@@ -9,11 +9,13 @@ semantics, the formatter) has not been started.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
-lists six places where the specification is silent or contradicts itself, and
-what the implementation does about each. Each errata entry is a **proposal**,
-not a decision already taken.
+lists seven places where the specification is silent or contradicts itself, and
+what the implementation does about each. Four have been ruled on by the owner
+and patched into `docs/spec/` (ERR-001, ERR-005, ERR-006, ERR-007); the other
+three are still proposals.
 
-Nothing is committed. `git init` has run; the working tree holds everything.
+Committed and pushed: `aa38277` on `origin/main` at
+`https://github.com/Insomniac-Coder/ember.git`.
 
 ## Hard constraint
 
@@ -49,7 +51,7 @@ a work queue.
 | `ember_driver` | `build`, `run`, `check`, `explain`, `--emit`, `--json` |
 | `runtime/ember_rt` | C11: alloc, panics, printers, embedding API |
 
-`cargo test --workspace`: **141 passed, 0 failed.** `cargo build --workspace`
+`cargo test --workspace`: **146 passed, 0 failed.** `cargo build --workspace`
 is warning-free.
 
 The emitted C compiles warning-free under `clang -std=c11 -Wall -Wextra` and
