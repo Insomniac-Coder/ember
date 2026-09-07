@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = [
+    "compiler/ember_span",
+    "compiler/ember_diag",
+    "compiler/ember_lexer",
+    "compiler/ember_ast",
+    "compiler/ember_parser",
+    "compiler/ember_types",
+    "compiler/ember_typeck",
+    "compiler/ember_hir",
+    "compiler/ember_mir",
+    "compiler/ember_codegen_c",
+    "compiler/ember_build",
+    "compiler/ember_driver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Insomniac-Coder/ember"
+
+[workspace.dependencies]
+ember_span = { path = "compiler/ember_span" }
+ember_diag = { path = "compiler/ember_diag" }
+ember_lexer = { path = "compiler/ember_lexer" }
+ember_ast = { path = "compiler/ember_ast" }
+ember_parser = { path = "compiler/ember_parser" }
+ember_types = { path = "compiler/ember_types" }
+ember_typeck = { path = "compiler/ember_typeck" }
+ember_hir = { path = "compiler/ember_hir" }
+ember_mir = { path = "compiler/ember_mir" }
+ember_codegen_c = { path = "compiler/ember_codegen_c" }
+ember_build = { path = "compiler/ember_build" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[profile.release]
+debug = 1

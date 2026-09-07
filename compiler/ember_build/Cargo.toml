@@ -1,0 +1,13 @@
+[package]
+name = "ember_build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ember_span.workspace = true
+ember_diag.workspace = true
+
+[lints]
+workspace = true

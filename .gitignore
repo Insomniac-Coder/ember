@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Ember build output (XIX.3 [BLD-5])
+target/
+*.pdb
+*.ilk
+*.obj
+*.exe
+*.lib
+*.dll
+*.exp
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Snapshot review leftovers
+*.snap.new

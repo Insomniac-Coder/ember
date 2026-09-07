@@ -1,0 +1,15 @@
+[package]
+name = "ember_lexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ember_span.workspace = true
+ember_diag.workspace = true
+unicode-ident = "1"
+unicode-normalization = "0.1"
+
+[lints]
+workspace = true
