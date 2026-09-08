@@ -740,8 +740,12 @@ real one, and the exception list is one entry long.
 view type whatever it says, and omitting the attribute is `E2030`. The
 attribute is documentation, and the reason it is mandatory is that without it a
 reader has to check every field's type to learn the struct may not be stored.
-`[TYP-15]`'s storage restriction itself — `E3063`, shape B12 — needs the region
-work below and is not in.
+**`[TYP-15]`'s storage restriction is in for the cases that need no regions**:
+a `static` and a container element have no bounding region at all, so no
+analysis can make them work, and both are `E3063` with shape B12's mandated
+help — an owned copy with its per-element cost named, or an index or handle
+with the container it indexes named. A view escaping through a *return* is
+`[LT-1]`'s job and needs the region graph.
 
 **Not done in block E:** `[TYP-15]`'s storage check; `@borrows` (`[LT-1a]`); real region variables
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and

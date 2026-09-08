@@ -284,6 +284,39 @@ impl<'a> Checker<'a> {
         self.sink.emit(Diagnostic::error(code, span, message));
     }
 
+    /// `[TYP-15]` — "a view-typed value MUST NOT be stored in a place whose
+    /// region is not outlived by the view's region. Class fields, non-view
+    /// struct fields, `static`s, `Box[T]` and `Shared[T]` contents, container
+    /// elements and `owned fn` captures have no bounding region and are
+    /// therefore always forbidden."
+    ///
+    /// The cases here are the ones decidable without regions: the place has no
+    /// region at all, so no analysis can make it work. A view escaping through
+    /// a *return* is `[LT-1]`'s job and needs the region graph.
+    fn reject_stored_view(&mut self, ty: Ty, span: Span, place: &str) {
+        if !self.types.is_view(ty) {
+            return;
+        }
+        let shown = self.types.display(ty);
+        self.sink.emit_classified(
+            Diagnostic::error(
+                codes::E3063,
+                span,
+                format!("`{shown}` is a view, so it may not be stored in {place}"),
+            )
+            .primary_label("stored here")
+            .help(concat!(
+                "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — ",
+                "and note that costs one allocation per element; or store a `u32` index ",
+                "or a `Handle[T]` and name the container it indexes"
+            ))
+            .note(concat!(
+                "a view borrows something, and this place outlives whatever it could ",
+                "borrow (TYP-15)"
+            )),
+        );
+    }
+
     /// `[LEX-15a]` — `type Name = T` at item level. An alias may name another
     /// alias declared later in the file, so they are resolved to a fixpoint:
     /// one whose body still mentions an unknown name is deferred, and whatever
@@ -797,6 +830,9 @@ impl<'a> Checker<'a> {
                 // the value has to be known here.
                 ast::ItemKind::Static(decl) => {
                     let ty = self.resolve_type(&decl.ty);
+                    // `[TYP-15]` — a `static` has no bounding region, so a
+                    // view stored in one can outlive anything.
+                    self.reject_stored_view(ty, decl.ty.span, "a `static`");
                     let value = self.check_expr(&decl.value, ty);
                     if decl.is_mut {
                         self.error(
@@ -1361,6 +1397,11 @@ impl<'a> Checker<'a> {
                         return self.common.error;
                     };
                     let elem = self.resolve_type(t);
+                    // `[TYP-15]` — "arbitrary owning containers instantiated
+                    // at a view type (`Array[str]`, `Array[MutSpan[T]]`)
+                    // remain rejected". `[TYP-15a]`'s `BorrowList`/`ViewList`
+                    // are the sanctioned exception and are not built.
+                    self.reject_stored_view(elem, t.span, "a container element");
                     return self.types.intern(TyKind::Vec { elem });
                 }
                 // `[TYP-16]` — a user generic struct, instantiated on demand:
