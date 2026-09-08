@@ -3,7 +3,7 @@
 ## XI.1 Thread safety markers
 
 * `Send`: a value may be moved to another thread. Auto-derived (`[TYP-*]`). Not `Send`: `*T`, `*mut T`, `ref`/`ref mut`/views (in v1 — scoped threads relax this, §3), non-`Sync` class handles, `Shared[T]` where `T: !Sync`.
-* `Sync`: a value may be *shared* (borrowed) by multiple threads simultaneously. Auto-derived when all fields are `Sync`. `ref mut` is never `Sync`. Interior mutability primitives (`Cell[T]`, `RefCell[T]`) are `!Sync`; `Atomic[T]`, `Mutex[T]`, `RwLock[T]` are `Sync` (when `T: Send`).
+* `Sync`: a value may be *shared* (borrowed) by multiple threads simultaneously. Auto-derived when all fields are `Sync`. `ref mut` is never `Sync`. Interior mutability primitives (`Cell[T]`, `RefCell[T]`; Part IX §7) are `!Sync`; `Atomic[T]`, `Mutex[T]`, `RwLock[T]` are `Sync` (when `T: Send`).
 * `[THR-1]` A class is `Sync` iff every field is `Sync` **and** every non-`let` field's type is itself an interior-synchronised type (`Atomic`, `Mutex`, `RwLock`, channel end) — because handles alias, a plain mutable field shared across threads would be a data race. `@sync class` asserts `Sync` and is `E7001` if the rule is violated; `@thread_local class` forces `!Sync` even if the fields would allow it (to get non-atomic counts).
 * `[THR-2]` Class handles are `Send` iff the class is `Sync` (a sent handle can be copied on both sides).
 

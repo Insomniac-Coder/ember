@@ -212,17 +212,18 @@ impl Printer<'_> {
         match &item.kind {
             ast::ItemKind::Fn(decl) => self.function(&vis, decl),
             ast::ItemKind::Struct(decl) => {
-                let header = self.type_header(&vis, "struct", decl.name, &decl.implements);
+                let header = self.type_header(&vis, "struct", decl.name, &decl.generics, &decl.implements);
                 self.line(&header);
                 self.members(&decl.members, item.span);
             }
             ast::ItemKind::Enum(decl) => {
-                let header = self.type_header(&vis, "enum", decl.name, &decl.implements);
+                let header = self.type_header(&vis, "enum", decl.name, &decl.generics, &decl.implements);
                 self.line(&header);
                 self.variants(&decl.variants, &decl.members, item.span);
             }
             ast::ItemKind::Interface(decl) => {
-                let mut header = format!("{vis}interface {}", decl.name.name);
+                let params = self.generics(&decl.generics);
+                let mut header = format!("{vis}interface {}{params}", decl.name.name);
                 if !decl.supertraits.is_empty() {
                     let names: Vec<String> =
                         decl.supertraits.iter().map(|t| self.type_expr(t)).collect();
@@ -233,7 +234,9 @@ impl Printer<'_> {
                 self.members(&decl.members, item.span);
             }
             ast::ItemKind::Extend(decl) => {
-                let mut header = format!("extend {}", self.type_expr(&decl.target));
+                let params = self.generics(&decl.generics);
+                let target = self.type_expr(&decl.target);
+                let mut header = format!("extend{params} {target}");
                 if !decl.implements.is_empty() {
                     let names: Vec<String> =
                         decl.implements.iter().map(|t| self.type_expr(t)).collect();
@@ -262,8 +265,9 @@ impl Printer<'_> {
                 ));
             }
             ast::ItemKind::TypeAlias(decl) => {
+                let params = self.generics(&decl.generics);
                 let target = decl.value.as_ref().map(|t| format!(" = {}", self.type_expr(t))).unwrap_or_default();
-                self.line(&format!("{vis}type {}{target}", decl.name.name));
+                self.line(&format!("{vis}type {}{params}{target}", decl.name.name));
             }
             // A construct the formatter does not reshape is copied through as
             // it was written, which keeps `parse(fmt(x)) ≡ parse(x)` true even
@@ -278,14 +282,44 @@ impl Printer<'_> {
         }
     }
 
+    /// `[GRM-8]` — a type parameter list, empty string when there is none.
+    /// Every place the parser accepts one has to print it: dropping `[T]`
+    /// would make `fmt` produce a different program, which `[FMT-1]` forbids.
+    fn generics(&mut self, params: &[ast::GenericParam]) -> String {
+        if params.is_empty() {
+            return String::new();
+        }
+        let printed: Vec<String> = params
+            .iter()
+            .map(|param| {
+                if let Some(ty) = &param.const_ty {
+                    return format!("const {}: {}", param.name.name, self.type_expr(ty));
+                }
+                let mut text = param.name.name.to_string();
+                if !param.bounds.is_empty() {
+                    let bounds: Vec<String> =
+                        param.bounds.iter().map(|b| self.type_expr(b)).collect();
+                    text.push_str(&format!(": {}", bounds.join(" + ")));
+                }
+                if let Some(default) = &param.default {
+                    text.push_str(&format!(" = {}", self.type_expr(default)));
+                }
+                text
+            })
+            .collect();
+        format!("[{}]", printed.join(", "))
+    }
+
     fn type_header(
         &mut self,
         vis: &str,
         keyword: &str,
         name: ast::Ident,
+        generics: &[ast::GenericParam],
         implements: &[ast::TypeExpr],
     ) -> String {
-        let mut header = format!("{vis}{keyword} {}", name.name);
+        let params = self.generics(generics);
+        let mut header = format!("{vis}{keyword} {}{params}", name.name);
         if !implements.is_empty() {
             let names: Vec<String> = implements.iter().map(|t| self.type_expr(t)).collect();
             header.push_str(&format!(" implements {}", names.join(", ")));
@@ -302,8 +336,9 @@ impl Printer<'_> {
             .map(|t| format!(" -> {}", self.type_expr(t)))
             .unwrap_or_default();
         let unsafe_ = if decl.is_unsafe { "unsafe " } else { "" };
+        let generics = self.generics(&decl.generics);
         let header = format!(
-            "{vis}{unsafe_}fn {}({}){ret}:",
+            "{vis}{unsafe_}fn {}{generics}({}){ret}:",
             decl.name.name,
             params.join(", ")
         );
@@ -313,7 +348,7 @@ impl Printer<'_> {
                 // `[FMT-1]`'s width applies to the header; a long parameter
                 // list breaks one per line with a trailing comma.
                 if header.len() + self.depth * INDENT.len() > LINE_WIDTH && !params.is_empty() {
-                    self.line(&format!("{vis}{unsafe_}fn {}(", decl.name.name));
+                    self.line(&format!("{vis}{unsafe_}fn {}{generics}(", decl.name.name));
                     self.depth += 1;
                     for param in &params {
                         self.line(&format!("{param},"));
@@ -400,8 +435,9 @@ impl Printer<'_> {
                 self.line(&format!("{vis}const {}{ty} = {value}", decl.name.name));
             }
             ast::MemberKind::TypeAlias(decl) => {
+                let params = self.generics(&decl.generics);
                 let target = decl.value.as_ref().map(|t| format!(" = {}", self.type_expr(t))).unwrap_or_default();
-                self.line(&format!("{vis}type {}{target}", decl.name.name));
+                self.line(&format!("{vis}type {}{params}{target}", decl.name.name));
             }
         }
     }
@@ -551,6 +587,13 @@ impl Printer<'_> {
             }
             ast::StmtKind::Defer(block) => {
                 self.line("defer:");
+                self.block(block);
+            }
+            // `[UNS-1]` — without this arm the catch-all copies the block
+            // through with every line trimmed, which flattens the body out of
+            // the block and changes the program.
+            ast::StmtKind::Unsafe(block) => {
+                self.line("unsafe:");
                 self.block(block);
             }
             ast::StmtKind::Break { label } => {

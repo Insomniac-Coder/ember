@@ -4,8 +4,15 @@
 
 **Phases 0 and 1 of nine are complete. Phase 2 is in progress.** All seven of
 Phase 1's blocks are done. Phase 2's blocks A to C — moves, drops and drop
-flags, generics, and iterators — are done; the borrow checker, closures and
-arenas are not started, and the collections in Ember are blocked on them.
+flags, generics, and iterators — are done, and so is the core of block G:
+`unsafe` blocks, raw pointers and the memory builtins. That is what unblocked
+block D, which is now writable but not written. The borrow checker and
+closures are not started.
+
+**The owner amended the specification on 2026-09-08** — the v0.2 memory-safety
+update. It adds `Cell`/`RefCell` and a mandatory borrow-diagnostic catalogue,
+and both land *inside* Phase 2, which grew two exit criteria. Read
+"The 2026-09-08 spec amendment" below before planning any more of this phase.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
@@ -18,7 +25,7 @@ ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
 | Working branch | **`phase-1-core-language`** — all of Phase 1 and Phase 2 blocks A-C, pushed |
-| Tests | `cargo test --workspace` → **151 passed, 0 failed** |
+| Tests | `cargo test --workspace` → **151 passed, 0 failed**; 31 `.em` programs under `tests/` |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
 
 ## Hard constraint
@@ -294,6 +301,17 @@ the panic — the same vacuous pass as the exit-code trap above. And only
 test, break it on purpose once and watch the suite go red.** A `compile-fail`
 expectation is a substring of the rendered message, not the registry title.
 
+**A statement that writes a place, but is not `Assign`, was invisible to the
+move analysis.** `[TYP-8]`'s checked arithmetic lowers to
+`StmtKind::CheckedBinaryOp`, which `drops.rs`'s `step` did not handle, so the
+destination was never marked live and the next read of it was reported as a
+use after move. Every integer `bigger = cap * 2` bound to a local hit it;
+floats did not, because they take the plain `Assign` path, and nothing in the
+suite wrote that shape until block G's tests did. **When a new MIR statement
+writes a place, `drops.rs` has to learn it** — the analysis fails closed, and
+failing closed here means rejecting a correct program.
+
+
 **Part II §4's keyword table has 47 entries, not 46.** `ember_lexer::token`
 asserts the count so the table and the enum cannot drift.
 
@@ -444,7 +462,17 @@ references to globals exist.
 - **Anything the printer has no rule for is copied from the source.** A lambda,
   an f-string, a `match` expression: reproducing one from the tree risks
   changing what it means, and copying keeps parse-equivalence true for the
-  whole language rather than only the part with rules.
+  whole language rather than only the part with rules. **That catch-all is not
+  as safe as it reads**, and it cost two defects later in Phase 2: it trims
+  each copied line, so a statement holding a block — `unsafe:` — came out with
+  its body at the parent's indentation. A new statement or item kind needs its
+  own arm, not the catch-all.
+- **The printer knew nothing about type parameters** until Phase 2 block G's
+  tests were written: `struct Pair[A, B]` printed as `struct Pair`. Generics
+  arrived in Phase 2, after this block, and nothing re-checked the formatter
+  against them, so `[FMT-1]`'s round trip was false for every generic
+  declaration in the corpus. `generics()` now prints them for `fn`, `struct`,
+  `enum`, `interface`, `extend` and `type`.
 
 **Not done:** width-based breaking inside expressions. A long call or condition
 stays on one line; only a long parameter list breaks. `[FMT-1]` asks for
@@ -460,13 +488,20 @@ and arenas. Split the same way Phase 1 was:
 | | Block | State |
 |---|---|---|
 | **A** | moves, `Copy`, drop elaboration, drop flags, `E3040` | **done** |
-| **B** | generics with bounds, monomorphisation, associated types | **done** |
+| **B** | generics with bounds, monomorphisation, associated types, generic structs | **done** |
 | **C** | `Iterator` and `for` over anything | **done; the adaptor set is not written** |
-| D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | **blocked on G** — see below |
+| D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | **unblocked; not written** |
 | E | the NLL borrow checker (§4.7), two-phase borrows, `@view` | not started |
 | F | closures (`[CLO-*]`), `Callable`, `fn(A)->R` parameters | not started |
-| G | arenas, `unsafe`, raw pointers, `MaybeUninit`, `transmute` | not started |
-| H | diagnostics pass on borrow errors, `ui/` snapshots | not started |
+| **G**, core | `unsafe:` blocks, `*T`/`*mut T`, `alloc`/`free`/`read`/`write`/`size_of` | **done** |
+| G, the rest | arenas (`[ARN-*]`), `MaybeUninit`, `transmute`, pointer arithmetic, inline asm | not started |
+| H | the §XIX.6.1 shape catalogue, the classifier, `ember explain --borrow` | not started |
+| I | `Cell`, `RefCell`, `Ref`/`RefMut` (`[CELL-*]`), `std.cell` | not started — **added by the 2026-09-08 amendment** |
+
+Blocks D and G were planned the other way round. G's core was pulled forward
+because D could not be written without it, and the rest of G — arenas,
+`MaybeUninit`, `transmute` — turned out not to be needed for D at all.
+Block I did not exist until the amendment.
 
 ### Block A: moves and drops
 
@@ -531,17 +566,73 @@ structs and enums — only functions are parameterised, so `Pair[A, B]` is not
 yet writable; generic interfaces (`Add[Rhs]`); the `Iterator` adaptor set
 (`map`, `filter`, …), which needs closures — block F.
 
-### Block D is blocked on block G
+### Block G's core, and block D unblocked
 
-`Array`, `Span`, `MutSpan`, `Box` and `Map` cannot be written in Ember until
-raw pointers, `MaybeUninit` and `unsafe` exist, which is block G. Generics are
-in place, so the type signatures are now expressible; the bodies are not. **Do
-G before D.**
+`Array`, `Span`, `MutSpan`, `Box` and `Map` could not be written in Ember
+without raw pointers and `unsafe`. Those now exist, so D is writable. What D
+was worth in the meantime was already delivered: `for x in xs` over an
+`Array[T]` works, and it is a counted loop rather than an iterator object.
 
-What D was worth in the meantime is delivered: `for x in xs` over an `Array[T]`
-works, and it is a counted loop rather than an iterator object.
+**`unsafe:` is a block, and `[UNS-1]` is enforced.** Using a raw pointer, or
+any of the memory builtins, outside one is `E3100`, whose `help` names the
+fix. The typechecker carries an `in_unsafe` flag; `[UNS-2]` holds — nothing
+inside an `unsafe` block skips type checking, bounds checking or the move
+analysis.
 
-**Not done in this block:** partial moves (moving one field out of a struct)
+**The builtins are `alloc`, `free`, `read`, `write` and `size_of`**, each
+generic in the pointee type. MIR lowering picks `arg_ty` per builtin rather
+than from the first argument, which was a real bug: `alloc`'s first argument
+is a count, so taking the type from it made every allocation `usize`-sized.
+
+**Generic structs came with it.** Only generic *functions* existed before, and
+D needs `Buffer[T]`-shaped types. `StructDef` gained an `origin` — the generic
+it was instantiated from, and the arguments used — because without it
+`Buffer[T]` in a method signature would not unify with the `Buffer[i32]` at
+the call site. `unify` and `substitute_ty` both consult it.
+
+**D is proved unblocked, not assumed.** A growable collection is written
+entirely in Ember — allocate, grow by doubling, copy across, index, free — and
+runs correctly, with the runtime's allocation counter reporting 3 allocations,
+3 frees and nothing live at exit.
+
+**Three defects, all found by writing the tests rather than by reading the
+code.** None was visible while the demo programs ran:
+
+1. **Methods on a generic struct were silently dropped.** Collection kept the
+   fields and ignored every other member, so `Pair[A, B]` with a `fn left`
+   produced an instantiation with no `left`, and the call site said
+   `Pair_i32_f32 has no method named left` — an error at a distance from the
+   cause. `GenericStruct` now stores each method resolved once with the
+   parameters opaque, and `instantiate_struct` substitutes and registers them,
+   queueing the bodies on `pending_methods` the way generic functions queue on
+   `pending`. This mattered more than it looked: `Array[T].push` is a method,
+   so block D was not really unblocked without it.
+2. **The formatter dropped every type parameter list.** `struct Pair[A, B]`
+   printed as `struct Pair`, and `fn make[T](...)` as `fn make(...)`. The
+   formatter was written in Phase 1, before generics existed, and nothing had
+   re-checked it since. `[FMT-1]`'s `parse(fmt(x)) ≡ parse(x)` was false for
+   every generic declaration in the corpus.
+3. **The formatter flattened `unsafe:` blocks.** `StmtKind::Unsafe` had no arm,
+   so the catch-all copied the text through with each line trimmed, which put
+   the body at the parent's indentation.
+
+The third defect is the general shape of the second: the formatter's catch-all
+looks safe but is not — it preserves text and destroys structure. Any new
+statement or item kind needs an arm.
+
+**Not done in G:** arenas (`[ARN-*]`), `MaybeUninit`, `transmute`, pointer
+arithmetic (`offset`/`add`/`sub`), and inline assembly (`[UNS-6]`). None of
+them is needed for D. `L3010 unsafe block larger than necessary` (`[UNS-3]`)
+is a lint, and no lint pass exists yet.
+
+**One limit worth knowing.** A generic struct's method body is checked only
+when something instantiates it — there is no opaque `Buffer[T]` for `self` to
+have, so unlike a generic function it is never checked once with the
+parameters left abstract. A method nobody instantiates is never type-checked,
+which is C++'s behaviour rather than Rust's. The first instantiation of each
+method reports; later ones are quiet, so one mistake is one error.
+
+**Still open from blocks A to D:** partial moves (moving one field out of a struct)
 are not tracked — only whole locals; `mem.take`/`replace`/`swap`/`forget`
 (`[OWN-6]`); `[OWN-4]`'s `E3041` for a loop that moves a value declared
 outside it; and user-defined `drop` methods are recognised (`has_drop`) but
@@ -562,7 +653,52 @@ their bodies are not yet called by the glue.
 - **`pub` visibility is enforced across modules but not within one.** Nothing
   checks `pub(package)` yet, because there is one package.
 
+## The 2026-09-08 spec amendment
+
+The owner replaced Parts IX, XI, XV, XIX, XX and XXII wholesale with the v0.2
+memory-safety update. Two things were added, and both are Phase 2 work:
+
+**1. `Cell` and `RefCell` (`[CELL-1..11]`, new Part IX §7).** The escape hatch
+for value types, matching what classes already give the object world. `Cell[T]`
+requires `T: Copy`, hands out no reference, and therefore needs no runtime
+check at all — `get` is a load, `set` is a store. `RefCell[T]` keeps a
+one-word borrow counter and panics on conflict, naming the line of the
+conflicting borrow. Both are `!Sync`. Neither is in the prelude (`[CELL-11]`),
+so reaching for one is a visible import — that is open question 9, awaiting the
+owner. They live in `std.cell`, a new module row in Part XV.
+
+**2. A mandatory borrow-diagnostic catalogue (`[DIA-7..10]`, new §XIX.6.1).**
+Sixteen error shapes — O1–O4, B1–B10, X1, R1 — each with a *required* `help`
+line naming a concrete API. `[DIA-7]` makes classification mandatory: an
+ownership or borrow error the classifier cannot place is written to
+`target/<profile>/unclassified-borrow-errors.log`, and CI fails if the
+conformance suite produces even one. `[DIA-9]` forbids suggesting `unsafe`,
+`Cell`, `RefCell`, `Shared` or `clone()` first when a structural fix exists;
+`clone()` leads only for O1. `[DIA-8]` adds `ember explain --borrow
+<file>:<line>`, which must be generated from the borrow checker's own loan and
+region tables, not reconstructed after the fact.
+
+**What that does to the plan.** Phase 2's exit criteria in §XX.2 now also
+require all `[CELL-*]` and `[DIA-7..10]` tests, a `tests/ui/borrow/<shape>/`
+snapshot for each of the sixteen shapes, and **zero unclassified borrow errors
+across the whole corpus**. `[DIA-7]` is the constraint that matters: it has to
+be designed into the borrow checker (block E) rather than bolted on in block H,
+because the classifier needs the loan and region tables that E builds. Building
+E without it means building E twice.
+
+`L3011 RefCell guard held across a call` joined the lint list, and the error
+registry's `E1000–E1499` row now names `E1050`/`E1051` — both already exist.
+
+**Three things in the update were deliberately not taken**, all because they
+predate owner decisions already recorded in `docs/spec-errata.md`: it reverts
+test annotations from `#$` to `#!` in Part XIX §5 and in the §XX.3 milestones
+(ERR-006), and it carries Appendix A's `match` example back to the `=>` form
+that does not parse (ERR-008). It also drops `[TST-0]` and the `assert-c`
+annotation, which came in with ERR-006. Diffing the owner's file against
+`docs/spec/` will show exactly those differences and nothing else.
+
 ## Environment
+
 
 - Rust 1.98.1 stable, MSVC toolchain. Installed 2026-09-07 via winget.
 - LLVM 22.1.8 at `C:\Program Files\LLVM`; `libclang.dll` in its `bin`. Not

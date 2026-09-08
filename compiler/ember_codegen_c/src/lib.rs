@@ -661,6 +661,37 @@ impl Emitter<'_> {
                             rendered[1]
                         );
                     }
+                    // `[UNS-5]` — the raw memory primitives. `arg_ty` is the
+                    // first argument's type, which for `alloc` and `size_of`
+                    // is the element type itself.
+                    Builtin::MemAlloc => {
+                        let elem = self.element_of(*arg_ty);
+                        let elem = self.c_type(elem);
+                        return format!(
+                            "({elem}*)ember_alloc({} * sizeof({elem}), _Alignof({elem}))",
+                            rendered[0]
+                        );
+                    }
+                    Builtin::MemFree => {
+                        let elem = self.element_of(*arg_ty);
+                        let elem = self.c_type(elem);
+                        return format!(
+                            "ember_free({}, {} * sizeof({elem}), _Alignof({elem}))",
+                            rendered[0], rendered[1]
+                        );
+                    }
+                    Builtin::PtrRead => {
+                        return format!("({})[{}]", rendered[0], rendered[1]);
+                    }
+                    Builtin::PtrWrite => {
+                        return format!(
+                            "({})[{}] = {}",
+                            rendered[0], rendered[1], rendered[2]
+                        );
+                    }
+                    Builtin::SizeOf => {
+                        return format!("sizeof({})", self.c_type(*arg_ty));
+                    }
                     Builtin::Println | Builtin::Print => {}
                 }
                 let suffix = self.builtin_suffix(*arg_ty);

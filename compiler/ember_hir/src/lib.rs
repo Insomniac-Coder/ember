@@ -270,6 +270,18 @@ pub enum Builtin {
     /// The runtime formatter is chosen from the value's type, as `println`'s
     /// is, until `Display` can be written.
     Format,
+    /// `[UNS-5]`, `std.mem` — the raw memory primitives the collections are
+    /// written on top of. Every one of these needs `unsafe` (`[UNS-1]`).
+    /// `alloc[T](count) -> *mut T`.
+    MemAlloc,
+    /// `free[T](p, count)`.
+    MemFree,
+    /// `read[T](p, index) -> T`.
+    PtrRead,
+    /// `write[T](p, index, value)`.
+    PtrWrite,
+    /// `size_of[T]() -> usize`, which needs no `unsafe`.
+    SizeOf,
 }
 
 impl Builtin {
@@ -293,6 +305,11 @@ impl Builtin {
             Builtin::StringLen => "len",
             Builtin::StringAsStr => "as_str",
             Builtin::Format => "format",
+            Builtin::MemAlloc => "alloc",
+            Builtin::MemFree => "free",
+            Builtin::PtrRead => "read",
+            Builtin::PtrWrite => "write",
+            Builtin::SizeOf => "size_of",
         }
     }
 }

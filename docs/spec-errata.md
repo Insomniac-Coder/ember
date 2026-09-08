@@ -274,8 +274,17 @@ never affects compilation. `#!` is left with exactly one meaning.
 
 **Applied to.** `docs/spec/part-19-toolchain.md` (`[TST-1]`, `[TST-2]`, and a
 new `[TST-0]` stating that annotations are read from raw text),
-`docs/spec/part-02-lexical-structure.md` (§II.3's comment table), the test
-harness, and every `.em` file under `tests/`.
+`docs/spec/part-02-lexical-structure.md` (§II.3's comment table),
+`docs/spec/part-20-implementation-plan.md` (the four milestone programs of
+§XX.3), the test harness, and every `.em` file under `tests/`.
+
+Part XX was missed when the decision was first applied and was caught on
+2026-09-08 while merging the owner's v0.2 memory-safety update. That update was
+written against the pre-decision text and reverts `#$` to `#!` in Part XIX §5
+and in the §XX.3 milestones; those reversions were **not** taken. Everything
+else in it was. A future reader diffing the owner's file against `docs/spec/`
+will find exactly three differences: this one, ERR-008's `match` example in
+Appendix A, and `[TST-0]`/`assert-c`, which the update predates.
 
 **`[TST-0]` is new and load-bearing.** The harness reads annotations from the
 raw source text, never from the token stream, because a `compile-fail` test may
@@ -345,6 +354,10 @@ match s:
 **Consequences.** Appendix A's example is corrected to the statement form.
 Part IV §2's row is left alone: `!` is still the type of an expression that
 never produces a value, which `panic` and an infinite `while true` still are.
+
+The owner's v0.2 memory-safety update of 2026-09-08 carries Appendix A along
+unchanged, with the `=>` form restored — it predates this decision, and its own
+change table does not list Appendix A as changed. The corrected form was kept.
 
 **If the owner rules the other way**, `return`/`break`/`continue` become
 expressions of type `!`. The type system already supports it — `!` coerces to

@@ -134,6 +134,10 @@ pub struct StructDef {
     pub derives_copy: bool,
     /// `[STR-3]` — a `drop` method or a `Drop` field makes the type move-only.
     pub has_drop: bool,
+    /// `[TYP-16]` — when this struct is one instantiation of a generic, the
+    /// generic it came from and the arguments it was built with. That is what
+    /// lets `Buffer[T]` unify with `Buffer[i32]`.
+    pub origin: Option<(Symbol, Vec<Ty>)>,
 }
 
 impl StructDef {
@@ -355,6 +359,16 @@ impl TypeTable {
             | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
             | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. })
             | (TyKind::Vec { elem: a }, TyKind::Vec { elem: b }) => self.unify(a, b, args),
+            // Two instantiations of the same generic struct unify argument
+            // by argument.
+            (TyKind::Struct(a), TyKind::Struct(b)) => {
+                match (&self.struct_def(a).origin, &self.struct_def(b).origin) {
+                    (Some((na, aa)), Some((nb, ab))) if na == nb && aa.len() == ab.len() => {
+                        aa.iter().zip(ab.iter()).all(|(&x, &y)| self.unify(x, y, args))
+                    }
+                    _ => true,
+                }
+            }
             (TyKind::Tuple(a), TyKind::Tuple(b)) if a.len() == b.len() => {
                 a.iter().zip(b.iter()).all(|(&x, &y)| self.unify(x, y, args))
             }
@@ -900,6 +914,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            origin: None,
         });
         let ty = table.intern(TyKind::Struct(id));
         let layout = table.layout(ty);
@@ -919,6 +934,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            origin: None,
         });
         let ty = table.intern(TyKind::Struct(id));
         let layout = table.layout(ty);
@@ -937,6 +953,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            origin: None,
         });
         let ty = table.intern(TyKind::Struct(plain));
         assert!(!table.is_copy(ty), "a struct without @derive(Copy) is not Copy");
@@ -954,6 +971,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: true,
+            origin: None,
         });
         let ty = table.intern(TyKind::Struct(id));
         assert!(!table.is_copy(ty));
@@ -982,6 +1000,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            origin: None,
         });
         let ty = table.intern(TyKind::Struct(id));
         assert!(table.is_view(ty));
@@ -1013,6 +1032,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            origin: None,
         });
         let plain_ty = table.intern(TyKind::Struct(plain));
         assert!(table.is_ffi_safe(plain_ty));
@@ -1023,6 +1043,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            origin: None,
         });
         let with_str_ty = table.intern(TyKind::Struct(with_str));
         assert!(!table.is_ffi_safe(with_str_ty), "a view is not FFI-safe on its own");

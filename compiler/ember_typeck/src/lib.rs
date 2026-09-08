@@ -95,6 +95,46 @@ struct GenericParam {
     bounds: Vec<Symbol>,
 }
 
+/// `[TYP-16]` — a struct declared with type parameters. Its fields are
+/// resolved once with the parameters opaque, so instantiating one is a
+/// substitution rather than another walk of the declaration.
+#[derive(Clone)]
+struct GenericStruct {
+    params: Vec<Symbol>,
+    fields: Vec<FieldDef>,
+    derives_copy: bool,
+    /// `[TYP-16]` — the methods declared in the body, resolved once with the
+    /// type parameters left opaque. An instantiation substitutes them, the
+    /// same way it substitutes the fields.
+    methods: Vec<GenericMethod>,
+}
+
+/// One method of a generic struct: its shape in terms of the struct's type
+/// parameters, and where its body is so an instantiation can be checked.
+#[derive(Clone)]
+struct GenericMethod {
+    name: Symbol,
+    receiver: Mode,
+    /// The parameters after `self`. `self` itself is not here: its type is
+    /// the instantiation, which does not exist until one is built.
+    params: Vec<(Symbol, Ty, Mode, Span)>,
+    ret: Ty,
+    /// Module, item and member index of the declaration.
+    source: (usize, usize, usize),
+    span: Span,
+}
+
+/// A method of one instantiation, waiting for its body to be checked against
+/// the concrete types. The same work list as `pending`, for methods.
+struct PendingMethod {
+    def: DefId,
+    owner: Ty,
+    /// The generic it came from and the arguments it was built with, which is
+    /// what binds `T` while the body is checked.
+    origin: (Symbol, Vec<Ty>),
+    source: (usize, usize, usize),
+}
+
 /// One instantiation of a generic function: which one, and with what.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Instance {
@@ -174,8 +214,12 @@ struct Checker<'a> {
     assoc_values: HashMap<(Ty, Symbol), Ty>,
     /// Instantiations reached so far, so each is emitted once (`[MONO-1]`).
     instances: HashMap<Instance, DefId>,
+    /// Structs declared with type parameters, by qualified name.
+    generic_structs: HashMap<Symbol, GenericStruct>,
     /// Instantiations still to have their bodies checked.
     pending: Vec<(Instance, DefId)>,
+    /// The same, for the methods of instantiated generic structs.
+    pending_methods: Vec<PendingMethod>,
 
     // Per-function state.
     locals: Vec<LocalDecl>,
@@ -188,6 +232,9 @@ struct Checker<'a> {
     loop_labels: Vec<Option<Symbol>>,
     /// `[CTL-7]` — inside a `defer` block, where control may not leave.
     in_defer: bool,
+    /// `[UNS-1]`, `[UNS-2]` — inside an `unsafe:` block, where the raw memory
+    /// operations are permitted.
+    in_unsafe: bool,
     ret_ty: Ty,
     /// The profile's `[TYP-8]` policy, used when a function has no
     /// `@overflow(...)` of its own.
@@ -219,12 +266,15 @@ impl<'a> Checker<'a> {
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
+            generic_structs: HashMap::new(),
             pending: Vec::new(),
+            pending_methods: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             or_bindings: None,
             loop_labels: Vec::new(),
             in_defer: false,
+            in_unsafe: false,
             ret_ty,
             default_overflow: OverflowPolicy::default(),
         }
@@ -409,8 +459,62 @@ impl<'a> Checker<'a> {
     /// struct declared later in the file, then fields and signatures
     /// (Part XVIII §4.4 step 1).
     fn collect(&mut self, module: &ast::Module) {
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             match &item.kind {
+                // `[TYP-16]` — a struct with type parameters is not a type; it
+                // is a recipe. Each `Pair[i32, f32]` builds one.
+                ast::ItemKind::Struct(decl) if !decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    let params: Vec<Symbol> =
+                        decl.generics.iter().map(|g| g.name.name).collect();
+                    self.declare_generics(&decl.generics);
+                    let fields = decl
+                        .members
+                        .iter()
+                        .filter_map(|member| match &member.kind {
+                            ast::MemberKind::Field(field) => Some(FieldDef {
+                                name: field.name.name,
+                                ty: self.resolve_type(&field.ty),
+                                span: member.span,
+                                has_default: field.default.is_some(),
+                            }),
+                            _ => None,
+                        })
+                        .collect();
+                    // `[TYP-16]` — the methods, resolved once here. `self` is
+                    // left out of the signature because its type is the
+                    // instantiation, and no instantiation exists yet.
+                    let mut methods = Vec::new();
+                    for (member_index, member) in decl.members.iter().enumerate() {
+                        let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                        if fn_decl.body.is_none() {
+                            continue;
+                        }
+                        let Some((receiver, signature)) =
+                            self.method_signature(fn_decl, None, member.span)
+                        else {
+                            continue;
+                        };
+                        methods.push(GenericMethod {
+                            name: fn_decl.name.name,
+                            receiver,
+                            params: signature.params,
+                            ret: signature.ret,
+                            source: (self.current_module, item_index, member_index),
+                            span: member.span,
+                        });
+                    }
+                    self.type_params.clear();
+                    self.generic_structs.insert(
+                        name,
+                        GenericStruct {
+                            params,
+                            fields,
+                            derives_copy: has_derive(&item.attrs, "Copy"),
+                            methods,
+                        },
+                    );
+                }
                 ast::ItemKind::Struct(decl) => {
                     // Every declared name is stored qualified, so two modules
                     // may both declare a `Point`.
@@ -429,6 +533,7 @@ impl<'a> Checker<'a> {
                         span: item.span,
                         derives_copy: has_derive(&item.attrs, "Copy"),
                         has_drop: false,
+                        origin: None,
                     });
                     let ty = self.types.intern(TyKind::Struct(id));
                     self.struct_ids.insert(name, id);
@@ -1124,6 +1229,19 @@ impl<'a> Checker<'a> {
                     let elem = self.resolve_type(t);
                     return self.types.intern(TyKind::Vec { elem });
                 }
+                // `[TYP-16]` — a user generic struct, instantiated on demand:
+                // `Pair[i32, f32]` is its own struct with its own layout.
+                if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
+                    let mut resolved = Vec::new();
+                    for arg in args {
+                        let ast::GenericArg::Type(t) = arg else {
+                            self.error(codes::E1010, ty.span, "expected a type argument");
+                            return self.common.error;
+                        };
+                        resolved.push(self.resolve_type(t));
+                    }
+                    return self.instantiate_struct(name, &decl, &resolved, ty.span);
+                }
                 let arity = if name.is("Option") {
                     1
                 } else if name.is("Result") {
@@ -1397,6 +1515,109 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
+    /// `read[T]`, `write[T]` and `size_of[T]`. Everything but `size_of` needs
+    /// an `unsafe` block (`[UNS-1]`); these are what the collections will be
+    /// written on top of.
+    fn synth_memory_builtin(
+        &mut self,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Option<Expr> {
+        let usize_ty = self.common.usize;
+        let void = self.common.void;
+        let (which, arity, needs_unsafe) = if name.is("alloc") {
+            (Builtin::MemAlloc, 1, true)
+        } else if name.is("free") {
+            (Builtin::MemFree, 2, true)
+        } else if name.is("read") {
+            (Builtin::PtrRead, 2, true)
+        } else if name.is("write") {
+            (Builtin::PtrWrite, 3, true)
+        } else if name.is("size_of") {
+            (Builtin::SizeOf, 0, false)
+        } else {
+            return None;
+        };
+
+        if needs_unsafe && !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    format!("`{name}` needs an `unsafe` block"),
+                )
+                .note("`[UNS-1]` lists the operations that do")
+                .help("wrap the call in `unsafe:`"),
+            );
+        }
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {arity} arguments, found {}", args.len()),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+
+        // `alloc[T]` and `size_of[T]` say their element type; `free`, `read`
+        // and `write` take it from the pointer they are given.
+        let mut checked: Vec<Expr> = Vec::new();
+        let elem = match which {
+            Builtin::MemAlloc | Builtin::SizeOf => match explicit.first() {
+                Some(&ty) => ty,
+                None => {
+                    self.error(
+                        codes::E2060,
+                        span,
+                        format!("write the type: `{name}[T](...)`"),
+                    );
+                    return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                }
+            },
+            _ => {
+                let pointer = self.synth_committed(&args[0].value);
+                let elem = match self.types.kind(pointer.ty) {
+                    TyKind::Ptr { inner, .. } => *inner,
+                    _ => {
+                        let shown = self.types.display(pointer.ty);
+                        self.error(
+                            codes::E2020,
+                            args[0].value.span,
+                            format!("`{name}` needs a raw pointer, not `{shown}`"),
+                        );
+                        return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                    }
+                };
+                checked.push(pointer);
+                elem
+            }
+        };
+
+        let (rest, ret) = match which {
+            Builtin::MemAlloc => {
+                let ptr = self.types.intern(TyKind::Ptr { mutable: true, inner: elem });
+                (vec![usize_ty], ptr)
+            }
+            Builtin::MemFree => (vec![usize_ty], void),
+            Builtin::PtrRead => (vec![usize_ty], elem),
+            Builtin::PtrWrite => (vec![usize_ty, elem], void),
+            _ => (Vec::new(), usize_ty),
+        };
+        for (arg, &param_ty) in args.iter().skip(checked.len()).zip(rest.iter()) {
+            let value = self.check_expr(&arg.value, param_ty);
+            checked.push(value);
+        }
+        // `size_of` has no arguments, so the element type has to travel
+        // somewhere; a zero-sized placeholder of that type carries it.
+        if which == Builtin::SizeOf {
+            checked.push(Expr { ty: elem, kind: ExprKind::Error, span });
+        }
+        Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })
+    }
+
     /// `Some(x)`, `Ok(x)`, `Err(e)`. `None` has no payload and is handled
     /// where a bare path is checked.
     fn synth_wrapper(
@@ -1471,6 +1692,167 @@ impl<'a> Checker<'a> {
             kind: ExprKind::EnumLit { enum_id: id, variant: index, fields: vec![value] },
             span,
         })
+    }
+
+    /// Substitution that also rebuilds an instantiated generic struct:
+    /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different struct with a
+    /// different layout, not the same one with its fields rewritten.
+    fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
+        if let TyKind::Struct(id) = *self.types.kind(ty) {
+            let origin = self.types.struct_def(id).origin.clone();
+            if let Some((name, generic_args)) = origin {
+                let concrete: Vec<Ty> = generic_args
+                    .iter()
+                    .map(|&a| self.substitute_ty(a, args))
+                    .collect();
+                if concrete == generic_args {
+                    return ty;
+                }
+                let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
+                return self.instantiate_struct(name, &decl, &concrete, Span::DUMMY);
+            }
+            return ty;
+        }
+        self.types.substitute(ty, args)
+    }
+
+    /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
+    /// struct. The type arguments come from the values, unless they were
+    /// written out.
+    fn synth_generic_struct_literal(
+        &mut self,
+        name: Symbol,
+        decl: &GenericStruct,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Expr {
+        let mut solved: Vec<Option<Ty>> = vec![None; decl.params.len()];
+        for (slot, ty) in explicit.iter().enumerate() {
+            if slot < solved.len() {
+                solved[slot] = Some(*ty);
+            }
+        }
+        // Unify each declared field type with the value given for it.
+        for (arg, field) in args.iter().zip(decl.fields.iter()) {
+            let value = self.synth_committed(&arg.value);
+            self.types.unify(field.ty, value.ty, &mut solved);
+        }
+
+        let mut substitution = Vec::new();
+        for (index, param) in decl.params.iter().enumerate() {
+            match solved[index] {
+                Some(ty) => substitution.push(ty),
+                None => {
+                    self.error(
+                        codes::E2060,
+                        span,
+                        format!("cannot tell what `{param}` is here; write `{name}[...](...)`"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+            }
+        }
+        let ty = self.instantiate_struct(name, decl, &substitution, span);
+        let TyKind::Struct(id) = *self.types.kind(ty) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let instance = self.types.struct_def(id).name;
+        self.synth_struct_literal(id, instance, args, span)
+    }
+
+    /// `[TYP-16]` — one struct per set of type arguments. `Pair[i32, f32]`
+    /// and `Pair[f32, i32]` are different types with different layouts, built
+    /// once each and named after the arguments.
+    fn instantiate_struct(
+        &mut self,
+        name: Symbol,
+        decl: &GenericStruct,
+        args: &[Ty],
+        span: Span,
+    ) -> Ty {
+        if args.len() != decl.params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{name}` takes {} type arguments, found {}",
+                    decl.params.len(),
+                    args.len()
+                ),
+            );
+            return self.common.error;
+        }
+        let stem: Vec<String> =
+            args.iter().map(|&t| type_stem(&self.types.display(t))).collect();
+        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        if let Some(&ty) = self.named_types.get(&instance) {
+            return ty;
+        }
+
+        // Register the name before the fields are resolved, so a struct that
+        // holds a pointer to itself terminates.
+        let id = self.types.add_struct(StructDef {
+            name: instance,
+            fields: Vec::new(),
+            span,
+            derives_copy: decl.derives_copy,
+            has_drop: false,
+            origin: Some((name, args.to_vec())),
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.struct_ids.insert(instance, id);
+        self.named_types.insert(instance, ty);
+
+        // The fields were resolved once with the parameters left opaque, so
+        // instantiating is a substitution rather than a re-resolve.
+        let fields: Vec<FieldDef> = decl
+            .fields
+            .iter()
+            .map(|field| FieldDef {
+                name: field.name,
+                ty: self.substitute_ty(field.ty, args),
+                span: field.span,
+                has_default: field.has_default,
+            })
+            .collect();
+        self.types.struct_def_mut(id).fields = fields;
+
+        // The methods are substituted the same way, each getting a `DefId` of
+        // its own. Their bodies are queued rather than checked here: an
+        // instantiation is usually reached in the middle of checking some
+        // other body, which is not a place to start checking a new one.
+        for method in &decl.methods {
+            let mut params =
+                vec![(Symbol::intern("self"), ty, method.receiver, method.span)];
+            for &(field_name, param_ty, mode, param_span) in &method.params {
+                params.push((field_name, self.substitute_ty(param_ty, args), mode, param_span));
+            }
+            let ret = self.substitute_ty(method.ret, args);
+            let signature = Signature { params, ret, generics: Vec::new() };
+            let Some(def) = self.register_method(
+                ty,
+                method.name,
+                signature,
+                method.receiver,
+                None,
+                method.span,
+            ) else {
+                continue;
+            };
+            // `[DRP-1]` — a generic that writes `fn drop` gives every one of
+            // its instantiations a destructor.
+            if method.name.is("drop") {
+                self.types.struct_def_mut(id).has_drop = true;
+            }
+            self.pending_methods.push(PendingMethod {
+                def,
+                owner: ty,
+                origin: (name, args.to_vec()),
+                source: method.source,
+            });
+        }
+        ty
     }
 
     /// `Option[T]`, as a two-variant enum built once per `T`.
@@ -1695,25 +2077,76 @@ impl<'a> Checker<'a> {
         // Errors were already reported when the generic body was checked
         // once; an instantiation must not repeat them.
         let mut quiet = Sink::new();
-        while let Some((key, instance)) = self.pending.pop() {
-            let Some(&(module_index, item_index)) = sources.get(&key.def) else { continue };
-            let item = &modules[module_index].module.items[item_index];
-            let ast::ItemKind::Fn(decl) = &item.kind else { continue };
-            let Some(block) = &decl.body else { continue };
+        // A generic struct's method body is never checked with its parameters
+        // opaque — there is no opaque `Buffer[T]` for `self` to have — so the
+        // first instantiation of each method is the one that reports. Later
+        // ones are quiet, as generic function instantiations are.
+        let mut reported: std::collections::HashSet<(Symbol, Symbol)> =
+            std::collections::HashSet::new();
+        while !self.pending.is_empty() || !self.pending_methods.is_empty() {
+            while let Some((key, instance)) = self.pending.pop() {
+                let Some(&(module_index, item_index)) = sources.get(&key.def) else { continue };
+                let item = &modules[module_index].module.items[item_index];
+                let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+                let Some(block) = &decl.body else { continue };
 
-            self.current_module = module_index;
-            // The parameters are now the concrete types.
-            let generics = self.signatures[key.def.0 as usize].generics.clone();
-            self.type_params.clear();
-            for (param, &ty) in generics.iter().zip(key.args.iter()) {
-                self.type_params.insert(param.name, ty);
+                self.current_module = module_index;
+                // The parameters are now the concrete types.
+                let generics = self.signatures[key.def.0 as usize].generics.clone();
+                self.type_params.clear();
+                for (param, &ty) in generics.iter().zip(key.args.iter()) {
+                    self.type_params.insert(param.name, ty);
+                }
+
+                let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
+                let function = self.check_one_function(decl, block, instance, &item.attrs, item.span);
+                quiet = std::mem::replace(self.sink, saved);
+                self.type_params.clear();
+                out.push(function);
             }
 
-            let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
-            let function = self.check_one_function(decl, block, instance, &item.attrs, item.span);
-            quiet = std::mem::replace(self.sink, saved);
-            self.type_params.clear();
-            out.push(function);
+            // `[TYP-16]` — the methods of instantiated generic structs, checked
+            // with the struct's parameters bound to the arguments it was built
+            // with and `self` bound to the instantiation.
+            while let Some(job) = self.pending_methods.pop() {
+                let (module_index, item_index, member_index) = job.source;
+                let item = &modules[module_index].module.items[item_index];
+                let ast::ItemKind::Struct(decl) = &item.kind else { continue };
+                let Some(member) = decl.members.get(member_index) else { continue };
+                let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                let Some(block) = &fn_decl.body else { continue };
+
+                self.current_module = module_index;
+                let (generic_name, args) = job.origin;
+                let Some(generic) = self.generic_structs.get(&generic_name) else { continue };
+                let params = generic.params.clone();
+                self.type_params.clear();
+                for (param, &ty) in params.iter().zip(args.iter()) {
+                    self.type_params.insert(*param, ty);
+                }
+
+                let first = reported.insert((generic_name, fn_decl.name.name));
+                let saved = if first {
+                    None
+                } else {
+                    Some(std::mem::replace(self.sink, std::mem::take(&mut quiet)))
+                };
+                let function = self.check_one_method(
+                    job.owner,
+                    fn_decl,
+                    block,
+                    job.def,
+                    &item.attrs,
+                    member.span,
+                );
+                if let Some(saved) = saved {
+                    quiet = std::mem::replace(self.sink, saved);
+                }
+                self.type_params.clear();
+                if let Some(function) = function {
+                    out.push(function);
+                }
+            }
         }
         out
     }
@@ -2091,6 +2524,15 @@ impl<'a> Checker<'a> {
             }
             // `[CTL-7]` — `defer:` runs at scope exit. Nothing about the block
             // itself is special; the ordering is applied when it is lowered.
+            // `[UNS-2]` — an `unsafe:` block does not turn anything off. It
+            // only permits `[UNS-1]`'s operations, which are refused
+            // everywhere else.
+            ast::StmtKind::Unsafe(block) => {
+                let was = std::mem::replace(&mut self.in_unsafe, true);
+                let block = self.check_block(block);
+                self.in_unsafe = was;
+                out.push(Stmt::Block(block));
+            }
             ast::StmtKind::Defer(block) => {
                 // `[CTL-7]` — control may not leave a `defer` block, so the
                 // loops outside it are out of reach and `return` is `E2160`.
@@ -3498,6 +3940,17 @@ impl<'a> Checker<'a> {
             return built;
         }
 
+        // `Pair(1, 2.5)` — a generic struct's constructor, with the type
+        // arguments inferred from the values, or written as `Pair[i32, f32]`.
+        if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
+            return self.synth_generic_struct_literal(name, &decl, args, &explicit, span);
+        }
+
+        // `[UNS-5]`, `std.mem` — the raw memory primitives.
+        if let Some(built) = self.synth_memory_builtin(name, args, &explicit, span) {
+            return built;
+        }
+
         // `Array[T]()` and `String()` — the compiler-known constructors.
         if name.is("Array") || name.is("String") {
             if !args.is_empty() {
@@ -3675,14 +4128,14 @@ impl<'a> Checker<'a> {
         let instance = self.instantiate(def, &substitution, name, span);
         let concrete: Vec<(Ty, Mode)> = declared
             .iter()
-            .map(|&(ty, mode)| (self.types.substitute(ty, &substitution), mode))
+            .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
             .collect();
         let checked = args
             .iter()
             .zip(concrete.iter())
             .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
             .collect();
-        let ret = self.types.substitute(ret, &substitution);
+        let ret = self.substitute_ty(ret, &substitution);
         let _ = checked_args;
         Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
     }
@@ -3766,9 +4219,9 @@ impl<'a> Checker<'a> {
         let ret = generic.ret;
         let concrete_params = params
             .into_iter()
-            .map(|(n, t, m, s)| (n, self.types.substitute(t, args), m, s))
+            .map(|(n, t, m, s)| (n, self.substitute_ty(t, args), m, s))
             .collect();
-        let concrete_ret = self.types.substitute(ret, args);
+        let concrete_ret = self.substitute_ty(ret, args);
 
         let instance = DefId(self.signatures.len() as u32);
         self.signatures.push(Signature {

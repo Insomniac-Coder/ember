@@ -91,5 +91,58 @@ struct Pool[T]:                         # slot map
 
 `[HND-1]` `Handle` is a plain `Copy` value; `[HND-2]` the index/generation split is configurable per `Pool` (`Pool[T, INDEX_BITS=20]`).
 
+## IX.7 Interior mutability: `Cell` and `RefCell`
+
+`[BRW-1]`'s aliasing-XOR-mutability rule is checked statically for value types. Some correct programs cannot be written that way: a shared cache, a memoised field, an observer that mutates a counter it does not own, a value reachable from two places that both need to write it. Classes solve this for object graphs (Part VIII: refcounting plus dynamically checked exclusivity). `Cell` and `RefCell` provide the equivalent escape hatch for **value types**, so that a programmer who hits the wall on a `struct` has a ladder that stays in safe code.
+
+Both are safe types built on `unsafe` internals. Neither is a way to opt out of the rules; each moves one specific check from compile time to runtime, and says so in the type.
+
+### `Cell[T]` — replace the whole value, no references
+
+```ember
+struct Sprite:
+    frame: Cell[u32]                          # mutable through a shared borrow
+    texture: TextureHandle
+
+fn advance(s: Sprite):                        # note: `s` is borrowed, not `mut`
+    s.frame.set(s.frame.get() + 1)
+```
+
+* `[CELL-1]` `Cell[T]` requires `T: Copy`. Its API is `Cell(v)`, `get(self) -> T`, `set(self, v: T)`, `replace(self, v: T) -> T`, `update(self, f: fn(T) -> T)`. All take `self` (a shared borrow) and mutate.
+* `[CELL-2]` `Cell` never hands out a reference to its contents, so no aliasing rule can be violated and **no runtime check is needed**. `get` is a load; `set` is a store. There is no overhead relative to a plain field.
+* `[CELL-3]` `Cell[T]` is `!Sync` (`[THR-1]`): it may be moved between threads if `T: Send`, but never shared. The `Sync` equivalent is `Atomic[T]`.
+* `[CELL-4]` A `Cell` field does not make its containing struct mutable in any other respect, and does not affect `Copy` derivation: `Cell[T]` is itself `Copy` when `T: Copy`, and copying a `Cell` copies the value it holds at that moment.
+
+### `RefCell[T]` — dynamically checked borrows of any `T`
+
+```ember
+struct Scene:
+    entities: RefCell[Array[Entity]]
+
+fn add(s: Scene, e: Entity):
+    with list = s.entities.borrow_mut():      # runtime check begins here
+        list.push(e)                          # list: ref mut Array[Entity]
+                                              # check ends at block exit
+```
+
+* `[CELL-5]` `RefCell[T]` holds a borrow-state counter alongside `T`. `borrow(self) -> Ref[T]` succeeds unless a mutable borrow is active; `borrow_mut(self) -> RefMut[T]` succeeds unless any borrow is active. Both **panic** on failure with `E-panic: RefCell already mutably borrowed (borrowed at <file>:<line>)` — the message names the source location of the conflicting borrow, which the runtime records in debug and release profiles.
+* `[CELL-6]` `try_borrow`/`try_borrow_mut` return `Option[Ref[T]]`/`Option[RefMut[T]]` for code that must handle contention rather than panic.
+* `[CELL-7]` `Ref[T]`/`RefMut[T]` are **view types** (`[TYP-15]` applies) whose region borrows the `RefCell`; their `drop` releases the borrow state. They MUST be bound by `with` or a local — the lint `L3011 RefCell guard held across a call` fires when a guard is live across a function call that could re-enter the same cell.
+* `[CELL-8]` `RefCell[T]` is `!Sync`. The `Sync` equivalents are `Mutex[T]` and `RwLock[T]`, whose API is deliberately the same shape (`with g = m.lock():`) so that promoting single-threaded code to shared code is a type change and nothing else.
+* `[CELL-9]` The borrow-state counter is 1 machine word; in the `shipping` profile with `exclusivity = "unchecked"` the checks are compiled out and a violation is UB, matching `[EXC-1]`'s treatment of class exclusivity. In `debug` and `release` the checks are always present.
+* `[CELL-10]` `RefCell` is not a synchronisation primitive and not a substitute for restructuring. The diagnostic for a borrow error (`[DIA-7]`, shape B4) suggests `RefCell` **only** when the conflicting accesses are provably not simultaneous in the same expression — never as a first suggestion.
+
+### Which to reach for
+
+| Situation | Use |
+|---|---|
+| Mutating a `Copy` field through a shared borrow | `Cell[T]` |
+| Mutating a non-`Copy` value (container, `String`) through a shared borrow, single-threaded | `RefCell[T]` |
+| Object graph with aliased mutation | `class` (Part VIII) — already gives this behaviour with no wrapper type |
+| Same, across threads | `Mutex[T]` / `RwLock[T]` / `Atomic[T]` |
+| Two mutable views into one container | `split_at_mut`, `chunks_mut`, `columns_mut` — no wrapper needed |
+
+`[CELL-11]` `Cell`, `RefCell`, `Ref`, `RefMut`, `Atomic`, `Mutex`, `RwLock` live in `std.cell` and `std.sync`; `Cell` and `RefCell` are **not** in the prelude, so using them is a visible import.
+
 ---
 

@@ -189,6 +189,7 @@ codes! {
     E3070 = (Error, 3070, Ownership, "[DRP-1]", "`drop` cannot be called explicitly");
     E3080 = (Error, 3080, Ownership, "[EXC-3]", "overlapping access through the same handle");
     E3090 = (Error, 3090, Ownership, "[ARN-3]", "arena allocation of a type that needs `drop`");
+    E3100 = (Error, 3100, Ownership, "[UNS-1]", "this operation requires an `unsafe` block");
 
     // --- effects and contracts ----------------------------------------------
     E4001 = (Error, 4001, Effects, "[EFF-5]", "`@noalloc` function reaches an allocation");

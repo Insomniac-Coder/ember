@@ -170,6 +170,9 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<LocalId, LocalId>) {
                 StmtKind::Assign { place, .. } if place.projection.is_empty() => {
                     flags.get(&place.local).copied()
                 }
+                StmtKind::CheckedBinaryOp { dest, .. } if dest.projection.is_empty() => {
+                    flags.get(&dest.local).copied()
+                }
                 _ => None,
             };
             rewritten.push(stmt);
@@ -313,6 +316,35 @@ fn step(stmt: &Stmt, state: &mut [Owned], reporter: Option<&mut Reporter>, body:
             }
             if place.projection.is_empty() {
                 state[place.local.0 as usize] = Owned::Live;
+            }
+        }
+        // `[TYP-8]` — checked arithmetic writes its result through its own
+        // statement rather than an `Assign`, so without this arm the
+        // destination was never marked live and the next read of it was
+        // reported as a use after move. Every integer `a * b` bound to a
+        // local went through here.
+        StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+            let mut read = Vec::new();
+            let mut push = |place: &Place| read.push(place.local);
+            read_by_operand(lhs, &mut push);
+            read_by_operand(rhs, &mut push);
+            if let Some(reporter) = reporter {
+                for local in &read {
+                    if state[local.0 as usize] != Owned::Live {
+                        reporter.report(*local, state[local.0 as usize], stmt.span, body);
+                    }
+                }
+            }
+            let mut moved = Vec::new();
+            moved_by_operand(lhs, &mut moved);
+            moved_by_operand(rhs, &mut moved);
+            for local in moved {
+                state[local.0 as usize] = Owned::Moved;
+            }
+            for place in [dest, overflow] {
+                if place.projection.is_empty() {
+                    state[place.local.0 as usize] = Owned::Live;
+                }
             }
         }
         // A drop ends the value's life whatever it was.

@@ -30,14 +30,15 @@
 * `String`/`str` with SSO, `Array[T]` implemented as a compiler-known type temporarily (replaced by generic std implementation in Phase 2).
 * Definite-init analysis (`[CLS-2]`-style for locals).
 
-### Phase 2 — Ownership (exit: all `[OWN-*]`, `[BRW-*]`, `[LT-*]`, `[DRP-*]`, `[SPN-*]` tests; milestone M2)
+### Phase 2 — Ownership (exit: all `[OWN-*]`, `[BRW-*]`, `[LT-*]`, `[DRP-*]`, `[SPN-*]`, `[CELL-*]`, `[DIA-7..10]` tests; milestone M2; **zero unclassified borrow errors across the whole test corpus**)
 
 * Generics with bounds, monomorphisation, associated types, `Iterator`/`Iterable` and the adaptor set; `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember (`std/collections`).
 * Moves, `Copy`, drop elaboration with drop flags, `Drop` interface, `mem.*`.
 * NLL borrow checker (§XVIII.4.7) incl. two-phase borrows, disjoint fields, reborrows, view structs `@view`, elision rules, `@borrows`.
 * Closures (`[CLO-*]`), `Callable`, `fn(A)->R` generic parameters.
 * `Arena`, `FixedArena`, `ScopedArena` (`[ARN-*]`), `unsafe`, raw pointers, `MaybeUninit`, `transmute`.
-* Diagnostics quality pass on borrow errors (`[DIA-3]`), `ui/` snapshots.
+* `Cell[T]`, `RefCell[T]`, `Ref`/`RefMut` guards (`[CELL-*]`), `std.cell`.
+* Diagnostics quality pass on borrow errors: the full shape catalogue of §XIX.6.1 with a `ui/borrow/<shape>/` snapshot each (`[DIA-3]`, `[DIA-7]`, `[DIA-10]`), the classifier, and `ember explain --borrow` (`[DIA-8]`).
 
 ### Phase 3 — Objects (exit: `[OBJ-*]`, `[RC-*]`, `[EXC-*]`, `[DSP-*]`, `[WK-*]` tests; leak/cycle report works)
 
@@ -98,17 +99,17 @@ fn add(a: Vec3, b: Vec3) -> Vec3:
 fn main():
     c = add(Vec3(1, 2, 3), Vec3(4, 5, 6))
     println(c.x)
-#! stdout: 5
-#! assert-c: !contains("ember_alloc")
+#$ stdout: 5
+#$ assert-c: !contains("ember_alloc")
 ```
 
 **M2 — the borrow checker catches escapes** (Phase 2):
 ```ember
-#! test: compile-fail
+#$ test: compile-fail
 fn first(xs: Array[i32]) -> ref i32: return xs[0]          # ok: tied to xs
 fn bad() -> ref i32:
     xs = Array[i32]([1, 2])
-    return xs[0]                                              #! error[E3060]: borrowed value does not live long enough
+    return xs[0]                                              #$ error[E3060]: borrowed value does not live long enough
 ```
 
 **M3 — objects are deterministic** (Phase 3):
@@ -123,16 +124,16 @@ fn main():
     println("mid")
     mem.drop(b)          # object dies here
     println("end")
-#! stdout: mid\ndrop\nend
+#$ stdout: mid\ndrop\nend
 ```
 
 **M4 — contracts are transitive** (Phase 4):
 ```ember
-#! test: compile-fail
+#$ test: compile-fail
 fn helper(mut xs: Array[i32]): xs.push(1)
 
 @noalloc
-fn hot(mut xs: Array[i32]): helper(xs)                      #! error[E4001]: @noalloc function `hot` reaches an allocation: hot -> helper -> Array.push -> ember_alloc
+fn hot(mut xs: Array[i32]): helper(xs)                      #$ error[E4001]: @noalloc function `hot` reaches an allocation: hot -> helper -> Array.push -> ember_alloc
 ```
 
 **M5 — C is free** (Phase 5): import a header with `int calculate(int)`; the emitted C for the call site is a direct call (assert-c contains `calculate(` and no wrapper symbol).

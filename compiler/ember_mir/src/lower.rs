@@ -573,7 +573,15 @@ impl<'a> Builder<'a> {
                 self.current = next;
             }
             hir::ExprKind::Builtin { which, args } => {
-                let arg_ty = args.first().map(|a| a.ty).unwrap_or(expr.ty);
+                // `arg_ty` is what the backend picks its implementation from.
+                // For most builtins that is the first argument; `alloc` takes
+                // a count and returns the pointer, so its element type is in
+                // the result, and `size_of` carries it on a placeholder.
+                let arg_ty = match which {
+                    hir::Builtin::MemAlloc => expr.ty,
+                    hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
+                    _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
+                };
                 // `push` copies the value through a pointer, so the value has
                 // to live somewhere addressable: `&10` is not C.
                 let spill = matches!(which, hir::Builtin::ArrayPush);
