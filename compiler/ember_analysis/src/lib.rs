@@ -6,6 +6,7 @@
 //! helpers.
 
 pub mod borrows;
+pub mod regions;
 pub mod definite_init;
 pub mod drops;
 pub mod unused;

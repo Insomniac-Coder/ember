@@ -15,38 +15,31 @@
 //!
 //! | §4.7 step | here |
 //! |---|---|
-//! | 1. regions per reference-typed local | approximated by the borrower local's liveness |
-//! | 2. constraints from assignments and calls | assignment of a reference propagates the loan |
+//! | 1. regions per reference-typed local | real region variables — `regions.rs` |
+//! | 2. constraints from assignments and calls | the constraint graph, closed to a fixpoint |
 //! | 3. liveness | backward dataflow over the CFG, exact |
-//! | 4. loan scope | live borrower, not killed by reassignment |
+//! | 4. loan scope | the point is in the loan's region |
 //! | 5. access check | `[BRW-1]` over overlapping places |
-//! | 6. region errors | `[BRW-7]`'s `E3050`; `E3060` waits for storage-end tracking |
+//! | 6. region errors | `[BRW-7]`'s `E3050`; `E3060` where a loan outlives the frame |
 //! | 7. diagnostics | two labels and the "later used here" line `[DIA-3]` requires |
 //!
-//! The approximation in step 1 is the honest one to make first: a region *is*
-//! the set of points where a borrow must be valid, and for a borrow held in a
-//! local that is exactly where the local is live. It becomes wrong when a
-//! reference is returned, stored in a view struct, or passed into a callback —
-//! `[LT-1]`, `[LT-2]` and `[LT-7]` — and those are what a region variable and
-//! its constraint graph buy. None of them is expressible yet.
+//! Step 1 was an approximation until 2026-09-09: a region *is* the set of
+//! points where a borrow must be valid, and for a borrow that stays in the
+//! local it was created in that is exactly where the local is live. It stopped
+//! being true the moment the reference moved — a copy, a reborrow, or a call
+//! handing one back — and `regions.rs` is what replaced it.
 
 use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    BasicBlockId, Body, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
+    BasicBlockId, Body, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
     Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
 
-/// A point in the CFG: a statement index within a block, where `stmts.len()`
-/// is the terminator.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-struct Point {
-    block: usize,
-    index: usize,
-}
+use crate::regions::{Elision, Point, RegionVid, Regions};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
@@ -54,8 +47,11 @@ struct Loan {
     /// The place borrowed.
     place: Place,
     mutable: bool,
-    /// The local the reference was stored in. Its liveness is the loan's.
+    /// The local the reference was stored in. Named in the help line, and
+    /// exempt from being its own conflicting access.
     borrower: LocalId,
+    /// §4.7 step 4 — the loan is in scope exactly where this region is.
+    region: RegionVid,
     created_at: Point,
     span: Span,
     /// `[BRW-3]` — a mutable borrow taken for a call's receiver or a `mut`
@@ -79,17 +75,52 @@ enum Access {
 }
 
 pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
+    // `[LT-1]` is a property of the *callee's* signature, so a call in one
+    // body is read against another's. The table is built once.
+    let mut signatures: HashMap<&str, Elision> = HashMap::new();
     for body in bodies {
-        check(body, types, sink);
+        signatures.insert(body.symbol.as_str(), elision_of(body, types));
+    }
+    let elision = |func: &FuncRef| match func {
+        FuncRef::Direct { symbol } => {
+            signatures.get(symbol.as_str()).cloned().unwrap_or(Elision::Everything)
+        }
+        // A builtin is `println`, `format` or an arithmetic helper: none of
+        // them hands back a view of an argument.
+        FuncRef::Builtin { .. } => Elision::Nothing,
+    };
+    for body in bodies {
+        check_body(body, types, &elision, sink);
     }
 }
 
+/// `[LT-1]` — what a call to this function ties its result to. Rules 1 and 3
+/// both come out as "every view-typed parameter"; the difference between them
+/// is which parameters exist, not what the caller must assume.
+fn elision_of(body: &Body, types: &TypeTable) -> Elision {
+    if !types.is_view(body.return_ty()) {
+        return Elision::Nothing;
+    }
+    Elision::Everything
+}
+
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
-    let loans = collect_loans(body);
+    check_body(body, types, &|_| Elision::Everything, sink);
+}
+
+fn check_body(
+    body: &Body,
+    types: &TypeTable,
+    elision: &dyn Fn(&FuncRef) -> Elision,
+    sink: &mut Sink,
+) {
+    let live = liveness(body);
+    let regions = Regions::infer(body, types, &live, elision);
+    let loans = collect_loans(body, &regions);
     if loans.is_empty() {
         return;
     }
-    let live = liveness(body);
+    let reads = collect_reads(body);
     let mut reported = HashSet::new();
 
     for (block_index, block) in body.blocks.iter().enumerate() {
@@ -117,7 +148,18 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
-            check_point(body, types, &loans, &live, point, &accesses, stmt.span, sink, &mut reported);
+            check_point(
+                body,
+                types,
+                &loans,
+                &regions,
+                &reads,
+                point,
+                &accesses,
+                stmt.span,
+                sink,
+                &mut reported,
+            );
         }
 
         let point = Point { block: block_index, index: block.stmts.len() };
@@ -137,7 +179,8 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
             body,
             types,
             &loans,
-            &live,
+            &regions,
+            &reads,
             point,
             &accesses,
             block.terminator_span,
@@ -149,7 +192,7 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         // ends. Returning is the case that matters: the reference leaves the
         // frame while what it points at does not.
         if matches!(block.terminator, Terminator::Return) {
-            check_escapes(body, types, &loans, &live, point, block.terminator_span, sink);
+            check_escapes(body, types, &loans, &regions, point, block.terminator_span, sink);
         }
     }
 }
@@ -163,19 +206,14 @@ fn check_escapes(
     body: &Body,
     types: &TypeTable,
     loans: &[Loan],
-    live: &HashMap<Point, HashSet<LocalId>>,
+    regions: &Regions,
     point: Point,
     span: Span,
     sink: &mut Sink,
 ) {
-    for loan in in_scope(loans, live, point) {
+    for loan in in_scope(loans, regions, point) {
         let root = body.local(loan.place.local);
         if root.kind == LocalKind::Arg {
-            continue;
-        }
-        // Only a borrow that actually leaves: the return slot holds it, or a
-        // local that the return slot was assigned from does.
-        if !live.get(&point).is_some_and(|l| l.contains(&loan.borrower)) {
             continue;
         }
         let name = place_name(body, types, &loan.place);
@@ -197,8 +235,8 @@ fn check_escapes(
     }
 }
 
-/// Every `Rvalue::Ref` in the body, with the local it is stored into.
-fn collect_loans(body: &Body) -> Vec<Loan> {
+/// Every `Rvalue::Ref` in the body, with the region inference gave it.
+fn collect_loans(body: &Body, regions: &Regions) -> Vec<Loan> {
     let mut loans = Vec::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
@@ -211,10 +249,12 @@ fn collect_loans(body: &Body) -> Vec<Loan> {
                 continue;
             }
             let created_at = Point { block: block_index, index };
+            let Some(region) = regions.loan_region(created_at) else { continue };
             loans.push(Loan {
                 place: borrowed.clone(),
                 mutable: *mutable,
                 borrower: place.local,
+                region,
                 created_at,
                 span: stmt.span,
                 reserved_at: reservation_window(body, place.local, created_at),
@@ -298,24 +338,8 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
 
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
 /// borrower still live. Liveness *is* the region, for a borrow held in a local.
-fn in_scope<'a>(
-    loans: &'a [Loan],
-    live: &HashMap<Point, HashSet<LocalId>>,
-    point: Point,
-) -> Vec<&'a Loan> {
-    let Some(live_here) = live.get(&point) else { return Vec::new() };
-    loans
-        .iter()
-        .filter(|loan| {
-            // Created strictly earlier in the same block, or in another block
-            // that reaches this one — liveness of the borrower already
-            // encodes reachability, so ordering within a block is the only
-            // extra condition.
-            let earlier = loan.created_at.block != point.block
-                || loan.created_at.index < point.index;
-            earlier && live_here.contains(&loan.borrower)
-        })
-        .collect()
+fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
+    loans.iter().filter(|loan| regions.contains(loan.region, point)).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,14 +347,15 @@ fn check_point(
     body: &Body,
     types: &TypeTable,
     loans: &[Loan],
-    live: &HashMap<Point, HashSet<LocalId>>,
+    regions: &Regions,
+    reads: &HashMap<LocalId, Vec<Span>>,
     point: Point,
     accesses: &[(Place, Access)],
     span: Span,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
-    let scope = in_scope(loans, live, point);
+    let scope = in_scope(loans, regions, point);
     if scope.is_empty() {
         return;
     }
@@ -381,16 +406,23 @@ fn check_point(
             };
 
             // `[DIA-3]` — the borrow site, the conflicting access, and the
-            // later use that keeps the borrow alive.
+            // later use that keeps the borrow alive. The last of those is not
+            // necessarily the local the borrow was written into: with real
+            // regions a loan is kept alive by whatever the reference reached,
+            // which may be a copy of it made three lines further down.
             // `[DIA-2]` — never name a temporary at the user. When the
             // borrow lives in one, the advice is about the expression, not
             // about a local they cannot see.
-            let borrower = body.local(loan.borrower).name.clone();
+            let (borrower, later) = keeper(body, regions, reads, loan, span);
             let kind = if loan_mutable { "mutable " } else { "" };
+            let mut diagnostic = Diagnostic::error(code, span, message)
+                .primary_label("conflicting access here")
+                .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"));
+            if let Some(later) = later {
+                diagnostic = diagnostic.secondary(later, "borrow later used here");
+            }
             sink.emit_classified(
-                Diagnostic::error(code, span, message)
-                    .primary_label("conflicting access here")
-                    .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"))
+                diagnostic
                     .help(match &borrower {
                         Some(name) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
@@ -406,6 +438,91 @@ fn check_point(
             );
         }
     }
+}
+
+/// `[DIA-3]` — which reference keeps this loan alive at a conflict, and where
+/// it is next read.
+///
+/// The loan's region reaches a set of locals; the one to name is a local the
+/// programmer wrote whose next read comes after the conflicting access, because
+/// that read is the reason the borrow has not ended. A compiler temporary is
+/// never named (`[DIA-2]`): the help talks about the expression instead.
+fn keeper(
+    body: &Body,
+    regions: &Regions,
+    reads: &HashMap<LocalId, Vec<Span>>,
+    loan: &Loan,
+    conflict: Span,
+) -> (Option<String>, Option<Span>) {
+    let mut best: Option<(LocalId, Span)> = None;
+    for holder in regions.holders(loan.region) {
+        if body.local(*holder).name.is_none() {
+            continue;
+        }
+        let Some(spans) = reads.get(holder) else { continue };
+        for span in spans {
+            if span.file != conflict.file || span.start <= conflict.start {
+                continue;
+            }
+            if best.is_none_or(|(_, b)| span.start < b.start) {
+                best = Some((*holder, *span));
+            }
+        }
+    }
+    match best {
+        Some((holder, span)) => (body.local(holder).name.clone(), Some(span)),
+        // No later read: the borrow is kept alive by something else — a loop
+        // back edge, or the return slot — and the local it was written into is
+        // still the honest thing to name.
+        None => (body.local(loan.borrower).name.clone(), None),
+    }
+}
+
+/// Every point at which a local's value is read, by the span of the statement
+/// that reads it.
+fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
+    let mut reads: HashMap<LocalId, Vec<Span>> = HashMap::new();
+    let record = |accesses: Vec<(Place, Access)>, span: Span, reads: &mut HashMap<_, Vec<_>>| {
+        for (place, access) in accesses {
+            // A write through a reference reads the reference itself.
+            let reading = matches!(access, Access::Read)
+                || place.projection.iter().any(|p| matches!(p, Projection::Deref));
+            if reading {
+                reads.entry(place.local).or_default().push(span);
+            }
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let mut accesses = Vec::new();
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    rvalue_reads(rvalue, &mut accesses);
+                    accesses.push((place.clone(), Access::Write));
+                }
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    operand_read(lhs, &mut accesses);
+                    operand_read(rhs, &mut accesses);
+                }
+                StmtKind::Drop { place, .. } => accesses.push((place.clone(), Access::Read)),
+                _ => {}
+            }
+            record(accesses, stmt.span, &mut reads);
+        }
+        let mut accesses = Vec::new();
+        match &block.terminator {
+            Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
+            Terminator::Call { args, .. } => {
+                for arg in args {
+                    operand_read(arg, &mut accesses);
+                }
+            }
+            Terminator::Assert { cond, .. } => operand_read(cond, &mut accesses),
+            _ => {}
+        }
+        record(accesses, block.terminator_span, &mut reads);
+    }
+    reads
 }
 
 /// Two places overlap when one is a prefix of the other (§4.7 step 5).

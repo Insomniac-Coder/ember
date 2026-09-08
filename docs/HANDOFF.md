@@ -709,12 +709,37 @@ from every `Rvalue::Ref` (step 2, partially); loan scope as "the borrower local
 is live" (step 4); `[BRW-1]` over overlapping places (step 5); and `[DIA-3]`'s
 two labels plus the later-use line (step 7).
 
-**The approximation, stated plainly:** a region is the set of points where a
-borrow must be valid, and for a borrow held in a local that is exactly where
-the local is live. That is right until a reference is returned, stored in a
-`@view` struct, or passed into a callback — `[LT-1]`, `[LT-2]`, `[LT-7]` — none
-of which is expressible yet. Those are what real region variables and a
-constraint graph buy, and they are the next piece.
+**The approximation is gone: `compiler/ember_analysis/src/regions.rs` is real
+region variables and a constraint graph** (`LT-REG-1`, done 2026-09-09). A
+region is the set of points where a borrow must be valid, and for a borrow that
+stays in the local it was created in that is exactly where the local is live —
+which is why the approximation held for as long as it did. It stopped being
+true the moment the reference moved, and **three programs that write through a
+dangling reference compiled in silence**: a copy of the reference, a reborrow,
+and a call handing the reference back.
+
+One region variable per view-typed local (§4.7 step 1) and one per borrow
+expression; one edge per assignment, in the direction the data travels. The two
+things the checker wants are the two directions of that one graph — **points**
+travel backwards along it (`points(from) ⊇ points(to)`, which answers "is this
+loan still live here") and **provenance** forwards (which answers "which
+parameter did this reference come from", for `[LT-1]` and `[LT-1a]`). Calls
+join it through the callee's elision: a function returning a view ties its
+result to every view-typed argument, so the caller holds the borrow for as long
+as it holds the result.
+
+Constraints are **not location-sensitive**, which §4.7 settles deliberately
+("Polonius-style location-sensitive reasoning is not required for v1"). The
+imprecision that costs needs a reference local to be *re-seated*, and Ember has
+no syntax for it: `r = ref mut m` writes *through* `r` (`[TYP-14]`). Every
+reference local is assigned exactly once.
+
+**And `[DIA-3]`'s "later used here" label exists now, because regions are what
+can produce it.** The label was missing entirely and the help line named the
+local the borrow was first written into — which, once a loan can travel, is
+routinely the wrong one. The region's *holders* are the locals it reaches, and
+the one to name is the holder whose next read comes after the conflict, because
+that read is the reason the borrow has not ended.
 
 **`E3021`–`E3027` had to be allocated.** `[DIA-7a]` keys every `E3xxx` code to
 a diagnostic shape and forbids emitting one that is absent from its table — and
@@ -797,21 +822,24 @@ half.
 
 ### What block E still needs, in order
 
-1. **Real region variables and a constraint graph** (`LT-REG-1` in the
-   backlog). Today a region is approximated by the borrower local's liveness.
-   That is exactly right for a borrow held in a local and wrong for every case
-   where a reference leaves the frame: `[LT-1]`'s elision across a call,
-   `[LT-2]`'s view structs, `[LT-7]`'s callback regions, and `[TYP-15]`'s
-   storage check for anything but a `static` or a container element. It is the
-   largest remaining piece and everything else in the list waits behind it.
-2. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
+1. **`E3062`, the body half of `[LT-1a]`.** The region graph now knows which
+   parameter a returned reference came from; `@borrows` is still checked only
+   as a signature. Returning a view derived from a parameter the attribute does
+   not name has to be rejected, and the provenance to do it with is already
+   computed.
+2. **`[LT-2]`'s view structs and `[TYP-15]`'s escape through a return.** A view
+   struct has one region, and constructing one from several references gives it
+   the intersection; `E3064` for two independent regions and `E3063` for a view
+   stored where nothing bounds it are both registered and unemitted.
+3. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
    shape B8 — "a method takes all of `self`" — needs the call to know which
    fields it touches.
-3. **`[LT-1b]`'s `L3014`**, which needs `[MAN-3]`'s `[lints]` configuration
+4. **`[LT-1b]`'s `L3014`**, which needs `[MAN-3]`'s `[lints]` configuration
    first (`LNT-CFG-1`): an opt-in lint has nowhere to be opted into.
-4. **The remaining shapes.** `E3023`–`E3027` are registered and keyed and
+5. **The remaining shapes.** `E3023`–`E3027` are registered and keyed and
    nothing emits them yet; each waits on the construct it describes — aliased
    value mutation, self-referential structs, closures, `mut` arguments.
+6. **`[LT-7]`'s callback regions** wait on closures (block F).
 
 **Where the borrow checker lives:** `compiler/ember_analysis/src/borrows.rs`,
 run from the driver after drop elaboration so the drops it sees are the ones
