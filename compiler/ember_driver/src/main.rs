@@ -320,13 +320,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
-    let bodies = ember_mir::lower(&program, &types, &common);
+    let mut bodies = ember_mir::lower(&program, &types, &common);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }
     // Definite initialisation (Part XVIII §4.6) runs on MIR, before any
     // optimisation could remove the read it is looking for.
     ember_analysis::check_definite_init_all(&bodies, &mut sink);
+    // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
+    // `E3040`, and the drops lowering inserted are removed where the value was
+    // moved away or made conditional on a drop flag where it may have been.
+    ember_analysis::elaborate_drops_all(&mut bodies, &types, &mut sink);
+    if cfg!(debug_assertions) {
+        ember_mir::verify::verify_all(&bodies);
+    }
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }

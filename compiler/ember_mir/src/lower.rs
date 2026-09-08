@@ -130,6 +130,7 @@ struct Loop {
     continue_bb: BasicBlockId,
     break_bb: BasicBlockId,
     defer_mark: usize,
+    owned_mark: usize,
 }
 
 struct Builder<'a> {
@@ -148,6 +149,9 @@ struct Builder<'a> {
     /// `[CTL-7]` — `defer` blocks registered in the scopes currently open,
     /// in registration order. They run in reverse.
     defers: Vec<&'a hir::Block>,
+    /// `[OWN-2]` — the locals the scopes currently open will drop, in
+    /// declaration order. They drop in reverse.
+    owned: Vec<LocalId>,
     arg_count: usize,
     /// [TYP-8] -- this function's policy, from its attribute or the profile.
     overflow: OverflowPolicy,
@@ -219,6 +223,7 @@ impl<'a> Builder<'a> {
             current: BasicBlockId(0),
             loops: Vec::new(),
             defers: Vec::new(),
+            owned: Vec::new(),
             arg_count,
             overflow: function.overflow,
             bool_ty: common.bool_,
@@ -288,13 +293,36 @@ impl<'a> Builder<'a> {
 
     fn lower_block(&mut self, block: &'a hir::Block) {
         let mark = self.defers.len();
+        let owned_mark = self.owned.len();
         for stmt in &block.stmts {
             self.lower_stmt(stmt);
         }
         // `[CTL-7]` — leaving the block runs whatever it registered, last
-        // first.
+        // first. `[CTL-8]` — the deferred blocks run before the drops.
         self.emit_defers_from(mark);
         self.defers.truncate(mark);
+        self.emit_drops_from(owned_mark);
+        self.owned.truncate(owned_mark);
+    }
+
+    /// `[OWN-2]`, `[DRP-2]` — drop the locals this scope owns, in reverse
+    /// declaration order. The list is not shortened: a `return` in one branch
+    /// and the end of the block in another both drop the same locals.
+    fn emit_drops_from(&mut self, mark: usize) {
+        if self.owned.len() <= mark {
+            return;
+        }
+        let pending: Vec<LocalId> = self.owned[mark..].iter().rev().copied().collect();
+        for local in pending {
+            self.push(StmtKind::Drop { place: Place::local(local), flag: None });
+        }
+    }
+
+    /// Record a local as this scope's to drop, if its type owns anything.
+    fn owns(&mut self, local: LocalId) {
+        if self.types.needs_drop(self.locals[local.0 as usize].ty) {
+            self.owned.push(local);
+        }
     }
 
     /// Lower every `defer` block registered at or after `mark`, in reverse.
@@ -323,6 +351,8 @@ impl<'a> Builder<'a> {
                     let place = Place::local(mir_local);
                     self.lower_into(place, init);
                 }
+                // `[OWN-1]` — this scope now owns whatever was put here.
+                self.owns(mir_local);
             }
             hir::Stmt::Assign { place, value } => {
                 let place = self.lower_place(place);
@@ -339,8 +369,10 @@ impl<'a> Builder<'a> {
                     self.lower_into(Place::local(RETURN_LOCAL), value);
                 }
                 // `[CTL-8]` — a `return` runs every `defer` still pending, in
-                // every scope it is leaving, before it goes.
+                // every scope it is leaving, and then drops what those scopes
+                // own, before it goes.
                 self.emit_defers_from(0);
+                self.emit_drops_from(0);
                 self.terminate(Terminator::Return);
                 // Anything after a `return` in the same block is unreachable;
                 // start a fresh block so later statements still lower cleanly.
@@ -387,7 +419,7 @@ impl<'a> Builder<'a> {
                     otherwise: body_bb,
                 });
 
-                self.loops.push(Loop { continue_bb: head_bb, break_bb: exit_bb, defer_mark: self.defers.len() });
+                self.loops.push(Loop { continue_bb: head_bb, break_bb: exit_bb, defer_mark: self.defers.len(), owned_mark: self.owned.len() });
                 self.current = body_bb;
                 self.lower_block(body);
                 self.goto_if_open(head_bb);
@@ -412,6 +444,7 @@ impl<'a> Builder<'a> {
             hir::Stmt::Break { depth } => {
                 if let Some(target) = self.loop_at(*depth).copied() {
                     self.emit_defers_from(target.defer_mark);
+                    self.emit_drops_from(target.owned_mark);
                     self.terminate(Terminator::Goto(target.break_bb));
                     self.current = self.new_block();
                 }
@@ -422,6 +455,7 @@ impl<'a> Builder<'a> {
                 // spin forever.
                 if let Some(target) = self.loop_at(*depth).copied() {
                     self.emit_defers_from(target.defer_mark);
+                    self.emit_drops_from(target.owned_mark);
                     self.terminate(Terminator::Goto(target.continue_bb));
                     self.current = self.new_block();
                 }
@@ -482,7 +516,7 @@ impl<'a> Builder<'a> {
             otherwise: body_bb,
         });
 
-        self.loops.push(Loop { continue_bb: step_bb, break_bb: exit_bb, defer_mark: self.defers.len() });
+        self.loops.push(Loop { continue_bb: step_bb, break_bb: exit_bb, defer_mark: self.defers.len(), owned_mark: self.owned.len() });
         self.current = body_bb;
         self.lower_block(body);
         self.goto_if_open(step_bb);
@@ -528,7 +562,7 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Call { callee, args } => {
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
-                let args: Vec<Operand> = args.iter().map(|a| self.lower_operand(a)).collect();
+                let args: Vec<Operand> = args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Direct { symbol },
@@ -550,7 +584,7 @@ impl<'a> Builder<'a> {
                         if spill && index == 1 {
                             self.lower_into_temp(a)
                         } else {
-                            self.lower_operand(a)
+                            self.lower_operand_borrowed(a)
                         }
                     })
                     .collect();
@@ -1192,6 +1226,17 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageLive(temp));
         self.lower_into(Place::local(temp), expr);
         Operand::Copy(Place::local(temp))
+    }
+
+    /// An argument read in `[FN-1]`'s default **borrow** mode: the callee sees
+    /// the value but does not take it, so the caller still owns it and still
+    /// drops it. Only an `owned` parameter consumes — `xs.len()` must not move
+    /// `xs` away.
+    fn lower_operand_borrowed(&mut self, expr: &'a hir::Expr) -> Operand {
+        match self.lower_operand(expr) {
+            Operand::Move(place) => Operand::Copy(place),
+            other => other,
+        }
     }
 
     /// `[MIR-2]` — a non-`Copy` place is moved, not copied.

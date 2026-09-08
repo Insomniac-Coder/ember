@@ -492,6 +492,9 @@ impl TypeTable {
             }
             TyKind::Tuple(items) => items.iter().any(|&t| self.needs_drop(t)),
             TyKind::Array { elem, .. } => self.needs_drop(*elem),
+            // An `Array[T]` or a `String` always owns a heap buffer, whatever
+            // the element type is.
+            TyKind::Vec { .. } => true,
             _ => false,
         }
     }

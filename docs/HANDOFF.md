@@ -2,8 +2,10 @@
 
 ## Start here
 
-**Phases 0 and 1 of nine are complete.** All seven of Phase 1's blocks are
-done; Phase 2 is next.
+**Phases 0 and 1 of nine are complete. Phase 2 is in progress.** All seven of
+Phase 1's blocks are done. Phase 2's first block — moves, drops and drop
+flags — is done; generics, iterators, the borrow checker, closures and arenas
+are not started.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
@@ -450,17 +452,59 @@ conditions broken after `and`/`or` and trailing commas in multi-line element
 lists, which needs a proper Wadler-style layout algebra rather than the
 string-building printer this is.
 
-## Next: Phase 2
+## Phase 2 — where it stands
 
-Phase 1 is complete. Part XX's Phase 2 is generics and the borrow checker; read
-Part XX §2 before planning it.
+Part XX's Phase 2 is ownership: generics, drops, the borrow checker, closures
+and arenas. Split the same way Phase 1 was:
+
+| | Block | State |
+|---|---|---|
+| **A** | moves, `Copy`, drop elaboration, drop flags, `E3040` | **done** |
+| B | generics with bounds, monomorphisation, associated types | not started |
+| C | `Iterator`/`Iterable` and the adaptors; `for` over anything | not started |
+| D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | not started |
+| E | the NLL borrow checker (§4.7), two-phase borrows, `@view` | not started |
+| F | closures (`[CLO-*]`), `Callable`, `fn(A)->R` parameters | not started |
+| G | arenas, `unsafe`, raw pointers, `MaybeUninit`, `transmute` | not started |
+| H | diagnostics pass on borrow errors, `ui/` snapshots | not started |
+
+### Block A: moves and drops
+
+**The `Array`/`String` leak is closed, and measured rather than asserted:** the
+runtime's own allocation counter reports 204 allocations and 204 frees over
+`tests/run-pass/drops_and_moves.em`, with nothing live at exit.
+
+- `StmtKind::Drop { place, flag }` is inserted by lowering at every way out of
+  a scope — the end of the block, a `return`, and a `break` or `continue` that
+  leaves it — in reverse declaration order (`[DRP-2]`), after that scope's
+  `defer` blocks (`[CTL-8]`).
+- `compiler/ember_analysis/src/drops.rs` then runs the `Live | Moved | Maybe`
+  dataflow: a drop of a moved value becomes a `Nop`, and a drop of a `Maybe`
+  value gets `[OWN-3]`'s **drop flag**, a hidden `bool` set where the value is
+  stored and cleared where it is moved away. A conditional move is never an
+  error.
+- **A value can arrive from a call**, whose destination is written by a
+  terminator rather than a statement — `xs = Array()` is one — so the flag is
+  set at the top of the block control reaches next. Missing that leaked exactly
+  the values that were never moved.
+- **`[FN-1]`'s borrow is the default, and reading a place for a borrowed
+  argument must not consume it.** `xs.len()` was moving `xs` away, because a
+  non-`Copy` place always read as a move; the drop was then removed as
+  "already moved" and the buffer leaked. `lower_operand_borrowed` is the fix.
+  An `owned` parameter still needs the mode threaded through — nothing uses one
+  yet.
+- The drop glue is written straight into the C rather than as a synthesised
+  function: a struct drops its fields in reverse, an enum switches on its tag
+  and drops the active variant's payload, an array drops its elements.
+
+**Not done in this block:** partial moves (moving one field out of a struct)
+are not tracked — only whole locals; `mem.take`/`replace`/`swap`/`forget`
+(`[OWN-6]`); `[OWN-4]`'s `E3041` for a loop that moves a value declared
+outside it; and user-defined `drop` methods are recognised (`has_drop`) but
+their bodies are not yet called by the glue.
 
 **What Phase 1 left open, and where each belongs:**
 
-- **Nothing frees an `Array` or a `String`.** `ember_vec_free` exists in the
-  runtime and is never called, so both leak. Drop elaboration (Part XVIII §4.9)
-  is Phase 2's, and these are the first types that need it — this is the most
-  important open item.
 - **`dyn` and vtables** (`[TYP-22]`), which block D deliberately left out.
 - **`[T; N]` coercing to `Span[T]`**, and **`for` over anything but a range** —
   both need `Iterator`, which block D's interface machinery can express but

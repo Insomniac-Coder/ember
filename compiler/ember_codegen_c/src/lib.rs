@@ -229,6 +229,91 @@ impl Emitter<'_> {
         }
     }
 
+    /// Part XVIII §4.9's drop glue, written straight into the C rather than
+    /// through a synthesised function: what has to run for the value at
+    /// `access` to release everything it owns.
+    ///
+    /// `[DRP-2]` — a struct's fields drop after the struct's own `drop`, in
+    /// reverse declaration order; an enum drops the active variant's payload;
+    /// a tuple drops in reverse; an array drops its elements in index order.
+    fn drop_lines(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
+        match self.types.kind(ty) {
+            TyKind::Vec { elem } => {
+                // An `Array[T]` owns its elements as well as its buffer.
+                if self.types.needs_drop(*elem) {
+                    let mut inner = Vec::new();
+                    let element = format!("(({}*){access}.ptr)[_di]", self.c_type(*elem));
+                    self.drop_lines(&element, *elem, &mut inner);
+                    if !inner.is_empty() {
+                        out.push(format!(
+                            "for (size_t _di = 0; _di < {access}.len; ++_di) {{ {} }}",
+                            inner.join(" ")
+                        ));
+                    }
+                }
+                out.push(format!(
+                    "ember_vec_free(&{access}, sizeof({}));",
+                    self.c_type(*elem)
+                ));
+            }
+            TyKind::Struct(id) => {
+                let fields = self.types.struct_def(*id).fields.clone();
+                for field in fields.iter().rev() {
+                    if self.types.needs_drop(field.ty) {
+                        self.drop_lines(&format!("{access}.{}", field.name), field.ty, out);
+                    }
+                }
+            }
+            TyKind::Tuple(items) => {
+                for (index, item) in items.iter().enumerate().rev() {
+                    if self.types.needs_drop(*item) {
+                        self.drop_lines(&format!("{access}._{index}"), *item, out);
+                    }
+                }
+            }
+            TyKind::Array { elem, len } => {
+                if !self.types.needs_drop(*elem) {
+                    return;
+                }
+                for index in 0..*len {
+                    self.drop_lines(&format!("{access}._0[{index}]"), *elem, out);
+                }
+            }
+            // `[DRP-2]` — only the active variant's payload is dropped, which
+            // is a switch on the tag.
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(*id);
+                if def.is_unit_only() {
+                    return;
+                }
+                let mut arms = Vec::new();
+                for variant in def.variants.iter() {
+                    let mut inner = Vec::new();
+                    for field in variant.fields.iter().rev() {
+                        if self.types.needs_drop(field.ty) {
+                            let member = format!("{access}.payload.{}.{}", variant.name, field.name);
+                            self.drop_lines(&member, field.ty, &mut inner);
+                        }
+                    }
+                    if !inner.is_empty() {
+                        arms.push(format!(
+                            "case {}: {{ {} }} break;",
+                            variant.discriminant,
+                            inner.join(" ")
+                        ));
+                    }
+                }
+                if !arms.is_empty() {
+                    out.push(format!(
+                        "switch ({access}.tag) {{ {} default: break; }}",
+                        arms.join(" ")
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The element type of an `Array[T]`, given the receiver's type — which
     /// may be a `ref mut Array[T]`, because `push` takes the receiver by
     /// reference.
@@ -374,6 +459,28 @@ impl Emitter<'_> {
                     self.operand(rhs, body),
                     self.place_in(dest, body)
                 ));
+            }
+            // `[OWN-2]`, `[DRP-2]` — the value's life ends here.
+            StmtKind::Drop { place, flag } => {
+                let ty = self.place_ty(place, body);
+                let mut lines = Vec::new();
+                self.drop_lines(&self.place_in(place, body), ty, &mut lines);
+                if lines.is_empty() {
+                    return;
+                }
+                self.emit_line_directive(stmt.span);
+                // `[OWN-3]` — a value moved on some paths and not others is
+                // dropped behind its flag.
+                match flag {
+                    Some(flag) => {
+                        self.line(&format!("    if (_{}) {{ {} }}", flag.0, lines.join(" ")));
+                    }
+                    None => {
+                        for line in lines {
+                            self.line(&format!("    {line}"));
+                        }
+                    }
+                }
             }
             // Storage markers carry no code in C; the borrow checker and drop
             // elaboration consume them before this point.
@@ -1102,6 +1209,13 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                     write_place(overflow, &mut read);
                     read_operand(lhs, &mut read);
                     read_operand(rhs, &mut read);
+                }
+                // A drop reads what it is dropping, and its flag.
+                StmtKind::Drop { place, flag } => {
+                    read_place(place, &mut read);
+                    if let Some(flag) = flag {
+                        read[flag.0 as usize] = true;
+                    }
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }

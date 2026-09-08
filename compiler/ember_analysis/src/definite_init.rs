@@ -173,6 +173,10 @@ fn transfer(
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
                 state[local.0 as usize] = State::Uninit;
             }
+            // A drop reads the place it is dropping.
+            StmtKind::Drop { place, .. } => {
+                read_place(place, &state, stmt.span, &mut reporter);
+            }
             StmtKind::Nop => {}
         }
     }

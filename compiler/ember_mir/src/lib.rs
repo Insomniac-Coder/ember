@@ -218,6 +218,13 @@ pub enum StmtKind {
     /// from Phase 2, the borrow checker's loan-kill analysis.
     StorageLive(LocalId),
     StorageDead(LocalId),
+    /// `[OWN-2]`, `[DRP-2]` — the value in `place` reaches the end of its
+    /// life here. Drop elaboration (Part XVIII §4.9) turns this into nothing,
+    /// into the type's drop glue, or into a test of `flag` first.
+    ///
+    /// `flag` is `[OWN-3]`'s drop flag: a local that says whether the value
+    /// is still there on this path. `None` means it always is.
+    Drop { place: Place, flag: Option<LocalId> },
     Nop,
 }
 
@@ -329,6 +336,10 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
         ),
         StmtKind::StorageLive(l) => format!("StorageLive(_{})", l.0),
         StmtKind::StorageDead(l) => format!("StorageDead(_{})", l.0),
+        StmtKind::Drop { place, flag } => match flag {
+            Some(flag) => format!("drop({}) if _{}", dump_place(place), flag.0),
+            None => format!("drop({})", dump_place(place)),
+        },
         StmtKind::Nop => "nop".to_string(),
     }
 }

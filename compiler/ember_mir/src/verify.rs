@@ -120,6 +120,12 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(rhs, &at);
                 }
                 StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => v.local(*l, &at),
+                StmtKind::Drop { place, flag } => {
+                    v.place(place, &at);
+                    if let Some(flag) = flag {
+                        v.local(*flag, &at);
+                    }
+                }
                 StmtKind::Nop => {}
             }
         }
