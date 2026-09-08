@@ -241,6 +241,7 @@ impl<'a> Builder<'a> {
             blocks: self.blocks,
             arg_count: self.arg_count,
             span: self.function.span,
+            borrows: self.function.borrows.clone(),
         }
     }
 

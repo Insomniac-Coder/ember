@@ -39,7 +39,7 @@ use ember_mir::{
 use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
 
-use crate::regions::{Elision, Point, RegionVid, Regions};
+use crate::regions::{Elision, Origin, Point, RegionVid, Regions};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
@@ -94,14 +94,125 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
     }
 }
 
-/// `[LT-1]` — what a call to this function ties its result to. Rules 1 and 3
-/// both come out as "every view-typed parameter"; the difference between them
-/// is which parameters exist, not what the caller must assume.
+/// `[LT-1]` — what a call to this function ties its result to.
+///
+/// Rule 1 first: a view-typed `self` receiver takes the return on its own, and
+/// a method whose result points into an argument instead has to say so with
+/// `@borrows` — which is `[LT-1a]`, and which overrides all three rules. Rules
+/// 2 and 3 are the same answer written twice: every view-typed parameter, the
+/// difference between them being which parameters exist rather than what the
+/// caller must assume.
+///
+/// The permissiveness here is only sound because the *body* is checked against
+/// the same set: `check_return_regions` rejects a return that points into a
+/// parameter this said it would not.
 fn elision_of(body: &Body, types: &TypeTable) -> Elision {
     if !types.is_view(body.return_ty()) {
         return Elision::Nothing;
     }
+    if let Some(named) = &body.borrows {
+        return Elision::Named(named.clone());
+    }
+    if receiver_is_a_view(body, types) {
+        return Elision::Named(vec![0]);
+    }
     Elision::Everything
+}
+
+/// `[LT-1]` rule 1 — a `self`/`mut self` receiver that is itself a borrow.
+fn receiver_is_a_view(body: &Body, types: &TypeTable) -> bool {
+    body.arg_count > 0
+        && body.local(LocalId(1)).name.as_deref() == Some("self")
+        && types.is_view(body.local(LocalId(1)).ty)
+}
+
+/// `[LT-1]` and `[LT-1a]`, the body half: the parameters a returned view is
+/// allowed to point into, as locals.
+fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
+    if let Some(named) = &body.borrows {
+        return named.iter().map(|i| LocalId(*i as u32 + 1)).collect();
+    }
+    if receiver_is_a_view(body, types) {
+        return vec![LocalId(1)];
+    }
+    body.args().filter(|(_, decl)| types.is_view(decl.ty)).map(|(local, _)| local).collect()
+}
+
+/// `E3062` — the returned view points into a parameter elision did not tie it
+/// to (shape B6).
+///
+/// This is the half of `[LT-1a]` that needed regions. The attribute was
+/// checked as a *signature* — that it names parameters, that they are
+/// view-typed, that the return is a view — and the body was free to contradict
+/// it. `@borrows(a)` on a function that returns `b` compiled, and the caller
+/// then went on using `b` while holding a reference into it.
+fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink: &mut Sink) {
+    if !types.is_view(body.return_ty()) {
+        return;
+    }
+    let Some(region) = regions.local_region(ember_mir::RETURN_LOCAL) else { return };
+    let allowed = allowed_origins(body, types);
+    let Some(span) = body
+        .blocks
+        .iter()
+        .find(|b| matches!(b.terminator, Terminator::Return))
+        .map(|b| b.terminator_span)
+    else {
+        return;
+    };
+
+    let mut offenders: Vec<LocalId> = regions
+        .origins(region)
+        .iter()
+        .filter_map(|origin| match origin {
+            // A borrow of a by-value parameter is not an elision question at
+            // all: nothing in the caller outlives it. `check_escapes` reports
+            // that as `E3060`, the same as a local.
+            Origin::Param(local)
+                if !allowed.contains(local) && types.is_view(body.local(*local).ty) =>
+            {
+                Some(*local)
+            }
+            _ => None,
+        })
+        .collect();
+    offenders.sort();
+
+    for local in offenders {
+        let decl = body.local(local);
+        let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
+        let allowed_names: Vec<String> = allowed
+            .iter()
+            .map(|l| match &body.local(*l).name {
+                Some(name) => format!("`{name}`"),
+                None => format!("`_{}`", l.0),
+            })
+            .collect();
+        let (message, help) = if body.borrows.is_some() {
+            (
+                format!("the returned view points into `{name}`, which `@borrows` does not name"),
+                match allowed_names.len() {
+                    0 => "add `{name}` to `@borrows`".replace("{name}", &name),
+                    _ => format!(
+                        "add `{name}` to `@borrows`, or return a view of {}",
+                        allowed_names.join(" or ")
+                    ),
+                },
+            )
+        } else {
+            (
+                format!("the returned view points into `{name}` rather than into `self`"),
+                format!("write `@borrows({name})` above the declaration, which overrides rule 1"),
+            )
+        };
+        sink.emit_classified(
+            Diagnostic::error(codes::E3062, span, message)
+                .primary_label("returned here")
+                .secondary(decl.span, format!("`{name}` is the parameter it points into"))
+                .help(help)
+                .note("`@borrows` is what ties a return to a parameter elision would not (LT-1a)"),
+        );
+    }
 }
 
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
@@ -116,6 +227,9 @@ fn check_body(
 ) {
     let live = liveness(body);
     let regions = Regions::infer(body, types, &live, elision);
+    // Before the loans: a function that hands back a parameter has no loan of
+    // its own, and `[LT-1a]` is about exactly that function.
+    check_return_regions(body, types, &regions, sink);
     let loans = collect_loans(body, &regions);
     if loans.is_empty() {
         return;
@@ -199,9 +313,12 @@ fn check_body(
 
 /// `E3060` — the borrowed value does not live long enough.
 ///
-/// A borrow of a **parameter** is fine: the caller owns what it points at and
-/// `[LT-1]`'s elision ties the return's region to it. A borrow of a local is
-/// not: the local's storage ends with the frame, so the reference dangles.
+/// A borrow of a **view-typed parameter** is fine: the caller owns what it
+/// points at and `[LT-1]`'s elision ties the return's region to it. A borrow
+/// of a local is not, and neither is a borrow of a parameter passed *by
+/// value* — a copy lives in this frame and dies with it, whatever the caller
+/// still holds. Which parameter the return may point into is `[LT-1]`'s
+/// question and is `check_return_regions`'s.
 fn check_escapes(
     body: &Body,
     types: &TypeTable,
@@ -213,10 +330,18 @@ fn check_escapes(
 ) {
     for loan in in_scope(loans, regions, point) {
         let root = body.local(loan.place.local);
-        if root.kind == LocalKind::Arg {
+        if root.kind == LocalKind::Arg && types.is_view(root.ty) {
             continue;
         }
         let name = place_name(body, types, &loan.place);
+        // The label is about the *owner*, which for `self.n` is `self`.
+        let owner = place_name(body, types, &Place::local(loan.place.local));
+        let storage = match root.kind {
+            LocalKind::Arg => format!(
+                "`{owner}` is passed by value, so the copy's storage ends with the frame"
+            ),
+            _ => format!("`{owner}` is a local, so its storage ends with the frame"),
+        };
         sink.emit_classified(
             Diagnostic::error(
                 codes::E3060,
@@ -225,7 +350,7 @@ fn check_escapes(
             )
             .primary_label("the borrow is still live when the function returns")
             .secondary(loan.span, format!("`{name}` is borrowed here"))
-            .secondary(root.span, format!("`{name}` is a local, so its storage ends with the frame"))
+            .secondary(root.span, storage)
             .help(
                 "return an owned value, take the destination as a `mut` parameter, or borrow \
                  something the caller owns",

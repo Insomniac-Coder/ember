@@ -817,29 +817,40 @@ does not exist, or one that is not view-typed, or carry the attribute with no
 view-typed return, and compile. All three are `E2031` now, with the valid
 parameters listed when a name matches none. It is a public contract — `[VER-2]`
 makes widening it a breaking change — so a typo in it is worth catching loudly.
-What `@borrows` *means* still needs the region graph; this is the signature
-half.
+
+**And the body half is in (2026-09-09), which is what regions bought.** The
+attribute was checked as a *signature* and the body was free to contradict it:
+`@borrows(a)` on a function that returned `b` compiled, and the caller then went
+on using `b` while holding a reference into it. `E3062` (shape B6) is emitted
+when the returned view's provenance includes a parameter elision did not tie it
+to — `@borrows` naming a different one, or `[LT-1]` rule 1's borrowing receiver
+where the result points into an argument instead. The attribute's parameter
+*positions* now ride the signature into HIR and MIR, so the borrow checker
+reads a contract rather than re-parsing an attribute.
+
+**A hole in `E3060` fell out of the same work: a borrow of a parameter passed
+by value.** The escape check exempted every parameter, on the reasoning that
+the caller owns what a parameter points at. That is true of a view-typed one
+and false of a copy: `fn peek(self) -> ref i32: return ref self.n` returns a
+pointer into a frame that is about to end, and it compiled. The exemption is
+now for view-typed parameters only.
 
 ### What block E still needs, in order
 
-1. **`E3062`, the body half of `[LT-1a]`.** The region graph now knows which
-   parameter a returned reference came from; `@borrows` is still checked only
-   as a signature. Returning a view derived from a parameter the attribute does
-   not name has to be rejected, and the provenance to do it with is already
-   computed.
-2. **`[LT-2]`'s view structs and `[TYP-15]`'s escape through a return.** A view
+1. **`[LT-2]`'s view structs and `[TYP-15]`'s escape through a return.** A view
    struct has one region, and constructing one from several references gives it
    the intersection; `E3064` for two independent regions and `E3063` for a view
-   stored where nothing bounds it are both registered and unemitted.
-3. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
+   stored where nothing bounds it are both registered and unemitted. The
+   provenance the return check reads is the same machinery.
+2. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
    shape B8 — "a method takes all of `self`" — needs the call to know which
    fields it touches.
-4. **`[LT-1b]`'s `L3014`**, which needs `[MAN-3]`'s `[lints]` configuration
+3. **`[LT-1b]`'s `L3014`**, which needs `[MAN-3]`'s `[lints]` configuration
    first (`LNT-CFG-1`): an opt-in lint has nowhere to be opted into.
-5. **The remaining shapes.** `E3023`–`E3027` are registered and keyed and
+4. **The remaining shapes.** `E3023`–`E3027` are registered and keyed and
    nothing emits them yet; each waits on the construct it describes — aliased
    value mutation, self-referential structs, closures, `mut` arguments.
-6. **`[LT-7]`'s callback regions** wait on closures (block F).
+5. **`[LT-7]`'s callback regions** wait on closures (block F).
 
 **Where the borrow checker lives:** `compiler/ember_analysis/src/borrows.rs`,
 run from the driver after drop elaboration so the drops it sees are the ones

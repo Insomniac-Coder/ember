@@ -82,6 +82,13 @@ pub struct Function {
     /// `[TYP-8]` — from `@overflow(...)` on this function, or the profile's
     /// default when the attribute is absent.
     pub overflow: OverflowPolicy,
+    /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
+    /// attribute is written. `None` means elision decides (`[LT-1]`).
+    ///
+    /// Positions rather than names because that is what survives to MIR, where
+    /// a parameter is a local and the borrow checker has to answer "which
+    /// parameter did this reference come from".
+    pub borrows: Option<Vec<usize>>,
 }
 
 impl Function {

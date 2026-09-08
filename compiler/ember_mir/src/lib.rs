@@ -53,6 +53,9 @@ pub struct Body {
     pub blocks: Vec<BasicBlock>,
     pub arg_count: usize,
     pub span: Span,
+    /// `[LT-1a]` — the parameter positions `@borrows(…)` names. `None` means
+    /// `[LT-1]`'s elision decides which parameters the return may point into.
+    pub borrows: Option<Vec<usize>>,
 }
 
 impl Body {

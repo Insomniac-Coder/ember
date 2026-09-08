@@ -77,7 +77,7 @@ do yet, found while applying v0.5.
 | Id | Task | Gate | Done when |
 |---|---|---|---|
 | **RT-GEN-1** | Generate `ember_rt.h` and `ember_rt.c` from `EMBER_SYMBOL_PREFIX` | 0 | `[RT-5]` calls them "generation output"; ours are hand-written, so `tools/check_branding.py` exempts them. Done when the generator exists and the exemption is deleted |
-| **LT-REG-1** | Real region variables with a constraint graph | 2 | the borrow checker approximates a region by the borrower local's liveness. `[LT-1]`'s elision, `[LT-2]`'s view structs and `[LT-7]`'s callback regions all need the real thing |
+| ~~**LT-REG-1**~~ | ~~Real region variables with a constraint graph~~ | — | **done 2026-09-09.** `compiler/ember_analysis/src/regions.rs`; `[LT-1]`'s elision is in at the call site and in the body (`E3062`). `[LT-2]`'s view structs and `[LT-7]`'s callback regions build on it |
 | **LNT-CFG-1** | `[MAN-3]`'s `[lints]` configuration | 2 | `[LT-1b]`'s `L3014` is an opt-in lint and there is nowhere to opt in |
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |
 

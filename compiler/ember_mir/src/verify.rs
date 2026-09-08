@@ -196,6 +196,7 @@ mod tests {
             }],
             arg_count: 0,
             span: Span::DUMMY,
+            borrows: None,
         }
     }
 

@@ -81,6 +81,10 @@ pub fn check(
 struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
+    /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
+    /// written. Part of the public contract (`[VER-2]`), so it travels with
+    /// the signature rather than being re-read from the attributes later.
+    borrows: Option<Vec<usize>>,
     /// `[TYP-16]` — the generic parameters this function declares, with the
     /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
     generics: Vec<GenericParam>,
@@ -299,12 +303,12 @@ impl<'a> Checker<'a> {
         attrs: &[ast::Attribute],
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
-    ) {
+    ) -> Option<Vec<usize>> {
         let Some(attr) = attrs
             .iter()
             .find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"))
         else {
-            return;
+            return None;
         };
 
         if !self.types.is_view(ret) {
@@ -319,7 +323,7 @@ impl<'a> Checker<'a> {
                 .help("remove the attribute, or return a `ref`, a `Span` or a `@view` struct")
                 .note("`@borrows` chooses which parameter the *returned* view borrows (LT-1a)"),
             );
-            return;
+            return None;
         }
 
         let viewable: Vec<String> = params
@@ -328,6 +332,7 @@ impl<'a> Checker<'a> {
             .map(|(name, _, _, _)| name.to_string())
             .collect();
 
+        let mut named_positions = Vec::new();
         for arg in &attr.args {
             let ast::AttrArg::Expr(expr) = arg else { continue };
             let ast::ExprKind::Path { segments } = &expr.kind else { continue };
@@ -335,6 +340,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let named = segments[0].name;
+            if let Some(position) = params.iter().position(|(name, _, _, _)| *name == named) {
+                named_positions.push(position);
+            }
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
                     let known = if viewable.is_empty() {
@@ -369,6 +377,7 @@ impl<'a> Checker<'a> {
                 Some(_) => {}
             }
         }
+        Some(named_positions)
     }
 
     /// `[TYP-15]` — "a view-typed value MUST NOT be stored in a place whose
@@ -712,7 +721,7 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         let Some((receiver, signature)) =
-                            self.method_signature(fn_decl, None, member.span)
+                            self.method_signature(fn_decl, None, &member.attrs, member.span)
                         else {
                             continue;
                         };
@@ -987,11 +996,11 @@ impl<'a> Checker<'a> {
                         .as_ref()
                         .map(|t| self.resolve_type(t))
                         .unwrap_or(self.common.void);
-                    self.check_borrows_attribute(&item.attrs, &params, ret);
+                    let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     self.type_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
-                    self.signatures.push(Signature { params, ret, generics });
+                    self.signatures.push(Signature { params, ret, generics, borrows });
                 }
                 _ => {}
             }
@@ -1229,7 +1238,7 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let Some((receiver, signature)) =
-                        self.method_signature(fn_decl, Some(*ty), member.span)
+                        self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span)
                     else {
                         continue;
                     };
@@ -1273,7 +1282,9 @@ impl<'a> Checker<'a> {
         let mut methods = Vec::new();
         for member in &decl.members {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
-            let Some((receiver, signature)) = self.method_signature(f, None, member.span) else {
+            let Some((receiver, signature)) =
+                self.method_signature(f, None, &member.attrs, member.span)
+            else {
                 continue;
             };
             // A `DefId` for the declaration, so a call through a bound has a
@@ -1298,6 +1309,7 @@ impl<'a> Checker<'a> {
         &mut self,
         decl: &ast::FnDecl,
         self_ty: Option<Ty>,
+        attrs: &[ast::Attribute],
         span: Span,
     ) -> Option<(Mode, Signature)> {
         let mut receiver = None;
@@ -1332,7 +1344,10 @@ impl<'a> Checker<'a> {
             return None;
         };
         let ret = decl.ret.as_ref().map(|t| self.resolve_type(t)).unwrap_or(self.common.void);
-        Some((receiver, Signature { params, ret, generics: Vec::new() }))
+        // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
+        // is resolved against the same parameter list the body will see.
+        let borrows = self.check_borrows_attribute(attrs, &params, ret);
+        Some((receiver, Signature { params, ret, generics: Vec::new(), borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -1356,7 +1371,8 @@ impl<'a> Checker<'a> {
             if decl.body.is_none() {
                 continue;
             }
-            let Some((receiver, signature)) = self.method_signature(decl, Some(ty), member.span)
+            let Some((receiver, signature)) =
+                self.method_signature(decl, Some(ty), &member.attrs, member.span)
             else {
                 continue;
             };
@@ -2092,7 +2108,7 @@ impl<'a> Checker<'a> {
                 params.push((field_name, self.substitute_ty(param_ty, args), mode, param_span));
             }
             let ret = self.substitute_ty(method.ret, args);
-            let signature = Signature { params, ret, generics: Vec::new() };
+            let signature = Signature { params, ret, generics: Vec::new(), borrows: None };
             let Some(def) = self.register_method(
                 ty,
                 method.name,
@@ -2309,6 +2325,7 @@ impl<'a> Checker<'a> {
                 body,
                 span: item.span,
                 overflow,
+                borrows: self.signatures[def.0 as usize].borrows.clone(),
             });
         }
 
@@ -2456,6 +2473,7 @@ impl<'a> Checker<'a> {
             body,
             span,
             overflow,
+            borrows: self.signatures[def.0 as usize].borrows.clone(),
         }
     }
 
@@ -2568,6 +2586,7 @@ impl<'a> Checker<'a> {
             body,
             span,
             overflow,
+            borrows: self.signatures[def.0 as usize].borrows.clone(),
         })
     }
 
@@ -2647,6 +2666,20 @@ impl<'a> Checker<'a> {
         }
         let _ = inner;
         Expr { ty: inner, kind: ExprKind::Deref(Box::new(read)), span }
+    }
+
+    /// `[TYP-14]` — "use of `r` in an expression of type `T` reads through",
+    /// where the context wants a value and no expected type says so.
+    ///
+    /// `coerce` covers every site that has an expectation to compare against.
+    /// An operand of `+` and a builtin's argument have none: they want *a
+    /// value*, and a reference reaching one of them unread is a pointer in the
+    /// emitted C. `println(f(ref n))` printed a `ref i32` as if it were a
+    /// string until this existed.
+    fn read_through(&mut self, expr: Expr) -> Expr {
+        let TyKind::Ref { inner, .. } = *self.types.kind(expr.ty) else { return expr };
+        let span = expr.span;
+        Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span }
     }
 
     fn lookup(&self, name: Symbol) -> Option<LocalId> {
@@ -4440,7 +4473,13 @@ impl<'a> Checker<'a> {
         }
 
         if let Some(builtin) = Builtin::from_name(name.as_str()) {
-            let args: Vec<Expr> = args.iter().map(|a| self.synth_committed(&a.value)).collect();
+            let args: Vec<Expr> = args
+                .iter()
+                .map(|a| {
+                    let arg = self.synth_committed(&a.value);
+                    self.read_through(arg)
+                })
+                .collect();
             if args.len() != 1 {
                 self.error(
                     codes::E2020,
@@ -4686,10 +4725,12 @@ impl<'a> Checker<'a> {
         let concrete_ret = self.substitute_ty(ret, args);
 
         let instance = DefId(self.signatures.len() as u32);
+        let borrows = self.signatures[def.0 as usize].borrows.clone();
         self.signatures.push(Signature {
             params: concrete_params,
             ret: concrete_ret,
             generics: Vec::new(),
+            borrows,
         });
         self.instances.insert(key.clone(), instance);
         self.pending.push((key, instance));
@@ -5231,6 +5272,11 @@ impl<'a> Checker<'a> {
 
         let mut lhs = self.synth(lhs);
         let mut rhs = self.synth(rhs);
+        // `[TYP-14]` — an operand wants a value. This is before the operator
+        // method lookup on purpose: `ref Vec3 + Vec3` should find `Vec3`'s
+        // `add`, not fail to find one on a reference.
+        lhs = self.read_through(lhs);
+        rhs = self.read_through(rhs);
 
         // `[TYP-21]` — an operator on a non-scalar is an interface method
         // call. `a + b` on a `Vec3` is `a.add(b)`, with both sides passed in
