@@ -161,6 +161,13 @@ wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
 24-block baseline, which needs the grammar gaps those fragments expose. With
 those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
+**`docs/DEFECTS.md` is the defect ledger** (new, 2026-09-09). Every defect and
+whether it is closed, with how the fix was verified. Defects used to be recorded
+in prose here, spread across the per-block sections, where "found" and "fixed"
+read the same — a reader could not tell which were still open. Add a row when
+you fix one. A defect in the *specification* still goes to
+`docs/spec-errata.md`; the ledger points at the errata id.
+
 `docs/LIBRARIES.md` records what ships in `std` and what the ecosystem should
 gain once the phases are done, with the reasoning; `docs/BACKLOG.md` carries
 the same list as 31 numbered tasks, `LIB-1`..`LIB-31`, each with the phase it
