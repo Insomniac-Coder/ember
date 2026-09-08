@@ -681,11 +681,27 @@ ERR-021.
 borrow live across every access above it. The program was wrong, not the
 checker.
 
-**Not done in block E:** two-phase borrows (`[BRW-3]`), disjoint fields
-(`[BRW-4]`) beyond prefix overlap, `@view` structs, `E3060`'s
-borrow-outlives-source (needs storage-end tracking), `@borrows` (`[LT-1a]`),
-and the shape classifier (`[DIA-7]`, block H) which has to be designed into
-this pass rather than bolted on.
+**`[BRW-3]` two-phase borrows are in**, which is what makes
+`xs.push(xs.len())` legal — the example the rule is written around. A mutable
+borrow taken for a call is *reserved* where it is created and *activated* at
+the call, and behaves as shared in between. The reservation window is a set of
+points rather than a start and an end, because evaluating an argument that is
+itself a call ends the block: the reservation and its activation are never
+adjacent, and the first attempt at this looked only within one block and did
+nothing at all.
+
+**`[BRW-4]` disjoint fields work** and fall out of prefix overlap: two distinct
+fields never conflict, the same field does, and reading the whole struct while
+a field is borrowed does. Places are named as the programmer wrote them —
+`p.x`, not MIR's `p.0` — by walking the type alongside the projections, and the
+help line never names a compiler temporary.
+
+**Not done in block E:** `@view` structs; `E3060`'s borrow-outlives-source,
+which needs storage-end tracking; `@borrows` (`[LT-1a]`); real region variables
+with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
+what the liveness approximation cannot do; and the shape classifier
+(`[DIA-7]`, block H), which has to be designed into this pass rather than
+bolted on.
 
 ### Block A: moves and drops
 

@@ -36,6 +36,7 @@ use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
     BasicBlockId, Body, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator,
 };
+use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
 
 /// A point in the CFG: a statement index within a block, where `stmts.len()`
@@ -56,6 +57,16 @@ struct Loan {
     borrower: LocalId,
     created_at: Point,
     span: Span,
+    /// `[BRW-3]` — a mutable borrow taken for a call's receiver or a `mut`
+    /// argument is *reserved* where it is created and *activated* at the call.
+    /// At every point in between it behaves as a shared borrow, which is what
+    /// makes `v.push(v.len())` legal: the argument's shared borrow of `v` is
+    /// taken and released inside the window.
+    ///
+    /// The window is a set of points rather than an end marker because
+    /// evaluating an argument that is itself a call ends the block, so the
+    /// reservation and its activation sit in different blocks.
+    reserved_at: HashSet<Point>,
 }
 
 /// How a place is touched at a point (§4.7 step 5).
@@ -66,13 +77,13 @@ enum Access {
     Borrow { mutable: bool },
 }
 
-pub fn check_all(bodies: &[Body], sink: &mut Sink) {
+pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
     for body in bodies {
-        check(body, sink);
+        check(body, types, sink);
     }
 }
 
-pub fn check(body: &Body, sink: &mut Sink) {
+pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let loans = collect_loans(body);
     if loans.is_empty() {
         return;
@@ -105,7 +116,7 @@ pub fn check(body: &Body, sink: &mut Sink) {
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
-            check_point(body, &loans, &live, point, &accesses, stmt.span, sink, &mut reported);
+            check_point(body, types, &loans, &live, point, &accesses, stmt.span, sink, &mut reported);
         }
 
         let point = Point { block: block_index, index: block.stmts.len() };
@@ -123,6 +134,7 @@ pub fn check(body: &Body, sink: &mut Sink) {
         }
         check_point(
             body,
+            types,
             &loans,
             &live,
             point,
@@ -147,16 +159,90 @@ fn collect_loans(body: &Body) -> Vec<Loan> {
             if !place.projection.is_empty() {
                 continue;
             }
+            let created_at = Point { block: block_index, index };
             loans.push(Loan {
                 place: borrowed.clone(),
                 mutable: *mutable,
                 borrower: place.local,
-                created_at: Point { block: block_index, index },
+                created_at,
                 span: stmt.span,
+                reserved_at: reservation_window(body, place.local, created_at),
             });
         }
     }
     loans
+}
+
+/// `[BRW-3]` — the points at which a mutable borrow is merely *reserved*.
+///
+/// A borrow taken for a call is reserved from its creation until the call
+/// consumes it, and behaves as shared throughout. The window is found by
+/// walking forward along the single-successor chain that argument evaluation
+/// produces, stopping at the first use of the borrower. If that use is a call
+/// argument, everything before it is the window; if it is anything else, the
+/// borrow was never two-phase and the window is empty.
+fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> HashSet<Point> {
+    let mut window = HashSet::new();
+    let mut block_index = created_at.block;
+    let mut start = created_at.index + 1;
+
+    // Bounded by the block count: argument evaluation is a chain, and a loop
+    // back into it would mean the borrow is used more than once anyway.
+    for _ in 0..body.blocks.len() {
+        let Some(block) = body.blocks.get(block_index) else { return HashSet::new() };
+
+        for (index, stmt) in block.stmts.iter().enumerate().skip(start) {
+            let mut reads = Vec::new();
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    rvalue_reads(rvalue, &mut reads);
+                    if place.local == borrower {
+                        return HashSet::new();
+                    }
+                }
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    operand_read(lhs, &mut reads);
+                    operand_read(rhs, &mut reads);
+                }
+                StmtKind::Drop { place, .. } => reads.push((place.clone(), Access::Read)),
+                _ => {}
+            }
+            if reads.iter().any(|(p, _)| p.local == borrower) {
+                return HashSet::new();
+            }
+            window.insert(Point { block: block_index, index });
+        }
+
+        let terminator_point = Point { block: block_index, index: block.stmts.len() };
+        match &block.terminator {
+            Terminator::Call { args, next, .. } => {
+                let used = args.iter().any(|a| match a {
+                    Operand::Copy(p) | Operand::Move(p) => p.local == borrower,
+                    Operand::Const(_) => false,
+                });
+                if used {
+                    // This is the activation. The window is everything before.
+                    return window;
+                }
+                window.insert(terminator_point);
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            Terminator::Assert { next, .. } => {
+                window.insert(terminator_point);
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            Terminator::Goto(next) => {
+                window.insert(terminator_point);
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            // A branch means the borrow outlives argument evaluation.
+            _ => return HashSet::new(),
+        }
+    }
+    HashSet::new()
 }
 
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
@@ -184,6 +270,7 @@ fn in_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 fn check_point(
     body: &Body,
+    types: &TypeTable,
     loans: &[Loan],
     live: &HashMap<Point, HashSet<LocalId>>,
     point: Point,
@@ -205,13 +292,17 @@ fn check_point(
             if place.local == loan.borrower {
                 continue;
             }
+            // `[BRW-3]` — inside the reservation window the borrow is not yet
+            // mutable, so shared borrows and reads of the same place pass.
+            let reserved = loan.mutable && loan.reserved_at.contains(&point);
+            let loan_mutable = loan.mutable && !reserved;
             let conflict = match access {
                 // While a mutable borrow is live the owner may not read.
-                Access::Read => loan.mutable,
+                Access::Read => loan_mutable,
                 // While any borrow is live the owner may not write.
                 Access::Write => true,
                 // Two mutable, or one of each, conflict; two shared do not.
-                Access::Borrow { mutable } => loan.mutable || *mutable,
+                Access::Borrow { mutable } => loan_mutable || *mutable,
             };
             if !conflict {
                 continue;
@@ -222,8 +313,8 @@ fn check_point(
                 continue;
             }
 
-            let name = place_name(body, &loan.place);
-            let (code, message) = match (loan.mutable, access) {
+            let name = place_name(body, types, &loan.place);
+            let (code, message) = match (loan_mutable, access) {
                 (true, Access::Borrow { mutable: true }) => (
                     codes::E3022,
                     format!("`{name}` is already mutably borrowed"),
@@ -240,16 +331,26 @@ fn check_point(
 
             // `[DIA-3]` — the borrow site, the conflicting access, and the
             // later use that keeps the borrow alive.
-            let borrower = place_name(body, &Place::local(loan.borrower));
-            let kind = if loan.mutable { "mutable " } else { "" };
+            // `[DIA-2]` — never name a temporary at the user. When the
+            // borrow lives in one, the advice is about the expression, not
+            // about a local they cannot see.
+            let borrower = body.local(loan.borrower).name.clone();
+            let kind = if loan_mutable { "mutable " } else { "" };
             sink.emit(
                 Diagnostic::error(code, span, message)
                     .primary_label("conflicting access here")
                     .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"))
-                    .help(format!(
-                        "end the borrow before this: `{borrower}` is what keeps it alive, so \
-                         shorten its last use or put it in a block of its own"
-                    ))
+                    .help(match &borrower {
+                        Some(name) => format!(
+                            "end the borrow before this: `{name}` is what keeps it alive, so \
+                             shorten its last use or put it in a block of its own"
+                        ),
+                        None => format!(
+                            "bind the borrow of `{name}` to a local and finish with it before \
+                             this line, or copy the value out first",
+                            name = name
+                        ),
+                    })
                     .note("a borrow lasts until its last use, not to the end of the scope (BRW-2)"),
             );
         }
@@ -273,23 +374,69 @@ fn overlaps(a: &Place, b: &Place) -> bool {
     true
 }
 
-fn place_name(body: &Body, place: &Place) -> String {
-    let base = body
-        .local(place.local)
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("_{}", place.local.0));
-    let mut out = base;
+/// `[DIA-2]` — name the place as it was written. MIR holds field *indices*,
+/// so the type is walked alongside the projections to recover `p.x` from
+/// `p.0`. A tuple keeps its number, because that is what the source says too.
+fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
+    let decl = body.local(place.local);
+    let mut out = decl.name.clone().unwrap_or_else(|| format!("_{}", place.local.0));
+    let mut ty = decl.ty;
     for projection in &place.projection {
         match projection {
-            Projection::Field(i) => out = format!("{out}.{i}"),
-            Projection::ConstIndex(i) => out = format!("{out}[{i}]"),
-            Projection::Index(_) => out = format!("{out}[…]"),
-            Projection::Deref => out = format!("*{out}"),
+            Projection::Field(i) => {
+                out = match field_name(types, ty, *i) {
+                    Some(name) => format!("{out}.{name}"),
+                    None => format!("{out}.{i}"),
+                };
+                ty = field_ty(types, ty, *i).unwrap_or(ty);
+            }
+            Projection::ConstIndex(i) => {
+                out = format!("{out}[{i}]");
+                ty = element_ty(types, ty).unwrap_or(ty);
+            }
+            Projection::Index(_) => {
+                out = format!("{out}[…]");
+                ty = element_ty(types, ty).unwrap_or(ty);
+            }
+            Projection::Deref => {
+                out = format!("*{out}");
+                ty = pointee_ty(types, ty).unwrap_or(ty);
+            }
             _ => {}
         }
     }
     out
+}
+
+fn field_name(types: &TypeTable, ty: Ty, index: usize) -> Option<String> {
+    match types.kind(ty) {
+        TyKind::Struct(id) => {
+            types.struct_def(*id).fields.get(index).map(|f| f.name.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn field_ty(types: &TypeTable, ty: Ty, index: usize) -> Option<Ty> {
+    match types.kind(ty) {
+        TyKind::Struct(id) => types.struct_def(*id).fields.get(index).map(|f| f.ty),
+        TyKind::Tuple(items) => items.get(index).copied(),
+        _ => None,
+    }
+}
+
+fn element_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
+    match types.kind(ty) {
+        TyKind::Array { elem, .. } | TyKind::Vec { elem } => Some(*elem),
+        _ => None,
+    }
+}
+
+fn pointee_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
+    match types.kind(ty) {
+        TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => Some(*inner),
+        _ => None,
+    }
 }
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {

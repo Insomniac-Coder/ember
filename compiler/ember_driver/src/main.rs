@@ -368,7 +368,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // the footgun `[GRM-4]` opens.
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
-    ember_analysis::check_borrows_all(&bodies, &mut sink);
+    ember_analysis::check_borrows_all(&bodies, &types, &mut sink);
     ember_analysis::check_unused_all(&bodies, &mut sink);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
