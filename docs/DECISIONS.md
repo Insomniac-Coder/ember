@@ -194,3 +194,83 @@ binary, `ember.toml`, the `.em`/`.embind` extensions, `EMBER_RT_ABI` and every
 `ember_*` runtime symbol, `cmake/EmberModule.cmake`, and every `#!` test
 annotation. Mechanical, but wide. Recorded here so the decision is not made by
 default.
+
+---
+
+## ADR-010 — Regions are location-insensitive, and a reference local is assigned once
+
+**Spec rule:** Part XVIII §4.7 steps 1–4, `[LT-5]`.
+**Status:** taken 2026-09-09, on the permission §4.7 gives.
+
+**Context.** §4.7 says "Polonius-style location-sensitive reasoning is not
+required for v1", so a constraint may propagate a whole point set rather than
+the points reachable from where the assignment sits. What that costs is
+precision in one shape: a reference local assigned twice, where the second
+loan's region would absorb the first's live range and the first would look live
+during it.
+
+**Decision.** Constraints propagate whole point sets. The imprecision is
+unreachable in Ember, because a reference local cannot be re-seated: `r = ref
+mut m` writes *through* `r` (`[TYP-14]`), so every reference local is assigned
+exactly once, at its declaration.
+
+**Consequences.** The inference is a fixpoint over one edge list rather than a
+reachability computation per constraint, which is most of why the pass is short.
+**If a future revision adds a way to re-point a reference** — a `ref` field
+assigned twice, a reference in a container, a loop that rebinds one — this
+decision expires with it, and the checker will report a borrow as live across a
+range where it is dead. The module header in
+`compiler/ember_analysis/src/regions.rs` states the assumption where it is
+relied on.
+
+---
+
+## ADR-011 — `E3060` for storage, `E3062` for elision
+
+**Spec rule:** Part XVIII §4.7 step 6, `[LT-1]`, `[LT-1a]`, ERR-024.
+**Status:** taken 2026-09-09.
+
+**Context.** §4.7 step 6 names two codes and a returned borrow of a local
+satisfies the description of both: its region outlives the borrowed place's
+storage (`E3060`), and it is a return that derives from no parameter
+(`E3062`). Shape B7 is keyed to the first and B6 to the second, so the choice
+decides which `help` the programmer is shown.
+
+**Decision.** The split is by *what is wrong*, not by where it was noticed.
+`E3060` when the borrowed storage ends first — a local, or a parameter passed
+by value (ERR-024). `E3062` when the storage outlives the call but elision does
+not tie the return to it — `@borrows` naming a different parameter, or
+`[LT-1]` rule 1's borrowing receiver where the result points into an argument.
+
+**Consequences.** The two diagnostics say different things and neither is a
+fallback for the other: B7 tells you the value dies too soon, B6 tells you the
+signature does not permit what the body did. A program can hit both, and does
+— `tests/compile-fail/a_returned_view_elision_cannot_tie.em` carries one of
+each. The cost is that "returned reference does not derive from a parameter",
+`E3062`'s registry title, is now narrower than its wording: a borrow of a local
+derives from no parameter either and is `E3060`.
+
+---
+
+## ADR-012 — `E3064` stays unemitted until a program needs it
+
+**Spec rule:** `[LT-2]`, `[DIA-7a]`, §XIX.6.1 shape B13.
+**Status:** taken 2026-09-09. Revisit when `[TYP-15a]`'s `BorrowList`/`ViewList`
+land, which is where two element regions could first be asked for.
+
+**Context.** `E3064` "two independent regions in one view struct" is registered
+and keyed to shape B13. `[LT-2]` says a view struct built from several
+references takes the **intersection** of their regions — so construction always
+has an answer, and the compiler narrows rather than refusing. No program has
+been found that reaches the error.
+
+**Decision.** Leave it unemitted and record why, rather than invent a trigger.
+`docs/DEFECTS.md` carries it as an open row.
+
+**Consequences.** `[DIA-7a]` is satisfied either way — it forbids emitting a
+code that is *absent* from the shape table, not leaving a present one unused.
+The risk accepted is that a program which should be rejected is quietly
+narrowed instead; the intersection is sound, so it is a precision loss and not
+a soundness one. **The alternative rejected:** writing a diagnostic against a
+guessed trigger, which enforces the rule in a shape nobody asked for and is
+harder to remove later than to add now.

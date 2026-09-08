@@ -32,6 +32,8 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-020 | `[TST-6]` | **decided** — the stale description corrected; `compile-pass` left as the requirement |
 | ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated and in the table |
 | ERR-022 | `[DIA-7]` with `[DIA-7a]` | **withdrawn** — `[DIA-7a]` sits under `[DIA-7]`, which scopes it |
+| ERR-023 | `[TYP-14]`, Part IV §2 | **decided** — reading through is a property of the type in a value context, not of the form |
+| ERR-024 | Part XVIII §4.7 step 6 | **decided** — a by-value parameter's storage ends with the frame, so `E3060` covers it |
 
 ---
 
@@ -948,6 +950,95 @@ added without the build going red.
 
 **Found by** writing that test. The list of exceptions is one entry long, which
 is the useful outcome: it says the classifier's coverage is otherwise complete.
+
+---
+
+## ERR-023 — `[TYP-14]` reads as though only a *named* reference dereferences
+
+**Status: decided, 2026-09-09. Amended in the document.**
+
+**Where.** Part IV §2: "Auto-dereferenced: `r.field`, `r.method()`, and use of
+`r` in an expression of type `T` all read through."
+
+Every example names `r`, a reference held in a variable. Read literally that is
+a rule about a *name*, and the compiler implemented exactly that: reading a
+local of reference type where a value was wanted read through, and nothing else
+did. A call that returns `ref i32` was then neither an operand nor an argument:
+
+```ember
+fn give(a: ref i32) -> ref i32:
+    return a
+
+m: i32 = give(ref n) + 1     ## E2020: `+` cannot be applied to `ref i32`
+println(give(ref n))         ## emitted C passing `const int32_t *` as `ember_str`
+```
+
+The second is the one that matters. It is not rejected — it compiles, and the
+*C compiler* catches it. An Ember program should not be able to reach a C type
+error, and `[CG-C-1]` says the emitted C is warning-free, which this was not.
+
+**Decision.** The rule is about the type in a value context, not the form the
+reference was written in. Amended to say so, naming the cases: a named
+reference, a call that returns one, a field read, an operand, an argument.
+
+**What would change if the owner rules the other way.** If reading through is
+meant to be a property of names only, then a call returning `ref T` needs a
+written dereference at every use, and the language needs a spelling for it —
+there is none today, and `[LT-6]` reserves nothing for it either. The
+implementation would go back to rejecting both lines above, and `println` would
+need an explicit overload for reference types rather than a coercion.
+
+**Found by** writing a test that printed a returned reference. Nothing in the
+corpus returned one before the borrow checker made them expressible.
+
+---
+
+## ERR-024 — §4.7 step 6 says "a local", and a by-value parameter is not one
+
+**Status: decided, 2026-09-09. Amended in the document.**
+
+**Where.** Part XVIII §4.7 step 6: "A loan whose region extends beyond the
+borrowed place's storage (`StorageDead`/`Drop` of **a local** while a loan on it
+is in scope) is `E3060`."
+
+Beside it, `[LT-1]`: a returned view's region is a **view-typed** parameter's.
+Read together the intent is clear, but step 6 is the sentence a borrow checker
+is written from, and its parenthesis names locals only. The implementation
+exempted every parameter on exactly that reading, with a comment saying "the
+caller owns what it points at" — true of a view-typed parameter and false of a
+copy:
+
+```ember
+fn peek(self) -> ref i32:
+    return ref self.n        ## compiled; returns a pointer into a dead frame
+```
+
+`self` here is passed by value. The copy lives in the callee's frame and dies
+with it, so the borrow is exactly as short-lived as a borrow of a local.
+
+**Decision.** Step 6 names a by-value parameter alongside a local, and states
+that only a view-typed parameter names storage the caller keeps. This is a
+clarification, not a change of rule: nothing in `[LT-1]`, `[LT-3]` or `[TYP-15]`
+ever said an owned parameter could be borrowed and returned.
+
+**What would change if the owner rules the other way.** Nothing in the
+implementation — there is no reading under which the program above is sound.
+The amendment exists so the next person writing to step 6 does not repeat the
+exemption.
+
+**Found by** the same test run as ERR-023.
+
+---
+
+## Two defects that needed no amendment, recorded so the question is not re-asked
+
+`[FMT-1]` ("the formatter preserves comments", `parse(fmt(x)) ≡ parse(x)`) and
+`[DIA-3]` ("MUST include the 'later used here' label") were both **right and
+unambiguous** while the compiler did neither. The formatter deleted doc
+comments on methods and variants; no borrow diagnostic carried the label. Those
+are implementation gaps and are in `docs/DEFECTS.md`, not here. An
+implementation gap is not a spec defect — ERR-014, ERR-019 and ERR-022 are what
+that mistake costs when it is made the other way.
 
 ---
 

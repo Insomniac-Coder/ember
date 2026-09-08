@@ -7,12 +7,24 @@ Every defect found and what closed it. One row per defect, newest first.
 same. A reader could not tell which of them are closed. This file answers that
 one question, and links to where the reasoning lives.
 
-**How to use it.** When a defect is fixed: add a row, state how the fix was
-*verified* (a program that failed before and passes now, or a test that goes red
-when the fix is removed), and name the commit. If the defect was in the
-**specification** rather than in the compiler, it belongs in
-`docs/spec-errata.md` instead and the row here points at the errata id — the
-standing rule is that an implementation gap is not a spec defect.
+**How to use it.** Fixing a defect updates four documents, and the row records
+which:
+
+1. **this ledger** — the row, with how the fix was *verified*: a program that
+   failed before and passes now, or a test that goes red when the fix is
+   removed;
+2. **`docs/HANDOFF.md`** — the reasoning, in the section for the block it
+   belongs to;
+3. **`docs/DECISIONS.md`** — an ADR, where the fix took a decision the
+   specification does not force;
+4. **the specification** — `docs/spec-source/ember-spec.md`, regenerated into
+   `docs/spec/`, where the document's own wording admitted the wrong reading.
+   That goes through `docs/spec-errata.md` and its procedure, never by hand.
+
+The fourth is the one to be careful with: **an implementation gap is not a spec
+defect.** Where the document was right and the compiler was wrong, say so in the
+row and leave the specification alone — ERR-014, ERR-019 and ERR-022 record what
+the opposite mistake costs.
 
 Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
@@ -22,17 +34,17 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 | # | Defect | Rule | Status | Fixed in |
 |---|---|---|---|---|
-| D-001 | A borrow copied into another local was not tracked: `s = r` killed the loan with `r`, so writing the owner afterwards compiled | `[BRW-1]`, `[LT-5]` | **fixed** | `1204a5e` |
+| D-001 | A borrow copied into another local was not tracked: `s = r` killed the loan with `r`, so writing the owner afterwards compiled | `[BRW-1]`, `[LT-5]` | **fixed** | `1204a5e`, ADR-010 |
 | D-002 | A reborrow (`q = ref mut r`) did not keep the borrow it derived from alive | `[BRW-6]`, `[LT-5]` | **fixed** | `1204a5e` |
 | D-003 | A call handing a reference back did not keep its argument borrowed | `[LT-1]` | **fixed** | `1204a5e` |
 | D-004 | `[DIA-3]`'s "later used here" label was missing from every borrow diagnostic, and the help named the local the borrow *started* in | `[DIA-3]` | **fixed** | `1204a5e` |
-| D-005 | `@borrows` was checked as a signature only: `@borrows(a)` on a function returning `b` compiled | `[LT-1a]` | **fixed** | `c1bd89c` |
-| D-006 | `E3060` exempted every parameter, so a borrow of a **by-value** parameter could be returned | `[LT-1]`, XVIII §4.7 step 6 | **fixed** | `c1bd89c` |
-| D-007 | `[TYP-14]`'s read-through worked only for a named local, so a call returning `ref i32` was not an operand of `+` (`E2020`) and reached `println` as a pointer | `[TYP-14]` | **fixed** | `c1bd89c` |
+| D-005 | `@borrows` was checked as a signature only: `@borrows(a)` on a function returning `b` compiled | `[LT-1a]` | **fixed** | `c1bd89c`, ADR-011 |
+| D-006 | `E3060` exempted every parameter, so a borrow of a **by-value** parameter could be returned | `[LT-1]`, XVIII §4.7 step 6 | **fixed** | `c1bd89c`, ERR-024, ADR-011 |
+| D-007 | `[TYP-14]`'s read-through worked only for a named local, so a call returning `ref i32` was not an operand of `+` (`E2020`) and reached `println` as a pointer | `[TYP-14]` | **fixed** | `c1bd89c`, ERR-023 |
 | D-008 | `ember fmt` deleted a doc comment on a method | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-009 | `ember fmt` deleted a doc comment on an enum variant | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-010 | The AST printer showed a variant as its bare name, so `[FMT-1]`'s round-trip test could not see D-009 | `[FMT-1]`, `[TST-1]` | **fixed** | `28aa05d` |
-| D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **open — no case found** | — |
+| D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **open — no case found** | ADR-012 |
 
 ### How each was verified
 
@@ -75,6 +87,12 @@ documented variant keeps both. Verified the way the handoff asks: the fix was
 removed and `formatting_is_idempotent_and_preserves_the_tree` went red, then
 restored. For D-009 that test went red **only after D-010 was fixed** — the
 instrument was blind to the defect it exists to catch.
+
+**D-008 and D-009 needed no specification change, and that is deliberate.**
+`[FMT-1]` says "the formatter preserves comments" and `parse(fmt(x)) ≡
+parse(x)`; a doc comment is a comment and the rule is unambiguous. Likewise
+`[DIA-3]` for D-004: the label is a MUST and the compiler emitted none. Both are
+recorded in the errata's closing section so the question is not re-asked.
 
 **D-011 is open and deliberately unwritten.** `[LT-2]` gives a struct built
 from several references the *intersection* of their regions, so the compiler

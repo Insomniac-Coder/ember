@@ -175,9 +175,10 @@ is gated behind and what finishing it means. Both at the owner's request, and
 nothing in either starts before Phase 8.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-before touching anything. `docs/spec-errata.md` lists **twenty-two** entries.
+before touching anything. `docs/spec-errata.md` lists **twenty-four** entries.
 ERR-001..ERR-008 are closed or carried by v0.5; ERR-009..ERR-022 came out of
-applying it. **Three of those are withdrawn or half-withdrawn, and the reason
+applying it; ERR-023 and ERR-024 came out of the region work on 2026-09-09,
+where the document's own wording admitted the reading the compiler took. **Three of those are withdrawn or half-withdrawn, and the reason
 is worth reading before adding another:** ERR-014, ERR-019 and ERR-022 recorded
 contradictions that were not there, and ERR-020 rewrote a requirement to match
 what the compiler can do today.
