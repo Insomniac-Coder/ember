@@ -143,6 +143,58 @@ void ember_debug_alloc_stats(ember_alloc_stats* out) {
     }
 }
 
+/* -- growable buffers -------------------------------------------------------- */
+
+/* The alignment a growable buffer allocates at. The compiler passes an element
+ * size but not an alignment, so the buffer uses the strictest fundamental one;
+ * over-aligning is always sound and costs at most a few bytes per buffer. */
+#define EMBER_VEC_ALIGN (sizeof(void*) * 2)
+
+void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
+    if (want <= v->cap) {
+        return;
+    }
+    /* Doubling keeps a loop of pushes linear ([ALC-1]); the floor of four
+     * stops a one-element array from reallocating on its second push. */
+    size_t cap = v->cap < 4 ? 4 : v->cap;
+    while (cap < want) {
+        cap *= 2;
+    }
+    v->ptr = ember_realloc(v->ptr, v->cap * elem_size, cap * elem_size, EMBER_VEC_ALIGN);
+    v->cap = cap;
+}
+
+void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
+    ember_vec_reserve(v, elem_size, v->len + 1);
+    memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
+    v->len += 1;
+}
+
+void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {
+    if (count == 0) {
+        return;
+    }
+    ember_vec_reserve(v, 1, v->len + count);
+    memcpy((unsigned char*)v->ptr + v->len, bytes, count);
+    v->len += count;
+}
+
+void ember_vec_free(ember_vec* v, size_t elem_size) {
+    if (v->ptr != NULL) {
+        ember_free(v->ptr, v->cap * elem_size, EMBER_VEC_ALIGN);
+    }
+    v->ptr = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+
+ember_str ember_vec_as_str(const ember_vec* v) {
+    ember_str s;
+    s.ptr = (const unsigned char*)v->ptr;
+    s.len = v->len;
+    return s;
+}
+
 /* -- panics ------------------------------------------------------------------ */
 
 void ember_backtrace_print(void) {
@@ -291,6 +343,51 @@ void ember_println_f32(float v) {
     ember_print_f32(v);
     fputc('\n', stdout);
 }
+/* -- formatting -------------------------------------------------------------- */
+
+void ember_fmt_i64(ember_vec* out, int64_t value) {
+    char buffer[32];
+    int n = snprintf(buffer, sizeof buffer, "%lld", (long long)value);
+    if (n > 0) {
+        ember_vec_extend(out, buffer, (size_t)n);
+    }
+}
+
+void ember_fmt_u64(ember_vec* out, uint64_t value) {
+    char buffer[32];
+    int n = snprintf(buffer, sizeof buffer, "%llu", (unsigned long long)value);
+    if (n > 0) {
+        ember_vec_extend(out, buffer, (size_t)n);
+    }
+}
+
+void ember_fmt_f64(ember_vec* out, double value) {
+    char buffer[32];
+    write_shortest_f64(value, buffer, sizeof buffer);
+    ember_vec_extend(out, buffer, strlen(buffer));
+}
+
+void ember_fmt_f32(ember_vec* out, float value) {
+    char buffer[32];
+    write_shortest_f32(value, buffer, sizeof buffer);
+    ember_vec_extend(out, buffer, strlen(buffer));
+}
+
+void ember_fmt_bool(ember_vec* out, bool value) {
+    const char* text = value ? "true" : "false";
+    ember_vec_extend(out, text, strlen(text));
+}
+
+void ember_fmt_char(ember_vec* out, uint32_t value) {
+    unsigned char buffer[4];
+    size_t n = encode_utf8(value, buffer);
+    ember_vec_extend(out, buffer, n);
+}
+
+void ember_fmt_str(ember_vec* out, ember_str value) {
+    ember_vec_extend(out, value.ptr, value.len);
+}
+
 
 void ember_print_f64(double v) {
     char buffer[32];

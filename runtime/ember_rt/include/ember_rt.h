@@ -231,6 +231,48 @@ void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 void ember_free(void* p, size_t size, size_t align);
 void* ember_try_alloc(size_t size, size_t align);
 
+/* -- growable buffers ------------------------------------------------------ */
+
+/* Part XX.1 makes `Array[T]` a compiler-known type until Phase 2's generics
+ * let the standard library write it in Ember. Every `Array[T]` has this
+ * layout; the compiler emits the element size at each call, which is how one
+ * runtime serves every element type.
+ *
+ * `String` is the same buffer holding UTF-8 bytes, so the two share the growth
+ * and free paths rather than each having their own. */
+typedef struct ember_vec {
+    void* ptr;
+    size_t len;
+    size_t cap;
+} ember_vec;
+
+#define ember_vec_empty() ((ember_vec){ NULL, 0, 0 })
+
+/* Make room for at least `want` elements. Growth doubles, so appending in a
+ * loop stays linear ([ALC-1]). */
+void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
+/* Append one element, copied from `value`. */
+void ember_vec_push(ember_vec* v, size_t elem_size, const void* value);
+void ember_vec_free(ember_vec* v, size_t elem_size);
+/* Append `count` bytes. Used for `String`, whose element size is one. */
+void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);
+
+/* A `String`'s bytes as a borrowed `str`. */
+ember_str ember_vec_as_str(const ember_vec* v);
+
+/* -- formatting ------------------------------------------------------------ */
+
+/* `[LEX-19]` f-strings append each piece to a buffer. std.fmt's `Display`
+ * replaces these once interfaces carry generics; until then the compiler picks
+ * one from the argument's type, exactly as it does for `println`. */
+void ember_fmt_i64(ember_vec* out, int64_t value);
+void ember_fmt_u64(ember_vec* out, uint64_t value);
+void ember_fmt_f64(ember_vec* out, double value);
+void ember_fmt_f32(ember_vec* out, float value);
+void ember_fmt_bool(ember_vec* out, bool value);
+void ember_fmt_char(ember_vec* out, uint32_t value);
+void ember_fmt_str(ember_vec* out, ember_str value);
+
 /* -- panics ---------------------------------------------------------------- */
 
 /* [RT-4] A panic prints "panic at <file>:<line>:<col>: <message>", then a

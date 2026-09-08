@@ -3,7 +3,7 @@
 ## Start here
 
 **Phase 0 of nine is complete and pushed.** Phase 1 is in progress: blocks A,
-B, C and D of seven are done, blocks E to G are not started.
+B, C, D and E of seven are done; F is half done and G is not started.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
@@ -15,7 +15,7 @@ ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`**, blocks A to D **uncommitted** |
+| Working branch | **`phase-1-core-language`**, pushed through block D at `d3138ab`; E and half of F **uncommitted** |
 | Tests | `cargo test --workspace` → **150 passed, 0 failed** |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
 
@@ -46,7 +46,7 @@ a work queue.
 
 ## Phase 1 — where it stands
 
-Seven blocks, dependency-ordered. A, B, C and D are done.
+Seven blocks, dependency-ordered. A to E are done; F is half done.
 
 | | Block | State |
 |---|---|---|
@@ -54,8 +54,8 @@ Seven blocks, dependency-ordered. A, B, C and D are done.
 | **B** | tuples, fixed arrays, enums, `match` with exhaustiveness | **done** |
 | **C** | `for` over ranges, loop `else`, labelled break, `with`, `defer` | **done** |
 | **D** | interfaces, operator interfaces, method resolution, `extend`, visibility | **done** |
-| E | `String`/`Array`, f-strings, `Option`/`Result`, `?` | not started |
-| F | modules across files, `const`, `static` | not started |
+| **E** | `String`/`Array`, f-strings, `Option`/`Result`, `?` | **done** |
+| **F** | modules across files, `const`, `static` | **half — `const` and `static` done, modules not started** |
 | G | formatter (`[FMT-1]`) | not started |
 
 ### Block A, in detail
@@ -352,19 +352,82 @@ Part IV §2 gives `return` the type `!`, siding with the appendix. The owner
 ruled the grammar wins (2026-09-08); the appendix is corrected and the entry
 records what would change if that is ever revisited.
 
-## Next: Phase 1 block E
+### Block E: `Option`, `Result`, `?`, `Array`, `String`, f-strings
 
-`String`/`Array`, f-strings, `Option`/`Result`, `?`. `Option` and `Result` are
-ordinary payload enums now that payload enums work, and `?` lowers to a `match`
-per `[ERR-2]`. `String` and `Array` need allocation, which `ember_rt` already
-provides.
+- **`Option[T]` and `Result[T, E]` are synthesised payload enums**, one per set
+  of type arguments, named `Option_i32` and so on. They reuse all of block B —
+  the `{tag, union}` layout, `match`, and exhaustiveness — so nothing new was
+  needed to pattern-match them. `Some`/`None`/`Ok`/`Err` take the expected type
+  when there is one; a bare `None` with no expectation is `E2060`, because
+  nothing says which `Option` it is.
+- **`?` becomes a two-arm `match`**, one arm yielding the payload and one
+  returning the failure — which is why HIR lets a `match`'s arms mix a value
+  and a block even though `[GRM-10]` forbids that in source.
+- `[ERR-2]`'s `F.from(e)` conversion is **not** applied: the failure types must
+  match exactly, because `From` needs generics. The diagnostic says so.
+- **`Array[T]` and `String` are one runtime buffer** — pointer, length,
+  capacity — with the element size passed at each call. That is what lets a
+  single `ember_vec_push` serve every element type without generics, which is
+  exactly what Part XX.1 asks for ("a compiler-known type temporarily"). `String`
+  is `Vec { elem: u8 }`, so it prints as `String` and shares every growth path.
+- **`push` needed a spill.** `ember_vec_push` copies through a pointer, and
+  `&10` is not C, so the pushed value is lowered into a local first.
+- Indexing an `Array[T]` is bounds-checked against the runtime length, using
+  the same `AssertKind::Bounds` a fixed array uses — its `len` operand was
+  already an operand rather than a constant, so nothing had to change.
+- **f-strings build a `String`**, appending each piece through
+  `ember_fmt_*`, chosen from the value's type exactly as `println`'s printer
+  is. A format spec (`{x:.2}`) is reported as unsupported rather than ignored.
+- `for i in 0..xs.len()` now works: either end of a range may be an untyped
+  literal, and the other end says what it should be.
 
-Then F (modules across files, `const`, `static`) and G (the formatter).
+**Not done:** small-string optimisation (`String` is always heap); `Array`'s
+`pop`, `insert`, `remove`, iteration by `for x in xs` (that needs `Iterator`);
+freeing — **nothing calls `ember_vec_free`, so every `Array` and `String`
+leaks.** Drop elaboration is Phase 2's, and this is the first type that needs
+it; `ember_vec_free` exists and is ready for it.
 
-Two things from earlier blocks land naturally in E: `[T; N]` coercing to
-`Span[T]`, and `for` over anything other than a range — both need the
-standard-library types this block introduces, plus the `Iterator` interface
-that block D's machinery can now express.
+### Block F, half: `const` and `static`
+
+`const NAME: T = literal` and `static NAME: T = literal` both become a value
+substituted where the name is used. `[STA-2]` says there are no runtime
+initialisers, so a non-literal is `E2130` — which is what Part XX.1's
+"comptime-initialised only via literal for now" asks for. A `const` may be an
+array length, which closes the gap `E2131` left in block B.
+
+`static mut` is rejected: `[STA-1]` requires `unsafe` for any access to one.
+With no mutation and no runtime initialiser, a `static` and a `const` behave
+identically here; the stable address `static` promises is not observable until
+references to globals exist.
+
+**Not done: modules across files.** The driver compiles one file and the
+checker holds one set of name tables. Supporting `import` means package
+discovery through `ember.toml`, mapping a module path to a file (`[MOD-1]`),
+per-module visible-name scopes, and package-wide resolution with cycles
+allowed (`[MOD-4]`). That is an architectural change to the driver and the
+checker, not a feature to add to them.
+
+## Next: Phase 1 block F's modules, then block G
+
+**Modules across files** is what is left of F, and it is the last real
+language feature in Phase 1. It needs, in order: reading `ember.toml` to find
+the package root; `[MOD-1]`'s module path to file path mapping; parsing every
+reachable module; a visible-name scope per module rather than the single set
+the checker holds now; and `[MOD-3]`'s import forms binding into those scopes.
+`[MOD-4]` allows cycles inside a package, so resolution has to be package-wide
+rather than one module at a time.
+
+**Block G, the formatter**, is independent of all of it and can be done at any
+point. Note before starting: `[FMT-1]` requires comments and blank-line groups
+to be preserved, and **comments are not in the AST** — the lexer discards them
+except for doc comments. A formatter therefore needs either a token stream kept
+alongside the tree or a concrete syntax tree; deciding which is the first piece
+of work, not an afterthought. `fmt(fmt(x)) == fmt(x)` and `parse(fmt(x)) ≡
+parse(x)` are to be tested over the whole corpus.
+
+Also still open, from earlier blocks: `[T; N]` coercing to `Span[T]`, and `for`
+over anything other than a range — both need `Iterator`, which block D's
+interface machinery can now express but nothing has written.
 
 ## Environment
 

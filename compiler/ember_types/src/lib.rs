@@ -74,6 +74,10 @@ pub enum TyKind {
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
     Array { elem: Ty, len: u64 },
+    /// `Array[T]` — a growable, heap-allocated sequence. Part XX.1 makes this
+    /// a compiler-known type until Phase 2's generics let the standard library
+    /// write it in Ember. `String` is this with `u8` elements.
+    Vec { elem: Ty },
     Fn { params: Vec<Ty>, ret: Ty },
     /// An unsolved inference variable.
     Infer(InferId),
@@ -374,6 +378,12 @@ impl TypeTable {
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
             TyKind::Enum(id) => self.enum_layout(*id),
+            // A pointer and two lengths, whatever the element type.
+            TyKind::Vec { .. } => Layout {
+                size: self.pointer_size * 3,
+                align: self.pointer_size,
+                field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
+            },
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => Layout::ZERO,
         }
     }
@@ -457,6 +467,9 @@ impl TypeTable {
                             .iter()
                             .all(|v| v.fields.iter().all(|f| self.is_copy(f.ty))))
             }
+            // An `Array` owns its buffer, so copying it would share one
+            // allocation between two owners.
+            TyKind::Vec { .. } => false,
             TyKind::Infer(_) => false,
         }
     }
@@ -600,6 +613,11 @@ impl TypeTable {
             TyKind::Str => "str".into(),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
+            // `String` prints as itself, not as `Array[u8]`.
+            TyKind::Vec { elem } if matches!(self.kind(*elem), TyKind::Uint(UintTy::U8)) => {
+                "String".into()
+            }
+            TyKind::Vec { elem } => format!("Array[{}]", self.display(*elem)),
             TyKind::Tuple(items) => {
                 let inner: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
                 format!("({})", inner.join(", "))

@@ -34,8 +34,21 @@ pub fn emit(
     has_main: bool,
 ) -> Output {
     let (order, structural) = plan_types(types);
-    let mut emitter =
-        Emitter { types, map, out: String::new(), line_directives: true, order, structural };
+    let usize_ty = types
+        .all()
+        .find(|(_, k)| matches!(k, TyKind::Uint(UintTy::Usize)))
+        .map(|(ty, _)| ty)
+        .or_else(|| types.all().next().map(|(ty, _)| ty))
+        .expect("the interner always holds the common types");
+    let mut emitter = Emitter {
+        types,
+        map,
+        out: String::new(),
+        line_directives: true,
+        order,
+        structural,
+        usize_ty,
+    };
     emitter.emit_module(bodies, module_name, has_main);
     Output { c_source: emitter.out }
 }
@@ -50,6 +63,9 @@ struct Emitter<'a> {
     order: Vec<TypeNode>,
     /// The generated C name of each tuple and fixed-array type.
     structural: BTreeMap<Ty, String>,
+    /// `usize`, for the lengths inside an `Array[T]`. The emitter has no
+    /// `CommonTypes`, so it finds the one the interner already holds.
+    usize_ty: Ty,
 }
 
 /// Where a projection walk has reached: a type, plus the variant a
@@ -210,6 +226,17 @@ impl Emitter<'_> {
                 }
                 _ => Vec::new(),
             }),
+        }
+    }
+
+    /// The element type of an `Array[T]`, given the receiver's type — which
+    /// may be a `ref mut Array[T]`, because `push` takes the receiver by
+    /// reference.
+    fn element_of(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Vec { elem } => *elem,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.element_of(*inner),
+            _ => ty,
         }
     }
 
@@ -487,10 +514,48 @@ impl Emitter<'_> {
         match func {
             FuncRef::Direct { symbol } => format!("{symbol}({})", rendered.join(", ")),
             FuncRef::Builtin { which, arg_ty } => {
+                // `Array` and `String` share one runtime buffer; the element
+                // size is passed at each call, which is how a single
+                // implementation serves every element type.
+                match which {
+                    Builtin::ArrayNew | Builtin::StringNew => {
+                        return "ember_vec_empty()".to_string();
+                    }
+                    Builtin::ArrayPush => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!(
+                            "ember_vec_push({}, sizeof({}), &{})",
+                            rendered[0],
+                            self.c_type(elem),
+                            rendered[1]
+                        );
+                    }
+                    Builtin::StringPush => {
+                        return format!(
+                            "ember_vec_extend({}, {}.ptr, {}.len)",
+                            rendered[0], rendered[1], rendered[1]
+                        );
+                    }
+                    Builtin::ArrayLen | Builtin::StringLen => {
+                        return format!("({}).len", rendered[0]);
+                    }
+                    Builtin::StringAsStr => {
+                        return format!("ember_vec_as_str(&{})", rendered[0]);
+                    }
+                    Builtin::Format => {
+                        return format!(
+                            "ember_fmt_{}({}, {})",
+                            self.format_suffix(*arg_ty),
+                            rendered[0],
+                            rendered[1]
+                        );
+                    }
+                    Builtin::Println | Builtin::Print => {}
+                }
                 let suffix = self.builtin_suffix(*arg_ty);
                 let name = match which {
                     Builtin::Println => "ember_println",
-                    Builtin::Print => "ember_print",
+                    _ => "ember_print",
                 };
                 format!("{name}_{suffix}({})", rendered.join(", "))
             }
@@ -499,6 +564,15 @@ impl Emitter<'_> {
 
     /// Which `ember_rt` printer a builtin call resolves to. Phase 0 has no
     /// `Display` interface, so the choice is made here from the argument type.
+    /// Which `ember_fmt_*` an f-string piece appends through. A `String`
+    /// piece is formatted as the `str` it borrows.
+    fn format_suffix(&self, ty: Ty) -> &'static str {
+        match self.types.kind(ty) {
+            TyKind::Vec { .. } => "str",
+            _ => self.builtin_suffix(ty),
+        }
+    }
+
     fn builtin_suffix(&self, ty: ember_types::Ty) -> &'static str {
         match self.types.kind(ty) {
             TyKind::Bool => "bool",
@@ -533,14 +607,34 @@ impl Emitter<'_> {
                         let def = self.types.struct_def(*id);
                         out.push_str(&format!(".{}", def.fields[*index].name));
                     }
+                    // An `Array[T]` is the runtime's buffer: pointer, length,
+                    // capacity, in that order.
+                    (_, TyKind::Vec { .. }) => {
+                        out.push_str(match index {
+                            0 => ".ptr",
+                            1 => ".len",
+                            _ => ".cap",
+                        });
+                    }
                     // A tuple's elements are the generated struct's `_0`,
                     // `_1`, … in order.
                     _ => out.push_str(&format!("._{index}")),
                 },
-                // An array is a generated struct wrapping one C array, so the
-                // subscript goes through that member.
-                Projection::Index(local) => out.push_str(&format!("._0[_{}]", local.0)),
-                Projection::ConstIndex(i) => out.push_str(&format!("._0[{i}]")),
+                // A fixed array is a generated struct wrapping one C array, so
+                // the subscript goes through that member. An `Array[T]` keeps
+                // its elements behind a `void*`, so the subscript casts first.
+                Projection::Index(local) => match self.types.kind(at.ty) {
+                    TyKind::Vec { elem } => {
+                        out = format!("(({}*){out}.ptr)[_{}]", self.c_type(*elem), local.0);
+                    }
+                    _ => out.push_str(&format!("._0[_{}]", local.0)),
+                },
+                Projection::ConstIndex(i) => match self.types.kind(at.ty) {
+                    TyKind::Vec { elem } => {
+                        out = format!("(({}*){out}.ptr)[{i}]", self.c_type(*elem));
+                    }
+                    _ => out.push_str(&format!("._0[{i}]")),
+                },
                 Projection::Deref => out = format!("(*{out})"),
                 // A downcast writes nothing on its own; the `Field` after it
                 // names the variant and the member together.
@@ -581,8 +675,14 @@ impl Emitter<'_> {
             (Projection::Field(index), TyKind::Tuple(items)) => {
                 plain(items.get(*index).copied().unwrap_or(at.ty))
             }
-            (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => {
-                plain(*elem)
+            (
+                Projection::Index(_) | Projection::ConstIndex(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem },
+            ) => plain(*elem),
+            // `.len` and `.cap` on the runtime buffer are `usize`; `.ptr` is
+            // never projected through, so it keeps the buffer's own type.
+            (Projection::Field(index), TyKind::Vec { .. }) => {
+                if *index == 0 { at } else { plain(self.usize_ty) }
             }
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
                 plain(*inner)
@@ -764,6 +864,9 @@ impl Emitter<'_> {
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }
             }
             TyKind::Array { .. } | TyKind::Tuple(_) => self.structural_name(ty),
+            // Every `Array[T]` and `String` is the same buffer; the element
+            // size travels with each runtime call instead of with the type.
+            TyKind::Vec { .. } => "ember_vec".into(),
             TyKind::Fn { .. } => "void*".into(),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit => "int32_t".into(),
         }

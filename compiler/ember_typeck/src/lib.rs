@@ -25,7 +25,7 @@ use ember_hir::{
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
-    CommonTypes, EnumDef, EnumId, FieldDef, OverflowPolicy, StructDef, StructId, Ty, TyKind,
+    CommonTypes, EnumDef, EnumId, FieldDef, OverflowPolicy, StructDef, StructId, Ty, TyKind, UintTy,
     TypeTable, VariantDef, int_max,
 };
 
@@ -85,6 +85,8 @@ struct Checker<'a> {
     /// Which interfaces each type implements, for `[TYP-20]` coherence and to
     /// report a missing method against the right interface.
     implemented: Vec<(Ty, Symbol, Span)>,
+    /// `const` and `static` values, substituted wherever their name is used.
+    constants: HashMap<Symbol, Expr>,
 
     // Per-function state.
     locals: Vec<LocalDecl>,
@@ -118,6 +120,7 @@ impl<'a> Checker<'a> {
             methods: HashMap::new(),
             interfaces: HashMap::new(),
             implemented: Vec::new(),
+            constants: HashMap::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             or_bindings: None,
@@ -247,6 +250,77 @@ impl<'a> Checker<'a> {
                     def.variants = variants;
                     def.has_drop = has_drop;
                     self.check_enum_copy(id, &item.attrs);
+                }
+                // `const NAME: T = literal` — a name for a value, substituted
+                // wherever it is used. Part XX.1 limits v1 to a literal until
+                // comptime evaluation exists.
+                ast::ItemKind::Const(decl) => {
+                    let declared = decl.ty.as_ref().map(|t| self.resolve_type(t));
+                    let value = match declared {
+                        Some(ty) => self.check_expr(&decl.value, ty),
+                        None => self.synth_committed(&decl.value),
+                    };
+                    if !matches!(
+                        value.kind,
+                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
+                    ) && value.ty != self.common.error
+                    {
+                        self.error(
+                            codes::E2130,
+                            decl.value.span,
+                            "a `const` must be a literal in this phase of the compiler",
+                        );
+                        continue;
+                    }
+                    if self.constants.contains_key(&decl.name.name) {
+                        self.error(
+                            codes::E1030,
+                            decl.name.span,
+                            format!("`{}` is already declared in this module", decl.name.name),
+                        );
+                        continue;
+                    }
+                    self.constants.insert(decl.name.name, value);
+                }
+                // `static NAME: T = literal` — one instance with a stable
+                // address. `[STA-2]` — there are no runtime initialisers, so
+                // the value has to be known here.
+                ast::ItemKind::Static(decl) => {
+                    let ty = self.resolve_type(&decl.ty);
+                    let value = self.check_expr(&decl.value, ty);
+                    if decl.is_mut {
+                        self.error(
+                            codes::E1010,
+                            decl.name.span,
+                            "`static mut` needs `unsafe`, which is not in this phase",
+                        );
+                        continue;
+                    }
+                    if !matches!(
+                        value.kind,
+                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
+                    ) && value.ty != self.common.error
+                    {
+                        self.error(
+                            codes::E2130,
+                            decl.value.span,
+                            "a `static` initialiser must be comptime-evaluable, so a literal here",
+                        );
+                        continue;
+                    }
+                    if self.constants.contains_key(&decl.name.name) {
+                        self.error(
+                            codes::E1030,
+                            decl.name.span,
+                            format!("`{}` is already declared in this module", decl.name.name),
+                        );
+                        continue;
+                    }
+                    // With no runtime initialiser and no mutation, a `static`
+                    // and a `const` behave identically; the difference is the
+                    // stable address, which nothing can observe until
+                    // references to globals exist.
+                    self.constants.insert(decl.name.name, value);
                 }
                 ast::ItemKind::Fn(decl) => {
                     let name = decl.name.name;
@@ -723,10 +797,71 @@ impl<'a> Checker<'a> {
                     None => self.common.error,
                 }
             }
+            // `[ERR-1]` — `Option[T]` and `Result[T, E]` are ordinary payload
+            // enums, synthesised on demand. Part XX.1 makes them compiler-known
+            // until Phase 2 gives the standard library generics of its own.
+            ast::TypeKind::Path { segments, args }
+                if segments.len() == 1 && !args.is_empty() =>
+            {
+                let name = segments[0].name;
+                // `Array[T]` — a compiler-known growable sequence (Part XX.1).
+                if name.is("Array") {
+                    if args.len() != 1 {
+                        self.error(codes::E2020, ty.span, "`Array` takes one type argument");
+                        return self.common.error;
+                    }
+                    let ast::GenericArg::Type(t) = &args[0] else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    let elem = self.resolve_type(t);
+                    return self.types.intern(TyKind::Vec { elem });
+                }
+                let arity = if name.is("Option") {
+                    1
+                } else if name.is("Result") {
+                    2
+                } else {
+                    self.error(
+                        codes::E1010,
+                        ty.span,
+                        format!("`{name}` does not take type arguments in this phase"),
+                    );
+                    return self.common.error;
+                };
+                if args.len() != arity {
+                    self.error(
+                        codes::E2020,
+                        ty.span,
+                        format!("`{name}` takes {arity} type arguments, found {}", args.len()),
+                    );
+                    return self.common.error;
+                }
+                let mut resolved = Vec::new();
+                for arg in args {
+                    let ast::GenericArg::Type(t) = arg else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    resolved.push(self.resolve_type(t));
+                }
+                if name.is("Option") {
+                    self.option_of(resolved[0])
+                } else {
+                    self.result_of(resolved[0], resolved[1])
+                }
+            }
+
             ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 => {
                 let name = segments[0].name;
                 if let Some(ty) = self.scalar_named(name.as_str()) {
                     return ty;
+                }
+                // `String` is a growable buffer of UTF-8 bytes: `Array[u8]`
+                // under a different name.
+                if name.is("String") {
+                    let u8_ty = self.common.u8;
+                    return self.types.intern(TyKind::Vec { elem: u8_ty });
                 }
                 if let Some(&ty) = self.named_types.get(&name) {
                     return ty;
@@ -764,12 +899,321 @@ impl<'a> Checker<'a> {
                 return Some(len);
             }
         }
+        // A `const` is a value known at compile time, so it may be a length.
+        if let ast::ExprKind::Path { segments } = &expr.kind {
+            if segments.len() == 1 {
+                if let Some(ExprKind::Int(value)) =
+                    self.constants.get(&segments[0].name).map(|c| &c.kind)
+                {
+                    if let Ok(len) = u64::try_from(*value) {
+                        return Some(len);
+                    }
+                }
+            }
+        }
         self.error(
             codes::E2131,
             expr.span,
-            "an array length must be an integer literal in this phase of the compiler",
+            "an array length must be an integer literal or a `const` in this phase",
         );
         None
+    }
+
+    /// Whether the runtime has a formatter for this type. `Display` replaces
+    /// this once interfaces carry generics.
+    fn is_formattable(&self, ty: Ty) -> bool {
+        matches!(
+            self.types.kind(ty),
+            TyKind::Bool
+                | TyKind::Char
+                | TyKind::Int(_)
+                | TyKind::Uint(_)
+                | TyKind::Float(_)
+                | TyKind::Str
+        ) || matches!(self.types.kind(ty), TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)))
+    }
+
+    /// Whether a type is one of the synthesised `Option`s.
+    fn is_option(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Enum(id) => self.types.enum_def(*id).name.as_str().starts_with("Option_"),
+            _ => false,
+        }
+    }
+
+    fn is_result(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Enum(id) => self.types.enum_def(*id).name.as_str().starts_with("Result_"),
+            _ => false,
+        }
+    }
+
+    /// `[ERR-2]` — `e?` yields the success payload, or returns the failure
+    /// from the enclosing function. It becomes a two-arm `match`: one arm
+    /// gives the value, the other returns.
+    fn synth_try(&mut self, inner: &ast::Expr, span: Span) -> Expr {
+        let value = self.synth_committed(inner);
+        let ret_ty = self.ret_ty;
+        let is_option = self.is_option(value.ty);
+        let is_result = self.is_result(value.ty);
+
+        if !is_option && !is_result {
+            if value.ty != self.common.error {
+                let shown = self.types.display(value.ty);
+                self.error(codes::E2180, span, format!("`?` needs an `Option` or a `Result`, not `{shown}`"));
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        // `[ERR-2]` — the enclosing function has to be able to carry the
+        // failure onwards.
+        if (is_option && !self.is_option(ret_ty)) || (is_result && !self.is_result(ret_ty)) {
+            let shown = self.types.display(value.ty);
+            let returning = self.types.display(ret_ty);
+            self.error(
+                codes::E2180,
+                span,
+                format!("`?` on a `{shown}` needs the function to return one too, not `{returning}`"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        let TyKind::Enum(id) = *self.types.kind(value.ty) else { unreachable!() };
+        // `Option` is `None, Some`; `Result` is `Ok, Err`. The success variant
+        // is the one carrying the payload in both.
+        let (success, failure) = if is_option { (1usize, 0usize) } else { (0usize, 1usize) };
+        let payload_ty = self.types.enum_def(id).variants[success].fields[0].ty;
+
+        // The success arm binds the payload and yields it.
+        let bound = self.declare(None, payload_ty, span);
+        let ok_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: value.ty,
+                kind: hir::PatternKind::Variant {
+                    enum_id: id,
+                    variant: success,
+                    fields: vec![hir::Pattern {
+                        ty: payload_ty,
+                        kind: hir::PatternKind::Bind { local: bound, sub: None },
+                        span,
+                    }],
+                },
+                span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Expr(Expr {
+                ty: payload_ty,
+                kind: ExprKind::Local(bound),
+                span,
+            }),
+            span,
+        };
+
+        // The failure arm rebuilds the failure in the return type and leaves.
+        let TyKind::Enum(ret_id) = *self.types.kind(ret_ty) else { unreachable!() };
+        let failure_fields = &self.types.enum_def(id).variants[failure].fields;
+        let carried: Vec<Ty> = failure_fields.iter().map(|f| f.ty).collect();
+        let ret_failure = &self.types.enum_def(ret_id).variants[failure].fields;
+        let ret_carried: Vec<Ty> = ret_failure.iter().map(|f| f.ty).collect();
+        if carried != ret_carried {
+            let from = self.types.display(value.ty);
+            let to = self.types.display(ret_ty);
+            self.error(
+                codes::E2180,
+                span,
+                format!("`?` cannot carry a `{from}` failure out of a function returning `{to}`"),
+            );
+            self.error_note_from_conversion(span);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mut binds = Vec::new();
+        let mut reads = Vec::new();
+        for &ty in &carried {
+            let local = self.declare(None, ty, span);
+            binds.push(hir::Pattern {
+                ty,
+                kind: hir::PatternKind::Bind { local, sub: None },
+                span,
+            });
+            reads.push(Expr { ty, kind: ExprKind::Local(local), span });
+        }
+        let err_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: value.ty,
+                kind: hir::PatternKind::Variant { enum_id: id, variant: failure, fields: binds },
+                span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Block(Block {
+                stmts: vec![Stmt::Return(Some(Expr {
+                    ty: ret_ty,
+                    kind: ExprKind::EnumLit {
+                        enum_id: ret_id,
+                        variant: failure,
+                        fields: reads,
+                    },
+                    span,
+                }))],
+                span,
+            }),
+            span,
+        };
+
+        Expr {
+            ty: payload_ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(value),
+                arms: vec![ok_arm, err_arm],
+            },
+            span,
+        }
+    }
+
+    /// `[ERR-2]` says the failure is converted with `From`. Without generics
+    /// there is no `From`, so the types have to match exactly and the
+    /// diagnostic says so.
+    fn error_note_from_conversion(&mut self, span: Span) {
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E2180,
+                span,
+                "the failure types must match exactly in this phase of the compiler",
+            )
+            .note("`[ERR-2]`'s `F.from(e)` conversion needs `From`, which needs generics"),
+        );
+    }
+
+    /// `Some(x)`, `Ok(x)`, `Err(e)`. `None` has no payload and is handled
+    /// where a bare path is checked.
+    fn synth_wrapper(
+        &mut self,
+        name: Symbol,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Option<Expr> {
+        let which = if name.is("Some") {
+            0
+        } else if name.is("Ok") {
+            1
+        } else if name.is("Err") {
+            2
+        } else {
+            return None;
+        };
+        if args.len() != 1 {
+            self.error(codes::E2020, span, format!("`{name}` takes one value"));
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+
+        // An expected `Option`/`Result` fixes both parameters, which is what
+        // makes `Err(e)` work without naming the success type.
+        let payload_ty = expected.and_then(|e| match self.types.kind(e) {
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(*id);
+                let variant = match which {
+                    0 => "Some",
+                    1 => "Ok",
+                    _ => "Err",
+                };
+                def.variant(Symbol::intern(variant)).and_then(|(_, v)| v.fields.first().map(|f| f.ty))
+            }
+            _ => None,
+        });
+        let value = match payload_ty {
+            Some(ty) => self.check_expr(&args[0].value, ty),
+            None => self.synth_committed(&args[0].value),
+        };
+
+        let ty = match (expected, which) {
+            (Some(e), _) if matches!(self.types.kind(e), TyKind::Enum(_)) => e,
+            (_, 0) => self.option_of(value.ty),
+            // Without an expectation the other parameter is unknown; the void
+            // placeholder keeps the error local instead of poisoning the call.
+            (_, 1) => {
+                let void = self.common.void;
+                self.result_of(value.ty, void)
+            }
+            _ => {
+                let void = self.common.void;
+                self.result_of(void, value.ty)
+            }
+        };
+        let TyKind::Enum(id) = *self.types.kind(ty) else {
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        };
+        let variant_name = match which {
+            0 => "Some",
+            1 => "Ok",
+            _ => "Err",
+        };
+        let Some((index, _)) = self.types.enum_def(id).variant(Symbol::intern(variant_name)) else {
+            let shown = self.types.display(ty);
+            self.error(codes::E2020, span, format!("`{shown}` has no `{variant_name}`"));
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        };
+        Some(Expr {
+            ty,
+            kind: ExprKind::EnumLit { enum_id: id, variant: index, fields: vec![value] },
+            span,
+        })
+    }
+
+    /// `Option[T]`, as a two-variant enum built once per `T`.
+    fn option_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.display(inner))));
+        self.builtin_enum(name, &[(Symbol::intern("None"), Vec::new()), (Symbol::intern("Some"), vec![inner])])
+    }
+
+    /// `Result[T, E]`, likewise.
+    fn result_of(&mut self, ok: Ty, err: Ty) -> Ty {
+        let name = Symbol::intern(&format!(
+            "Result_{}_{}",
+            type_stem(&self.types.display(ok)),
+            type_stem(&self.types.display(err))
+        ));
+        self.builtin_enum(name, &[(Symbol::intern("Ok"), vec![ok]), (Symbol::intern("Err"), vec![err])])
+    }
+
+    /// Build a compiler-known enum, or return the one already built. The name
+    /// carries the type arguments, so `Option[i32]` and `Option[f32]` are
+    /// different types and are only built once each.
+    fn builtin_enum(&mut self, name: Symbol, variants: &[(Symbol, Vec<Ty>)]) -> Ty {
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let repr = self.common.u8;
+        let variants: Vec<VariantDef> = variants
+            .iter()
+            .enumerate()
+            .map(|(index, (variant, payload))| VariantDef {
+                name: *variant,
+                fields: payload
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &ty)| FieldDef {
+                        name: Symbol::intern(&format!("_{i}")),
+                        ty,
+                        span: Span::DUMMY,
+                        has_default: false,
+                    })
+                    .collect(),
+                discriminant: index as i128,
+                span: Span::DUMMY,
+            })
+            .collect();
+        let id = self.types.add_enum(EnumDef {
+            name,
+            variants,
+            span: Span::DUMMY,
+            repr,
+            repr_is_explicit: false,
+            derives_copy: true,
+            has_drop: false,
+        });
+        let ty = self.types.intern(TyKind::Enum(id));
+        self.enum_ids.insert(name, id);
+        self.named_types.insert(name, ty);
+        ty
     }
 
     /// The element type an expected array type asks for, if the expectation
@@ -1677,8 +2121,32 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        let start = self.synth_committed(lo);
-        let end = self.check_expr(hi, start.ty);
+        // Either end may be an untyped literal, and it is the other end that
+        // says what it should be: `for i in 0..xs.len()` counts in `usize`.
+        let mut start = self.synth(lo);
+        let mut end = self.synth(hi);
+        match (
+            self.types.is_untyped_literal(start.ty),
+            self.types.is_untyped_literal(end.ty),
+        ) {
+            (true, false) => {
+                let target = end.ty;
+                start = self.coerce(start, target);
+            }
+            (false, true) => {
+                let target = start.ty;
+                end = self.coerce(end, target);
+            }
+            (true, true) => {
+                start = self.commit(start);
+                let target = start.ty;
+                end = self.coerce(end, target);
+            }
+            (false, false) => {
+                let target = start.ty;
+                end = self.coerce(end, target);
+            }
+        }
         if !self.types.is_integral(start.ty) && start.ty != self.common.error {
             let shown = self.types.display(start.ty);
             self.error(codes::E2020, iter.span, format!("cannot count over `{shown}`"));
@@ -1855,6 +2323,39 @@ impl<'a> Checker<'a> {
                 if let Some(local) = self.lookup(name) {
                     return self.read_local(local, span);
                 }
+                // A `const` or `static` is substituted where its name appears.
+                if let Some(value) = self.constants.get(&name) {
+                    let kind = match &value.kind {
+                        ExprKind::Int(v) => ExprKind::Int(*v),
+                        ExprKind::Float(v) => ExprKind::Float(*v),
+                        ExprKind::Bool(v) => ExprKind::Bool(*v),
+                        ExprKind::Str(s) => ExprKind::Str(s.clone()),
+                        _ => ExprKind::Error,
+                    };
+                    return Expr { ty: value.ty, kind, span };
+                }
+                // `None` carries nothing, so only the expected type can say
+                // which `Option` it is.
+                if name.is("None") {
+                    return match expected.filter(|e| self.is_option(*e)) {
+                        Some(ty) => {
+                            let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!() };
+                            Expr {
+                                ty,
+                                kind: ExprKind::EnumLit { enum_id: id, variant: 0, fields: Vec::new() },
+                                span,
+                            }
+                        }
+                        None => {
+                            self.error(
+                                codes::E2060,
+                                span,
+                                "cannot tell which `Option` this `None` is; annotate the type",
+                            );
+                            Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                        }
+                    };
+                }
                 self.error(codes::E1010, span, format!("cannot find `{name}` in this scope"));
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
@@ -2003,7 +2504,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 let base = self.synth(base);
                 let elem = match self.types.kind(base.ty) {
-                    TyKind::Array { elem, .. } => Some(*elem),
+                    TyKind::Array { elem, .. } | TyKind::Vec { elem } => Some(*elem),
                     _ => None,
                 };
                 let Some(elem) = elem else {
@@ -2034,6 +2535,45 @@ impl<'a> Checker<'a> {
                 self.check_match(scrutinee, arms, expected, span)
             }
 
+            // `[ERR-2]` — `e?` is the payload, or an early return of the
+            // failure.
+            ast::ExprKind::Try(inner) => self.synth_try(inner, span),
+
+            // `[LEX-19]` — an f-string builds a `String`.
+            ast::ExprKind::FString(parts) => {
+                let mut checked = Vec::new();
+                for part in parts {
+                    match part {
+                        ast::FStringPart::Text(text) => {
+                            checked.push(hir::FStringPart::Text(text.clone()))
+                        }
+                        ast::FStringPart::Expr { expr, format_spec } => {
+                            if format_spec.is_some() {
+                                self.error(
+                                    codes::E1010,
+                                    expr.span,
+                                    "a format spec is not supported yet in this phase",
+                                );
+                            }
+                            let value = self.synth_committed(expr);
+                            if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                                let shown = self.types.display(value.ty);
+                                self.error(
+                                    codes::E1010,
+                                    expr.span,
+                                    format!("`{shown}` cannot be formatted yet; `Display` needs generics"),
+                                );
+                            }
+                            checked.push(hir::FStringPart::Value(value));
+                        }
+                    }
+                }
+                let u8_ty = self.common.u8;
+                let ty = self.types.intern(TyKind::Vec { elem: u8_ty });
+                let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: ty });
+                Expr { ty, kind: ExprKind::FString { parts: checked, buffer_ref }, span }
+            }
+
             // `Shape.Circle(1.0)` parses as a method call on `Shape`, because
             // the parser cannot know `Shape` is a type. If it names an enum,
             // this is a variant constructor (`[ENM-1]`).
@@ -2049,7 +2589,7 @@ impl<'a> Checker<'a> {
                 self.synth_method_call(recv, *name, args, span)
             }
 
-            ast::ExprKind::Call { callee, args } => self.synth_call(callee, args, span),
+            ast::ExprKind::Call { callee, args } => self.synth_call(callee, args, expected, span),
 
             ast::ExprKind::Binary { op, lhs, rhs } => self.synth_binary(*op, lhs, rhs, span),
 
@@ -2188,7 +2728,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn synth_call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span) -> Expr {
+    fn synth_call(&mut self, callee: &ast::Expr, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> Expr {
         // `Shape.Circle(1.0)` — a variant constructor (`[ENM-1]`), which
         // parses as a call on a field access.
         if let ast::ExprKind::Field { base, name } = &callee.kind {
@@ -2209,6 +2749,40 @@ impl<'a> Checker<'a> {
         // `Vec3(1, 2, 3)` — the synthesised memberwise constructor (`[STR-1]`).
         if let Some(&id) = self.struct_ids.get(&name) {
             return self.synth_struct_literal(id, name, args, span);
+        }
+
+        // `[ERR-1]` — `Some(x)`, `Ok(x)` and `Err(e)` build the compiler-known
+        // enums. The expected type says which one when it is known; otherwise
+        // the payload's own type decides and the other parameter stays open,
+        // which needs an annotation.
+        if let Some(built) = self.synth_wrapper(name, args, expected, span) {
+            return built;
+        }
+
+        // `Array[T]()` and `String()` — the compiler-known constructors.
+        if name.is("Array") || name.is("String") {
+            if !args.is_empty() {
+                self.error(codes::E2020, span, format!("`{name}()` takes no arguments"));
+            }
+            let ty = if name.is("String") {
+                let u8_ty = self.common.u8;
+                self.types.intern(TyKind::Vec { elem: u8_ty })
+            } else {
+                match expected.filter(|e| matches!(self.types.kind(*e), TyKind::Vec { .. })) {
+                    Some(ty) => ty,
+                    None => {
+                        self.error(
+                            codes::E2060,
+                            span,
+                            "cannot tell what this `Array` holds; annotate the variable",
+                        );
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
+                }
+            };
+            let which =
+                if name.is("String") { Builtin::StringNew } else { Builtin::ArrayNew };
+            return Expr { ty, kind: ExprKind::Builtin { which, args: Vec::new() }, span };
         }
 
         if let Some(builtin) = Builtin::from_name(name.as_str()) {
@@ -2362,6 +2936,11 @@ impl<'a> Checker<'a> {
         if receiver.ty == self.common.error {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        // `Array` and `String` carry their methods in the compiler until
+        // Phase 2's generics let the standard library declare them.
+        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
+            return self.synth_vec_method(receiver, elem, name, args, span);
+        }
         let Some(entry) = self.methods.get(&(receiver.ty, name.name)) else {
             let shown = self.types.display(receiver.ty);
             self.error(
@@ -2419,6 +2998,64 @@ impl<'a> Checker<'a> {
             checked.push(self.check_argument(&arg.value, param_ty, mode));
         }
         Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+    }
+
+    /// The compiler-known methods on `Array[T]` and `String`.
+    fn synth_vec_method(
+        &mut self,
+        receiver: Expr,
+        elem: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let is_string = matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8));
+        let usize_ty = self.common.usize;
+        let str_ty = self.common.str_;
+
+        let (which, takes, ret) = if name.name.is("len") {
+            let which = if is_string { Builtin::StringLen } else { Builtin::ArrayLen };
+            (which, None, usize_ty)
+        } else if name.name.is("push") && !is_string {
+            (Builtin::ArrayPush, Some(elem), self.common.void)
+        } else if name.name.is("push_str") && is_string {
+            (Builtin::StringPush, Some(str_ty), self.common.void)
+        } else if name.name.is("as_str") && is_string {
+            (Builtin::StringAsStr, None, str_ty)
+        } else {
+            let shown = self.types.display(receiver.ty);
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`{shown}` has no method named `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+
+        let expected_args = usize::from(takes.is_some());
+        if args.len() != expected_args {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {expected_args} arguments, found {}", name.name, args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        // `push` grows the buffer, so it needs the caller's variable, not a
+        // copy of it.
+        let mutates = matches!(which, Builtin::ArrayPush | Builtin::StringPush);
+        let receiver = if mutates {
+            self.pass_receiver(receiver, Mode::Mut, span)
+        } else {
+            receiver
+        };
+
+        let mut call_args = vec![receiver];
+        if let Some(param_ty) = takes {
+            call_args.push(self.check_expr(&args[0].value, param_ty));
+        }
+        Expr { ty: ret, kind: ExprKind::Builtin { which, args: call_args }, span }
     }
 
     /// Part IV.11 step 3 — adjust the receiver to the method's declared mode.
@@ -2719,6 +3356,20 @@ fn mode_of(mode: ast::Mode) -> Mode {
         ast::Mode::Mut => Mode::Mut,
         ast::Mode::Owned => Mode::Owned,
     }
+}
+
+/// A printed type squeezed into an identifier, so that a synthesised name
+/// such as `Option_i32` is unique per type argument.
+fn type_stem(shown: &str) -> String {
+    let mut out = String::new();
+    for ch in shown.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
 }
 
 /// `[MNG-1]` — a method's C symbol carries the type it is on, so two types

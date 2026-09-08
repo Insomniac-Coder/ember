@@ -167,6 +167,11 @@ pub enum ExprKind {
     /// Reading through a reference. A `mut` parameter is a `ref mut T` inside
     /// the function, so every mention of its name is one of these.
     Deref(Box<Expr>),
+    /// `[LEX-19]` — an f-string. Building it needs several statements, so it
+    /// stays a single node until MIR, which has somewhere to put them.
+    /// `buffer_ref` is `ref mut String`, interned here because MIR cannot
+    /// intern types of its own.
+    FString { parts: Vec<FStringPart>, buffer_ref: Ty },
     Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
     Unary { op: UnOp, operand: Box<Expr> },
     /// `x as T` — an explicit numeric conversion (`[TYP-6]`).
@@ -178,6 +183,13 @@ pub enum ExprKind {
     Builtin { which: Builtin, args: Vec<Expr> },
     /// A subexpression that failed to check. Absorbs errors.
     Error,
+}
+
+/// One piece of an f-string: literal text, or a value to format into it.
+#[derive(Debug)]
+pub enum FStringPart {
+    Text(String),
+    Value(Expr),
 }
 
 #[derive(Debug)]
@@ -233,6 +245,25 @@ pub enum Builtin {
     Println,
     /// `print(x)` — the same without the newline.
     Print,
+    /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
+    /// compiler-known type until Phase 2's generics.
+    ArrayNew,
+    /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
+    ArrayPush,
+    /// `a.len()`.
+    ArrayLen,
+    /// `String()` — an empty string.
+    StringNew,
+    /// `s.push_str(other)`, appending UTF-8 bytes.
+    StringPush,
+    /// `s.len()` in bytes.
+    StringLen,
+    /// A `String` borrowed as a `str`, which is what `println` takes.
+    StringAsStr,
+    /// Append one formatted value to a `String`, for `[LEX-19]`'s f-strings.
+    /// The runtime formatter is chosen from the value's type, as `println`'s
+    /// is, until `Display` can be written.
+    Format,
 }
 
 impl Builtin {
@@ -248,6 +279,14 @@ impl Builtin {
         match self {
             Builtin::Println => "println",
             Builtin::Print => "print",
+            Builtin::ArrayNew => "Array",
+            Builtin::ArrayPush => "push",
+            Builtin::ArrayLen => "len",
+            Builtin::StringNew => "String",
+            Builtin::StringPush => "push_str",
+            Builtin::StringLen => "len",
+            Builtin::StringAsStr => "as_str",
+            Builtin::Format => "format",
         }
     }
 }
@@ -553,6 +592,16 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             format!("{kind}{}", dump_expr(place, function, types))
         }
         ExprKind::Deref(inner) => format!("(*{})", dump_expr(inner, function, types)),
+        ExprKind::FString { parts, .. } => {
+            let inner: Vec<String> = parts
+                .iter()
+                .map(|p| match p {
+                    FStringPart::Text(text) => format!("{text:?}"),
+                    FStringPart::Value(e) => format!("{{{}}}", dump_expr(e, function, types)),
+                })
+                .collect();
+            format!("f({})", inner.join(" "))
+        }
         ExprKind::Error => "<error>".to_string(),
     };
     format!("{body}:{}", types.display(expr.ty))

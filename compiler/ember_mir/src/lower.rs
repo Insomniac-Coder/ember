@@ -155,6 +155,8 @@ struct Builder<'a> {
     bool_ty: Ty,
     /// Interned once: array indices and lengths are `usize`.
     usize_ty: Ty,
+    /// Interned once: the destination of a call that returns nothing.
+    void_ty: Ty,
     /// The span statements pushed right now belong to.
     current_span: ember_span::Span,
 }
@@ -221,6 +223,7 @@ impl<'a> Builder<'a> {
             overflow: function.overflow,
             bool_ty: common.bool_,
             usize_ty: common.usize,
+            void_ty: common.void,
             current_span: function.span,
         }
     }
@@ -537,7 +540,20 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Builtin { which, args } => {
                 let arg_ty = args.first().map(|a| a.ty).unwrap_or(expr.ty);
-                let args: Vec<Operand> = args.iter().map(|a| self.lower_operand(a)).collect();
+                // `push` copies the value through a pointer, so the value has
+                // to live somewhere addressable: `&10` is not C.
+                let spill = matches!(which, hir::Builtin::ArrayPush);
+                let args: Vec<Operand> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, a)| {
+                        if spill && index == 1 {
+                            self.lower_into_temp(a)
+                        } else {
+                            self.lower_operand(a)
+                        }
+                    })
+                    .collect();
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Builtin { which: *which, arg_ty },
@@ -587,6 +603,53 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(place, scrutinee, arms, expr.span);
+            }
+            // `[LEX-19]` — start an empty `String` and append each piece.
+            hir::ExprKind::FString { parts, buffer_ref } => {
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: hir::Builtin::StringNew, arg_ty: expr.ty },
+                    args: Vec::new(),
+                    dest: place.clone(),
+                    next,
+                });
+                self.current = next;
+
+                let void = self.void_ty;
+                for part in parts {
+                    // The appenders write through the buffer, so they take its
+                    // address — the same shape `s.push_str(...)` produces.
+                    let buffer = self.temp(*buffer_ref, expr.span);
+                    self.push(StmtKind::StorageLive(buffer));
+                    self.push(StmtKind::Assign {
+                        place: Place::local(buffer),
+                        rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
+                    });
+                    let target = Operand::Copy(Place::local(buffer));
+                    let (which, args, arg_ty) = match part {
+                        hir::FStringPart::Text(text) => (
+                            hir::Builtin::StringPush,
+                            vec![target, Operand::Const(Const::Str(text.clone()))],
+                            expr.ty,
+                        ),
+                        hir::FStringPart::Value(value) => {
+                            let operand = self.lower_operand(value);
+                            (hir::Builtin::Format, vec![target, operand], value.ty)
+                        }
+                    };
+                    let next = self.new_block();
+                    // The append writes through the buffer, not into a
+                    // result, so the destination is a throwaway.
+                    let sink = self.temp(void, expr.span);
+                    self.terminate(Terminator::Call {
+                        func: FuncRef::Builtin { which, arg_ty },
+                        args,
+                        dest: Place::local(sink),
+                        next,
+                    });
+                    self.current = next;
+                }
             }
             _ => {
                 let rvalue = self.lower_rvalue(expr);
@@ -1074,13 +1137,19 @@ impl<'a> Builder<'a> {
     /// the backend — the check is then visible to every MIR analysis, the
     /// same choice `[TYP-8]`'s arithmetic checks make.
     fn lower_index(&mut self, base: &'a hir::Expr, index: &'a hir::Expr, span: ember_span::Span) -> Place {
-        let len = match self.types.kind(base.ty) {
-            TyKind::Array { len, .. } => *len,
+        let fixed_len = match self.types.kind(base.ty) {
+            TyKind::Array { len, .. } => Some(*len),
+            // An `Array[T]`'s length is a field, read at the point of use.
+            TyKind::Vec { .. } => None,
             // The type checker has already reported this; carry on with a
             // length that makes every access fail rather than pass.
-            _ => 0,
+            _ => Some(0),
         };
         let base = self.lower_place(base);
+        let len: Operand = match fixed_len {
+            Some(len) => Operand::Const(Const::Int { value: len as u128, ty: self.usize_ty }),
+            None => Operand::Copy(base.clone().field(1)),
+        };
 
         self.at(span);
         let index_op = self.lower_operand(index);
@@ -1097,7 +1166,7 @@ impl<'a> Builder<'a> {
             rvalue: Rvalue::BinaryOp {
                 op: BinOp::Lt,
                 lhs: Operand::Copy(Place::local(slot)),
-                rhs: Operand::Const(Const::Int { value: len as u128, ty: self.usize_ty }),
+                rhs: len.clone(),
             },
         });
         let after = self.new_block();
@@ -1105,7 +1174,7 @@ impl<'a> Builder<'a> {
             cond: Operand::Copy(Place::local(in_range)),
             expected: true,
             msg: AssertKind::Bounds {
-                len: Operand::Const(Const::Int { value: len as u128, ty: self.usize_ty }),
+                len,
                 index: Operand::Copy(Place::local(slot)),
             },
             next: after,
@@ -1114,6 +1183,15 @@ impl<'a> Builder<'a> {
         self.current = after;
 
         base.index(slot)
+    }
+
+    /// Lower an expression into a fresh local and read it back, so the result
+    /// is always something with an address.
+    fn lower_into_temp(&mut self, expr: &'a hir::Expr) -> Operand {
+        let temp = self.temp(expr.ty, expr.span);
+        self.push(StmtKind::StorageLive(temp));
+        self.lower_into(Place::local(temp), expr);
+        Operand::Copy(Place::local(temp))
     }
 
     /// `[MIR-2]` — a non-`Copy` place is moved, not copied.
