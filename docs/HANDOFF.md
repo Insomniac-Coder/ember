@@ -168,17 +168,56 @@ is gated behind and what finishing it means. Both at the owner's request, and
 nothing in either starts before Phase 8.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-before touching anything. `docs/spec-errata.md` now lists **twenty-one** entries;
-ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-021 are the
-defects found in v0.5 itself.
+before touching anything. `docs/spec-errata.md` lists **twenty-two** entries.
+ERR-001..ERR-008 are closed or carried by v0.5; ERR-009..ERR-022 came out of
+applying it. **Three of those are withdrawn or half-withdrawn, and the reason
+is worth reading before adding another:** ERR-014, ERR-019 and ERR-022 recorded
+contradictions that were not there, and ERR-020 rewrote a requirement to match
+what the compiler can do today.
+
+**The pattern to avoid: "the implementation does not do this yet" is not "the
+specification is wrong."** Each of those three read a rule as self-contradictory
+when a careful reading resolved it — the C-header diagram describes one
+pipeline stage and the overlay another; `[RT-5]`'s header is *generated*, so
+literal identifiers in it cost no source file anything; `[DIA-7a]` sits under
+`[DIA-7]`, which scopes it. Compiler debt now goes in `docs/BACKLOG.md`'s
+compiler-debt table instead: `RT-GEN-1`, `LT-REG-1`, `LNT-CFG-1`, `TST-6-1`.
+
+**Before recording a defect, quote both halves and read them together.** The
+owner caught all three, in a document this session had already read twice.
 
 | | |
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
-| Pushed | `60f3269` on `origin/main` — everything below, merged 2026-09-08 |
+| Pushed | `11a7922` on `origin/main`. `main` and `phase-1-core-language` are identical and both pushed; the working tree is clean |
 | Working branch | `phase-1-core-language`, now identical to `main`. The owner merged it on 2026-09-08; work from here can go on `main` or a new branch |
-| Tests | `cargo test --workspace` → **159 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
+| Tests | `cargo test --workspace` → **161 passed, 0 failed**; 49 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3` |
+
+## How to check everything
+
+Four gates, all in `.github/workflows/ci.yml`. Run them before and after any
+change to the specification or the diagnostics:
+
+```
+cargo test --workspace
+python tools/rule_index.py        # duplicate rule ids, orphaned amendments, code registry
+python tools/spec_check.py        # every ember block in Parts I-XVII and Appendix A parses
+python tools/check_branding.py    # no file spells the project's names but ember_branding
+python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
+```
+
+Three carry a baseline of known gaps and fail only on new ones:
+`rule_index_baseline.json` (rules with no conformance directory, codes with no
+error page), `spec_check_baseline.json` (23 blocks that are fragments), and
+`check_branding_baseline.json` (13 fixture file names in tests). **Both are
+keyed by content, not by line number** — an edit elsewhere in the document used
+to invalidate the whole spec-check baseline, and a gate that cries wolf on an
+unrelated edit is worse than no gate.
+
+`cargo` is not on `PATH` in this environment's bash; use
+`export PATH="$HOME/.cargo/bin:$PATH"`. `clang` lives in
+`C:/Program Files/LLVM/bin`.
 
 ## Hard constraint
 
@@ -756,8 +795,28 @@ makes widening it a breaking change — so a typo in it is worth catching loudly
 What `@borrows` *means* still needs the region graph; this is the signature
 half.
 
-**Not done in block E:** `[LT-1b]`'s `L3014`, which needs `[MAN-3]`'s `[lints]`
-configuration to exist before an opt-in lint has anywhere to be opted into; real region variables
+### What block E still needs, in order
+
+1. **Real region variables and a constraint graph** (`LT-REG-1` in the
+   backlog). Today a region is approximated by the borrower local's liveness.
+   That is exactly right for a borrow held in a local and wrong for every case
+   where a reference leaves the frame: `[LT-1]`'s elision across a call,
+   `[LT-2]`'s view structs, `[LT-7]`'s callback regions, and `[TYP-15]`'s
+   storage check for anything but a `static` or a container element. It is the
+   largest remaining piece and everything else in the list waits behind it.
+2. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
+   shape B8 — "a method takes all of `self`" — needs the call to know which
+   fields it touches.
+3. **`[LT-1b]`'s `L3014`**, which needs `[MAN-3]`'s `[lints]` configuration
+   first (`LNT-CFG-1`): an opt-in lint has nowhere to be opted into.
+4. **The remaining shapes.** `E3023`–`E3027` are registered and keyed and
+   nothing emits them yet; each waits on the construct it describes — aliased
+   value mutation, self-referential structs, closures, `mut` arguments.
+
+**Where the borrow checker lives:** `compiler/ember_analysis/src/borrows.rs`,
+run from the driver after drop elaboration so the drops it sees are the ones
+that will exist. The module header states the approximation against §4.7's
+seven steps; read it before extending it.
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
 what the liveness approximation cannot do; and the shape classifier
 (`[DIA-7]`, block H), which has to be designed into this pass rather than
