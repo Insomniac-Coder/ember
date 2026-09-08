@@ -2472,7 +2472,10 @@ impl<'a> Checker<'a> {
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
         match *self.types.kind(ty) {
-            TyKind::Ref { mutable: true, inner } => {
+            // `[TYP-14]` — "use of `r` in an expression of type `T` reads
+            // through". Shared references auto-deref exactly as mutable ones
+            // do; only what may be *written* through them differs.
+            TyKind::Ref { inner, .. } => {
                 Expr { ty: inner, kind: ExprKind::Deref(Box::new(read)), span }
             }
             _ => read,
@@ -4031,6 +4034,33 @@ impl<'a> Checker<'a> {
                     );
                 }
                 Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(inner), to }, span }
+            }
+
+            // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
+            // They are needed only when initialising a `ref`-typed local or a
+            // view struct's field; every other borrow is implicit in a
+            // parameter mode. `synth` of the operand yields the place, and
+            // for a `ref` local it yields the deref, which makes `ref mut r`
+            // a reborrow (`[BRW-6]`) with no extra machinery.
+            ast::ExprKind::RefOf { mutable, place } => {
+                let inner = self.synth(place);
+                if inner.ty == self.common.error {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if !is_place(&inner.kind) {
+                    self.error(
+                        codes::E2140,
+                        place.span,
+                        "only a place can be borrowed",
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                let ty = self.types.intern(TyKind::Ref { mutable: *mutable, inner: inner.ty });
+                Expr {
+                    ty,
+                    kind: ExprKind::Ref { place: Box::new(inner), mutable: *mutable },
+                    span,
+                }
             }
 
             // `[GRM-16]` — a jump has type `!` and produces no value. Every
