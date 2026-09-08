@@ -228,6 +228,29 @@ pub enum StmtKind {
     Nop,
 }
 
+impl StmtKind {
+    /// Statements that record scope rather than execute source. `[CG-C-8]`
+    /// requires a `#line` for every statement the backend emits, and these
+    /// emit nothing, so the verifier does not demand a span for them.
+    pub fn is_bookkeeping(&self) -> bool {
+        matches!(
+            self,
+            StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop
+        )
+    }
+
+    pub fn describe(&self) -> &'static str {
+        match self {
+            StmtKind::Assign { .. } => "an assignment",
+            StmtKind::CheckedBinaryOp { .. } => "a checked arithmetic statement",
+            StmtKind::StorageLive(_) => "a storage-live marker",
+            StmtKind::StorageDead(_) => "a storage-dead marker",
+            StmtKind::Drop { .. } => "a drop",
+            StmtKind::Nop => "a nop",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Terminator {
     Goto(BasicBlockId),

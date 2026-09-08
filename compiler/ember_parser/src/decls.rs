@@ -13,7 +13,11 @@ impl Parser<'_> {
         let start = self.span();
         let id = self.next_id();
 
-        if self.eat_kw(Kw::From) {
+        // ERR-017 — `from` is contextual: a keyword only here, where it
+        // begins an import. Everywhere else it is an ordinary name, which is
+        // what lets `interface From[T]` declare `fn from(…)`.
+        if self.at_contextual("from") {
+            self.bump();
             let path = self.parse_dotted_path();
             self.expect_kw(Kw::Import);
             let (items, glob) = self.parse_import_list();
@@ -238,6 +242,10 @@ impl Parser<'_> {
                 self.expect_punct(Punct::Colon);
                 Some(ItemKind::Comptime(self.parse_block()))
             }
+            // `[LEX-15a]` — `type` introduces a type alias at item level and an
+            // opaque foreign type inside an `extern` block, where it carries no
+            // `= T`. Both are `type_alias` nodes; the value distinguishes them.
+            TokenKind::Keyword(Kw::Type) => Some(ItemKind::TypeAlias(self.parse_type_alias())),
             // `abstract class` — `abstract` is contextual (`[LEX-15]`).
             TokenKind::Ident(s) if s.is("abstract") && self.at_kw_at(1, Kw::Class) => {
                 Some(ItemKind::Class(self.parse_class()))
@@ -246,13 +254,22 @@ impl Parser<'_> {
                 let reserved = *reserved;
                 let span = self.span();
                 self.bump();
+                // `[LEX-14a]` — the message MUST name the version that will
+                // introduce the word, so a reservation is never read as a typo.
                 self.report(
                     Diagnostic::error(
                         codes::E0005,
                         span,
-                        format!("`{}` is reserved for a future version", reserved.as_str()),
+                        format!(
+                            "`{}` is reserved for {}",
+                            reserved.as_str(),
+                            reserved.planned_version()
+                        ),
                     )
-                    .help("rename the item, or write `r#` before the name to use it as an identifier"),
+                    .help(format!(
+                        "rename the item, or write `r#{}` to use the word as an identifier",
+                        reserved.as_str()
+                    )),
                 );
                 None
             }
@@ -267,6 +284,26 @@ impl Parser<'_> {
                 None
             }
         }
+    }
+
+    /// `type Name = T` (alias), `type Item` / `type Item: Bound` (associated
+    /// type in an interface), `type Name` (opaque foreign type in an `extern`
+    /// block). One production serves all three (`[LEX-15a]`); the caller knows
+    /// which context it is in, and `value` distinguishes an alias from the rest.
+    fn parse_type_alias(&mut self) -> TypeAlias {
+        self.expect_kw(Kw::Type);
+        let name = self.expect_ident();
+        let generics = self.parse_generic_params();
+        let mut bounds = Vec::new();
+        if self.eat_punct(Punct::Colon) {
+            bounds.push(self.parse_type());
+            while self.eat_punct(Punct::Plus) {
+                bounds.push(self.parse_type());
+            }
+        }
+        let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
+        self.expect_newline();
+        TypeAlias { name, generics, value, bounds }
     }
 
     fn parse_extern_block(&mut self, is_unsafe: bool) -> ExternBlock {
@@ -698,26 +735,11 @@ impl Parser<'_> {
                 MemberKind::Fn(self.parse_fn())
             }
             TokenKind::Keyword(Kw::Const) => MemberKind::Const(self.parse_const()),
-            TokenKind::Reserved(ember_lexer::Reserved::Type) => {
-                // `type Item` / `type Item: Bound` inside an interface, and
-                // `type Name = T` as an alias.
-                self.bump();
-                let name = self.expect_ident();
-                let generics = self.parse_generic_params();
-                let mut bounds = Vec::new();
-                if self.eat_punct(Punct::Colon) {
-                    bounds.push(self.parse_type());
-                    while self.eat_punct(Punct::Plus) {
-                        bounds.push(self.parse_type());
-                    }
-                }
-                let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
-                self.expect_newline();
-                MemberKind::TypeAlias(TypeAlias { name, generics, value, bounds })
-            }
+            TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias()),
             _ => {
-                // `name: T [= default]` or `let name: T`.
-                let is_let = self.at_contextual("let");
+                // `name: T [= default]` or `let name: T`. `let` is a keyword
+                // in every position since `OQ-26` (errata ERR-004).
+                let is_let = self.at_kw(Kw::Let);
                 if is_let {
                     self.bump();
                 }

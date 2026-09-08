@@ -284,6 +284,107 @@ impl<'a> Checker<'a> {
         self.sink.emit(Diagnostic::error(code, span, message));
     }
 
+    /// `[LEX-15a]` — `type Name = T` at item level. An alias may name another
+    /// alias declared later in the file, so they are resolved to a fixpoint:
+    /// one whose body still mentions an unknown name is deferred, and whatever
+    /// survives no-further-progress is a cycle or a genuinely unknown type.
+    fn collect_type_aliases(&mut self, module: &ast::Module) {
+        let mut pending: Vec<&ast::TypeAlias> = module
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::TypeAlias(decl) => Some(decl),
+                _ => None,
+            })
+            .collect();
+
+        loop {
+            let before = pending.len();
+            let mut deferred = Vec::new();
+            for decl in std::mem::take(&mut pending) {
+                let name = self.qualified(decl.name.name);
+                if self.named_types.contains_key(&name) {
+                    self.error(
+                        codes::E1030,
+                        decl.name.span,
+                        format!("`{name}` is already declared in this module"),
+                    );
+                    continue;
+                }
+                // A generic alias needs the parameters in scope at every use,
+                // which is substitution work `[TYP-16]` puts in Phase 2.
+                if !decl.generics.is_empty() {
+                    self.error(
+                        codes::E1010,
+                        decl.name.span,
+                        "a generic type alias is not supported yet",
+                    );
+                    continue;
+                }
+                let Some(value) = &decl.value else {
+                    self.error(
+                        codes::E1010,
+                        decl.name.span,
+                        "a type alias needs a value: write `type Name = T`",
+                    );
+                    continue;
+                };
+                if !self.alias_body_is_resolvable(value) {
+                    deferred.push(decl);
+                    continue;
+                }
+                let ty = self.resolve_type(value);
+                self.named_types.insert(name, ty);
+            }
+            pending = deferred;
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
+
+        for decl in pending {
+            let Some(value) = &decl.value else { continue };
+            // Resolving now emits the real "cannot find type" diagnostic and
+            // names the member that could not be found, rather than a bare
+            // "alias unresolved" that hides which name is at fault.
+            let ty = self.resolve_type(value);
+            let name = self.qualified(decl.name.name);
+            self.named_types.insert(name, ty);
+        }
+    }
+
+    /// Every named type mentioned in an alias body is already known. Used to
+    /// order alias resolution without emitting diagnostics for the deferral.
+    fn alias_body_is_resolvable(&self, ty: &ast::TypeExpr) -> bool {
+        match &ty.kind {
+            ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::SelfType => true,
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => {
+                self.alias_body_is_resolvable(inner)
+            }
+            ast::TypeKind::Tuple(items) => {
+                items.iter().all(|t| self.alias_body_is_resolvable(t))
+            }
+            ast::TypeKind::Array { elem, .. } => self.alias_body_is_resolvable(elem),
+            ast::TypeKind::Path { segments, args } => {
+                if !args.iter().all(|a| match a {
+                    ast::GenericArg::Type(t) => self.alias_body_is_resolvable(t),
+                    _ => true,
+                }) {
+                    return false;
+                }
+                if segments.len() != 1 {
+                    return true;
+                }
+                let name = segments[0].name;
+                self.scalar_named(name.as_str()).is_some()
+                    || name.is("String")
+                    || self.named_types.contains_key(&self.resolve_name(name))
+                    || !args.is_empty()
+            }
+            _ => true,
+        }
+    }
+
     // -- modules -------------------------------------------------------------
 
     /// `[TYP-16]` — bring a declaration's type parameters into scope as opaque
@@ -566,6 +667,10 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+
+        // Aliases are resolved between the two loops: they may name a struct or
+        // enum (registered above) and may be named by a field (resolved below).
+        self.collect_type_aliases(module);
 
         for item in &module.items {
             match &item.kind {
@@ -2393,34 +2498,16 @@ impl<'a> Checker<'a> {
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
         match &stmt.kind {
             ast::StmtKind::Pass => {}
+            // `[GRM-16]` — a jump written as a statement arrives as an
+            // expression statement, and is the one expression that lowers to
+            // control flow rather than to a value.
             ast::StmtKind::Expr(expr) => {
+                if let ast::ExprKind::Jump(jump) = &expr.kind {
+                    self.lower_jump(jump, expr.span, out);
+                    return;
+                }
                 let expr = self.synth(expr);
                 out.push(Stmt::Expr(expr));
-            }
-            ast::StmtKind::Return(value) => {
-                if self.in_defer {
-                    self.error(
-                        codes::E2160,
-                        stmt.span,
-                        "control flow cannot leave a `defer` block",
-                    );
-                }
-                let ret_ty = self.ret_ty;
-                let value = match value {
-                    Some(expr) => Some(self.check_expr(expr, ret_ty)),
-                    None => {
-                        if ret_ty != self.common.void {
-                            let shown = self.types.display(ret_ty);
-                            self.error(
-                                codes::E2020,
-                                stmt.span,
-                                format!("this function returns `{shown}`, so `return` needs a value"),
-                            );
-                        }
-                        None
-                    }
-                };
-                out.push(Stmt::Return(value));
             }
             ast::StmtKind::Decl { pattern, ty, init } => {
                 let Some(name) = binding_name(pattern) else {
@@ -2560,16 +2647,6 @@ impl<'a> Checker<'a> {
                 stmts.extend(inner.stmts);
                 out.push(Stmt::Block(Block { stmts, span: stmt.span }));
             }
-            ast::StmtKind::Break { label, .. } => {
-                if let Some(depth) = self.loop_depth(*label, "break", stmt.span) {
-                    out.push(Stmt::Break { depth });
-                }
-            }
-            ast::StmtKind::Continue { label, .. } => {
-                if let Some(depth) = self.loop_depth(*label, "continue", stmt.span) {
-                    out.push(Stmt::Continue { depth });
-                }
-            }
             // A statement `match` produces no value, so its arms are checked
             // against `void` and it rides in `Stmt::Expr`.
             ast::StmtKind::Match { scrutinee, arms } => {
@@ -2591,6 +2668,53 @@ impl<'a> Checker<'a> {
 
     /// One `match`, as an expression. A statement `match` is this with an
     /// expected type of `void`, which `check_stmt` wraps in `Stmt::Expr`.
+    /// `[GRM-16]` — lower `return e`, `break l` and `continue l` into the
+    /// HIR's control-flow statements. A jump is always the whole of the
+    /// expression it appears in, so every position that can hold one is
+    /// statement-like: an expression statement, or a `=>` arm of a `match`.
+    fn lower_jump(&mut self, jump: &ast::Jump, span: Span, out: &mut Vec<Stmt>) {
+        match jump {
+            ast::Jump::Return(value) => {
+                // `[CTL-7]` — a jump may not leave a `defer` block.
+                if self.in_defer {
+                    self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                }
+                let ret_ty = self.ret_ty;
+                let value = match value {
+                    Some(expr) => Some(self.check_expr(expr, ret_ty)),
+                    None => {
+                        if ret_ty != self.common.void {
+                            let shown = self.types.display(ret_ty);
+                            self.error(
+                                codes::E2020,
+                                span,
+                                format!("this function returns `{shown}`, so `return` needs a value"),
+                            );
+                        }
+                        None
+                    }
+                };
+                out.push(Stmt::Return(value));
+            }
+            ast::Jump::Break { label } => {
+                if self.in_defer {
+                    self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                }
+                if let Some(depth) = self.loop_depth(*label, "break", span) {
+                    out.push(Stmt::Break { depth });
+                }
+            }
+            ast::Jump::Continue { label } => {
+                if self.in_defer {
+                    self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                }
+                if let Some(depth) = self.loop_depth(*label, "continue", span) {
+                    out.push(Stmt::Continue { depth });
+                }
+            }
+        }
+    }
+
     fn check_match(
         &mut self,
         scrutinee: &ast::Expr,
@@ -2613,6 +2737,15 @@ impl<'a> Checker<'a> {
             let body = match &arm.body {
                 ast::MatchArmBody::Block(block) => {
                     hir::MatchArmBody::Block(self.check_block(block))
+                }
+                // `[GRM-16]` — `Circle(r) => return PI * r * r`. A jump has
+                // type `!` and produces no value, so the arm lowers to a block
+                // holding the control-flow statement, and settles no type.
+                ast::MatchArmBody::Expr(expr) if matches!(expr.kind, ast::ExprKind::Jump(_)) => {
+                    let ast::ExprKind::Jump(jump) = &expr.kind else { unreachable!() };
+                    let mut stmts = Vec::new();
+                    self.lower_jump(jump, expr.span, &mut stmts);
+                    hir::MatchArmBody::Block(Block { stmts, span: expr.span })
                 }
                 ast::MatchArmBody::Expr(expr) => {
                     // The first arm settles the type; the rest are checked
@@ -3325,11 +3458,62 @@ impl<'a> Checker<'a> {
         Stmt::If { cond, then_block, else_block }
     }
 
+    /// `[CTL-0]` — the fix-it for a non-`bool` condition, chosen by type. The
+    /// rule names four shapes; anything else gets the bare error, because a
+    /// wrong suggestion costs more than none.
+    fn truthiness_fix(&self, ty: Ty) -> Option<String> {
+        match self.types.kind(ty) {
+            TyKind::Vec { .. } | TyKind::Str | TyKind::Array { .. } => {
+                Some("a container is not a condition: write `not xs.is_empty()`".to_string())
+            }
+            TyKind::Int(_) | TyKind::Uint(_) => {
+                Some("a number is not a condition: write `x != 0`".to_string())
+            }
+            TyKind::Ptr { .. } => {
+                Some("a pointer is not a condition: write `not p.is_null()`".to_string())
+            }
+            TyKind::Enum(id) => {
+                let name = self.types.enum_def(*id).name;
+                let name = name.as_str();
+                if name.starts_with("Option") || name.ends_with(".Option") {
+                    Some("write `x.is_some()`".to_string())
+                } else if name.starts_with("Result") || name.ends_with(".Result") {
+                    Some("write `x.is_ok()`".to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn check_condition(&mut self, cond: &ast::Condition) -> Expr {
         match cond {
             ast::Condition::Expr(expr) => {
                 let bool_ty = self.common.bool_;
-                self.check_expr(expr, bool_ty)
+                let checked = self.synth_committed(expr);
+                // `[CTL-0]` — there is no truthiness conversion, and the fix
+                // depends on what the writer actually wrote, so the diagnostic
+                // names the call that turns this value into a `bool`.
+                if checked.ty != bool_ty
+                    && checked.ty != self.common.error
+                    && checked.ty != self.common.never
+                {
+                    let shown = self.types.display(checked.ty);
+                    let fix = self.truthiness_fix(checked.ty);
+                    let mut diag = Diagnostic::error(
+                        codes::E2035,
+                        expr.span,
+                        "condition must be `bool`",
+                    )
+                    .primary_label(format!("this is `{shown}`"));
+                    if let Some(fix) = fix {
+                        diag = diag.help(fix);
+                    }
+                    self.sink.emit(diag);
+                    return Expr { ty: bool_ty, kind: ExprKind::Error, span: expr.span };
+                }
+                checked
             }
             ast::Condition::Pattern { value, .. } => {
                 self.error(
@@ -3346,9 +3530,40 @@ impl<'a> Checker<'a> {
 
     /// Synthesis mode, then default any untyped literal that survived
     /// (`[LEX-16]`, `[LEX-17]`): `i32` for integers, `f32` for floats.
-    fn synth_committed(&mut self, expr: &ast::Expr) -> Expr {
-        let expr = self.synth(expr);
-        self.commit(expr)
+    fn synth_committed(&mut self, ast_expr: &ast::Expr) -> Expr {
+        let expr = self.synth(ast_expr);
+        let committed = self.commit(expr);
+        self.warn_if_literal_loses_precision(ast_expr, committed.ty);
+        committed
+    }
+
+    /// `[LEX-17a]` — an unsuffixed float literal that takes `f32` from the
+    /// *default* rather than from context, and that was written with more
+    /// precision than `f32` holds, is `W2015`. A literal that receives `f32`
+    /// from context is not diagnosed: the programmer chose the type.
+    fn warn_if_literal_loses_precision(&mut self, expr: &ast::Expr, ty: Ty) {
+        if ty != self.common.f32 {
+            return;
+        }
+        let ast::ExprKind::Lit(ast::Literal::Float { value, suffix: None, digits }) = &expr.kind
+        else {
+            return;
+        };
+        // Nine is the most a decimal string can carry into `f32` without a
+        // round trip changing it.
+        if *digits <= 9 {
+            return;
+        }
+        let as_f32 = *value as f32;
+        self.sink.emit(
+            Diagnostic::warning(
+                codes::W2015,
+                expr.span,
+                "float literal loses precision at `f32`",
+            )
+            .primary_label(format!("`{value}` becomes `{as_f32}`"))
+            .help(format!("write `{value}f64` to keep it, or annotate the binding `: f32` to accept it")),
+        );
     }
 
     fn commit(&mut self, expr: Expr) -> Expr {
@@ -3807,6 +4022,21 @@ impl<'a> Checker<'a> {
                 Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(inner), to }, span }
             }
 
+            // `[GRM-16]` — a jump has type `!` and produces no value. Every
+            // position it can legally occupy is statement-like and is lowered
+            // by `lower_jump` before reaching here: an expression statement or
+            // a `=>` arm. Anything else (`f(return x)`, a ternary branch) needs
+            // a jump in the HIR and MIR expression path, which is not built.
+            ast::ExprKind::Jump(jump) => {
+                let word = jump.keyword();
+                self.error(
+                    codes::E1010,
+                    span,
+                    format!("`{word}` is not usable in this position yet"),
+                );
+                Expr { ty: self.common.never, kind: ExprKind::Error, span }
+            }
+
             _ => {
                 self.error(
                     codes::E1010,
@@ -3828,7 +4058,7 @@ impl<'a> Checker<'a> {
                 };
                 Expr { ty, kind: ExprKind::Int(*value), span }
             }
-            ast::Literal::Float { value, suffix } => {
+            ast::Literal::Float { value, suffix, .. } => {
                 let ty = match suffix {
                     Some(s) => self.float_suffix_ty(*s),
                     None => self.common.float_lit,

@@ -411,6 +411,9 @@ pub struct Block {
 #[derive(Debug)]
 pub struct Stmt {
     pub id: NodeId,
+    /// `[ATT-2]` — one of `@simd`, `@parallel`, `@unroll`, `@allow`, and only
+    /// on a `compound_stmt` (`[ATT-3]`).
+    pub attrs: Vec<Attribute>,
     pub kind: StmtKind,
     pub span: Span,
 }
@@ -422,10 +425,9 @@ pub enum StmtKind {
     /// `a, b = e` and augmented assignment. Whether this declares or assigns
     /// is decided in name resolution (`[GRM-4]`, `[GRM-5]`).
     Assign { targets: Vec<Expr>, op: Option<BinOp>, value: Expr },
+    /// `[GRM-16]` — `return`, `break` and `continue` are expressions, so a
+    /// jump written as a statement arrives here wrapped in `Expr`.
     Expr(Expr),
-    Return(Option<Expr>),
-    Break { label: Option<Ident> },
-    Continue { label: Option<Ident> },
     Pass,
     If(IfStmt),
     While { label: Option<Ident>, cond: Condition, body: Block, else_block: Option<Block> },
@@ -532,8 +534,33 @@ pub enum ExprKind {
     /// `ref`-typed local or a view struct field.
     RefOf { mutable: bool, place: Box<Expr> },
     Paren(Box<Expr>),
+    /// `[GRM-16]` — `return e`, `break label`, `continue label`. Type `!`,
+    /// parsed at the lowest precedence and never as an atom, so a jump is
+    /// always the whole of the expression it appears in.
+    Jump(Jump),
+    /// `[GRM-15]` — `owned e`, permitted only as the iterable of a `for` and
+    /// the scrutinee of a `match`, where it consumes `e` (`[CTL-1]`,
+    /// `[GRM-13]`). Anywhere else in expression position is `E0109`.
+    Owned(Box<Expr>),
     /// A node the parser could not build. Keeps later stages from cascading.
     Error,
+}
+
+#[derive(Debug)]
+pub enum Jump {
+    Return(Option<Box<Expr>>),
+    Break { label: Option<Ident> },
+    Continue { label: Option<Ident> },
+}
+
+impl Jump {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Jump::Return(_) => "return",
+            Jump::Break { .. } => "break",
+            Jump::Continue { .. } => "continue",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -569,7 +596,7 @@ pub enum LambdaBody {
 pub enum Literal {
     /// `[LEX-16]` — untyped until the type checker resolves it.
     Int { value: u128, suffix: Option<ember_lexer_types::IntSuffix> },
-    Float { value: f64, suffix: Option<ember_lexer_types::FloatSuffix> },
+    Float { value: f64, suffix: Option<ember_lexer_types::FloatSuffix>, digits: u32 },
     Bool(bool),
     Char(char),
     Str(String),

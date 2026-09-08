@@ -215,17 +215,6 @@ impl Printer {
                 self.nest(&format!("Assign {} {op}=", names.join(", ")), |p| p.expr(value));
             }
             StmtKind::Expr(e) => self.nest("ExprStmt", |p| p.expr(e)),
-            StmtKind::Return(e) => self.nest("Return", |p| {
-                if let Some(e) = e {
-                    p.expr(e);
-                }
-            }),
-            StmtKind::Break { label } => {
-                self.line(&format!("Break{}", label_str(label)));
-            }
-            StmtKind::Continue { label } => {
-                self.line(&format!("Continue{}", label_str(label)));
-            }
             StmtKind::Pass => self.line("Pass"),
             StmtKind::If(if_stmt) => self.if_stmt(if_stmt),
             StmtKind::While { cond, body, else_block, label } => {
@@ -414,6 +403,16 @@ impl Printer {
                 self.nest(&format!("RefOf {kw}"), |p| p.expr(place))
             }
             ExprKind::Paren(e) => self.expr(e),
+            ExprKind::Owned(inner) => self.nest("Owned", |p| p.expr(inner)),
+            ExprKind::Jump(jump) => match jump {
+                Jump::Return(value) => self.nest("Return", |p| {
+                    if let Some(value) = value {
+                        p.expr(value);
+                    }
+                }),
+                Jump::Break { label } => self.line(&format!("Break{}", label_str(label))),
+                Jump::Continue { label } => self.line(&format!("Continue{}", label_str(label))),
+            },
             ExprKind::Error => self.line("Error"),
         }
     }
@@ -448,7 +447,7 @@ pub fn literal_str(lit: &Literal) -> String {
             Some(s) => format!("{value}{s:?}"),
             None => value.to_string(),
         },
-        Literal::Float { value, suffix } => match suffix {
+        Literal::Float { value, suffix, .. } => match suffix {
             Some(s) => format!("{value}{s:?}"),
             None => value.to_string(),
         },

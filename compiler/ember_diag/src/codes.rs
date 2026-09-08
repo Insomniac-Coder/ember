@@ -137,6 +137,11 @@ codes! {
     E0102 = (Error, 102, Parse, "[III.5]", "chained comparison");
     E0103 = (Error, 103, Parse, "[GRM-10]", "match arms mix statement and expression form");
     E0104 = (Error, 104, Parse, "[ATT-1]", "unknown attribute");
+    E0105 = (Error, 105, Parse, "[GRM-18]", "`;` is not a statement separator");
+    E0106 = (Error, 106, Parse, "[GRM-17]", "a multi-statement closure cannot be written inside brackets");
+    E0107 = (Error, 107, Parse, "[GRM-16]", "a jump expression may not be an operand");
+    E0108 = (Error, 108, Parse, "[ATT-3]", "attribute is not permitted on this statement");
+    E0109 = (Error, 109, Parse, "[GRM-15]", "`owned` is not permitted in expression position");
 
     // --- name resolution, modules, visibility -------------------------------
     E1010 = (Error, 1010, Resolve, "[MOD-3]", "cannot find name in this scope");
@@ -150,6 +155,8 @@ codes! {
     // --- types, inference, interfaces, generics, patterns -------------------
     E2010 = (Error, 2010, Types, "[LEX-16]", "literal does not fit its type");
     E2020 = (Error, 2020, Types, "[TYP-4]", "mismatched types");
+    E2035 = (Error, 2035, Types, "[CTL-0]", "condition must be `bool`");
+    E2036 = (Error, 2036, Types, "[GRM-19]", "this pattern always matches");
     E2030 = (Error, 2030, Types, "[TYP-14]", "a struct carrying a borrow must be declared `@view`");
     E2040 = (Error, 2040, Types, "[TYP-17]", "unsatisfied interface bound");
     E2041 = (Error, 2041, Types, "[TYP-19]", "overlapping `extend` implementations");
@@ -165,6 +172,9 @@ codes! {
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
     E2131 = (Error, 2131, Types, "[IV.3]", "array length must be a constant");
+    E2031 = (Error, 2031, Types, "[LT-1a]", "`@borrows` names a parameter that is not view-typed");
+    E2172 = (Error, 2172, Types, "[GRM-8b]", "cannot index with a type");
+    E2173 = (Error, 2173, Types, "[GRM-8b]", "not a type or const-generic argument");
     E2140 = (Error, 2140, Types, "[EXP-5]", "cannot assign to a value expression");
     E2150 = (Error, 2150, Types, "[VI.3]", "`is` requires a type with identity");
     E2151 = (Error, 2151, Types, "[VI.3]", "integer `**` with a negative exponent");
@@ -182,6 +192,14 @@ codes! {
     E3030 = (Error, 3030, Ownership, "[CLO-2]", "closure would move a captured value out");
     E3040 = (Error, 3040, Ownership, "[OWN-3]", "use of moved value");
     E3041 = (Error, 3041, Ownership, "[OWN-4]", "value moved in a previous loop iteration");
+    E3014 = (Error, 3014, Ownership, "[THR-5]", "scope binding may not be moved");
+    E3015 = (Error, 3015, Ownership, "[THR-6]", "value whose drop is required may not be leaked");
+    E3016 = (Error, 3016, Ownership, "[CLS-7a]", "`self` escapes its own drop");
+    E3042 = (Error, 3042, Ownership, "[EXP-6]", "partial move then use of the whole value");
+    E3063 = (Error, 3063, Ownership, "[TYP-15]", "stored view may not outlive its source");
+    E3064 = (Error, 3064, Ownership, "[LT-2]", "two independent regions in one view struct");
+    E3095 = (Error, 3095, Ownership, "[DSJ-4]", "disjointness is not establishable for these operands");
+    E3096 = (Error, 3096, Ownership, "[ARN-6]", "arena is scoped here");
     E3050 = (Error, 3050, Ownership, "[BRW-7]", "use of an uninitialised or moved place");
     E3060 = (Error, 3060, Ownership, "[LT-3]", "borrowed value does not live long enough");
     E3061 = (Error, 3061, Ownership, "[LT-4]", "arena allocation cannot outlive its arena");
@@ -193,6 +211,8 @@ codes! {
 
     // --- effects and contracts ----------------------------------------------
     E4001 = (Error, 4001, Effects, "[EFF-5]", "`@noalloc` function reaches an allocation");
+    E4030 = (Error, 4030, Effects, "[EFF-13]", "`@static_safe` function performs a dynamically checked access");
+    E4040 = (Error, 4040, Effects, "[EFF-17]", "`@nopanic(explicit)` function reaches a panic");
     E4010 = (Error, 4010, Effects, "[EFF-2]", "implementation does not satisfy the interface's contract");
     E4020 = (Error, 4020, Effects, "[SIMD-2]", "`@simd(assert)` loop did not vectorise");
 
@@ -203,6 +223,17 @@ codes! {
     E5030 = (Error, 5030, Ffi, "[FFI-17]", "`std::function` cannot be imported");
     E5040 = (Error, 5040, Ffi, "[FFI-21]", "capturing closure passed where a C function pointer is expected");
     E5041 = (Error, 5041, Ffi, "[FFI-21]", "retained callback needs a release function in the overlay");
+    E5002 = (Error, 5002, Ffi, "[DIA-18]", "foreign call requires `unsafe`: its contract is incomplete");
+    E5011 = (Error, 5011, Ffi, "[FFI-30]", "one C identity imported with two different layouts");
+    E5012 = (Error, 5012, Ffi, "[FFI-11]", "pointer contract has no count");
+    E5014 = (Error, 5014, Ffi, "[FFI-29]", "two packages request the same implementation macro");
+    E5015 = (Error, 5015, Ffi, "[FFI-31]", "type may not cross the boundary");
+    E5016 = (Error, 5016, Ffi, "[FFI-8]", "`_Atomic` layout does not match `Atomic[T]`");
+    E5017 = (Error, 5017, Ffi, "[FFI-8]", "struct with a flexible array member is unsized");
+    E5018 = (Error, 5018, Ffi, "[FFI-8]", "`va_list` may not be constructed");
+    E5031 = (Error, 5031, Ffi, "[FFI-32b]", "C++ parameter cannot be mapped");
+    E5032 = (Error, 5032, Ffi, "[FFI-32]", "opaque C++ mirror may not be constructed");
+    W5002 = (Warning, 5002, Ffi, "[FFI-9]", "unsupported calling convention; declaration skipped");
     E5090 = (Error, 5090, Ffi, "[UNS-6]", "inline assembly is not supported by the C backend");
 
     // --- comptime -------------------------------------------------------------
@@ -212,6 +243,7 @@ codes! {
 
     // --- concurrency ----------------------------------------------------------
     E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` class has a field that is not Sync");
+    E7011 = (Error, 7011, Concurrency, "[PAR-2a]", "parallel loop has a loop-carried dependency");
     E7010 = (Error, 7010, Concurrency, "[PAR-2]", "parallel loop writes to a shared place");
     E7020 = (Error, 7020, Concurrency, "[ECS-4]", "systems in one parallel run have conflicting access sets");
 
@@ -219,6 +251,10 @@ codes! {
     E8001 = (Error, 8001, Layout, "[IX.5]", "GPU layout does not match the CPU layout");
 
     // --- build, manifest, toolchain -------------------------------------------
+    E9010 = (Error, 9010, Build, "[TYP-9c]", "toolchain cannot honour a float-control attribute");
+    E9011 = (Error, 9011, Build, "[TYP-9a]", "toolchain cannot disable FP contraction");
+    E9020 = (Error, 9020, Build, "[FFI-33]", "translation units of one target disagree on an inherited flag");
+    E9021 = (Error, 9021, Build, "[FFI-33]", "C++ standard library and CRT heap could not be determined");
     E9001 = (Error, 9001, Build, "[MAN-1]", "invalid manifest");
     E9002 = (Error, 9002, Build, "[BLD-4]", "the C toolchain could not be found or failed");
     E9003 = (Error, 9003, Build, "[CLI-1]", "invalid command line");
@@ -227,12 +263,18 @@ codes! {
     W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");
     W1002 = (Warning, 1002, Resolve, "[GRM-12]", "binding shadows an enum variant of the same name");
     W2091 = (Warning, 2091, Types, "[CTL-5]", "unreachable match arm");
+    W2015 = (Warning, 2015, Types, "[LEX-17a]", "float literal loses precision at f32");
     W2111 = (Warning, 2111, Types, "[CLS-4]", "`virtual` has no effect in a final class");
     W2190 = (Warning, 2190, Types, "[ERR-5]", "unused `Result`");
     W5001 = (Warning, 5001, Ffi, "[FFI-6]", "function-like macro ignored");
     W5031 = (Warning, 5031, Ffi, "[FFI-19]", "declaration skipped: the header could not be parsed");
 
     // --- lints ------------------------------------------------------------------
+    L1001 = (Lint, 1001, Resolve, "[LNT-1]", "unused binding");
+    L1002 = (Lint, 1002, Resolve, "[LNT-2]", "assignment declares a new binding");
+    L3011 = (Lint, 3011, Ownership, "[CELL-7]", "`RefCell` guard held across a call");
+    L3013 = (Lint, 3013, Ownership, "[EXC-7]", "long-term access held across a call");
+    L3014 = (Lint, 3014, Ownership, "[LT-1b]", "return region is the intersection of N parameters");
     L2001 = (Lint, 2001, Types, "[XIX.8]", "unnecessary clone");
     L2002 = (Lint, 2002, Types, "[XIX.8]", "large Copy value passed by value");
     L3001 = (Lint, 3001, Ownership, "[WK-1]", "potential reference cycle");

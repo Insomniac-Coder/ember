@@ -101,6 +101,13 @@ impl Diagnostic {
         Diagnostic { severity: Severity::Warning, ..Diagnostic::error(code, span, message) }
     }
 
+    /// An `L`-code. Rendered as a warning; kept a separate constructor so a
+    /// lint cannot be raised to an error by accident, and so `[MAN-3]`'s
+    /// `[lints]` table has something to name.
+    pub fn lint(code: Code, span: Span, message: impl Into<String>) -> Diagnostic {
+        Diagnostic { severity: Severity::Warning, ..Diagnostic::error(code, span, message) }
+    }
+
     /// Text on the primary caret itself, distinct from the header message.
     pub fn primary_label(mut self, text: impl Into<String>) -> Diagnostic {
         self.primary.message = Some(text.into());

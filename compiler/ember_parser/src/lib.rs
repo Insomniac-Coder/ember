@@ -13,6 +13,14 @@ use ember_span::{FileId, Span, Symbol};
 mod decls;
 mod body;
 
+/// `[MOD-6]`, `[VER-1]` — the language versions whose source this compiler
+/// accepts. The set MUST include every version still accepted, so that pinning
+/// an older one stays valid; it holds one entry because v0.5 changed the
+/// grammar under `let`, `type`, `;` and the jump expressions, and no earlier
+/// source survives those changes. It grows when `[VER-2]`'s compatibility
+/// promise comes into force at 1.0.
+pub const LANGUAGE_VERSIONS: &[&str] = &["0.5"];
+
 /// Parse one file's token stream into a [`Module`].
 ///
 /// `src` is the same normalised text the tokens came from; the parser needs it
@@ -211,6 +219,20 @@ impl<'a> Parser<'a> {
         if self.pos > 0 && matches!(self.tokens[self.pos - 1].kind, TokenKind::Dedent) {
             return;
         }
+        // `[GRM-18]` (`OQ-25`) — `;` is punctuation inside `[T; N]` and
+        // `[v; N]` and nowhere else. One line carries one statement, so a `;`
+        // between two of them gets its own code and its own fix rather than a
+        // bare "expected the end of the line".
+        if self.at_punct(Punct::Semi) {
+            let span = self.span();
+            self.report(
+                Diagnostic::error(codes::E0105, span, "`;` is not a statement separator")
+                    .primary_label("one line carries one statement")
+                    .help("put each statement on its own line"),
+            );
+            self.bump();
+            return;
+        }
         let found = self.peek().to_string();
         let span = self.span();
         self.report(
@@ -290,7 +312,6 @@ impl<'a> Parser<'a> {
                         | Kw::Static
                         | Kw::Pub
                         | Kw::Import
-                        | Kw::From
                         | Kw::Extern
                         | Kw::Open
                 )
@@ -347,7 +368,7 @@ impl<'a> Parser<'a> {
             if self.at_eof() {
                 break;
             }
-            if self.at_kw(Kw::Import) || self.at_kw(Kw::From) {
+            if self.at_kw(Kw::Import) || self.at_contextual("from") {
                 if let Some(import) = self.parse_import() {
                     imports.push(import);
                 }
@@ -374,6 +395,29 @@ impl<'a> Parser<'a> {
             return None;
         };
         self.bump();
+        // `[MOD-6]` — the directive was parsed and then read by nobody, so a
+        // file could pin any version at all and compile.
+        if name.is("language") {
+            if !LANGUAGE_VERSIONS.contains(&value.as_str()) {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0006,
+                        span,
+                        format!("this compiler does not support language version `{value}`"),
+                    )
+                    .help(format!("it supports {}", LANGUAGE_VERSIONS.join(", "))),
+                );
+            }
+        } else {
+            self.report(
+                Diagnostic::error(
+                    codes::E0006,
+                    span,
+                    format!("`#! {name}` is not a directive"),
+                )
+                .help("the only directive is `#! language \"<version>\"`"),
+            );
+        }
         Some(ember_ast::Directive { name: Ident { name, span }, value, span })
     }
 }

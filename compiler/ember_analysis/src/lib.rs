@@ -7,6 +7,8 @@
 
 pub mod definite_init;
 pub mod drops;
+pub mod unused;
 
 pub use definite_init::{check_all as check_definite_init_all, check_definite_init};
 pub use drops::{elaborate as elaborate_drops, elaborate_all as elaborate_drops_all};
+pub use unused::check_all as check_unused_all;

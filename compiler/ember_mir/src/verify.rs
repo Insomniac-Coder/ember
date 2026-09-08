@@ -107,7 +107,19 @@ pub fn verify(body: &Body) -> Vec<Violation> {
 
     for (index, block) in body.blocks.iter().enumerate() {
         let at = format!("bb{index}");
+        // `[CG-C-8]` — every statement carries the span of the source
+        // construct that produced it, and the verifier checks it. Without a
+        // span the backend emits no `#line`, so the debugger steps through
+        // that statement as if it belonged to whatever came before, and
+        // `tests/debug/`'s "one step advances one Ember statement" fails in a
+        // way that points at the debugger rather than at the lowering.
+        if block.terminator_span.is_dummy() {
+            v.fail(format!("{at}: terminator has no source span"));
+        }
         for stmt in &block.stmts {
+            if stmt.span.is_dummy() && !stmt.kind.is_bookkeeping() {
+                v.fail(format!("{at}: {} has no source span", stmt.kind.describe()));
+            }
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     v.place(place, &at);
@@ -158,6 +170,62 @@ pub fn verify(body: &Body) -> Vec<Violation> {
     }
 
     v.violations
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BasicBlock, LocalDecl, LocalKind, Stmt};
+    use ember_span::Span;
+
+    /// A body with one empty block and a real span on its terminator.
+    fn body_with(stmts: Vec<Stmt>, terminator_span: Span) -> Body {
+        Body {
+            name: "t".to_string(),
+            symbol: "em_t".to_string(),
+            locals: vec![LocalDecl {
+                ty: ember_types::TypeTable::new().1.void,
+                name: None,
+                kind: LocalKind::Return,
+                span: Span::DUMMY,
+            }],
+            blocks: vec![BasicBlock {
+                stmts,
+                terminator: Terminator::Return,
+                terminator_span,
+            }],
+            arg_count: 0,
+            span: Span::DUMMY,
+        }
+    }
+
+    /// `[CG-C-8]` — the check must actually fire. A verifier check nobody can
+    /// make fail is a comment.
+    #[test]
+    fn a_statement_without_a_span_is_a_violation() {
+        let stmt = Stmt::new(StmtKind::Drop { place: Place::local(LocalId(0)), flag: None }, Span::DUMMY);
+        let violations = verify(&body_with(vec![stmt], Span::new(ember_span::FileId(0), 0, 1)));
+        assert!(
+            violations.iter().any(|v| v.message.contains("no source span")),
+            "expected a missing-span violation, got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_terminator_without_a_span_is_a_violation() {
+        let violations = verify(&body_with(Vec::new(), Span::DUMMY));
+        assert!(
+            violations.iter().any(|v| v.message.contains("terminator has no source span")),
+            "expected a missing-span violation, got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn bookkeeping_statements_need_no_span() {
+        let stmt = Stmt::new(StmtKind::StorageLive(LocalId(0)), Span::DUMMY);
+        let violations = verify(&body_with(vec![stmt], Span::new(ember_span::FileId(0), 0, 1)));
+        assert!(violations.is_empty(), "got {violations:?}");
+    }
 }
 
 /// Verify every body, panicking on the first violation. Called from the driver

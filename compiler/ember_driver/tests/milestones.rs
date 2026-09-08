@@ -48,6 +48,10 @@ struct Expectations {
     /// substring of the message are matched anywhere in the output, which is
     /// what a `compile-fail` test in `tests/` needs.
     errors: Vec<(String, String)>,
+    /// `#$ warning[WXXXX]: text` / `#$ warning[LXXXX]: text` — a warning or
+    /// lint the compiler must produce. These were parsed by nobody until
+    /// 2026-09-08, so a file could assert any warning at all and pass.
+    warnings: Vec<(String, String)>,
 }
 
 fn parse_expectations(source: &str) -> Expectations {
@@ -90,6 +94,13 @@ fn parse_expectations(source: &str) -> Expectations {
                     .push((code.trim().to_string(), message.trim().to_string()));
             }
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("warning[") {
+            if let Some((code, message)) = value.split_once("]:") {
+                expectations
+                    .warnings
+                    .push((code.trim().to_string(), message.trim().to_string()));
+            }
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
@@ -101,6 +112,14 @@ fn parse_expectations(source: &str) -> Expectations {
             }
         } else if collecting_stdout {
             stdout_lines.push(rest.to_string());
+        } else if !rest.is_empty() && !rest.starts_with("rules:") && !rest.starts_with("note") {
+            // An unrecognised key used to fall through in silence, so
+            // `#$ panic:` for `#$ panics:` asserted nothing and the test
+            // passed. Every annotation is now either understood or refused.
+            panic!(
+                "unrecognised `#$` annotation: {rest:?}
+                 known keys: test, exit, assert-c, error[…], warning[…],                  panics, stdout, rules, note"
+            );
         }
     }
 
@@ -162,6 +181,27 @@ stderr:
             );
         }
         return;
+    }
+
+    // `[TST-1]` — warnings and lints the file names must be produced.
+    if !expectations.warnings.is_empty() {
+        let checked = ember(&["check", &relative], root);
+        for (code, message) in &expectations.warnings {
+            assert!(
+                checked.stderr.contains(code.as_str()),
+                "{relative}: expected {code}
+stderr:
+{}",
+                checked.stderr
+            );
+            assert!(
+                checked.stderr.contains(message.as_str()),
+                "{relative}: expected a warning containing {message:?}
+stderr:
+{}",
+                checked.stderr
+            );
+        }
     }
 
     // The emitted C, for `assert-c`.
@@ -244,17 +284,29 @@ fn milestones_pass() {
 
 #[test]
 fn run_pass_programs_pass() {
-    check_directory("tests/run-pass");
+    let count = check_directory("tests/run-pass");
+    assert!(count > 0, "no run-pass programs were found");
+}
+
+/// `tests/compile-pass` was walked by nothing until 2026-09-08: the directory
+/// existed, held files, and no test read them. Every suite asserts it found
+/// something for the same reason.
+#[test]
+fn compile_pass_programs_compile() {
+    let count = check_directory("tests/compile-pass");
+    assert!(count > 0, "no compile-pass programs were found");
 }
 
 #[test]
 fn compile_fail_programs_are_rejected() {
-    check_directory("tests/compile-fail");
+    let count = check_directory("tests/compile-fail");
+    assert!(count > 0, "no compile-fail programs were found");
 }
 
 #[test]
 fn run_fail_programs_panic() {
-    check_directory("tests/run-fail");
+    let count = check_directory("tests/run-fail");
+    assert!(count > 0, "no run-fail programs were found");
 }
 
 /// `[FMT-1]` — `fmt(fmt(x)) == fmt(x)` and `parse(fmt(x)) ≡ parse(x)`, over

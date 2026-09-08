@@ -100,7 +100,10 @@ pub enum Lit {
     /// `[LEX-17]` — an unsuffixed float is "untyped float"; absent context it
     /// becomes `f32`. Kept as `f64` so no precision is lost before the type is
     /// known.
-    Float { value: f64, suffix: Option<FloatSuffix> },
+    /// `digits` is the count of significant decimal digits as **written**
+    /// (`[LEX-17a]`). It cannot be recovered from `value`, which no longer
+    /// knows whether `0.1` was written `0.1` or `0.100000000000000006`.
+    Float { value: f64, suffix: Option<FloatSuffix>, digits: u32 },
     Char(char),
     /// Type `str` with static region (`[LEX-20]`).
     Str(String),
@@ -199,19 +202,23 @@ macro_rules! keywords {
     };
 }
 
-// Reserved keywords, v1 (Part II §4).
+// Reserved keywords, v1 (Part II §4). 48 entries.
+//
+// `let` is fully reserved (`OQ-26`, errata ERR-004), `type` is a v1 keyword
+// (`[LEX-15a]`, errata ERR-009), and `from` is contextual (owner, 2026-09-08,
+// errata ERR-017) because `interface From[T]` requires `fn from(…)`.
 keywords! { Kw,
     And => "and", As => "as", Break => "break", Class => "class",
     Comptime => "comptime", Const => "const", Continue => "continue",
     Defer => "defer", Dyn => "dyn", Elif => "elif", Else => "else",
     Enum => "enum", Extend => "extend", Extern => "extern", False => "false",
-    Fn => "fn", For => "for", From => "from", If => "if",
-    Implements => "implements", Import => "import", In => "in",
-    Interface => "interface", Is => "is", Match => "match", Mut => "mut",
-    Not => "not", Open => "open", Or => "or", Override => "override",
-    Owned => "owned", Pass => "pass", Pub => "pub", Ref => "ref",
-    Return => "return", SelfValue => "self", SelfType => "Self",
-    Static => "static", Struct => "struct", Super => "super", True => "true",
+    Fn => "fn", For => "for", If => "if", Implements => "implements",
+    Import => "import", In => "in", Interface => "interface", Is => "is",
+    Let => "let", Match => "match", Mut => "mut", Not => "not",
+    Open => "open", Or => "or", Override => "override", Owned => "owned",
+    Pass => "pass", Pub => "pub", Ref => "ref", Return => "return",
+    SelfValue => "self", SelfType => "Self", Static => "static",
+    Struct => "struct", Super => "super", True => "true", Type => "type",
     Unsafe => "unsafe", Virtual => "virtual", Void => "void", Where => "where",
     While => "while", With => "with",
 }
@@ -219,18 +226,41 @@ keywords! { Kw,
 // Reserved for future use: lexed as keywords, `E0005` if used (Part II §4).
 keywords! { Reserved,
     Actor => "actor", Async => "async", Await => "await", Macro => "macro",
-    Yield => "yield", Move => "move", Trait => "trait", Type => "type",
+    Yield => "yield", Move => "move", Trait => "trait",
     Union => "union", Loop => "loop", Unless => "unless",
+}
+
+impl Reserved {
+    /// `[LEX-14a]` — the `E0005` message MUST name the version that will
+    /// introduce the word, so a reservation is never mistaken for a typo.
+    pub fn planned_version(self) -> &'static str {
+        match self {
+            // Part XI §7 reserves the async family for v2.
+            Reserved::Async | Reserved::Await | Reserved::Actor => "v2",
+            // Part XIV §3 defers user-defined derives, and macros with them.
+            Reserved::Macro => "v2",
+            // `trait` is the alternative spelling of `interface`; `union`,
+            // `loop`, `unless` and `yield` have no dated plan beyond v2.
+            Reserved::Trait
+            | Reserved::Union
+            | Reserved::Loop
+            | Reserved::Unless
+            | Reserved::Yield
+            | Reserved::Move => "a later version",
+        }
+    }
 }
 
 /// `[LEX-15]` — keywords only in the grammatical positions named in Part III,
 /// ordinary identifiers everywhere else. The lexer emits these as `Ident`; the
 /// parser recognises them by text where the grammar allows.
-// `let` is added to the list: `[CLS-9]` gives `let name: T` a meaning as an
-// immutable field, but Part II §4 lists it neither as a keyword nor as
-// contextual. See docs/spec-errata.md ERR-004.
+/// `from` is here rather than in `Kw` because `interface From[T]` requires a
+/// method literally named `from` (`[ERR-7]`, `[ERR-8]`, and `?`'s conversion),
+/// and a reserved word cannot be a method name. It is a keyword only where it
+/// begins an import at item level, which is the one position an import may
+/// start (owner, 2026-09-08; errata ERR-017).
 pub const CONTEXTUAL_KEYWORDS: &[&str] =
-    &["abstract", "final", "lazy", "test", "bench", "let"];
+    &["abstract", "final", "lazy", "test", "bench", "from"];
 
 // ---------------------------------------------------------------------------
 // Punctuation
@@ -294,9 +324,10 @@ mod tests {
 
     #[test]
     fn the_v1_keyword_list_is_the_one_in_the_spec() {
-        // Part II §4 lists seven keywords on each of six rows and five on the
-        // seventh. A count that drifts means the table and this enum disagree.
-        assert_eq!(Kw::ALL.len(), 47);
+        // Part II §4 lists seven keywords on each of six rows and six on the
+        // seventh: 48. A count that drifts means the table and this enum
+        // disagree.
+        assert_eq!(Kw::ALL.len(), 48);
         assert_eq!(Kw::from_str("owned"), Some(Kw::Owned));
         assert_eq!(Kw::from_str("Self"), Some(Kw::SelfType));
         assert_eq!(Kw::from_str("self"), Some(Kw::SelfValue));
@@ -304,10 +335,30 @@ mod tests {
     }
 
     #[test]
+    fn from_is_contextual_so_that_From_can_declare_it() {
+        // ERR-017 — `interface From[T]: fn from(…)` must parse.
+        assert_eq!(Kw::from_str("from"), None);
+        assert!(CONTEXTUAL_KEYWORDS.contains(&"from"));
+    }
+
+    #[test]
+    fn let_and_type_are_fully_reserved() {
+        // `OQ-26` (ERR-004) and `[LEX-15a]` (ERR-009): both are keywords in
+        // every position, and neither is contextual or reserved-for-future.
+        assert_eq!(Kw::from_str("let"), Some(Kw::Let));
+        assert_eq!(Kw::from_str("type"), Some(Kw::Type));
+        assert_eq!(Reserved::from_str("type"), None);
+        assert!(!CONTEXTUAL_KEYWORDS.contains(&"let"));
+    }
+
+    #[test]
     fn reserved_words_are_separate_from_live_keywords() {
         assert_eq!(Reserved::from_str("async"), Some(Reserved::Async));
         assert_eq!(Kw::from_str("async"), None);
-        assert_eq!(Reserved::from_str("type"), Some(Reserved::Type));
+        // `[LEX-14a]`: every reserved word can name the version that takes it.
+        for r in Reserved::ALL {
+            assert!(!r.planned_version().is_empty());
+        }
     }
 
     #[test]

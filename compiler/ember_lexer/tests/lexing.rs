@@ -47,7 +47,7 @@ fn describe(kind: &TokenKind) -> String {
                 Some(s) => format!("int({value}:{s:?})"),
                 None => format!("int({value})"),
             },
-            Lit::Float { value, suffix } => match suffix {
+            Lit::Float { value, suffix, .. } => match suffix {
                 Some(s) => format!("float({value}:{s:?})"),
                 None => format!("float({value})"),
             },

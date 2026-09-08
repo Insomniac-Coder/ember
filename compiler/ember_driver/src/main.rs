@@ -24,6 +24,7 @@ usage:
 options:
     --profile debug|release|shipping   default: debug
     --emit tokens|ast|hir|mir|c        print an intermediate form and stop
+    --syntax-only                      lex and parse only; report E00xx/E01xx
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
     --out-dir <dir>                    default: target/
@@ -50,6 +51,11 @@ struct Options {
     out_dir: Option<PathBuf>,
     json: bool,
     deny_warnings: bool,
+    /// `[CLI-9]` — lex and parse only, reporting `E00xx` and `E01xx`. Names
+    /// are not resolved, so an example naming undeclared types still passes.
+    /// This is what `[TST-7]`'s gate over the specification's own code blocks
+    /// runs.
+    syntax_only: bool,
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
@@ -72,12 +78,33 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             explain(code)
         }
         "build" | "run" | "check" => {
-            let input = args.get(1).ok_or_else(|| format!("`ember {command}` needs a source file"))?;
-            if input.starts_with('-') {
-                return Err(format!("`ember {command}` needs a source file"));
+            // The source file may sit before or after the flags. Requiring it
+            // first made `ember check --syntax-only f.em` fail with "needs a
+            // source file", which is a confusing way to say "wrong order".
+            let mut input = None;
+            let mut rest = Vec::new();
+            let mut skip_value = false;
+            for arg in &args[1..] {
+                if skip_value {
+                    rest.push(arg.clone());
+                    skip_value = false;
+                    continue;
+                }
+                if arg.starts_with('-') {
+                    skip_value = matches!(
+                        arg.as_str(),
+                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D"
+                    );
+                    rest.push(arg.clone());
+                } else if input.is_none() {
+                    input = Some(arg.clone());
+                } else {
+                    rest.push(arg.clone());
+                }
             }
-            let options = parse_options(&args[2..])?;
-            compile(Path::new(input), command, &options)
+            let input = input.ok_or_else(|| format!("`ember {command}` needs a source file"))?;
+            let options = parse_options(&rest)?;
+            compile(Path::new(&input), command, &options)
         }
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
         // file is already formatted instead of rewriting it.
@@ -141,6 +168,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     return Err("the only backend in v1 is `c`; LLVM is v2".to_string());
                 }
             }
+            "--syntax-only" => options.syntax_only = true,
             "--json" => options.json = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
@@ -292,6 +320,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         print!("{}", ember_ast::dump(&module));
         return Ok(finish(&sink, &map, options));
     }
+    // `[CLI-9]` — stop here. Everything after this point resolves names.
+    if options.syntax_only {
+        return Ok(finish(&sink, &map, options));
+    }
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
@@ -331,6 +363,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
     ember_analysis::elaborate_drops_all(&mut bodies, &types, &mut sink);
+    // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
+    // by `ember lint`. A lint that fires on a separate command does not close
+    // the footgun `[GRM-4]` opens.
+    ember_analysis::check_unused_all(&bodies, &mut sink);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }

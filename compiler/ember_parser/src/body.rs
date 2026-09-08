@@ -85,12 +85,24 @@ impl Parser<'_> {
 
     fn parse_statement(&mut self) -> Option<Stmt> {
         // A doc comment where a statement was expected documents nothing; it
-        // is discarded in silence (ERR-007).
-        if matches!(self.peek(), TokenKind::DocComment(_)) {
+        // is discarded in silence (ERR-007). Parsing then continues with the
+        // statement that follows — returning `None` here made the caller treat
+        // the comment as a parse failure and skip the next line, so a comment
+        // deleted the statement under it. A comment never changes what a
+        // program does.
+        while matches!(self.peek(), TokenKind::DocComment(_)) {
             let doc = self.take_doc();
             self.discard_dangling_doc(doc);
+            self.eat_newlines();
+        }
+        if self.at_dedent() || self.at_eof() {
             return None;
         }
+
+        // `[ATT-3]` — a statement attribute attaches to the next compound
+        // statement. Parsed before the label so `@parallel` may precede
+        // `outer: for …`.
+        let attrs = self.parse_attributes();
 
         let start = self.span();
         let id = self.next_id();
@@ -106,7 +118,8 @@ impl Parser<'_> {
                 } else {
                     self.parse_while(Some(label))
                 };
-                return Some(Stmt { id, kind, span: start.to(self.prev_span()) });
+                self.check_stmt_attrs(&attrs, Some(&kind));
+                return Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) });
             }
         }
 
@@ -159,13 +172,59 @@ impl Parser<'_> {
                 StmtKind::Comptime(self.parse_block())
             }
             _ => {
+                // `[ATT-3]` — an attribute may not precede a simple statement.
+                self.check_stmt_attrs(&attrs, None);
                 let stmt = self.parse_simple_statement()?;
                 self.expect_newline();
                 return Some(stmt);
             }
         };
 
-        Some(Stmt { id, kind, span: start.to(self.prev_span()) })
+        self.check_stmt_attrs(&attrs, Some(&kind));
+        Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) })
+    }
+
+    /// `[ATT-2]`, `[ATT-3]` — only four attributes are permitted on a
+    /// statement, only on a compound one, and three of the four only on a
+    /// `for`. `kind` is `None` when the statement turned out to be simple.
+    fn check_stmt_attrs(&mut self, attrs: &[Attribute], kind: Option<&StmtKind>) {
+        const LOOP_ONLY: [&str; 3] = ["simd", "parallel", "unroll"];
+        for attr in attrs {
+            let name = attr.path.last().map(|s| s.name).unwrap();
+            let permitted = LOOP_ONLY.iter().any(|p| name.is(p)) || name.is("allow");
+            if !permitted {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0104,
+                        attr.span,
+                        format!("`@{name}` is not permitted on a statement"),
+                    )
+                    .help("only `@simd`, `@parallel`, `@unroll` and `@allow` are"),
+                );
+                continue;
+            }
+            let Some(kind) = kind else {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0108,
+                        attr.span,
+                        format!("`@{name}` must precede a compound statement"),
+                    )
+                    .help("attach it to the `for`, `while`, `if` or `match` it describes"),
+                );
+                continue;
+            };
+            if LOOP_ONLY.iter().any(|p| name.is(p)) && !matches!(kind, StmtKind::For { .. }) {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0108,
+                        attr.span,
+                        format!("`@{name}` applies to a `for` loop"),
+                    )
+                    .help("move it onto the `for` statement"),
+                );
+            }
+        }
     }
 
     /// A statement that fits on one line and is terminated by `NEWLINE`.
@@ -174,27 +233,17 @@ impl Parser<'_> {
         let id = self.next_id();
 
         let kind = match self.peek() {
-            TokenKind::Keyword(Kw::Return) => {
-                self.bump();
-                let value = (!self.at_newline() && !self.at_eof()).then(|| self.parse_expr());
-                StmtKind::Return(value)
-            }
-            TokenKind::Keyword(Kw::Break) => {
-                self.bump();
-                StmtKind::Break { label: self.at_ident().then(|| self.expect_ident()) }
-            }
-            TokenKind::Keyword(Kw::Continue) => {
-                self.bump();
-                StmtKind::Continue { label: self.at_ident().then(|| self.expect_ident()) }
-            }
             TokenKind::Keyword(Kw::Pass) => {
                 self.bump();
                 StmtKind::Pass
             }
+            // `[GRM-16]` removed the jump alternatives from `small_stmt`: a
+            // jump written as a statement is an expression statement, which
+            // `parse_expr_statement` produces.
             _ => self.parse_expr_statement()?,
         };
 
-        Some(Stmt { id, kind, span: start.to(self.prev_span()) })
+        Some(Stmt { id, attrs: Vec::new(), kind, span: start.to(self.prev_span()) })
     }
 
     /// A declaration, an assignment, or a bare expression.
@@ -302,10 +351,21 @@ impl Parser<'_> {
     /// `=` is not an expression operator, so an expression is parsed first and
     /// reinterpreted as a pattern when `=` follows.
     fn parse_condition(&mut self) -> Condition {
+        let start = self.span();
         let expr = self.parse_expr_no_block();
         if self.at_punct(Punct::Eq) {
             self.bump();
             let pattern = self.expr_to_pattern(expr);
+            // `[GRM-19]` — the pattern in a condition MUST be refutable. A
+            // binding or `_` matches everything, so the branch is not a
+            // branch at all and the writer meant a plain declaration.
+            if pattern_is_irrefutable(&pattern) {
+                let span = start.to(self.prev_span());
+                self.report(
+                    Diagnostic::error(codes::E2036, span, "this pattern always matches")
+                        .help("write `x = e` on the preceding line"),
+                );
+            }
             let value = self.parse_expr_no_block();
             return Condition::Pattern { pattern, value };
         }
@@ -321,11 +381,28 @@ impl Parser<'_> {
         StmtKind::While { label, cond, body, else_block }
     }
 
+    /// `[GRM-15]` — `owned e` is an expression form legal in exactly two
+    /// places. Parsed here rather than in `parse_prefix` so that everywhere
+    /// else it reaches `E0109` with the fix named.
+    fn parse_consumable_expr(&mut self) -> Expr {
+        if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
+            let start = self.span();
+            self.bump();
+            let inner = self.parse_expr_no_block();
+            return Expr {
+                id: self.next_id(),
+                kind: ExprKind::Owned(Box::new(inner)),
+                span: start.to(self.prev_span()),
+            };
+        }
+        self.parse_expr_no_block()
+    }
+
     fn parse_for(&mut self, label: Option<Ident>) -> StmtKind {
         self.expect_kw(Kw::For);
         let pattern = self.parse_pattern();
         self.expect_kw(Kw::In);
-        let iter = self.parse_expr_no_block();
+        let iter = self.parse_consumable_expr();
         self.expect_punct(Punct::Colon);
         let body = self.parse_block();
         let else_block = self.parse_loop_else();
@@ -346,7 +423,7 @@ impl Parser<'_> {
     /// `=>` expressions; mixing is `E0103`.
     fn parse_match_tail(&mut self) -> (Expr, Vec<MatchArm>) {
         self.expect_kw(Kw::Match);
-        let scrutinee = self.parse_expr_no_block();
+        let scrutinee = self.parse_consumable_expr();
         self.expect_punct(Punct::Colon);
 
         let mut arms = Vec::new();
@@ -411,7 +488,76 @@ impl Parser<'_> {
         self.parse_expr_bp(0, false)
     }
 
+    /// `[GRM-16]` — `return`, `break` and `continue` are expressions of type
+    /// `!` at the lowest precedence, parallel to `ternary` and never atoms. A
+    /// jump is therefore always the whole of the expression it appears in;
+    /// meeting one where an operand is expected is `E0107`.
+    fn at_jump(&self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::Keyword(Kw::Return | Kw::Break | Kw::Continue)
+        )
+    }
+
+    /// True where a `return` with no value ends: a line end, a closing
+    /// bracket, a separator, or the `:` of an enclosing construct.
+    fn at_expr_end(&self) -> bool {
+        self.at_newline()
+            || self.at_eof()
+            || self.at_dedent()
+            || self.at_punct(Punct::RParen)
+            || self.at_punct(Punct::RBracket)
+            || self.at_punct(Punct::RBrace)
+            || self.at_punct(Punct::Comma)
+            || self.at_punct(Punct::Colon)
+    }
+
+    fn parse_jump(&mut self, allow_block_lambda: bool) -> Expr {
+        let start = self.span();
+        let id = self.next_id();
+        let jump = match self.peek() {
+            TokenKind::Keyword(Kw::Return) => {
+                self.bump();
+                let value = (!self.at_expr_end())
+                    .then(|| Box::new(self.parse_expr_bp(0, allow_block_lambda)));
+                Jump::Return(value)
+            }
+            TokenKind::Keyword(Kw::Break) => {
+                self.bump();
+                Jump::Break { label: self.at_ident().then(|| self.expect_ident()) }
+            }
+            _ => {
+                self.expect_kw(Kw::Continue);
+                Jump::Continue { label: self.at_ident().then(|| self.expect_ident()) }
+            }
+        };
+        Expr { id, kind: ExprKind::Jump(jump), span: start.to(self.prev_span()) }
+    }
+
     fn parse_expr_bp(&mut self, min_bp: u8, allow_block_lambda: bool) -> Expr {
+        if self.at_jump() {
+            if min_bp > 0 {
+                let span = self.span();
+                let word = match self.peek() {
+                    TokenKind::Keyword(kw) => kw.as_str(),
+                    _ => "return",
+                };
+                self.report(
+                    Diagnostic::error(
+                        codes::E0107,
+                        span,
+                        "a jump expression may not be an operand",
+                    )
+                    .primary_label(format!("`{word}` is the whole expression or nothing"))
+                    .help(format!(
+                        "put `{word}` on its own, or bind the operand first and `{word}` it"
+                    )),
+                );
+            }
+            // Parsed either way, so one mistake does not cascade.
+            return self.parse_jump(allow_block_lambda);
+        }
+
         let start = self.span();
         let mut lhs = self.parse_prefix(allow_block_lambda);
 
@@ -648,6 +794,26 @@ impl Parser<'_> {
             {
                 ExprKind::Lambda(self.parse_lambda(allow_block_lambda))
             }
+            // `[GRM-15]` — `owned` reaching expression position here means it
+            // is not a `for` iterable, a `match` scrutinee or an `owned fn`,
+            // which are the only three places it may appear.
+            TokenKind::Keyword(Kw::Owned) => {
+                let span = self.span();
+                self.bump();
+                self.report(
+                    Diagnostic::error(
+                        codes::E0109,
+                        span,
+                        "`owned` is not permitted in expression position",
+                    )
+                    .help(
+                        "`owned` marks a parameter, a receiver, a closure or a consumed \
+                         scrutinee; to move a value, pass it to an `owned` parameter",
+                    ),
+                );
+                let inner = self.parse_expr_bp(BP_CAST, allow_block_lambda);
+                ExprKind::Owned(Box::new(inner))
+            }
             TokenKind::Punct(Punct::LParen) => {
                 self.bump();
                 if self.eat_punct(Punct::RParen) {
@@ -708,15 +874,24 @@ impl Parser<'_> {
                 ExprKind::Path { segments }
             }
             TokenKind::Reserved(reserved) => {
+                let reserved = reserved;
                 let span = self.span();
                 self.bump();
+                // `[LEX-14a]` — name the version that takes the word.
                 self.report(
                     Diagnostic::error(
                         codes::E0005,
                         span,
-                        format!("`{}` is reserved for a future version", reserved.as_str()),
+                        format!(
+                            "`{}` is reserved for {}",
+                            reserved.as_str(),
+                            reserved.planned_version()
+                        ),
                     )
-                    .help("write `r#` before the name to use it as an identifier"),
+                    .help(format!(
+                        "write `r#{}` to use the word as an identifier",
+                        reserved.as_str()
+                    )),
                 );
                 ExprKind::Error
             }
@@ -1188,10 +1363,26 @@ enum InfixOp {
     Range { inclusive: bool },
 }
 
+/// `[GRM-19]` — a pattern that matches every value of its type. Decided
+/// syntactically: a binding, `_`, and tuples built only from those. A
+/// `Constructor` or `Path` may still be irrefutable when the type has one
+/// variant, which needs types and is checked in `ember_typeck`.
+fn pattern_is_irrefutable(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::Wild => true,
+        PatternKind::Bind { sub, .. } => match sub {
+            Some(sub) => pattern_is_irrefutable(sub),
+            None => true,
+        },
+        PatternKind::Tuple(items) => items.iter().all(pattern_is_irrefutable),
+        _ => false,
+    }
+}
+
 fn convert_literal(lit: Lit) -> Literal {
     match lit {
         Lit::Int { value, suffix } => Literal::Int { value, suffix },
-        Lit::Float { value, suffix } => Literal::Float { value, suffix },
+        Lit::Float { value, suffix, digits } => Literal::Float { value, suffix, digits },
         Lit::Char(c) => Literal::Char(c),
         Lit::Str(s) => Literal::Str(s),
         Lit::Bytes(b) => Literal::Bytes(b),

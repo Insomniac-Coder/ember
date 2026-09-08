@@ -203,7 +203,26 @@ impl Printer<'_> {
 
     // -- items ---------------------------------------------------------------
 
+    /// A `##` doc comment, one `## ` line per line of the body. An empty line
+    /// inside the body keeps its `##` so the comment stays one block and does
+    /// not detach from what it documents.
+    fn doc_comment(&mut self, doc: Option<&str>) {
+        let Some(doc) = doc else { return };
+        for line in doc.lines() {
+            let line = line.trim_end();
+            if line.is_empty() {
+                self.line("##");
+            } else {
+                self.line(&format!("## {line}"));
+            }
+        }
+    }
+
     fn item(&mut self, item: &ast::Item) {
+        // `[FMT-1]` — the formatter preserves comments, and a doc comment is
+        // the documented surface `ember doc` reads. Emitted before the
+        // attributes, which is the order the parser reads them in.
+        self.doc_comment(item.doc.as_deref());
         for attr in &item.attrs {
             // `[FMT-1]` — attributes one per line.
             self.line(&self.attribute(attr));
@@ -422,7 +441,10 @@ impl Printer<'_> {
                     .as_ref()
                     .map(|d| format!(" = {}", self.expr(d)))
                     .unwrap_or_default();
-                self.line(&format!("{vis}{}: {ty}{default}", field.name.name));
+                // `[CLS-9]` — `let` is part of the declaration, not decoration.
+                // Dropping it changed the field's meaning and broke `[FMT-1]`.
+                let let_kw = if field.is_let { "let " } else { "" };
+                self.line(&format!("{vis}{let_kw}{}: {ty}{default}", field.name.name));
             }
             ast::MemberKind::Fn(decl) => self.function(&vis, decl),
             ast::MemberKind::Const(decl) => {
@@ -519,13 +541,6 @@ impl Printer<'_> {
                 let text = self.expr(expr);
                 self.line(&text);
             }
-            ast::StmtKind::Return(value) => match value {
-                Some(value) => {
-                    let text = self.expr(value);
-                    self.line(&format!("return {text}"));
-                }
-                None => self.line("return"),
-            },
             // `[FMT-1]` — `x: T = v` spacing.
             ast::StmtKind::Decl { pattern, ty, init } => {
                 let pattern = self.pattern(pattern);
@@ -595,14 +610,6 @@ impl Printer<'_> {
             ast::StmtKind::Unsafe(block) => {
                 self.line("unsafe:");
                 self.block(block);
-            }
-            ast::StmtKind::Break { label } => {
-                let label = label.map(|l| format!(" {}", l.name)).unwrap_or_default();
-                self.line(&format!("break{label}"));
-            }
-            ast::StmtKind::Continue { label } => {
-                let label = label.map(|l| format!(" {}", l.name)).unwrap_or_default();
-                self.line(&format!("continue{label}"));
             }
             // Anything the printer does not reshape is copied through.
             _ => {
@@ -676,6 +683,23 @@ impl Printer<'_> {
     fn expr_pure(&self, expr: &ast::Expr) -> String {
         match &expr.kind {
             ast::ExprKind::Paren(inner) => format!("({})", self.expr_pure(inner)),
+            // `[GRM-16]` — a jump is an expression, so it reaches the printer
+            // here whether it was written as a statement or inside a `match`
+            // arm. It must have a rule of its own: the catch-all copies text
+            // through with each line trimmed and would flatten a nested block.
+            ast::ExprKind::Owned(inner) => format!("owned {}", self.expr_pure(inner)),
+            ast::ExprKind::Jump(jump) => match jump {
+                ast::Jump::Return(Some(value)) => format!("return {}", self.expr_pure(value)),
+                ast::Jump::Return(None) => "return".to_string(),
+                ast::Jump::Break { label } => match label {
+                    Some(l) => format!("break {}", l.name),
+                    None => "break".to_string(),
+                },
+                ast::Jump::Continue { label } => match label {
+                    Some(l) => format!("continue {}", l.name),
+                    None => "continue".to_string(),
+                },
+            },
             ast::ExprKind::Path { segments } => dotted(segments),
             ast::ExprKind::SelfExpr => "self".to_string(),
             ast::ExprKind::Field { base, name } => {

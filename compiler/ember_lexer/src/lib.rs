@@ -487,7 +487,13 @@ impl<'a> Lexer<'a> {
         // ERR-002; rejecting it would be a papercut with nothing bought.
         if is_float || float_suffix(&suffix).is_some() {
             let value: f64 = text.parse().unwrap_or(0.0);
-            self.finish_number(start, Lit::Float { value, suffix: float_suffix(&suffix) }, &suffix, true);
+            let digits = significant_digits(&text);
+            self.finish_number(
+                start,
+                Lit::Float { value, suffix: float_suffix(&suffix), digits },
+                &suffix,
+                true,
+            );
         } else {
             let value = text.parse::<u128>().unwrap_or_else(|_| {
                 let span = self.span(start);
@@ -917,6 +923,31 @@ enum EscapeContext {
 
 fn int_suffix(text: &str) -> Option<IntSuffix> {
     IntSuffix::from_str(text)
+}
+
+/// `[LEX-17a]` — significant decimal digits as written, so that a literal
+/// carrying more precision than `f32` holds can be diagnosed. Leading zeros are
+/// not significant; the exponent is not part of the mantissa. Counted from the
+/// source text, because the parsed `f64` cannot tell `0.1` from `0.10000000001`.
+fn significant_digits(text: &str) -> u32 {
+    let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+    let mut seen_nonzero = false;
+    let mut count = 0;
+    for c in mantissa.chars() {
+        if c == '.' || c == '_' || c == '+' || c == '-' {
+            continue;
+        }
+        if !c.is_ascii_digit() {
+            break;
+        }
+        if c != '0' {
+            seen_nonzero = true;
+        }
+        if seen_nonzero {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn float_suffix(text: &str) -> Option<token::FloatSuffix> {
