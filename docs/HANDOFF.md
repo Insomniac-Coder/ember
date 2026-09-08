@@ -1,109 +1,169 @@
 # Ember — handoff
 
-## Read this before anything else: a new specification is coming
+## Read this before anything else: v0.5 has landed and is applied
 
-**The owner is supplying a new design document, v0.5.** Said on 2026-09-08,
-after the v0.2 memory-safety amendment had been merged: it "makes some
-substantial changes to the design so a few areas will have to be revisited."
+**The owner supplied the v0.5 specification on 2026-09-08.** It is the whole
+document, not a partial replacement, and it carries the change logs for 0.3,
+0.4 and 0.5 — three revisions at once. The open question in the previous
+handoff ("is it the whole document?") is answered: `docs/spec/` was
+regenerated, not patched.
 
-**It has not arrived yet.** Nothing in this file describes it, because nothing
-about it is known beyond that sentence. When it arrives, apply it before
-writing any more Phase 2 code — the procedure and the things it must not
-overwrite are in "Applying a new specification version" below.
+**Where it lives now.**
 
-**Do not start block E, F, I or the rest of G while waiting.** The owner did
-not say to stop, so this is judgement rather than an instruction, and an
-explicit request for work overrides it. The reasoning: the NLL borrow checker
-is the largest single piece left in Phase 2, the v0.2 amendment already changed
-what it has to produce (`[DIA-7]`'s classifier needs the borrow checker's own
-loan and region tables), and a v0.5 that revisits ownership at all would mean
-building it a second time. Waiting costs nothing; the work is committed and
-pushed.
-
-**One question is with the owner and unanswered:** is v0.5 the *whole*
-document, or another partial replacement? v0.2 was one 2,671-line file;
-the 2026-09-08 amendment replaced six parts wholesale and left the rest alone.
-The answer decides whether `docs/spec/` is regenerated or patched.
-
-**Everything is committed and pushed** (`58cb057` on
-`origin/phase-1-core-language`), so a rewrite costs time and nothing else.
-
-### Where the owner's source documents live
-
-Outside the repository, in `C:\Users\ism19\Downloads\`:
-
-| File | What it is |
+| Path | What it is |
 |---|---|
-| `Ember_Design_Document_v0.2_Implementation_Spec.md` | the original 2,671-line specification; `docs/spec/` is this, split |
-| `Ember_Updated_Parts_Memory_Safety.md` | the 2026-09-08 amendment: Parts IX, XI, XV, XIX, XX, XXII |
-| `Ember_Part_XIX_Toolchain.md` | an earlier Part XIX the owner withdrew — **superseded, do not apply** |
+| `docs/spec-source/as-received/Ember_v0.5_spec.md` | byte-identical to what the owner sent. **Never edit it.** It is what a future revision is diffed against |
+| `docs/spec-source/ember-spec.md` | the **normative** document: as-received plus the errata rulings below |
+| `docs/spec/` | generated from it by `tools/split_spec.py`. **Never hand-edit.** `tools/split_spec.py --check` fails CI if anyone does |
 
-None of them is in the repository. If that folder is cleared, the ability to
-re-split or to diff `docs/spec/` against what the owner actually sent goes with
-it. Worth proposing to the owner that they be vendored under `docs/spec/source/`;
-not done unasked, because what belongs in the repository is their call.
+That three-way split exists because v0.5's own ground rule 3 records how 0.3
+silently reverted four owner rulings: it was authored from an unpatched copy.
+Keeping the pristine file *and* the errata means either side is reconstructible.
+
+### What v0.5 changed under work that was already finished
+
+Two of the four rulings the owner had made were **reversed** by v0.5:
+
+- `let` is **fully reserved**, not contextual (`OQ-26`, reverses ERR-004).
+- `return`, `break` and `continue` are **expressions** of type `!`, not
+  statements (`OQ-14`, reverses ERR-008). This is what makes
+  `Circle(r) => return PI * r * r` parse.
+
+The other two (`E0102`/`E0103`/`E0104`, and a dangling doc comment being
+silent) were carried into the document by the owner. `1f32` and `;` were
+decided the way the implementation had already guessed.
+
+### Seven defects in v0.5 itself, found and fixed before any of it reached code
+
+`docs/spec-errata.md` ERR-009 … ERR-016. **Six of the seven had one cause**:
+0.4's and 0.5's amendments were *appended* to each Part instead of
+*substituted into* the rule they amend. Two signatures, both now checked by
+`tools/rule_index.py`:
+
+- a rule id stated twice (`[EFF-12]`, `[PAR-2]`);
+- a rule whose body begins with `…` (`[MOD-6]`, `[CLO-2]`, `[FFI-6]`).
+
+**`[MOD-6]` and `[CLO-2]` had lost text that survives in no copy of v0.5.** It
+was restored from the committed split of v0.2 — which would have been destroyed
+had `docs/spec/` been regenerated before the diff was read. That is the reason
+to diff first and regenerate second, every time.
+
+The seventh (ERR-016) is the standard-interface list in Part IV §8: every one
+of its twenty declarations put its members on the header line, which
+`interface_decl` has never admitted, and six also used `;` as a separator,
+which `OQ-25` had just outlawed. Rewritten indented.
+
+`type` was in both keyword lists (ERR-009). It is now a v1 keyword and the
+reserved set has **49** entries, not 47.
 
 ## Applying a new specification version
 
-The procedure that worked for the 2026-09-08 amendment, in order:
+The procedure that worked for v0.5, in order:
 
-1. **Split the owner's file per part** into a scratch directory —
-   `awk` on `^# Part ` / `^# Appendix ` headings, or `tools/split_spec.py` if
-   the document is complete. Never overwrite `docs/spec/` from it directly.
-2. **Diff each part against the committed one** before changing anything,
-   ignoring blank lines and trailing space. The diff is the specification of
-   the work; read all of it before applying any of it.
-3. **Apply, then diff again** and confirm the only remaining differences are
-   ones you can name.
-4. **Record every difference you deliberately kept** in `docs/spec-errata.md`,
-   against the entry that decided it. A future reader will diff the owner's
-   file against `docs/spec/` and must find an explanation for each one.
-5. **Watch the line endings.** `.gitattributes` pins LF, `core.autocrlf` is
-   `true` locally, and most working-tree files are CRLF while every committed
-   blob is LF. A scripted edit can leave a file *mixed*, which is the state
-   that makes later scripted edits fail silently. Normalise anything you touch
-   and check `git diff --stat` shows only real changes.
-
-**Owner rulings a new document will probably contradict, because they postdate
-it.** Each is *decided*; keep the ruling, not the document, and say so in the
-errata:
-
-- **`#$`, not `#!`, for test annotations** (ERR-006). `#!` is `[MOD-6]`'s
-  language directive and the lexer cannot tell them apart. Every `.em` file
-  under `tests/` uses `#$`, as do Part XIX §5 and Part XX §3's milestones.
-  `[TST-0]` and the `assert-c` annotation came in with it.
-- **`return` is a statement, so `Circle(r) => return ...` does not parse**
-  (ERR-008). Appendix A's `match` example is corrected to the `:` form.
-- **`E0102`/`E0103`/`E0104`**, not `E0010`/`E0011`/`E0020` (ERR-001).
-- **A doc comment that documents nothing is silent**, no `W0001` (ERR-007).
+1. **Copy the owner's file to `docs/spec-source/as-received/` untouched**, then
+   copy it again to `docs/spec-source/ember-spec.md` as the working normative
+   copy.
+2. **Split it to a scratch directory** with `tools/split_spec.py` and **diff
+   each part against the committed one** before changing anything. The diff is
+   the specification of the work; read all of it before applying any of it.
+   Do not regenerate `docs/spec/` until this is done — it is the only copy of
+   whatever the new document deleted.
+3. **Apply errata to `ember-spec.md`** with a script that asserts each
+   replacement matched exactly once, then regenerate `docs/spec/`.
+4. **Record every deliberate difference** in `docs/spec-errata.md`.
+5. **Run `python tools/rule_index.py`** — duplicate rule ids, orphaned
+   amendments, codes missing from the registry, registry entries citing rules
+   that do not exist.
+6. **Watch the line endings.** `.gitattributes` pins LF and the owner's file is
+   LF; `split_spec.py` now writes LF explicitly, because Python's text mode was
+   turning it into CRLF on Windows and leaving the tree mixed.
 
 ## Start here
 
-**Phases 0 and 1 of nine are complete. Phase 2 is in progress.** All seven of
-Phase 1's blocks are done. Phase 2's blocks A to C — moves, drops and drop
-flags, generics, and iterators — are done, and so is the core of block G:
-`unsafe` blocks, raw pointers and the memory builtins. That is what unblocked
-block D, which is now writable but not written. The borrow checker and
-closures are not started.
+**Phases 0 and 1 of nine were complete; Phase 2 is in progress and is roughly a
+third done.** Phase 2's blocks A to C — moves, drops and drop flags, generics,
+and iterators — are done, and so is the core of block G: `unsafe` blocks, raw
+pointers and the memory builtins. Block D is writable but not written. **The
+NLL borrow checker (block E) is the largest single piece left in the project
+and is not started.** Closures are not started.
 
-**The owner amended the specification on 2026-09-08** — the v0.2 memory-safety
-update. It adds `Cell`/`RefCell` and a mandatory borrow-diagnostic catalogue,
-and both land *inside* Phase 2, which grew two exit criteria. Read
-"The 2026-09-08 spec amendment" below before planning any more of this phase.
+**v0.5 reopened Phase 0.** `[TOOL-1]`..`[TOOL-4]` add milestone **M0, "the
+first hour"**, as a *Phase 0 exit criterion*: on a clean machine with no C
+toolchain, `install → ember new hello → cd hello → ember run` must print
+`hello, world` in under five minutes and at most six typed commands, on Windows
+and Linux. `[TOOL-2]` makes a bundled Clang and `lld` a committed deliverable,
+not a conditional one. Neither is built.
+
+**Phase 2 grew again** (Part XX §2): besides `Cell`/`RefCell` and the borrow
+diagnostics the 2026-09-08 amendment added, v0.5 puts `assert_disjoint` /
+`assume_disjoint` with proof-carrying returns inside it, and `[LT-7]`'s
+late-bound callback regions and `[TYP-15a]`'s `BorrowList`/`ViewList` land
+*inside* the borrow checker rather than beside it. Block E got bigger.
+
+### Conformance work done 2026-09-08, after v0.5 landed
+
+None of this advanced a phase: it brought the finished phases into line with
+the new document. All of it is green.
+
+| What | Rules |
+|---|---|
+| 49 keywords; `let` and `type` fully reserved | `[LEX-15]`, `[LEX-15a]` |
+| `E0005` names the version that will take the word | `[LEX-14a]` |
+| `type` aliases at item level, resolved to a fixpoint so one alias may name another | `[LEX-15a]` |
+| `return`/`break`/`continue` are expressions; `E0107` when one is an operand | `[GRM-16]` |
+| `E0105` for `;` between statements, `E0109` for stray `owned`, `E2036` for an irrefutable condition | `[GRM-18]`, `[GRM-15]`, `[GRM-19]` |
+| statement attributes: the four permitted, only on a compound statement, three only on a `for` | `[ATT-2]`..`[ATT-4]` |
+| `E2035` — a condition must be `bool`, with the fix chosen by the operand's type | `[CTL-0]` |
+| `W2015` — a defaulted float literal written with more precision than `f32` holds | `[LEX-17a]` |
+| `E0006` — the `#! language` directive is checked against the supported set | `[MOD-6]` |
+| 34 codes named by v0.5 added to the registry; it is exhaustive again | `[DIA-6a]` |
+| `E0006` — `#! language` is checked; `--syntax-only` and flags before the file | `[MOD-6]`, `[CLI-9]` |
+| every MIR statement and terminator must carry a source span, checked by the verifier | `[CG-C-8]` |
+| `from` made contextual so `interface From[T]` can declare `fn from(…)` | `[LEX-15]`, ERR-017 |
+| `tools/rule_index.py`, `tools/spec_check.py`, `tools/split_spec.py --check`, CI workflow | `[XXII.4]`, `[TST-4]`, `[TST-7]`, Phase 0 |
+
+**Three defects found by writing the tests, not by reading:**
+
+- **A `##` comment inside a function body deleted the statement under it.** The
+  parser returned "no statement" for the comment, and the caller treated that
+  as a parse failure and skipped to the next line. A comment must never change
+  what a program does (ERR-007); this one removed code.
+- **`let` was dropped by the formatter**, so `fmt` turned an immutable field
+  into a mutable one and `[FMT-1]`'s round trip was false for every `let`.
+- **Doc comments were dropped by the formatter entirely.** No test file had one
+  until now, so nothing caught it.
+
+**Two more defects came out of `tools/spec_check.py`** once it existed, both
+now recorded: `interface From[T]` could not be declared because `from` was a
+reserved word (ERR-017 — the owner ruled it contextual, and set the general
+rule: a reserved word that blocks a name the standard library must declare
+becomes contextual, never renamed and never `r#`), and two `assert` examples
+were written without parentheses (ERR-018).
+
+**The `[TST-7]` gate's current state: 14 of 38 fenced `ember` blocks parse.**
+The other 24 are fragments — bare statements at file level, which `[GRM-2]`
+forbids — and are baselined in `tools/spec_check_baseline.json`. Shrinking that
+number is what the gate exists to drive.
+
+**Still open from v0.5, in rough order of leverage:** the `branding` module and
+`tools/check_branding.py` (`[RT-5]`, `[MAN-4]`, `[MNG-5]`); `L1001`/`L1002`
+unused-binding lints emitted by `build` and `check` (`[LNT-1]`..`[LNT-3]`);
+`tools/spec_check.py` and the `docs/spec-source/appendix-a.em` fixture
+(`[TST-6]`, `[TST-7]`); `[GRM-8a]`..`[GRM-8c]` type arguments in expression
+position; `[GRM-17]`/`[LEX-6a]` closures inside brackets.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-(the nine owner decisions) before touching anything. `docs/spec-errata.md`
-lists eight places where the specification is silent or contradicts itself.
-Five have been ruled on by the owner and patched into `docs/spec/` (ERR-001,
-ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
+before touching anything. `docs/spec-errata.md` now lists **eighteen** entries;
+ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-018 are the
+defects found in v0.5 itself.
 
 | | |
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`** — all of Phase 1, Phase 2 blocks A-C and G's core, pushed at `58cb057`. Not merged to `main`; the owner has not decided when. |
-| Tests | `cargo test --workspace` → **151 passed, 0 failed**; 31 `.em` programs under `tests/` |
-| Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
+| Working branch | **`phase-1-core-language`** — Phase 1, Phase 2 blocks A-C and G's core pushed at `58cb057`. The v0.5 intake and the conformance work above are **uncommitted** |
+| Tests | `cargo test --workspace` → **156 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
+| Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3` |
 
 ## Hard constraint
 

@@ -19,3 +19,7 @@ target/
 
 # Snapshot review leftovers
 *.snap.new
+
+# Python tooling
+__pycache__/
+*.pyc

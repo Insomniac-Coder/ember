@@ -27,7 +27,8 @@ frame.reset()                                 # requires `mut frame` and no live
 * `[ARN-2]` Values allocated in an arena are **not dropped individually**. `[ARN-3]` Allocating a type that `needs_drop` in an arena is `E3090` unless the call is `alloc_nodrop` (explicit acknowledgement that `drop` will never run) — this keeps arenas free of destructor bookkeeping and prevents silent resource leaks of handles/GPU objects.
 * `[ARN-4]` `Arena` allocation is bump allocation with alignment padding; it is `@noalloc`-clean **only** if the arena is `@noalloc`-declared (`Arena.fixed(buffer: MutSpan[u8])`, which never grows and panics on exhaustion) — a growing arena carries the `Alloc` effect on the growth path. The type `FixedArena` is provided for hot paths.
 * `[ARN-5]` `ArenaArray[T]`, `ArenaMap[K,V]` are container variants whose backing storage is an arena view; they are view types (`@view`) and follow `[TYP-15]`.
-* `[ARN-6]` `ScopedArena`: `with scope = frame.scope():` creates a nested mark; the block's allocations are released at block end (LIFO), giving job-local memory (Part XI §6).
+* `[ARN-6]` `ScopedArena`: `Arena.scope(mut self) -> ScopedArena` takes a **mutable** borrow of the parent arena, held for the `ScopedArena`'s whole region. `with scope = frame.scope():` creates a nested mark; the block's allocations are released at block end (LIFO), giving job-local memory (Part XI §6). While a scope is live the parent MUST NOT be allocated from, reset, or dropped — `E3096 arena is scoped here`, with `help: allocate from `scope` instead, or take this allocation before opening the scope`. Nested scopes are obtained from the `ScopedArena` (`ScopedArena.scope(mut self)`), which nests marks to any depth.
+* `[ARN-7]` LIFO rewind is a **safety property, not a convenience**. An implementation MUST NOT provide any operation that lowers an arena's bump pointer, invalidates a mark, or reuses arena bytes while a view whose region derives from that arena is live. Every such operation MUST take `mut self` on the arena whose bytes it reclaims, which is what makes `[BRW-1]` the enforcing rule. `[ARN-1]`'s argument extends to `scope`, `reset` and drop alike.
 
 ## IX.3 Allocators
 
@@ -58,7 +59,7 @@ fn parse(data: Span[u8]) -> Option[u32]:
 * `[UNS-1]` Operations requiring an `unsafe` context: dereferencing `*T`/`*mut T` (`read`, `write`, `deref`, `deref_mut`, index), pointer arithmetic (`offset`, `add`, `sub`), pointer casts (`[TYP-7]`), calling an `unsafe fn`, calling any `extern` function not covered by a verified contract (`[FFI-*]`), accessing `static mut`, `transmute`, `get_unchecked`, `assume_init`, implementing an `unsafe interface`, inline assembly.
 * `[UNS-2]` An `unsafe:` block does not disable the borrow checker, bounds checks on safe types, or type checking; it only permits the operations above.
 * `[UNS-3]` The lint `L3010 unsafe block larger than necessary` fires when statements inside an `unsafe` block need no unsafe permission.
-* `[UNS-4]` Invariants safe code may assume and unsafe code MUST uphold: every `ref` is non-null, aligned, points to initialised memory of the right type, and is not aliased by a `ref mut` while live; every `Span` length is within its allocation; every class handle points to a live object with a correct header; every `str` is valid UTF-8; no `Send`/`Sync` violation.
+* `[UNS-4]` Invariants safe code may assume and unsafe code MUST uphold: every `ref` is non-null, aligned, points to initialised memory of the right type, and is not aliased by a `ref mut` while live; every `Span` length is within its allocation; every class handle points to a live object with a correct header; every `str` is valid UTF-8; no `Send`/`Sync` violation. No two views (`Span`, `MutSpan`, `str`, `Ref`, `RefMut`, a `@view struct`, or a `ref`) that are simultaneously live in safe code may overlap unless both are shared. Constructing overlapping views through raw pointers, `transmute`, or a foreign call and handing them to safe code is undefined behaviour; `[SIMD-3]` and `[CG-C-4]` depend on this invariant. Unsafe code MUST NOT use a raw pointer derived from a `ref` after that reference's region has ended, nor one derived from a class-object field after the object's last live handle has been released (`[RC-5]`).
 * `[UNS-5]` `MaybeUninit[T]`, `transmute[A, B]`, `ptr.copy_nonoverlapping`, `mem.zeroed[T]()` (requires `T: Zeroable`, an unsafe marker interface auto-derived for all-scalar/POD structs) are provided in `std.mem`.
 * `[UNS-6]` Inline assembly: `unsafe asm("…", inputs, outputs, clobbers)` following LLVM's constraint syntax; the C backend rejects it (`E5090`) except on Clang/GCC where it emits `__asm__ volatile`. Prefer `std.cpu` intrinsics.
 
@@ -108,10 +109,10 @@ fn advance(s: Sprite):                        # note: `s` is borrowed, not `mut`
     s.frame.set(s.frame.get() + 1)
 ```
 
-* `[CELL-1]` `Cell[T]` requires `T: Copy`. Its API is `Cell(v)`, `get(self) -> T`, `set(self, v: T)`, `replace(self, v: T) -> T`, `update(self, f: fn(T) -> T)`. All take `self` (a shared borrow) and mutate.
+* `[CELL-1]` `Cell[T]` places any `T`. Its unconditional API is `Cell(owned v)`, `set(self, owned v: T)`, `replace(self, owned v: T) -> T`, `into_inner(owned self) -> T`, and `take(self) -> T where T: Default`; all take `self` (a shared borrow) and mutate. `get(self) -> T` is provided only where `T: Copy`, by `extend[T: Copy] Cell[T]:` — ordinary Part V §6 machinery, no specialisation implied, `[TYP-19]` unaffected. `update(self, f: fn(T) -> T)` requires `T: Default` or `T: Copy`. **`set` and `replace` MUST store the new value before dropping the old one.** A drop can run arbitrary user code that re-enters the same `Cell` (`Cell[Box[Node]]` where `Node`'s drop reaches back and reads it); a drop-then-store implementation would leave the `Cell` observably uninitialised across that window, which is a read of uninitialised memory.
+* `[CELL-4]` A `Cell` field does not make its containing struct mutable in any other respect. `Cell[T]` is `Copy` when `T: Copy`, and copying such a `Cell` copies the value it holds at that moment; `Cell[T]` for a non-`Copy` `T` is move-only, and is `Drop` iff `T` is.
 * `[CELL-2]` `Cell` never hands out a reference to its contents, so no aliasing rule can be violated and **no runtime check is needed**. `get` is a load; `set` is a store. There is no overhead relative to a plain field.
 * `[CELL-3]` `Cell[T]` is `!Sync` (`[THR-1]`): it may be moved between threads if `T: Send`, but never shared. The `Sync` equivalent is `Atomic[T]`.
-* `[CELL-4]` A `Cell` field does not make its containing struct mutable in any other respect, and does not affect `Copy` derivation: `Cell[T]` is itself `Copy` when `T: Copy`, and copying a `Cell` copies the value it holds at that moment.
 
 ### `RefCell[T]` — dynamically checked borrows of any `T`
 
@@ -129,8 +130,9 @@ fn add(s: Scene, e: Entity):
 * `[CELL-6]` `try_borrow`/`try_borrow_mut` return `Option[Ref[T]]`/`Option[RefMut[T]]` for code that must handle contention rather than panic.
 * `[CELL-7]` `Ref[T]`/`RefMut[T]` are **view types** (`[TYP-15]` applies) whose region borrows the `RefCell`; their `drop` releases the borrow state. They MUST be bound by `with` or a local — the lint `L3011 RefCell guard held across a call` fires when a guard is live across a function call that could re-enter the same cell.
 * `[CELL-8]` `RefCell[T]` is `!Sync`. The `Sync` equivalents are `Mutex[T]` and `RwLock[T]`, whose API is deliberately the same shape (`with g = m.lock():`) so that promoting single-threaded code to shared code is a type change and nothing else.
-* `[CELL-9]` The borrow-state counter is 1 machine word; in the `shipping` profile with `exclusivity = "unchecked"` the checks are compiled out and a violation is UB, matching `[EXC-1]`'s treatment of class exclusivity. In `debug` and `release` the checks are always present.
+* `[CELL-9]` The borrow-state counter is one machine word and the check is present in **every** profile. `exclusivity = "unchecked"` (`[EXC-1]`, ADR-004) governs dynamic **class** exclusivity only; it MUST NOT affect `RefCell`, `Ref`, `RefMut`, `Cell`, `Mutex` or `RwLock`. A package that requires an interior-mutability primitive with no check uses `unsafe` (`UnsafeCell`, `[UNS-*]`), which is visible in review and in `grep`.
 * `[CELL-10]` `RefCell` is not a synchronisation primitive and not a substitute for restructuring. The diagnostic for a borrow error (`[DIA-7]`, shape B4) suggests `RefCell` **only** when the conflicting accesses are provably not simultaneous in the same expression — never as a first suggestion.
+* `[CELL-6a]` `try_borrow` and `try_borrow_mut` MUST return `None` on contention in every profile. No profile setting may make them infallible; doing so would change which branch of a `match` executes, which `[PRF-1]` forbids.
 
 ### Which to reach for
 
@@ -142,7 +144,45 @@ fn add(s: Scene, e: Entity):
 | Same, across threads | `Mutex[T]` / `RwLock[T]` / `Atomic[T]` |
 | Two mutable views into one container | `split_at_mut`, `chunks_mut`, `columns_mut` — no wrapper needed |
 
-`[CELL-11]` `Cell`, `RefCell`, `Ref`, `RefMut`, `Atomic`, `Mutex`, `RwLock` live in `std.cell` and `std.sync`; `Cell` and `RefCell` are **not** in the prelude, so using them is a visible import.
+`[CELL-11]` `Cell`, `RefCell`, `Ref`, `RefMut`, `Atomic`, `Mutex`, `RwLock` live in `std.cell` and `std.sync`; `Cell` and `RefCell` **are** in the prelude (owner decision `OQ-10`): `Shared[T]` is already there and is heavier on every axis this document measures, so taxing the zero-cost facility and not the expensive one inverted the gradient the earlier rule meant to create. `[DIA-9]` still forbids offering them as a *first* suggestion, which is where the visibility actually matters.
+
+## IX.8 Establishing disjointness: `assert_disjoint` and `assume_disjoint`
+
+`[BRW-5]` makes two mutable borrows through computed indices conflict, because the compiler cannot in general prove `i != j`. The sanctioned structural fixes (`split_at_mut`, `chunks_mut`, `columns_mut`) cover the common cases. For the rest — two spans obtained from unrelated sources that the programmer knows do not overlap — Ember provides two clearly distinct tools, matching the two arms of `[PHIL-8]`.
+
+### `mem.assert_disjoint` — verify now, establish for the region (safe)
+
+```ember
+from std.mem import assert_disjoint
+
+fn blend(mut dst: MutSpan[f32], src: Span[f32]):
+    match assert_disjoint(dst, src):
+        Some(d, s):                       # d, s are *known* disjoint from here on
+            for i in 0..d.len():
+                d[i] = d[i] * 0.5 + s[i] * 0.5
+        None:
+            fallback_overlapping_blend(dst, src)
+```
+
+* `[DSJ-1]` `assert_disjoint(a, b)` compares the two views' address ranges (`base`, `base + len * size_of[T]()`) and returns `Some((a', b'))` when they do not overlap, `None` when they do. It **consumes** `a` and `b` and returns fresh views carrying a compile-time disjointness fact. The cost is two comparisons, once, at the call.
+* `[DSJ-2]` The proof is attached to the **returned values**, not to a program point. This is deliberate: a flow-sensitive fact recorded against a line silently rots when either operand is reassigned, whereas a fact carried by a value cannot be separated from the value it describes. Reassigning `d` or `s` produces ordinary views again.
+* `[DSJ-3]` The returned views are treated as **non-overlapping places** by the borrow checker (`[BRW-5]` does not apply between them) and by the aliasing facts passed to the backend (`restrict` / `noalias`, `[SIMD-3]`), so a loop over both vectorises.
+* `[DSJ-4]` Applicable operands: `Span[T]`, `MutSpan[T]`, `SoA` columns, and arena views — anything whose base address and byte length are recoverable. It is **not** available for arbitrary `ref mut`s to unrelated locals (`E3095`), because two single-object references have no range to compare and the borrow checker already handles the cases that arise in practice.
+* `[DSJ-5]` `assert_disjoint_or_panic(a, b) -> (MutSpan[T], Span[T])` is the panicking form. Both forms record a `RuntimeCheck(Aliasing)` site with reason `establishes_static_fact` **in the contract effect set (`[EFF-15]`)** whenever the comparison is not elided by profile-independent analysis; the comparison is elided when the compiler already knows the ranges are disjoint (the common `split_at_mut` case), in which case no site is recorded.
+* `[DSJ-6]` `assert_disjoint` is `@noalloc`, `@nosync`, and usable in a `@static_safe` function: it *establishes* a static fact rather than deferring a check, and once the comparison is elided or hoisted out of a loop the body contains no aliasing check at all. When the comparison itself is emitted inside a `@static_safe` function, it is permitted — `[EFF-12]` forbids checks that stand in for an unproven property, and this one proves it.
+
+### `unsafe assume_disjoint` — assert without verification (unsafe)
+
+```ember
+unsafe:
+    d, s = assume_disjoint(dst, src)     # SAFETY: caller contract guarantees distinct allocations
+```
+
+* `[DSJ-7]` `assume_disjoint` has the same signature shape as `assert_disjoint` but performs **no check in any profile** and returns the views unconditionally. It requires `unsafe` because the programmer, not the machine, is asserting the property; violating it is UB exactly like any other broken `unsafe` precondition (`[UNS-4]`).
+* `[DSJ-8]` There is deliberately **no third form** that is checked in `debug` and assumed in `shipping`. Such a construct would give a program two different meanings under two profiles, would move a memory-safety property into a build setting, and would be invisible in review because it does not contain the word `unsafe`. `[PRF-1]` already forbids profiles from changing semantics; this rule names the specific temptation.
+* `[DSJ-9]` `assert_disjoint_all(v1, …, vn)` and `assert_disjoint_all_or_panic` accept 2..8 view operands, perform the n(n−1)/2 pairwise range comparisons (at most 28), consume all operands and return proof-carrying views for all of them, pairwise disjoint. `[DSJ-1]`..`[DSJ-6]` apply unchanged to each pair.
+
+The distinction in one line: **`assert_disjoint` verifies a property and establishes it; `assume_disjoint` claims a property Ember cannot verify.**
 
 ---
 

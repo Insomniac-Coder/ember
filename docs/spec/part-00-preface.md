@@ -1,6 +1,6 @@
 # Ember Programming Language — Design & Implementation Specification
 
-**Version:** 0.2
+**Version:** 0.5 (supersedes 0.4; see the change log at the end of Part 0)
 **Authority:** This document is the sole normative source for Ember. It supersedes all earlier drafts, which are not required to implement anything described here.
 **Status:** Implementation-ready specification for the reference compiler, runtime, toolchain and RageV integration
 **Audience:** Implementing agents and engineers. This document is written to be executed against, not read for inspiration.

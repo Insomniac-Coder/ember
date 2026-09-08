@@ -16,7 +16,7 @@ const SIN_TABLE: [f32; 256] = comptime:
     t
 
 comptime:
-    assert size_of[Vertex]() == 32, "Vertex layout changed; update the shader"
+    assert(size_of[Vertex]() == 32, "Vertex layout changed; update the shader")
 ```
 
 ## XIV.2 Reflection

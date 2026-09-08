@@ -10,14 +10,24 @@ each entry states exactly what would change if the owner rules the other way.
 
 | ID | Rule | Status |
 |---|---|---|
-| ERR-001 | `E0010`, `E0011`, `E0020` | **decided** — renumbered |
-| ERR-002 | `[LEX-17]`, Part II §5 grammar | proposed — accepted as an extension |
-| ERR-003 | Part II §6 operator table | proposed — `;` added |
-| ERR-004 | `[CLS-9]`, Part II §4 | proposed — `let` made contextual |
-| ERR-005 | `[LEX-8]` with `[LEX-11]` | proposed — resolved by buffering |
-| ERR-006 | Part II §3 with `[TST-1]` | **decided** — annotations moved to `#$` |
-| ERR-007 | `[LEX-11]` | **decided** — a dangling doc comment is silent |
-| ERR-008 | Part III §109 with Part IV §2, Appendix A | **decided** — `return` stays a statement |
+| ERR-001 | `E0010`, `E0011`, `E0020` | **decided** — renumbered; carried by v0.5 |
+| ERR-002 | `[LEX-17]`, Part II §5 grammar | **closed by v0.5** `OQ-24` — `1f32` legal, as implemented |
+| ERR-003 | Part II §6 operator table | **closed by v0.5** `OQ-25` — `;` is punctuation, never a separator |
+| ERR-004 | `[CLS-9]`, Part II §4 | **closed by v0.5** `OQ-26` — `let` fully reserved; **reverses** this entry |
+| ERR-005 | `[LEX-8]` with `[LEX-11]` | **closed by v0.5** `OQ-12` — `[LEX-11a]` is normative |
+| ERR-006 | Part II §3 with `[TST-1]` | **decided** — annotations moved to `#$`; carried by v0.5 |
+| ERR-007 | `[LEX-11]` | **decided** — a dangling doc comment is silent; carried by v0.5 |
+| ERR-008 | Part III §109 with Part IV §2, Appendix A | **closed by v0.5** `OQ-14` — jumps are expressions; **reverses** this entry |
+| ERR-009 | `[LEX-15]`, `[LEX-15a]`, `[LEX-14a]`, Part II §4 | **decided** — `type` is a v1 keyword; 49 entries |
+| ERR-010 | `[EFF-12]`, Part X §2 | **decided** — the two statements merged into one |
+| ERR-011 | `[PAR-1]`, `[PAR-2]`, Part XI §4 | **decided** — `[PAR-2]` split out and de-duplicated |
+| ERR-012 | `[MOD-6]`, Part V §1 | **decided** — first half restored |
+| ERR-013 | `[CLO-2]`, Part VI §5 | **decided** — capture-mode rule restored |
+| ERR-014 | `[FFI-6]`, `[FFI-6b]`, Part XVI §2 | proposed — fragment repaired, macro contradiction open |
+| ERR-015 | `[EFF-11]`, Part X §1.1 | **decided** — fifth reason code defined |
+| ERR-016 | Part IV §8 interface list, `[GRM-18]`, `[TST-7]` | **decided** — block rewritten in indented form |
+| ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
+| ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
 
 ---
 
@@ -87,6 +97,12 @@ is aimed at — where `1f32` and `1.0f32` mean the same thing to the reader.
 `ember_lexer::Lexer::lex_number`, plus a diagnostic suggesting `1.0f32`. This
 is the least consequential entry here.
 
+**Closed by v0.5, `OQ-24`.** `1f32` and `1.0f32` are both float literals;
+`1.f32` remains a method call on `1`, because `float_lit`'s `dec_lit "."` form
+requires that no identifier character follow. `float_suffix` was added to
+`float_lit` in the document. The implementation already did this and needs no
+change.
+
 ---
 
 ## ERR-003 — `;` is used by the grammar but is not an operator
@@ -113,6 +129,14 @@ adding one token, which is why the implementation went this way.
 should ever *produce* it is unspecified — `[FMT-1]` says nothing — and is a
 Phase 1 question.
 
+**Closed by v0.5, `OQ-25`.** `;` stays in the Part II §6 table, as this entry
+proposed, but the side effect above was ruled the other way: `simple_stmt` loses
+its `{";" small_stmt}` tail, one line carries one statement, and `a = 1; b = 2`
+is `E0105` (`[GRM-18]`). `[FMT-3]` settles the formatter question — it never
+emits `;` outside `[T; N]` and `[v; N]`. The parser already never accepted `;`
+as a separator, so the work is the `E0105` code and its mandated help, not a
+grammar change.
+
 ---
 
 ## ERR-004 — `let` has a meaning but is not a keyword
@@ -135,6 +159,19 @@ at the start of a type member, an ordinary identifier everywhere else.
 program that uses it as a variable name — which the current keyword list
 explicitly permits, so somebody will. Contextual is the conservative choice and
 leaves the reserved list free to take `let` later.
+
+**Closed by v0.5, `OQ-26` — and it reverses this entry.** `let` is **fully
+reserved**: a keyword in every position, with `r#let` required to use the word
+as a name. The owner's reason is that `let name: T` should never depend on
+position, at the cost of one identifier nobody can use unescaped. Part II §4's
+v1 table gains `let`, and `[LEX-15]`'s count moves 47 → 48 (and then to 49 with
+`type`, ERR-009).
+
+**What changes.** `let` moves from `CONTEXTUAL_KEYWORDS` to `Kw` in
+`compiler/ember_lexer/src/token.rs`, the `Kw::ALL.len()` assertion follows, and
+`decls.rs`'s `at_contextual("let")` becomes a keyword test. A program using
+`let` as a name now fails where it previously compiled; nothing in `tests/` or
+`std/` does.
 
 ---
 
@@ -364,3 +401,385 @@ expressions of type `!`. The type system already supports it — `!` coerces to
 every type, so an arm yielding `!` sits beside arms yielding `f32` with no
 further work. The change is in the parser: `parse_prefix` would need to accept
 these three keywords, and `[GRM-10]`'s expression arms would then take them.
+
+**Closed by v0.5, `OQ-14` — and it reverses this entry.** They *are*
+expressions: type `!`, parsed at the **lowest** precedence, parallel to
+`ternary` and never as an `atom`. `[GRM-16]` removes `"return" [expression]`,
+`"break" [label]` and `"continue" [label]` from `small_stmt` — a jump written
+as a statement is now an expression statement — and adds `E0107 a jump
+expression may not be an operand` so that `a + return b` is still rejected.
+`block_expr` is deleted from `atom` in the same rule.
+
+The owner's reason is the one this entry recorded as the alternative: Part IV
+§2's `!` producer list already implied it. The paragraph above about the v0.2
+amendment "carrying Appendix A along unchanged" is superseded — v0.5 rewrites
+that example as `return match s:` with `=>` arms, which parses either way.
+
+**What changes.** `parse_prefix` accepts the three keywords at the lowest
+precedence; `body.rs`'s three statement arms become expression statements;
+`E0107` is added. The `!`-coercion side is already there.
+
+---
+
+# Defects found in v0.5 itself (ERR-009 … ERR-015)
+
+The seven entries below were found while applying v0.5 on 2026-09-08, before any
+of it reached code. **Six of the seven have one cause**: 0.4's and 0.5's
+amendments were *appended* to each Part rather than *substituted into* the rule
+they amend. That leaves two signatures, and both are mechanically detectable:
+
+- a rule id stated twice, which `[XXII.4]` now makes a hard CI failure; and
+- a rule whose body begins with `…`, which is an amendment that has been
+  separated from the sentence it was meant to continue — and, in two cases,
+  which **deleted** the original sentence outright.
+
+`tools/rule_index.py` must carry both checks when it is written. The ellipsis
+test costs four lines and catches an orphaned amendment the moment it lands,
+which is the only point at which the original text is still recoverable.
+
+**Recoverability is the reason `docs/spec-source/as-received/` exists.** Two of
+these rules (`[MOD-6]`, `[CLO-2]`) lost text that survives nowhere in v0.5. It
+was restored from the committed split of v0.2 — which would have been
+overwritten had `docs/spec/` been regenerated before the diff was read.
+
+---
+
+## ERR-009 — `type` is in both keyword lists
+
+**Where.** Part II §4 lists `type` under "reserved for future use (lexed as
+keywords, `E0005` if used)". `[LEX-15a]`, added in 0.4, says the opposite:
+
+> `type` is a v1 keyword: it introduces a type alias (`type_alias`), an
+> associated type in an `interface` (`interface_member`), and an opaque foreign
+> type in an `extern` block (`extern_item`).
+
+Part III §2 needs it to be a keyword — all three productions are in the v1
+grammar. And `[LEX-14a]` requires the `E0005` message for a reserved-future
+word to "name the version that will introduce it", which cannot be written for
+a word introduced now.
+
+**Decision (owner, 2026-09-08).** `type` moves into the v1 reserved table.
+`[LEX-15]`'s count goes from 48 to **49**.
+
+**Why full reservation rather than contextual.** It is the same call `OQ-26`
+made for `let` one ruling earlier, for the same stated reason: the meaning
+never depends on position. It also makes `[LEX-14]` land — that rule's
+motivating example for raw identifiers is literally "imported C symbols such as
+a field called `type`", and `r#type` is only the anticipated escape if `type` is
+reserved.
+
+**The cost, stated plainly.** `event.type` must be written `event.r#type`, and
+that lands on hand-written gameplay code, not only on FFI. The alternative
+considered was making `type` contextual — joining `abstract`, `final`, `lazy`,
+`test`, `bench`, keeping the count at 48, and resolving `type X = Y` against
+`type = 5` on the second token, which is within the LL(2) the grammar claims.
+That is what Python did for `type X = …` in 3.12. It was not taken, because
+positional keywords are what `OQ-26` had just rejected.
+
+**Applied to.** Part II §4's two keyword blocks and `[LEX-15]`'s sentence.
+
+**Not yet applied to the compiler.** `Type` moves from `Reserved` to `Kw` in
+`compiler/ember_lexer/src/token.rs`, and `Kw::ALL.len()` goes 47 → 49 (`let`,
+ERR-004, is the other one).
+
+**If the owner rules the other way**, `type` joins `CONTEXTUAL_KEYWORDS`
+instead, `[LEX-15]`'s count stays 48, and the parser recognises `type` by text
+in the three declaration positions. A relaxation worth considering under either
+ruling: admit any keyword token in field- and method-name position after `.`,
+where no keyword can begin an expression. That makes `event.type` legal with
+`type` fully reserved and confines `r#` to bindings. It is a language addition,
+not a defect fix, so it is not taken here.
+
+---
+
+## ERR-010 — `[EFF-12]` is stated twice, and neither statement is complete
+
+**Where.** Part X §2 states `[EFF-12]` in two places:
+
+- in the hard-contracts bullet list, beside `@noalloc`, `@nosync` and
+  `@noblock`, with the carve-out that `@static_safe` does **not** forbid
+  `RuntimeCheck(Bounds)`, `(Stale)` or `(Overflow)`, and the `@no_runtime_checks`
+  v2 reservation;
+- again fourteen lines later, with the `establishes_static_fact` exception that
+  `OQ-11` decides — and ending in a literal `…`.
+
+`[XXII.4]` makes a duplicate rule id a hard CI failure, so the document fails
+its own new invariant. Worse than the duplication: the trailing `…` means the
+second statement was never meant to stand alone, and the first is missing the
+exception, so **neither is the rule**.
+
+**Decision.** Merge, keeping the bullet's position in the contract list — where
+a reader comparing `@static_safe` against `@noalloc` will look — and deleting
+the later duplicate. The merged rule opens with the second statement's sentence
+including the exception, then continues with the first's carve-out and
+reservation.
+
+**Consequences.** One definition. `OQ-11`'s decision is now stated where the
+contract is introduced rather than fourteen lines below it, and `[EFF-15]`'s
+citation of `[EFF-12]` resolves to one rule.
+
+**Note.** The merge makes `[EFF-12]` depend on a reason code that `[EFF-11]`
+did not define. See ERR-015.
+
+---
+
+## ERR-011 — `[PAR-2]` is stated twice, once inside `[PAR-1]`'s paragraph
+
+**Where.** Part XI §4. `[PAR-1]`'s bullet states two rules: its own sentence
+about the loop body being compiled as a closure, and then `[PAR-2]`'s
+independence requirement in the same paragraph. `[PAR-2]` is then stated again
+five bullets later, prefixed `…`, with the fuller (a)/(b)/(c) clauses.
+
+Two consequences beyond the duplicate id: `[PAR-2a]` and `[PAR-2b]` both cite
+"clause (b)", which only the later statement defines, and they appeared *before*
+it; and the two statements disagree — the first requires the write index to be
+"exactly `i` or `i + const`", the second requires every access to `P` including
+**reads** to share one constant offset, which is strictly stronger.
+
+**Decision.** `[PAR-2]` becomes its own bullet immediately after `[PAR-1]`,
+carrying the later, stronger text. `[PAR-1]` keeps only its own sentence. The
+trailing duplicate is deleted. `[PAR-2a]` and `[PAR-2b]` now follow the clause
+they cite.
+
+**Why the stronger reading.** It is the later text, it is the one `[PAR-2a]`
+and `[SIMD-5]` are written against — `[SIMD-5]`'s vectorisable form cites
+"`[PAR-2]`(b)" by name — and a loop-carried dependency through a *read* is
+exactly the case a weaker rule would admit and `@parallel` cannot survive.
+
+---
+
+## ERR-012 — `[MOD-6]` lost its first half
+
+**Where.** Part V §1. v0.5 states the rule as:
+
+> `[MOD-6]` … Mismatch with the compiler's supported set is `E0006`. …
+
+The `…` stands where v0.2 said what the rule was *about*: that a module may
+declare `#! language "0.2"` on its first line, and that the package's
+`ember.toml` `language` key is the default. Without it, `[MOD-6]` names a
+mismatch between two things it no longer identifies, and the `#!` directive —
+which Part III §1's grammar still defines, and which `[LEX-14]`/ERR-006 turn on
+— has no normative rule anywhere in the document.
+
+**Decision.** Restore the first half verbatim from the committed split of v0.2,
+with the example version updated to `"0.5"`. The 0.4 sentence that follows is
+kept unchanged.
+
+**Provenance.** The restored text exists in no copy of v0.5. It was taken from
+`docs/spec/part-05-declarations-and-semantics.md` as committed at `58cb057`.
+
+---
+
+## ERR-013 — `[CLO-2]` lost its capture-mode rule
+
+**Where.** Part VI §5. v0.5 states:
+
+> `[CLO-2]` … A closure that moves a captured non-`Copy` value out of its own
+> storage implements `CallableOnce` but not `Callable` (`[CLO-6]`).
+
+The `…` replaced the rule that decides **how closures capture at all**: read-only
+use ⇒ shared borrow; mutation ⇒ mutable borrow, so the closure needs a mutable
+place to call; `owned fn` ⇒ move, copy or retain. Nothing else in the document
+states it. `[CLO-1]` says a closure "is a view type if it captures anything by
+reference (the default)" and `[CLO-4]` depends on which captures are borrows,
+but neither says which variables are captured which way.
+
+**Decision.** Restore the capture-mode sentence, keeping 0.4's `CallableOnce`
+tail — which correctly supersedes v0.2's trailing "`E3030` in v1
+(once-callable closures are not supported)".
+
+**Why this one matters most of the six.** Block E — the NLL borrow checker,
+the largest remaining piece of Phase 2 — has to implement exactly this rule, and
+`[CLO-6]`'s once-callable design is built on top of it. Had `docs/spec/` been
+regenerated from v0.5 before the diff was read, the rule would have been lost
+with no copy anywhere.
+
+---
+
+## ERR-014 — `[FFI-6]` is a fragment, and its pipeline contradicts `[FFI-6b]`
+
+**Status: fragment repaired; the contradiction is a proposal, deferred to
+Phase 5.**
+
+**Where.** Part XVI §2. `[FFI-6]`'s body is the import pipeline diagram, which
+says the AST walk takes:
+
+> object-like macros that expand to integer/float/string literals, function-like
+> macros are ignored (W5001)
+
+0.4 then appended a `…`-prefixed `[FFI-6]` widening the object-like case to any
+constant expression "after full macro expansion" — integer, float, string,
+null-pointer-constant or pointer/handle cast — and added `[FFI-6b]`, under which
+a **function-like** macro *may* be exposed as a function when an overlay declares
+its signature. The diagram and the rules now disagree on both halves.
+
+**What was applied.** Only the fragment repair: `…` becomes **Macro import.**,
+so `[FFI-6]` reads as a rule. The diagram is left as written.
+
+**What is left open.** Whether the pipeline diagram is amended to defer to
+`[FFI-6]`/`[FFI-6b]`, and what `W5001` means once `[FFI-6b]` exists — a warning
+for every un-overlaid function-like macro would fire on every real header. This
+is Phase 5 work and nothing before it depends on the answer.
+
+---
+
+## ERR-015 — `establishes_static_fact` is used four times and defined nowhere
+
+**Where.** `[EFF-11]`'s reason-code table has exactly four rows:
+`not_provable_in_principle`, `not_proven_by_analysis`, `requested_by_type`,
+`inherent_to_mechanism`. The rule says "Every emitted-check entry carries
+**exactly one** reason, and diagnostics MUST use its wording".
+
+A fifth code, `establishes_static_fact`, is used by `[DSJ-5]`, by `[DSJ-6]`, by
+`[EFF-12]` as merged in ERR-010, and by `OQ-11`'s decision text — and 0.4's own
+change log row 4 calls it "the new reason code". It is in no table.
+
+As written the rule is unimplementable: `[EFF-10]`'s side table must carry one
+reason per site, `[EFF-12]` must test for this one, and Phase 4's exit criteria
+fix the expected reason for every check site in `tests/safety/reasons/`.
+
+**Decision.** Add the fifth row:
+
+> | `establishes_static_fact` | the check verifies a property once and returns
+> proof-carrying values, so the property is static from there on (`[DSJ-1]`,
+> `[DSJ-5]`) | nothing; the check is what makes the code after it checkable, and
+> `[EFF-12]` permits it under `@static_safe` |
+
+**Consequences.** `[EFF-11a]`'s rule — that reporting the wrong reason is a
+diagnostic bug — now has a fifth code to get right, and `[DIA-11]`'s S1 shape
+has a fifth case: when the reason is `establishes_static_fact` the check is not
+a contract violation at all, so S1 must not fire.
+
+**Why it is a decision and not a proposal.** The wording is new text, but the
+code's existence and meaning are already settled by `OQ-11` and by 0.4's change
+log. Only the table row was missing.
+
+---
+
+## ERR-016 — The standard-interface list cannot be parsed
+
+**Where.** Part IV §8's fenced block listing the interfaces the compiler knows
+about — `Clone`, `Drop`, `Eq`, `Ord`, `Add`, `Index`, `Iterator`, `Iterable`,
+`Callable`, `Error`, `From` and the rest. It is laid out as an aligned table,
+every declaration on one line:
+
+```
+interface Iterator:              type Item; fn next(mut self) -> Option[Item]
+interface IntoIterator:          type Item; type Iter: Iterator[Item = Item]; fn into_iter(owned self) -> Iter
+```
+
+**Two independent reasons it does not parse.**
+
+1. `[GRM-18]` (`OQ-25`) removes `;` as a statement separator, so the six rows
+   that use one are `E0105`. This is v0.5 outlawing a form its own normative
+   listing depends on — the ruling is right and the block was not revisited.
+2. Underneath that, `interface_decl` is
+   `"interface" identifier … ":" NEWLINE INDENT {interface_member} DEDENT`.
+   There is **no same-line body form** for an interface, unlike `fn_decl`, whose
+   `block` admits `simple_stmt NEWLINE`. So *every* row is unparseable, not only
+   the six with semicolons, and always was. `[LEX-9]`'s same-line carve-out does
+   not reach it either: that permits "a single simple statement", and an
+   interface member is not a statement.
+
+**Why it is not cosmetic.** `[TST-7]` requires every fenced `ember` block in
+Parts I–XVII to pass `ember check --syntax-only`, with a recorded baseline of
+blocks excused by `,ignore`. The document has 48 `ember` blocks and exactly one
+is excused; this is not it. So the block that defines what the compiler must
+implement — `a + b` lowers to `Add.add`, `for x in v` to `Iterable.iter`
+(`[TYP-21]`, `[CTL-1]`) — is a block the conformance gate will reject.
+
+**Decision.** Rewrite the block in the indented form, one member per line,
+keeping every declaration and every comment. Twenty rows become sixty-odd lines;
+the column alignment is lost and nothing else changes. The two-line comment
+listing the other operator interfaces (`Sub`, `Mul`, … `Not`) becomes a `#`
+comment above `Add`, since it documented a group rather than a declaration.
+
+**The alternative, rejected.** `[TST-7]` permits excusing a block whose reason
+is "a `std` signature sketch", which this is, and that costs one line instead of
+sixty. Rejected because it exempts from checking the one list whose exactness the
+whole operator and iteration story depends on — and the block was already wrong,
+in two ways, with nobody noticing.
+
+**Checked across the whole document afterwards.** No other `interface`,
+`struct`, `class`, `enum` or `extend` declaration in any fenced block puts its
+body on the header line, and no other block uses `;` as a separator (the one
+remaining `;` is inside a string literal in a `comptime` example).
+
+**Not applied to the compiler.** The parser has never accepted the same-line
+interface form, so nothing there changes. `E0105` remains outstanding under
+ERR-003.
+
+---
+
+## ERR-017 — `From`'s required method could not be declared
+
+**Status: decided by the owner, 2026-09-08. `from` is contextual.**
+
+**Where.** Part IV §8 declares the interface `?` is specified in terms of:
+
+```ember
+interface From[T]:
+    fn from(owned value: T) -> Self
+```
+
+`[ERR-2]` lowers `expr?` to `Err(F.from(e))`, `[ERR-7]` supplies the identity
+conversion, and `[ERR-8]` the erasure to `Box[dyn Error]`. All three name the
+method `from`. But `from` was in Part II §4's reserved table, because
+`from a.b import x` begins with it — so `fn from(…)` did not parse, and neither
+did a user's `extend MyError implements From[io.Error]:`.
+
+**Decision.** `from` joins the contextual keywords (`[LEX-15]`): a keyword only
+where it begins an import at item level, an ordinary identifier everywhere
+else. The reserved set goes back to **48** — `type` joined under ERR-009 and
+`from` leaves here.
+
+**Why this and not the alternatives.** Requiring `r#from` costs nothing in the
+compiler but makes the specification's own text wrong and puts an escape
+sequence in the first interface a beginner meets. Renaming the method to `of`
+or `convert` parses most easily and reads worst: every neighbouring language
+calls it `from`. The contextual reading is the one under which the document is
+already correct, and the position is unambiguous — an import is the only thing
+that may start with `from` at item level, and `parse_module` already dispatches
+on the first token of a line.
+
+**The general rule the owner set with it:** when a reserved word collides with
+a name the standard library must be able to declare, make the word contextual
+rather than renaming the member or demanding `r#`.
+
+**Applied to.** Part II §4's table and `[LEX-15]`'s sentence; `Kw` and
+`CONTEXTUAL_KEYWORDS` in `ember_lexer::token`; `parse_import` and
+`parse_module` in `ember_parser`. Covered by
+`from_is_contextual_so_that_From_can_declare_it`.
+
+**Found by** `tools/spec_check.py`, written this session to satisfy `[TST-7]`.
+It compiles every fenced `ember` block in the document, which is how a
+five-line interface nobody had tried to parse turned out to be unparseable.
+
+---
+
+## ERR-018 — Two `assert` examples are written as a statement, not a call
+
+**Status: decided, 2026-09-08. Both examples corrected.**
+
+**Where.** Part VI §6 specifies the form: `assert(cond)`, `assert(cond,
+"msg")`, `assert_eq(a, b)`, `assert_ne(a, b)`. Part XV lists `assert*` among
+the functions `std.core` provides, and `assert` is not in the keyword table, so
+it is an ordinary call.
+
+Two examples wrote it as a keyword taking a bare expression:
+
+- Part XIV §1: `assert size_of[Vertex]() == 32, "Vertex layout changed; …"`
+- Appendix A: `comptime: assert size_of[Vec3]() == 12`
+
+Neither parses. Appendix A is `[TST-6]`'s compile-pass fixture, so its failing
+is a CI failure by construction.
+
+**Decision.** The grammar wins, as it did for ERR-008: `assert` is a function
+and the examples take parentheses. Both corrected in the source document, and
+Appendix A's block now parses.
+
+**The state of `[TST-7]`'s gate.** Of the 38 `ember` blocks in Parts I–XVII and
+Appendix A, **14 parse and 24 do not**. The 24 are fragments — bare statements
+at file level, which `[GRM-2]` forbids — and are recorded in
+`tools/spec_check_baseline.json` so the gate fails only on new breakage.
+Shrinking that baseline is what `[TST-7]` exists to drive.

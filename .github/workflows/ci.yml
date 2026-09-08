@@ -1,0 +1,71 @@
+name: ci
+
+# Part XX §2, Phase 0: "CI (GitHub Actions: windows-latest with MSVC +
+# clang-cl, ubuntu-latest with clang + gcc)". The document checks run once,
+# on Linux, because they read files rather than compile them.
+
+on:
+  push:
+    branches: [main, "phase-*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cc: clang
+          - os: ubuntu-latest
+            cc: gcc
+          - os: windows-latest
+            cc: msvc
+          - os: windows-latest
+            cc: clang-cl
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Test
+        run: cargo test --workspace --locked
+        env:
+          EMBER_CC: ${{ matrix.cc }}
+
+  documents:
+    runs-on: ubuntu-latest
+    name: specification and registry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Part XX §1 ground rule 3 — `docs/spec/` is generated and must not be
+      # hand-edited. A hand edit looks exactly like the specification in
+      # review, so it is caught mechanically instead.
+      - name: docs/spec is the split of docs/spec-source
+        run: python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
+
+      # `[XXII.4]`, `[TST-4]`, `[DIA-6a]` — duplicate rule ids, orphaned
+      # amendments, rules with no conformance directory, codes missing from
+      # the registry, and registry entries citing rules that do not exist.
+      - name: rule and error-code index
+        run: python tools/rule_index.py
+
+      # `[TST-7]` — every fenced `ember` block in Parts I-XVII and Appendix A
+      # passes `ember check --syntax-only`, against a recorded baseline of the
+      # fragments that cannot yet parse as compilation units.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build the compiler for the spec gate
+        run: cargo build -p ember_driver --bin ember
+      - name: specification code blocks parse
+        run: python tools/spec_check.py

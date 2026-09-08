@@ -105,7 +105,7 @@ array_type      := "[" type ";" expression "]"                          (* fixed
 ```ebnf
 block           := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
 statement       := simple_stmt NEWLINE | compound_stmt
-simple_stmt     := small_stmt {";" small_stmt} [";"]
+simple_stmt     := small_stmt                                           (* one statement per line; `;` is not a separator *)
 small_stmt      := var_decl | assignment | expression | "return" [expression] | "break" [label]
                  | "continue" [label] | "pass" | "defer" ":" ...      (* defer is compound, see below *)
 var_decl        := pattern ":" type ["=" expression]                    (* typed declaration, may be uninitialised *)
@@ -178,7 +178,7 @@ lambda          := ["owned"] "fn" "(" [lambda_params] ")" ["->" type] ("=>" expr
 lambda_params   := lambda_param {"," lambda_param}
 lambda_param    := [mode] identifier [":" type]
 match_expr      := "match" expression ":" NEWLINE INDENT {pattern ["if" expression] "=>" expression NEWLINE} DEDENT
-path_expr       := identifier "::" identifier {"::" identifier}         (* explicit path, e.g. Shape::Circle; `.` also works *)
+path_expr       := identifier "::" identifier {"::" identifier}         (* qualified module/type/namespace path *)
 ```
 
 `[GRM-8]` **Generic-instantiation vs indexing.** `name[...]` in expression position is parsed as an `IndexOrInstantiate` node and resolved during name resolution: if `name` resolves to a generic function or type, it is an instantiation; otherwise an index. `[GRM-9]` A call immediately following (`f[i32](x)`) does not change this rule.
@@ -206,6 +206,15 @@ field_pattern   := pattern | identifier "=" pattern                       (* pos
 
 * `[GRM-12]` An identifier in pattern position resolves to a unit variant or `const` if one of that name is in scope; otherwise it is a fresh binding. The compiler warns `W1002` when a binding shadows a same-named variant in another enum to catch typos.
 * `[GRM-13]` Patterns bind by value for `Copy` types and by **reference** (`ref`) otherwise when matching on a place expression that is not consumed; `match owned x:` consumes and binds by move. This mirrors Rust's default binding modes.
+* `[GRM-8a]` Inside `[` `]` in expression position the parser MUST commit to `type_only_arg` when the next token is one of `ref`, `*`, `dyn`, `fn`, `extern`, `void`, `!`; otherwise it parses an `expression`. Each argument is recorded in the `IndexOrInstantiate` node as `TypeOrExpr::{Type, Expr}` (Part XVIII §2). The set is unambiguous: Ember has no prefix `*` and no prefix `!` (`not` and `~` are the operators), and the rest are keywords, so committing on those seven tokens cannot misparse an expression.
+* `[GRM-8b]` Name resolution resolves the node per `[GRM-8]`. If it resolves to an **index** and any argument is a `TypeOrExpr::Type` or an `identifier "=" type` binding, it is `E2172 cannot index with a type`, naming the argument. If it resolves to an **instantiation**, each `TypeOrExpr::Expr` argument is reinterpreted as a type or a const-generic argument by the ordinary rules: an array-repeat literal `[T; N]` reinterprets as `array_type`, a tuple literal as `tuple_type`, a path expression as `path_type`; anything not reinterpretable is `E2173 not a type or const-generic argument`.
+* `[GRM-8c]` `identifier "=" type` inside `[` `]` is an associated-type binding in both type and expression position; it is never a named argument and never an assignment.
+* `[GRM-17]` A block-bodied lambda inside brackets whose body is not a single `small_stmt` is `E0106 a multi-statement closure cannot be written inside brackets`, with `help: bind it on a preceding line: `h = fn(e): …` then pass `h`` and `note: indentation is not significant inside brackets ([LEX-6])`.
+* `[GRM-16]` `return`, `break` and `continue` are expressions of type `!` (Part IV §2), parsed at the **lowest** precedence, parallel to `ternary` and never as an `atom`: a `jump_expr` MUST be the whole of the expression in which it appears, so `a + return b` is `E0107 a jump expression may not be an operand`. Part III §4's `small_stmt` alternatives `"return" [expression]`, `"break" [label]` and `"continue" [label]` are removed; a jump written as a statement is an expression statement. `[CTL-7]`'s prohibition on `return`/`break`/`continue` leaving a `defer` block (`E2160`) is unaffected. `block_expr` is **deleted** from `atom`: `[GRM-11]` already rules it out of v1 and no production defines it.
+* `[GRM-15]` `owned e` is permitted only as the iterable of a `for` and the scrutinee of a `match`, where it consumes `e` per `[CTL-1]` and `[GRM-13]`. `owned` elsewhere in expression position is `E0109`, with `help: `owned` marks a parameter, a receiver, a closure or a consumed scrutinee; to move a value, pass it to an `owned` parameter`.
+* `[GRM-14]` `mut T` in a generic argument, or in a tuple type appearing as one, is an **access-mode argument**: it denotes write access to `T` rather than a distinct type. It is accepted only where the generic parameter is declared to take one, which requires a third kind of generic parameter (alongside type and const) declared `access P` — `Query[A: access…]` in `std.ecs`. Elsewhere `mut` in a type position is `E2020`. `Query[(mut Position, Velocity)]` therefore parses as a tuple of access-mode arguments, and iteration yields `ref mut Position, ref Velocity` per `[ECS-3]`.
+* `[GRM-18]` `;` is **not** a statement separator (owner decision `OQ-25`). One line carries one statement. A `;` between two small statements is `E0105 `;` is not a statement separator`, whose help is to put each statement on its own line. `;` remains punctuation solely inside `[T; N]` and `[v; N]` (`array_type`, `array_lit`).
+* `[GRM-19]` The pattern in a `condition` MUST be refutable. An irrefutable pattern is `E2036 this pattern always matches`, with `help: write `x = e` on the preceding line`.
 
 ## III.7 Grammar of attributes recognised by the compiler
 
@@ -229,5 +238,21 @@ Unknown attributes are `E0104` unless prefixed with a registered plugin namespac
 | `@move_only` | struct | disables `Copy` derivation |
 | `@sync` `@thread_local` | class | overrides `Sync` derivation (Part XI) |
 | `@reflect` `@serialize` | type | metadata generation (Part XIV) |
+| `@static_safe` | fn | hard contract (Part X `[EFF-12]`) |
+| `@noblock` | fn | hard contract (Part X) |
+| `@no_runtime_checks` | fn | **reserved (v2)** — recognised, rejected with `E0104` naming the reservation, never silently ignored |
+| `@borrows(param, …)` | fn | region contract (Part VII `[LT-1a]`) |
+| `@assume_noalloc(expr)` | expression, inside `unsafe` | effect override (`[EFF-7]`) |
+| `@allocator(Name)` | class | **reserved (v2)** (`[OBJ-4]`) |
+| `@prelude` | module | import (`[MOD-3]`) |
+| `@export_table("Name", protocol=N)` | struct | ABI (`[FFI-26]`, Part XXI) |
+| `@non_exhaustive` | enum | FFI import (`[FFI-8]`) |
+| `@component(layout=soa\|aos)` | struct | ECS storage (`[ECS-2]`) |
+| `@soa(flatten)` | field | SoA column layout (`[SOA-1]`) |
+| `@gpu` | fn | **reserved (v3)** (XVII §8) |
+| `@allow(code, …)` | any item, and any statement admitting a statement attribute | suppresses the named `W`/`L` diagnostics within the annotated item |
+| `@must_drop` | struct, class | drop is load-bearing for a borrow guarantee (`[THR-6]`) |
+| `@fp(contract)` | fn | float control (`[TYP-9b]`) |
+| `@deprecated(since, note)` | any item | policy (`[VER-3]`, intent) |
 
 ---

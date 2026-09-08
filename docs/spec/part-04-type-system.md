@@ -60,7 +60,9 @@ Every type belongs to exactly one **category**, which determines storage, copy/m
 * `str`: `Span[u8]` known to be valid UTF-8.
 * `@view struct`: any struct containing a `ref`, `Span`, `MutSpan`, `str` or another view type is automatically a view type. The attribute is required on the declaration as documentation; omitting it is `E2030` with a fix-it. A view type has exactly one implicit **region parameter** (Part VII §5).
 
-`[TYP-15]` View types MUST NOT be stored in: class fields, non-view struct fields, `static`s, `Array`/`Map`/`Box`/`Shared` elements, closure captures of an `owned fn`, or sent across threads. They may live in locals, parameters, return values, tuple/enum/`Option` payloads that are themselves used as locals, and other view types.
+`[TYP-15]` A view-typed value MUST NOT be stored in a place whose region is not outlived by the view's region. Class fields, non-view struct fields, `static`s, `Box[T]` and `Shared[T]` contents, container elements and `owned fn` captures have no bounding region and are therefore always forbidden (`E3063 stored view may not outlive its source`, shape B12). Views MAY live in locals, parameters, return values, and in tuple, enum, `Option` and `Result` payloads. Whether a generic container instantiated at a view type may itself become a view type is reserved (OQ-19).
+
+`[TYP-15a]` **Specialized containers of views.** `BorrowList[T]` and `ViewList[T]` MAY contain view-typed elements when all elements are bounded by one compiler-inferred region. The region is inferred from the container's construction and mutation context and MUST NOT be written by the programmer. The container's element region MUST satisfy the one-region model of `[LT-2]`; an operation that would require two independent element regions is rejected. These types are specialized borrowing containers, not ordinary owning generic containers, and they MUST NOT be used to smuggle a view into a class field, `static`, `Box`, `Shared`, or another place forbidden by `[TYP-15]`. Arbitrary owning containers instantiated at a view type (`Array[str]`, `Map[str, V]`, `Array[MutSpan[T]]`) remain rejected.
 
 ## IV.5 Raw types
 
@@ -81,6 +83,9 @@ A `class C` declaration introduces the type `C` whose values are **handles** (no
 * Default type parameters: `interface Add[Rhs = Self]`.
 * `[TYP-18]` Generic parameters are inferred from arguments at call sites by unification; explicit instantiation `f[i32](x)` is allowed and required when no argument mentions the parameter (`Array[f32]()`).
 * `[TYP-19]` No specialisation, no higher-kinded types, no variadic generics in v1. Overlapping `extend` impls are `E2041`.
+* `[TYP-9a]` **Contraction is off by default and MUST be made off.** `[TYP-9]`'s prohibition on FMA contraction is not the default of any supported host C compiler. The C backend MUST emit `#pragma STDC FP_CONTRACT OFF` at the head of every translation unit **and** pass the corresponding flag, because GCC does not implement that pragma: Clang and GCC `-ffp-contract=off`; MSVC `/fp:precise` with `#pragma fp_contract(off)`. A toolchain on which contraction cannot be disabled MUST be rejected at configure time with `E9011`, naming the compiler and version.
+* `[TYP-9b]` `@fp(contract)` on a function permits — and requires the backend to enable — FMA contraction within that function only. It permits no reassociation, no NaN/Inf assumptions and no other `@fastmath` relaxation. Mapping: Clang `#pragma clang fp contract(fast)` around the body; MSVC `#pragma fp_contract(on)` around the definition; GCC, which has no reliable per-function control, MUST emit the function into its own translation unit compiled with `-ffp-contract=fast` — and such a function is therefore **excluded from `[CG-C-3]`'s inline header on GCC**, since inlining it into a non-contracting TU would silently lose the attribute.
+* `[TYP-9c]` If the host toolchain cannot honour `@fastmath` or `@fp(…)` at function granularity, the compiler MUST report `E9010` naming the toolchain and the attribute. It MUST NOT silently compile the function under the translation unit's default float control; a silently ignored float-control attribute is the worst outcome, because the programmer believes the contract holds (`[PHIL-6]`).
 
 ## IV.8 Interfaces
 
@@ -99,26 +104,75 @@ An `interface` declares required methods, associated types/consts, and may provi
 **Standard interfaces** that the compiler knows about (spelled as ordinary interfaces in `std.core`):
 
 ```ember
-interface Clone:                 fn clone(self) -> Self
-interface Drop:                  fn drop(mut self)            # called exactly once at end of life
-interface Eq:                    fn eq(self, other: Self) -> bool        # ==, !=
-interface Ord: Eq:               fn cmp(self, other: Self) -> Ordering   # < > <= >=
-interface PartialOrd: Eq:        fn partial_cmp(self, other: Self) -> Option[Ordering]
-interface Hash:                  fn hash(self, mut h: Hasher)
-interface Default:               fn default() -> Self
-interface Display:               fn fmt(self, mut f: Formatter) -> Result[void, FmtError]   # f"{x}"
-interface Debug:                 fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]  # f"{x:?}"
-interface Add[Rhs = Self]:       type Output; fn add(self, rhs: Rhs) -> Output          # + (also Sub Mul Div Rem Neg
-interface AddAssign[Rhs = Self]: fn add_assign(mut self, rhs: Rhs)                      #   BitAnd BitOr BitXor Shl Shr Not)
-interface Index[Idx]:            type Output; fn index(self, i: Idx) -> ref Output       # a[i] read
-interface IndexMut[Idx]: Index[Idx]: fn index_mut(mut self, i: Idx) -> ref mut Output   # a[i] write
-interface Iterator:              type Item; fn next(mut self) -> Option[Item]
-interface IntoIterator:          type Item; type Iter: Iterator[Item = Item]; fn into_iter(owned self) -> Iter
-interface Iterable:              type Item; type Iter: Iterator[Item = Item]; fn iter(self) -> Iter   # for x in v
-interface IterableMut: Iterable: type IterMut: Iterator[Item = ref mut Item]; fn iter_mut(mut self) -> IterMut
-interface Callable[Args, R]:     fn call(self, args: Args) -> R        # closures; compiler-implemented
-interface Error: Debug + Display: fn source(self) -> Option[ref dyn Error]  # default None
-interface From[T]:               fn from(owned value: T) -> Self        # `?` conversion; Into is blanket
+interface Clone:
+    fn clone(self) -> Self
+
+interface Drop:
+    fn drop(mut self)                                      # called exactly once at end of life
+
+interface Eq:
+    fn eq(self, other: Self) -> bool                       # ==, !=
+
+interface Ord: Eq:
+    fn cmp(self, other: Self) -> Ordering                  # < > <= >=
+
+interface PartialOrd: Eq:
+    fn partial_cmp(self, other: Self) -> Option[Ordering]
+
+interface Hash:
+    fn hash(self, mut h: Hasher)
+
+interface Default:
+    fn default() -> Self
+
+interface Display:
+    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]        # f"{x}"
+
+interface Debug:
+    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]  # f"{x:?}"
+
+# Sub, Mul, Div, Rem, Neg, BitAnd, BitOr, BitXor, Shl, Shr and Not are declared
+# exactly as Add is; each has a matching *Assign form declared as AddAssign is.
+interface Add[Rhs = Self]:
+    type Output
+    fn add(self, rhs: Rhs) -> Output
+
+interface AddAssign[Rhs = Self]:
+    fn add_assign(mut self, rhs: Rhs)
+
+interface Index[Idx]:
+    type Output
+    fn index(self, i: Idx) -> ref Output                   # a[i] read
+
+interface IndexMut[Idx]: Index[Idx]:
+    fn index_mut(mut self, i: Idx) -> ref mut Output       # a[i] write
+
+interface Iterator:
+    type Item
+    fn next(mut self) -> Option[Item]
+
+interface IntoIterator:
+    type Item
+    type Iter: Iterator[Item = Item]
+    fn into_iter(owned self) -> Iter
+
+interface Iterable:
+    type Item
+    type Iter: Iterator[Item = Item]
+    fn iter(self) -> Iter                                  # for x in v
+
+interface IterableMut: Iterable:
+    type IterMut: Iterator[Item = ref mut Item]
+    fn iter_mut(mut self) -> IterMut
+
+interface Callable[Args, R]:
+    fn call(self, args: Args) -> R                         # closures; compiler-implemented
+
+interface Error: Debug + Display:
+    fn source(self) -> Option[ref dyn Error]               # default None
+
+interface From[T]:
+    fn from(owned value: T) -> Self                        # `?` conversion; Into is blanket
 ```
 
 `[TYP-21]` Operators desugar to these interface calls with **auto-referencing**: `a + b` calls `Add.add(a, b)` with `a` and `b` passed in the interface's declared modes (both borrowed for `Add` as declared above, i.e. `Vec3 + Vec3` does not consume). `a += b` calls `AddAssign.add_assign` if implemented, else `a = a + b`.

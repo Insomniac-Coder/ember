@@ -28,6 +28,82 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
+## Change log — 0.5
+
+0.5 answers every question 0.4 put to the owner. It adds three rules, promotes three reserved
+identifiers to normative text, and converts one open ambiguity into a decision. It removes no
+guarantee and reopens no confirmed ADR.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **All fifteen open questions answered.** Part XXII.1 becomes a decision record; `OQ-1`..`OQ-23` keep their permanent identifiers. No question is left for an implementing agent to decide silently. | XXII.1 |
+| 2 | `[EXC-4]` **resolved** (`OQ-18`): `let` freezes the binding, not the value, so a long-term access to a `let` field registers exactly as any other field does and only an instantaneous read is exempt. This closes the aliasing hole the unconditional exemption left open, and `[CLS-9a]` states the mutate-through consequence. | VIII.3, V.5 |
+| 3 | `[LT-7]` **adopted** (`OQ-17`): late-bound callback regions, one level of higher-ranked quantification at callback boundaries, with region variables compiler-internal and absent from source, generic arguments and ABI-visible names. `[THR-5]` and `[JOB-2]` stop being bespoke exceptions, and `[GPU-9]`'s `pass.native` becomes expressible. | VII.5 |
+| 4 | `[TYP-15a]` **added** (`OQ-19`): `BorrowList[T]`/`ViewList[T]` may hold views under one inferred region, which the programmer never writes; arbitrary owning containers at view types stay rejected, and the new containers may not smuggle a view past `[TYP-15]`. | IV.4 |
+| 5 | `[FFI-30c]` **added**: distributable, composable overlays with declared left-to-right order, explicit `override`, diagnosed conflicts, foreign type identity held stable, and the composed overlay identity folded into build invalidation. | XVI.4 |
+| 6 | `Cell` and `RefCell` join the **prelude** (`OQ-10`), because `Shared[T]` was already there and heavier on every axis measured. `[DIA-9]` still bars them as a first suggestion. | IX.7, XV |
+| 7 | **Call sites never write a mode** (`OQ-13`, `[FN-2a]`). Part 0 row 3's guarantee is preserved verbatim; the mode is read from the signature and surfaced by `ember inspect` and `[IDE-7]` inlay hints. | V.2 |
+| 8 | `::` **kept** (`OQ-15`) with its purpose written down: the qualified module/type/namespace path separator, distinct from `.` for instance and member access. | III.5 |
+| 9 | **No fixed exclusivity cost is normative** (`OQ-16`). The "~2 ns" figure is withdrawn as a promise and re-derived under `[BEN-1]`–`[BEN-7]`, because `[EXC-3]`, `[EXC-6]` and `[FFI-33]` all add work to that path. ADR-004's decision is unchanged. | VIII.3, I.4 |
+| 10 | `[CLI-10]` `--report=engine` is a **reporting mode, not a profile**: it may not change type checking, acceptance, semantics or optimisation legality. `[PRF-1]` governs profiles and this is not one. | XIX.1 |
+| 11 | The 1.0 promises become **normative rather than intent** (`OQ-22`), and the bundled Clang + `lld` toolchain becomes a **committed deliverable** (`OQ-23`, `[TOOL-2]`). | XIX.2, XIX.1 |
+| 12 | **Rule-ID uniqueness is a hard invariant.** `tools/rule_index.py` fails CI when an id is defined twice in the active index; a reference is not a definition. This is the defect class that reached three drafts of the 0.5 proposal undetected. | XXII.4 |
+| 13 | `[TST-11]` records the **v0.5 regression obligations** for `[EXC-4]`, `[LT-7]`, `[TYP-15]`/`[TYP-15a]`, `[FFI-30c]`, `[EFF-17]` and `[PRF-1]`, so every rule this revision adds or changes has a conformance mapping. | XIX.5 |
+| 17 | `;` is **no longer a statement separator** (`OQ-25`, ERR-003). `simple_stmt` becomes `small_stmt`, `a = 1; b = 2` is `E0105`, and one line carries one statement. `;` stays punctuation only inside `[T; N]` and `[v; N]`. `[LEX-9]` and `[FMT-3]` follow. | III.4, II.2, XIX.7 |
+| 16 | `1f32` is **confirmed legal** (`OQ-24`, ERR-002), alongside `1.0f32`. `1.f32` remains a method/field access on `1`, not a literal. | II.5 |
+| 15 | `let` is **fully reserved** (`OQ-26`, ERR-004): it joins the reserved keyword set, which grows from 47 to 48 entries, and `r#let` is required to use the word as a name. `ember_lexer`'s keyword-count assertion moves from 47 to 48: `type` joins the set under ERR-009 and `from` leaves it under ERR-017. | II.4 |
+| 14 | The **GPU host model is scheduled, not respecified**: Part XVII's `[GPU-*]` and Part XXI's `[RV-*]` remain the sole normative source, their implementation moves to v0.6, and v0.5 carries an explicit compatibility surface it may not break. The MIR interpreter becomes a supported restricted execution mode with mandatory differential testing. | XX.2 |
+
+## Change log — 0.4
+
+0.4 makes the document agree with itself and with the compiler that implements it. It adds no pillar and
+removes none: every change is a reconciliation, a contradiction closed, a memory-safety hole in Safe code,
+or a rule this document already implies and failed to state.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row here is a
+defect.** 0.3 altered eight sites without a row, which is why the sentence is now normative.
+
+| # | Change | Where |
+|---|---|---|
+| 0 | Carries the owner rulings ERR-001, ERR-005, ERR-006 and ERR-007 recorded in `docs/spec-errata.md`, which 0.3 reverted by being authored from an unpatched copy. The single-file source under `docs/spec-source/` is now stated to be normative and `docs/spec/` generated. | II.3, III.5, III.7, XIX.5, XX.1, XX.3 |
+| 1 | The three still-open errata are written into the grammar: `;` joins the punctuation table (ERR-003), `let` joins the contextual keywords (ERR-004), `1f32` joins `float_lit` (ERR-002). Each is marked "implementation follows, owner ruling pending". | II.4, II.5, II.6 |
+| 2 | Registry hygiene: the attribute table gains every attribute the document uses (`@static_safe`, `@borrows`, `@allow`, `@must_drop`, `@fp`, and the reserved forms); the rule index admits amendment and hyphenated ids and gains six prefixes; `type` becomes a v1 keyword. | III.7, II.4, XXII.4 |
+| 3 | Contract effect sets are computed once under a fixed **contract profile** (`[EFF-15]`), so `@static_safe` no longer means one thing in `release` and the opposite in `shipping`. | X.1, X.2 |
+| 4 | `[DSJ-6]` and `[EFF-12]` are made consistent: a check that *establishes* a static fact carries the new reason code `establishes_static_fact` and does not violate `@static_safe`. | IX.8, X.1, X.2 |
+| 5 | `exclusivity = "unchecked"` reaches dynamic **class** exclusivity and nothing else; `[CELL-9]` keeps `RefCell`'s check in every profile, resolving the contradiction with XXII.2's own new non-goal. | VIII.3, IX.7, XIX.4, XXII.2 |
+| 6 | Alias facts are derived, never assumed, and `[CG-C-4]` states how they reach the backend — without which `[SIMD-3]` and `[DSJ-3]` buy nothing. | IX.8, XII.2, XVIII.6 |
+| 7 | Seven memory-safety holes in Safe code are closed: exclusivity elision only over a closed interval (`[EXC-3]`), resurrection during `drop` (`[OBJ-5]`, `[WK-3]`), borrows keeping objects alive (`[RC-5]`), leakable scope guards (`[THR-6]`, `@must_drop`), `@parallel` disjointness as a property of the place (`[PAR-2]`), `ScopedArena` rewind (`[ARN-7]`), and what `let` exempts (`[EXC-4]`, pending `OQ-18`). | VIII, IX.2, XI |
+| 8 | The escape hatches the vision rests on are made usable: `@borrows` is registered and given a position (`[LT-1a]`), `?` can propagate an error of its own type (`[ERR-7]`), type arguments are admitted in expression position (`[GRM-8a]`–`[GRM-8c]`), and once-callable closures are selected by the existing parameter mode (`[CLO-6]`). | III, IV, VI, VII, XIII |
+| 9 | The C backend gets the four things "speed of C" requires: cross-translation-unit inlining (`[CG-C-3]`), loop bounds-check versioning (`[OPT-2]`), guaranteed vectorisable loop shape (`[SIMD-5]`, `[CG-C-6]`), and enforced float control (`[TYP-9a]`–`[TYP-9c]`). | XVIII.6, VIII.6, XII, IV.2 |
+| 10 | Grammar repairs for constructs the document uses and Part III did not define, and a rule that every fenced `ember` block in this specification is compile-checked (`[TST-7]`). | III, XIX.5 |
+| 11 | The errors of the first hour get a mandated catalogue of their own (§XIX.6.2, shapes N1–N12), ownership shapes O5–O9, A1, B12, B13 are added, and `E3060` is split so one code no longer means two things. | XIX.6.1, XIX.6.2 |
+| 12 | The editor becomes an architectural constraint rather than a later rewrite: an owned `Session` replacing the leaked interner, error tolerance past the parser, and item-granular re-checking (`[IDE-3]`, `[IDE-4]`, `[IDE-6]`, `[BLD-7]`–`[BLD-10]`); a new XIX §10 reserves the server itself. | XVIII.1, XIX.10 |
+| 13 | Phase-5 completeness: the C importer imports what real headers contain (`[FFI-6]`, `[FFI-8]`), a generated shim translation unit handles `static inline` and single-header libraries (`[FFI-29]`), foreign contracts carry a count axis and an `unsafe overlay` boundary (`[FFI-11]`, `[FFI-2a]`, `[TIER-1]`), and imported entities have one identity (`[FFI-30]`). | XVI |
+| 14 | The plan gains instruments that measure the **user** rather than the compiler: a benchmark protocol (`[BEN-1]`), a first-run milestone (`[TOOL-1]`–`[TOOL-4]`), and a corpus written by people who have not read this document (`[TST-8]`–`[TST-10]`). | XIX.1, XX.3, XX.4 |
+| 15 | Part XXII.1 is renumbered once, permanently, under stable `OQ-n` identifiers, and twelve new questions are recorded rather than answered. | XXII.1 |
+
+## Change log — 0.3
+
+0.3 makes the enforcement model explicit and observable. It adds no new safety guarantee and removes none; every change either states a rule the compiler already followed, or makes an existing cost visible and restrictable.
+
+| # | Change | Where |
+|---|---|---|
+| 1 | `[PHIL-8]` **the enforcement ladder** stated as a governing rule: prove statically → else enforce safely at runtime → else require `unsafe`. Rejection is correct only when a safe expression of the same intent exists, and the diagnostic must name it. | I.3 |
+| 2 | `[PHIL-9]` **why classes carry dynamic checks and value types do not** — the class header already exists and is invisible to C; a `struct` has none because `[TYP-11]` guarantees C layout, and adding hidden state would break `size_of`, `@layout(c)`, `[FFI-5]` assertions and SoA/GPU bit-compatibility. The dichotomy is forced by the FFI guarantee, not by preference. | I.4 |
+| 3 | A table of **which mechanism enforces which guarantee**, so the static/runtime split is documented rather than folklore. | I.4 |
+| 4 | **`RuntimeCheck(k)` effect**, `k ∈ {Aliasing, Bounds, Stale, Overflow}`, computed *after* elision so it describes generated code. Coarse in the effect set; per-site detail lives in a codegen side table. | X.1.1 |
+| 5 | **Reason codes** on every emitted check (`not_provable_in_principle`, `not_proven_by_analysis`, `requested_by_type`, `inherent_to_mechanism`), because "the compiler could not prove it" is false for a `RefCell` borrow or a generational compare and misleads the reader into restructuring code that cannot improve. | `[EFF-11]` |
+| 6 | **`@static_safe`**, defined as "no `RuntimeCheck(Aliasing)`" rather than as a bespoke attribute. Deliberately excludes `Bounds`/`Stale`/`Overflow`; `@no_runtime_checks` reserved for v2. Documented as a value-type contract in practice, with a diagnostic that names the specific dynamic access. | X.2 |
+| 7 | **`mem.assert_disjoint`** — verifies two view ranges do not overlap (two comparisons) and returns proof-carrying views the borrow checker and backend treat as disjoint. Paired with `unsafe assume_disjoint` for the unverifiable case. No profile-dependent third form. | IX.8 |
+| 8 | **`ember inspect --safety`** — every check emitted, with reason, and every check elided, with the analysis that removed it. | X.3, `[CLI-3]` |
+| 9 | Diagnostic shapes **B11** (disjointness not provable) and **S1** (`@static_safe` violated), plus `[DIA-11]`: when a check's reason is `not_provable_in_principle`, the suggestion must be to drop the contract or change the data structure, never to restructure. | XIX.6.1 |
+| 10 | Non-goals extended: no profile-dependent assumptions, **no cycle collector** (it is a tracing collector over the RC subgraph and reintroduces what Part 0 removed). | XXII.2 |
+
+Considered and rejected for 0.3: a fourth safety tier separating "statically proven" from "runtime enforced" — the existing tiers describe what the programmer *writes* (Safe / Contract / Unsafe), while static-vs-runtime describes how the compiler *enforces* within Safe; conflating them would imply a choice the programmer does not make. And limited RC cycle reclamation, per non-goal 10.
+
 Every RageV-class requirement — first-class lifetime domains, borrow ergonomics for renderer code, command-scoped GPU ownership, deferred destruction, temporal history as a resource class, shader-language independence, native islands for backends and platform code, zero-cost FFI facades, transitive performance contracts, and visible allocation/effect decisions — is expressed with these primitives rather than as special cases. Part XXI.6 lists each requirement with the mechanism that satisfies it.
 
 ---

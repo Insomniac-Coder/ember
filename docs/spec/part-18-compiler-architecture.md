@@ -7,11 +7,12 @@
                                                                                          │
                           ┌──────────────────────────────────────────────────────────────┘
                           ▼
-   HIR ─► MIR lowering ─► Definite-init ─► Borrow check (NLL) ─► Drop elaboration ─► Effect analysis
-                                                                                          │
-                          ┌───────────────────────────────────────────────────────────────┘
+   HIR ─► MIR lowering ─► Definite-init ─► Borrow check (NLL) ─► Drop elaboration
+                                                                        │
+                          ┌─────────────────────────────────────────────┘
                           ▼
-   Monomorphisation ─► MIR optimisations (RC elision, inlining of tiny fns, SROA, const-prop, bounds-check elim)
+   Monomorphisation ─► MIR optimisations (RC elision, inlining of tiny fns, SROA, const-prop, bounds-check elim,
+                       exclusivity-check elision) ─► Effect analysis (under the contract profile, `[EFF-15]`)
                           │
             ┌─────────────┴─────────────┐
             ▼                           ▼
@@ -22,6 +23,8 @@
                           ▼
                       linker (lld / link.exe / ld)  + ember_rt.lib
 ```
+
+Effect analysis runs **after** monomorphisation and after the target-independent subset of MIR optimisation, because `[EFF-9]`'s `RuntimeCheck(k)` describes generated code: a check that elision removes must not appear in the effect set. It runs under the **contract profile** (`[EFF-15]`), so a contract has one verdict for a given source rather than one per build profile.
 
 `[CMP-1]` The compiler is a Rust workspace (`emberc`). Each stage is a crate with a documented input/output type and a `--emit=<stage>` flag so intermediate representations can be dumped and snapshot-tested. `[CMP-2]` No stage after parsing may report a diagnostic without a source span.
 
@@ -215,6 +218,16 @@ Emits one `.c` file per Ember module plus `ember_types.h` (all struct/enum/vtabl
 **Debug info**: `#line` directives mapping every emitted statement to the Ember source; locals keep their Ember names where legal. `[CG-C-1]` The emitted C MUST compile warning-free under `-std=c11 -Wall -Wextra` (Clang/GCC) and `/W3` (MSVC), be free of UB by construction (no signed-overflow arithmetic without checks: wrapping ops use unsigned arithmetic and cast back), and not depend on compiler extensions except through `ember_rt.h` macros that have portable fallbacks.
 
 `[CG-C-2]` The generated C is deterministic for identical input (stable ordering, no pointer-based hashing), so the build cache and `diff`-based review work.
+* `[CG-C-4]` **Aliasing facts in emitted C.** `restrict` in C qualifies a pointer *object*; the pointer inside a `Span`/`MutSpan` is not such an object at the point of use. For every loop body and every `@simd` region, the C backend MUST hoist the base pointer of each view accessed in the region **whose base and length are loop-invariant across the region** into a local of type `T* restrict` / `const T* restrict`, and its length into a `size_t` local, before the region, and index those locals in the body. A view reassigned inside the body is not hoisted and receives no annotation. Two such locals MUST be declared `restrict` together only where `[SIMD-3]` establishes them disjoint.
+* `[CG-C-5]` Every `ember_panic_*` declaration MUST carry `_Noreturn` and a cold marker (`__attribute__((cold))` on Clang/GCC; on MSVC, `__declspec(noreturn)` with the call placed in a basic block outside the loop body), and the C backend MUST emit the panic call in its own block reached by a forward branch, so the host compiler can sink it away from the fast path.
+* `[CG-C-6]` For every loop in vectorisable form the C backend MUST emit the host compiler's vectorisation pragma immediately before it: `#pragma clang loop vectorize(enable)`, `#pragma GCC ivdep`, or `#pragma loop(ivdep)` (MSVC). These pragmas assert the absence of a loop-carried dependence, which is why `[SIMD-5]`'s single-constant-offset clause is a precondition rather than an optimisation.
+* `[CG-C-3]` **Cross-translation-unit inlining.** Because `[BLD-1]` emits one translation unit per module, a call to a function defined in another module is opaque to the host C compiler unless the callee's definition is visible in the caller's translation unit. Extending `[BLD-1]`'s existing COMDAT-style mechanism from monomorphised instantiations to non-generic definitions, the C backend MUST emit, per package, an **inline header** `target/<profile>/c/<package>_inline.h`, included by every emitted `.c` file of that package and of every package that depends on it, holding a `static inline` definition of every function that is: (a) annotated `@inline`; (b) an impl of an operator interface (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Index`, `IndexMut`, `Eq`, `Ord`, `*Assign`, …) on a type whose `size_of` ≤ 64 bytes; (c) `len`, `is_empty`, `as_span`, `as_mut_span`, `iter`, `iter_mut`, `next`, a field accessor, or a `Deref`/`Iterator` method of a `std` view or container type; or (d) any other function whose MIR body after §4.12 is ≤ 40 statements and whose effect set does not contain `FFI`. A function emitted this way MUST NOT also be emitted with external linkage in its defining module unless it is `@export`ed or its address is taken, so `[MONO-1]`'s link-time dedup is unaffected.
+* `[CG-C-3a]` `@inline` is **binding on the C backend**, not a hint: such a function MUST be emitted per `[CG-C-3]` and MUST carry `__forceinline` (MSVC) or `__attribute__((always_inline))` (Clang/GCC). Part III §7's table and the glossary entry for "Contract" are amended accordingly, resolving the existing contradiction with the `[CG-C-*]` code shapes. `@noinline` remains a hint.
+* `[CG-C-3b]` A package MUST publish the MIR bodies of every function selected by `[CG-C-3]` in its build artefact, and `[BLD-2]`'s interface hash MUST cover them — `[BLD-2]` already names "inline bodies"; this rule fixes which bodies those are. A change to such a body invalidates dependent modules' codegen.
+* `[CG-C-8]` **Step fidelity.** A `#line` directive MUST precede every emitted statement and MUST name the span of the *source construct that produced it*, never the declaration span of a place it mentions. All C statements lowered from one Ember statement MUST carry the same `#line`, so "step over" advances exactly one Ember statement. Desugared constructs (`for`, `?`, `?.`, `with`, f-strings, operator calls — XVIII §3) MUST attribute to the source syntax, not to the desugaring. **This requires MIR `Stmt` and `Term` to carry a source span**, and the MIR verifier checks that every statement has one.
+* `[CG-C-7]` **Names.** Every MIR local carrying a user name MUST be emitted with that name as its C identifier, transliterated per `[MNG-3]`, suffixed `_<n>` only on collision with a C keyword, a reserved identifier, or another local in the same C scope. Parameters keep their Ember names; compiler temporaries keep `_<index>`. A profile MAY set `debug_names = false`; no default profile does. Deterministic naming keeps `[CG-C-2]`'s diff-based review intact.
+* `[CG-C-9]` **Debugger visualisers.** `ember build` MUST emit, beside the binary, `target/<profile>/<package>.natvis` (passed with `/NATVIS:` on MSVC) and `<package>-gdb.py` / `<package>-lldb.py`, generated from the same `TypeInfo` table (§4.3) the backend already walks. They MUST render at minimum: `Option[T]` as `None`/`Some(v)` including every niche form; `Result[T,E]`; each payload enum as `Variant(fields)`; `String`/`str` as text including the SSO form; `Array`/`Span`/ `MutSpan` as `len` elements; `Box`, `Shared`, `Weak` as their pointee plus counts; a class handle as `Class { fields }` with the header hidden; `Handle[Tag]` as `index:generation`; `SoA[T]` as reconstructed `T` values.
+* `[CG-C-10]` **Stacks.** `[RT-4]`'s panic output and `ember_backtrace_print` MUST print Ember function paths and Ember `file:line:col`, demangled from `[MNG-1]`'s scheme, never raw C symbols. The toolchain ships `ember demangle` (a stdin/stdout filter) so MSVC and GDB stacks can be read.
 
 ## XVIII.7 LLVM backend (v2)
 
@@ -227,6 +240,7 @@ em_<pkg>_<module path with '_'>_<item>[__g<hash of generic args>][__v<vtable>]  
 ```
 
 `[MNG-1]` Hash = first 12 hex digits of BLAKE3 of the canonical type string of the generic arguments. `[MNG-2]` `@export("name")` overrides the symbol entirely. `[MNG-3]` Identifiers are transliterated to ASCII (`_uXXXX_` for non-ASCII). `[MNG-4]` Class object structs are `em_obj_<mangled class>`; vtables `em_vt_<mangled>`; type infos `em_ti_<mangled>`.
+* `[MNG-5]` The mangled prefix `em_` of `[MNG-1]`/`[MNG-4]` is derived from `EMBER_SYMBOL_PREFIX` and constructed in exactly one function.
 
 ## XVIII.9 Runtime ABI (`ember_rt`, C11)
 
@@ -284,6 +298,7 @@ void ember_debug_alloc_stats(ember_alloc_stats*);
 * `[RT-2]` No global constructors; `ember_rt_init` is explicit (the generated `main` calls it) and idempotent.
 * `[RT-3]` `ember_type_info` layout: `{ uint32_t size, align; uint32_t flags; const char* name; const ember_type_info* base; void (*drop)(void*); void (*drop_fields)(void*); const ember_vtable* vtable; const ember_itable_entry* itables; uint32_t itable_count; const ember_field_desc* fields; uint32_t field_count; }` — the reflection fields are present only for `@reflect` types.
 * `[RT-4]` Panics print `panic at <file>:<line>:<col>: <message>` followed by a backtrace in debug/release, then call `cfg.on_panic` (if set) and `abort()`.
+* `[RT-5]` Every runtime symbol, macro and header name is **generated** from a single build constant `EMBER_SYMBOL_PREFIX` (default `ember`), defined in exactly one place in `ember_rt` and one in the compiler. `ember_rt.h` is a **generation output** carrying literal identifiers, not a header of macro concatenations — it is the interface document C embedders read, and it must stay readable. No file in the compiler, runtime, CMake module, examples or test corpus may hard-code the symbol prefix, the CLI name, the manifest file name, or the source and binding-cache extensions; each is read from a single `branding` module. `tools/check_branding.py` fails CI on any hard-coded occurrence.
 
 ## XVIII.10 Compiler correctness strategy
 

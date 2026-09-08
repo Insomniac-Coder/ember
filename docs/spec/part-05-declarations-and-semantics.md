@@ -7,7 +7,7 @@
 * `[MOD-3]` `import a.b.c` binds `c` as a namespace; `from a.b import x, y as z` binds items; `import a.b.c as d` renames. `from a.b import *` is permitted only for `prelude` modules declared `@prelude` (`E1040` otherwise).
 * `[MOD-4]` Import cycles within a package are allowed (name resolution is package-wide); cycles between packages are `E1041`.
 * `[MOD-5]` `std.prelude` is imported implicitly into every module: `Option, Some, None, Result, Ok, Err, Array, String, str, Span, MutSpan, Box, Shared, Weak, print, println, assert, assert_eq, panic, Copy, Clone, Drop, Eq, Ord, Hash, Debug, Display, Default, Iterator, Iterable, Send, Sync`.
-* `[MOD-6]` A module MAY declare `#! language "0.2"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`.
+* `[MOD-6]` A module MAY declare `#! language "0.5"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts, so pinning an older version stays valid.
 * `[MOD-7]` **Read-only visibility for fields.** A field declared `pub(read)` (or `pub(package, read)`) may be **read** wherever a `pub` (respectively `pub(package)`) field could be read, but may be **written only from the declaring module**. Outside the declaring module, the following are errors `E1050 field is read-only outside its module`: assignment (`h.value = x`, augmented assignment), taking `ref mut h.value`, passing `h.value` to a `mut` parameter or `mut self` method, and destructuring it with a mutable binding. Reading, copying, taking `ref h.value`, and passing it to a borrowed parameter are allowed. `read` applies to fields of structs and classes only; on any other item it is `E1051`. Because construction is a write, a `pub(read)` field does not count as `pub` for the purpose of the synthesised memberwise constructor (`[STR-1]`).
 
   Summary of field visibility:
@@ -39,6 +39,7 @@ pub fn name[T: Bound](a: A, mut b: B, owned c: C, d: D = default) -> R where T: 
 * `[FN-6]` Functions are values of a unique zero-sized function type; they coerce to `fn(A) -> R` (the generic callable bound) and, if they capture nothing and have no generic parameters, to `extern "C" fn(A) -> R` when their types are FFI-safe.
 * `[FN-7]` Recursion is permitted; the compiler does not guarantee tail-call elimination in v1.
 * `[FN-8]` `main` is `fn main()`, `fn main() -> Result[void, E]` (`E: Error`), or `fn main(args: Span[str])` variants. A non-`Ok` result prints the error with `Display` to stderr and exits with code 1.
+* `[FN-2a]` The compiler forms the borrow the callee's declared mode requires. If the argument is not a suitable place for that mode, it reports shape **B10** naming the place required. **A call site never writes the mode** (owner decision `OQ-13`): `f(x)` is written whether `f` declares `x`, `mut x` or `owned x`, preserving Part 0 row 3's guarantee that call sites never carry a sigil. The mode is read from the callee's signature, and `ember inspect` and the editor's inlay hints (`[IDE-7]`) surface it at the argument.
 
 ## V.3 Structs
 
@@ -123,8 +124,10 @@ class Door(Script):
 * `[CLS-5]` A class may implement interfaces; interface methods are dispatched statically unless the receiver is `dyn I`.
 * `[CLS-6]` `drop` on a class runs derived-first, then base; then fields are dropped in reverse declaration order; then the memory is released when the weak count is also zero.
 * `[CLS-7]` `self` inside a class method is a handle (Copy); `mut self` grants a dynamically checked write access for the duration of the method (Part VIII §3). Storing `self` into another object is allowed and retains (this is how observer patterns work — beware cycles; see Part VIII §5).
-* `[CLS-8]` Classes are `Sync` iff every field is `Sync` (`Atomic`, `Mutex[T]`, immutable `let` fields of `Sync` types) — Part XI. Non-`Sync` classes use non-atomic counts and are thread-confined.
+* `[CLS-8]` Classes are `Sync` iff every field's type is itself `Sync` (`Atomic`, `Mutex[T]`, `RwLock[T]`, a channel end, or a deeply immutable value type) — Part XI. **`let` does not contribute to this derivation.** Since `OQ-18` a `let` field restrains only the binding, and `[CLS-9a]` permits mutation *through* it, so a `let Array[i32]` field is exactly as unsynchronised as a non-`let` one. Non-`Sync` classes use non-atomic counts and are thread-confined.
 * `[CLS-9]` `let` fields: `let name: T` declares an **immutable** field, assignable only in `init`. For a field that the class mutates but outsiders may only read, use `pub(read)` (`[MOD-7]`), not `let`. Immutable fields of `Sync` types keep a class `Sync`.
+* `[CLS-7a]` Inside a `drop` body, `self` MUST NOT be copied into a place that outlives the call. The compiler MUST reject the statically visible cases — storing `self`, or a handle-typed projection denoting the same object, into a field of another object, a `static`, a container, an `owned fn` capture, or a `Retained` token — as `E3016 self escapes its own drop`, with `help: a destructor may not publish a handle to the object being destroyed; move the data out with `mem.take` instead`. Cases the compiler cannot see are caught by `[OBJ-5]`.
+* `[CLS-9a]` A `let` field of a non-`Copy` type MAY still be mutated *through* by a `mut self` method of the declaring class (`self.items.push(v)` is legal); only assignment to the field itself is restricted to `init`. Code that needs the value frozen must choose a type with no `mut self` API, not `let`. For "outsiders may read, only this module may write", use `pub(read)` (`[MOD-7]`).
 
 ## V.6 Interfaces and `extend`
 
@@ -156,6 +159,9 @@ extend[T: Display] Array[T] implements Display:          # generic impl with bou
 
 ## V.8 Attributes on declarations
 
-Attributes precede the declaration, one per line, and are validated by the compiler against the table in Part III §7. Attribute arguments are literals, identifiers, or nested attribute-like forms (`@derive(Serialize(rename_all="camel"))`). `[ATT-1]` Unknown attributes in an unregistered namespace are errors (not warnings) to prevent silent no-ops.
+Attributes precede the declaration, one per line, and are validated by the compiler against the table in Part III §7. Attribute arguments are literals, identifiers, or nested attribute-like forms (`@derive(Serialize(rename_all="camel"))`). `[ATT-1]` An attribute not in the Part III §7 tables and not in a registered plugin namespace is `E0104`. An attribute listed as **reserved** is `E0104` with a message naming the version that will introduce it, so that a reservation is never mistaken for a typo. A derive-scoped attribute outside its derive is `E0104` naming the derive that defines it.
+
+* `[ATT-2]` A statement attribute MUST be one of `@simd`, `@parallel`, `@unroll`, `@allow`. Any other attribute in statement position is `E0104`, naming the four that are permitted there. `[ATT-3]` A statement attribute attaches to the next `compound_stmt` and MUST NOT precede a `simple_stmt` (`E0108`). `@simd`, `@parallel` and `@unroll` additionally require that statement to be a `for_stmt` (`E0108`).
+* `[ATT-4]` One attribute per line. The `attribute` production carries a mandatory `NEWLINE`, matching Part V §8 and the formatter.
 
 ---
