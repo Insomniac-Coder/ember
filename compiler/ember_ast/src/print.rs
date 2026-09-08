@@ -101,7 +101,29 @@ impl Printer {
             }
             ItemKind::Enum(e) => self.nest(&format!("Enum {}", e.name.name), |p| {
                 for v in &e.variants {
-                    p.line(&format!("Variant {}", v.name.name));
+                    // A variant printed as its bare name made this tree blind
+                    // to everything attached to one, and `[FMT-1]`'s round
+                    // trip is only as strong as what the tree records: the
+                    // formatter dropped a variant's doc comment and the test
+                    // that exists to catch exactly that saw two equal trees.
+                    if let Some(doc) = &v.doc {
+                        p.line(&format!("Doc {:?}", doc));
+                    }
+                    for attr in &v.attrs {
+                        p.line(&format!("@{}", join(&attr.path)));
+                    }
+                    let fields: Vec<String> = v
+                        .fields
+                        .iter()
+                        .map(|f| match f.name {
+                            Some(name) => format!("{}: {}", name.name, type_str(&f.ty)),
+                            None => type_str(&f.ty),
+                        })
+                        .collect();
+                    let shape =
+                        if fields.is_empty() { String::new() } else { format!("({})", fields.join(", ")) };
+                    let discriminant = v.discriminant.is_some().then_some(" = …").unwrap_or_default();
+                    p.line(&format!("Variant {}{shape}{discriminant}", v.name.name));
                 }
                 for m in &e.members {
                     p.member(m);

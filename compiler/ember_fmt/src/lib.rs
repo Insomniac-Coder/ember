@@ -429,6 +429,11 @@ impl Printer<'_> {
     }
 
     fn member(&mut self, member: &ast::Member) {
+        // `[FMT-1]` — a member's doc comment, in the same order as an item's.
+        // The item level was fixed when doc comments were first found to be
+        // dropped and this level was left, so a documented method lost its
+        // documentation to `ember fmt`.
+        self.doc_comment(member.doc.as_deref());
         for attr in &member.attrs {
             self.line(&self.attribute(attr));
         }
@@ -474,6 +479,7 @@ impl Printer<'_> {
         self.depth += 1;
         for variant in variants {
             self.comments_before(variant.span);
+            self.doc_comment(variant.doc.as_deref());
             for attr in &variant.attrs {
                 self.line(&self.attribute(attr));
             }

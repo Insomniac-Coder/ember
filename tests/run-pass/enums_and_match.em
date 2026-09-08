@@ -16,6 +16,9 @@ enum Level:
     High = 30
 
 enum Shape:
+    ## A doc comment on a variant. `ember fmt` dropped these — the item level
+    ## was fixed when doc comments were first found missing and the member and
+    ## variant levels were left — and `[FMT-1]`'s round trip is what says so.
     Circle(f32)
     Rect(w: f32, h: f32)
     Empty
