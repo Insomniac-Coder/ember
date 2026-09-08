@@ -1,5 +1,9 @@
 # Libraries
 
+> Tracked as numbered tasks in [BACKLOG.md](BACKLOG.md) — `LIB-1`..`LIB-31`.
+> This file carries the reasoning; that one carries the gates and the
+> acceptance criteria.
+
 What ships with the language, and what should follow once all nine phases are
 done. Nothing here is a commitment to build now; Part XX's phase order stands,
 and this list exists so that the shape of the ecosystem is decided before

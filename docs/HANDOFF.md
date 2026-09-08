@@ -161,8 +161,11 @@ wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
 24-block baseline, which needs the grammar gaps those fragments expose. With
 those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
-`docs/LIBRARIES.md` records what ships in `std` and what the ecosystem
-should gain once the phases are done, at the owner's request.
+`docs/LIBRARIES.md` records what ships in `std` and what the ecosystem should
+gain once the phases are done, with the reasoning; `docs/BACKLOG.md` carries
+the same list as 31 numbered tasks, `LIB-1`..`LIB-31`, each with the phase it
+is gated behind and what finishing it means. Both at the owner's request, and
+nothing in either starts before Phase 8.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 before touching anything. `docs/spec-errata.md` now lists **twenty-one** entries;
