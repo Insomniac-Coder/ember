@@ -186,6 +186,33 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
+/// `[DIA-7]` — `target/<profile>/unclassified-borrow-errors.log`.
+///
+/// Written only when there is something to write, so its presence is the
+/// signal: an empty run leaves no file, and CI checks for the file rather than
+/// parsing output.
+fn write_unclassified_log(sink: &ember_diag::Sink, options: &Options) {
+    let entries = sink.unclassified();
+    if entries.is_empty() {
+        return;
+    }
+    let dir = options
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target").join(options.profile.name()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("unclassified-borrow-errors.log");
+    let body = entries.join("
+") + "
+";
+    let _ = std::fs::write(&path, body);
+    eprintln!(
+        "note: {} unclassified borrow error(s) recorded in {} (DIA-7)",
+        entries.len(),
+        path.display()
+    );
+}
+
 fn explain(code: &str) -> Result<ExitCode, String> {
     let Some(found) = ember_diag::codes::lookup(code) else {
         return Err(format!("`{code}` is not a diagnostic code"));
@@ -370,6 +397,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_borrows_all(&bodies, &types, &mut sink);
     ember_analysis::check_unused_all(&bodies, &mut sink);
+    // `[DIA-7]` — a borrow error the classifier could not place is recorded
+    // rather than left to be noticed. CI fails when the conformance suite
+    // produces any, which is what stops an unexplained rejection shipping.
+    write_unclassified_log(&sink, options);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }

@@ -40,6 +40,17 @@ jobs:
         env:
           EMBER_CC: ${{ matrix.cc }}
 
+      # `[DIA-7]` — "CI fails if the conformance suite produces any
+      # unclassified borrow error". The file exists only when there is one.
+      - name: no unclassified borrow errors
+        shell: bash
+        run: |
+          if find target -name unclassified-borrow-errors.log | grep -q .; then
+            echo "unclassified borrow errors (DIA-7):"
+            find target -name unclassified-borrow-errors.log -exec cat {} +
+            exit 1
+          fi
+
   documents:
     runs-on: ubuntu-latest
     name: specification and registry

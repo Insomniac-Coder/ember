@@ -715,6 +715,22 @@ M2 is written over `ref i32` rather than the specification's `Array[i32]` and
 `xs[0]`, which needs `Index` to return a `ref` — block D. The rule under test
 is the same, and the file says so.
 
+**`[DIA-7]`'s classifier is in, and designed into the pass rather than bolted
+on** — which is what the rule requires, because the classifier needs the
+borrow checker's own loan and region tables and cannot be reconstructed from
+rendered text afterwards. `compiler/ember_diag/src/shapes.rs` holds
+§XIX.6.1's twenty-six shapes and `[DIA-7a]`'s code-to-shape table; the borrow
+checker emits through `emit_classified`, which records anything it cannot
+place; the driver writes `target/<profile>/unclassified-borrow-errors.log` and
+CI fails if the file exists. **Zero unclassified borrow errors across the
+corpus today**, which is one of Phase 2's exit criteria met early.
+
+A test asserts every ownership code has a shape, and it found one that does
+not: `E3100`, `[UNS-1]`'s "requires an `unsafe` block", which sits in the
+ownership range and is not an ownership error. `[DIA-7]` and `[DIA-7a]`
+disagree about the classifier's scope; ERR-022 records that `[DIA-7]`'s is the
+real one, and the exception list is one entry long.
+
 **Not done in block E:** `@view` structs; `@borrows` (`[LT-1a]`); real region variables
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
 what the liveness approximation cannot do; and the shape classifier

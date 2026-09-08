@@ -179,7 +179,7 @@ fn check_escapes(
             continue;
         }
         let name = place_name(body, types, &loan.place);
-        sink.emit(
+        sink.emit_classified(
             Diagnostic::error(
                 codes::E3060,
                 span,
@@ -387,7 +387,7 @@ fn check_point(
             // about a local they cannot see.
             let borrower = body.local(loan.borrower).name.clone();
             let kind = if loan_mutable { "mutable " } else { "" };
-            sink.emit(
+            sink.emit_classified(
                 Diagnostic::error(code, span, message)
                     .primary_label("conflicting access here")
                     .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"))

@@ -13,6 +13,7 @@ use std::fmt::Write as _;
 
 use ember_span::{SourceMap, Span};
 
+pub mod shapes;
 pub mod codes;
 pub use codes::Code;
 
@@ -153,6 +154,8 @@ pub struct Sink {
     warning_count: usize,
     /// `-Dwarnings`: warnings are counted as errors for the exit code.
     pub deny_warnings: bool,
+    /// `[DIA-7]` — ownership or borrow errors the classifier could not place.
+    unclassified: Vec<String>,
 }
 
 impl Sink {
@@ -175,6 +178,30 @@ impl Sink {
 
     pub fn error_count(&self) -> usize {
         self.error_count
+    }
+
+    /// `[DIA-7]` — emit an ownership or borrow diagnostic, which MUST carry
+    /// one of §XIX.6.1's shapes. A code the classifier cannot place is
+    /// recorded rather than silently emitted, because "an unexplained
+    /// rejection is the single largest usability cost of static aliasing
+    /// rules" and the rule exists to make adding one impossible by accident.
+    pub fn emit_classified(&mut self, diagnostic: Diagnostic) {
+        if let Some(code) = diagnostic.code {
+            if shapes::shape_for(code).is_none() {
+                self.unclassified.push(format!(
+                    "{code}: {} at {:?}",
+                    diagnostic.message, diagnostic.primary.span
+                ));
+            }
+        }
+        self.emit(diagnostic);
+    }
+
+    /// The borrow errors no shape could be found for. `[DIA-7]` writes these
+    /// to `target/<profile>/unclassified-borrow-errors.log` and fails CI when
+    /// the conformance suite produces any.
+    pub fn unclassified(&self) -> &[String] {
+        &self.unclassified
     }
 
     pub fn warning_count(&self) -> usize {

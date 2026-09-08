@@ -31,6 +31,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-019 | `[RT-5]` | **decided** — the runtime's own two files are exempt |
 | ERR-020 | `[TST-6]` | fixture created; `compile-pass` deferred to `std` |
 | ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated |
+| ERR-022 | `[DIA-7]` with `[DIA-7a]` | **decided** — the classifier covers ownership errors, not the range |
 
 ---
 
@@ -914,3 +915,36 @@ the range and the neighbouring number were determined, and each maps to exactly
 one shape §XIX.6.1 already specifies down to its required `help`. Recorded
 rather than asked about, and `[DIA-7a]`'s table should gain these seven rows in
 the next revision the owner writes.
+
+---
+
+## ERR-022 — `[DIA-7]` and `[DIA-7a]` disagree about what the classifier covers
+
+**Status: decided, 2026-09-08. `[DIA-7]`'s scope is the real one.**
+
+**Where.** `[DIA-7]`: "Every **ownership or borrow error** MUST be classified
+into one of the shapes in §XIX.6.1". `[DIA-7a]`: "The table below maps **every
+error code in `E3000–E3499`** to the shape whose `help` it MUST emit. A code
+absent from this table MUST NOT be emitted."
+
+Those are different sets. The range also holds `E3100`, `[UNS-1]`'s "this
+operation requires an `unsafe` block" — which is not an ownership error, is not
+a borrow error, and which none of §XIX.6.1's twenty-six shapes describes. Under
+`[DIA-7a]` read literally, the compiler may not emit it at all.
+
+**Decision.** `[DIA-7]`'s scope governs: the classifier covers ownership and
+borrow errors, not every code that happens to sit in the numeric range.
+`compiler/ember_diag/src/shapes.rs` carries the exception explicitly, as a
+named list with this entry cited, so that it is a decision rather than an
+oversight.
+
+**Why not renumber `E3100` instead.** It would be the tidier answer — the code
+belongs in a range for `unsafe`, which the registry does not have — but ERR-001
+already records what renumbering costs, and that cost rises with every phase.
+`E3100` is emitted, tested and documented. One line of exception is cheaper
+than moving it, and the exception is checked: a test asserts every *other*
+ownership code has a shape, so a genuinely unclassified borrow error cannot be
+added without the build going red.
+
+**Found by** writing that test. The list of exceptions is one entry long, which
+is the useful outcome: it says the classifier's coverage is otherwise complete.
