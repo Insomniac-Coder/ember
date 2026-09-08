@@ -41,11 +41,11 @@ EXEMPT = {
     Path("compiler/ember_branding/src/lib.rs"),
     Path("tools/check_branding.py"),
     Path("runtime/ember_rt/include/ember_rt.h"),
-    # `[RT-5]` names the runtime among the places that may not hard-code the
-    # prefix, and in its next sentence requires the header to carry literal
-    # identifiers so embedders can read and grep it. The implementation file
-    # defines exactly those identifiers, so it is exempt for the same reason.
-    # Recorded as errata ERR-019.
+    # `[RT-5]` says these are *generation output*: a generator writes the
+    # literal identifiers from `EMBER_SYMBOL_PREFIX`, so no source file spells
+    # the prefix and the header still greps. Ours are hand-written, which is an
+    # implementation gap rather than an exception to the rule — exempted here
+    # until the generator exists. See errata ERR-019 and BACKLOG RT-GEN-1.
     Path("runtime/ember_rt/src/ember_rt.c"),
 }
 

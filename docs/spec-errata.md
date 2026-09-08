@@ -28,10 +28,10 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-016 | Part IV §8 interface list, `[GRM-18]`, `[TST-7]` | **decided** — block rewritten in indented form |
 | ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
 | ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
-| ERR-019 | `[RT-5]` | **decided** — the rule now exempts the runtime's own two files |
-| ERR-020 | `[TST-6]` | **decided** — the rule now describes the appendix it has |
+| ERR-019 | `[RT-5]` | **withdrawn** — not a defect; the header is *generated*. Our hand-written one is an implementation gap |
+| ERR-020 | `[TST-6]` | **decided** — the stale description corrected; `compile-pass` left as the requirement |
 | ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated and in the table |
-| ERR-022 | `[DIA-7]` with `[DIA-7a]` | **decided** — `[DIA-7a]` narrowed to ownership errors |
+| ERR-022 | `[DIA-7]` with `[DIA-7a]` | **withdrawn** — `[DIA-7a]` sits under `[DIA-7]`, which scopes it |
 
 ---
 
@@ -951,7 +951,7 @@ is the useful outcome: it says the classifier's coverage is otherwise complete.
 
 ---
 
-## All twenty-two are now in the document
+## What is in the document, and what was withdrawn
 
 Every entry above is applied to `docs/spec-source/ember-spec.md`, which is the
 normative copy. Five were held back at first and patched on 2026-09-08 when the
@@ -976,22 +976,43 @@ owner asked for them:
   string-literal, null-pointer-constant or pointer/handle-cast type, after full
   macro expansion. The diagram now defers to `[FFI-6]` for that list rather
   than restating a narrower one.
-- **ERR-019** — `[RT-5]` forbade the runtime from spelling its own symbol
-  prefix in the same breath as requiring its header to carry literal
-  identifiers. The rule now exempts exactly `ember_rt.h` and `ember_rt.c`, on
-  the stated ground that a symbol has to be spelled where it is declared and
-  defined and nowhere else.
+- **ERR-019 is withdrawn: it was not a defect.** The entry claimed `[RT-5]`
+  forbids the runtime from spelling its own prefix while requiring the header
+  to carry literal identifiers, and that both cannot hold. They can, and the
+  rule says how in its first sentence: the header is **generated**. A generator
+  writes the literal identifiers from `EMBER_SYMBOL_PREFIX`, so the header
+  greps and no *source* file spells anything.
+
+  The change made on the misreading is reverted, because it excused the runtime
+  from ever being generated — it turned an implementation gap into a permanent
+  exception to a rule that was already correct.
+
+  What is true is smaller: our `ember_rt.h` and `ember_rt.c` are hand-written.
+  `tools/check_branding.py` exempts them and says why, and `BACKLOG.md` carries
+  it as `RT-GEN-1`.
 - **ERR-020** — `[TST-6]` described an Appendix A with a `0.3` directive and
-  statement-form `match` arms, neither of which v0.5 has. It now describes the
-  appendix that exists, and says plainly that the fixture is held to
-  `--syntax-only` until `std` supplies the types the appendix names.
+  statement-form `match` arms, neither of which v0.5 has. Corrected to describe
+  the appendix that exists.
+
+  **The `compile-pass` requirement is left as written.** A first attempt
+  softened it to `syntax-pass` "until `std` catches up", which is rewriting a
+  requirement to match what the implementation can do — the wrong direction.
+  The fixture is held to `--syntax-only` today; that is the implementation
+  falling short of the rule, recorded as `TST-6-1` in `BACKLOG.md`, not the
+  rule being wrong.
 - **ERR-021** — `[DIA-7a]`'s table gained the seven rows for `E3021`–`E3027`,
   so the codes the compiler emits for `[BRW-1]` are keyed where the rule
   requires.
-- **ERR-022** — `[DIA-7a]` said "every error code in `E3000–E3499`" where
-  `[DIA-7]` says "every ownership or borrow error". It now says the latter,
-  names `E3100` as the code that is neither, and requires an implementation to
-  carry its exceptions as a named list rather than by omission.
+- **ERR-022 is withdrawn.** `[DIA-7a]` sits directly under `[DIA-7]`, which
+  scopes the classifier to "every ownership or borrow error"; read together,
+  `[DIA-7a]`'s "every error code in `E3000–E3499`" means every *such* code in
+  that range. `E3100` is in the range and is neither, so no shape describes it
+  and none should. That reading needs no change to the document, and the edit
+  that narrowed the rule is reverted.
+
+  `compiler/ember_diag/src/shapes.rs` still names the exception rather than
+  omitting it, so a genuinely unclassified borrow error fails the build. That
+  was always the useful part.
 
 `docs/spec-source/as-received/Ember_v0.5_spec.md` is still byte-identical to
 what the owner sent, so every one of these divergences can be diffed and each

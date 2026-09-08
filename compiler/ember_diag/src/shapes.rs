@@ -159,12 +159,13 @@ pub fn shape_for(code: codes::Code) -> Option<Shape> {
 /// Codes in the ownership range that are **not** ownership or borrow errors,
 /// so the classifier has nothing to say about them.
 ///
-/// `[DIA-7]` scopes the classifier to "every ownership or borrow error", and
-/// `[DIA-7a]` then widens it to "every error code in `E3000–E3499`". The two
-/// disagree, because the range also holds `[UNS-1]`'s "this operation requires
-/// an `unsafe` block", which is not an ownership error and which none of
-/// §XIX.6.1's twenty-six shapes describes. `[DIA-7]`'s scope is the real one.
-/// Recorded as errata ERR-022.
+/// `[DIA-7a]` sits directly under `[DIA-7]`, which scopes the classifier to
+/// "every ownership or borrow error"; read together, `[DIA-7a]`'s "every error
+/// code in `E3000–E3499`" means every such code in that range. `E3100`,
+/// `[UNS-1]`'s "requires an `unsafe` block", is in the range and is neither, so
+/// no shape describes it and none should. The exception is named rather than
+/// omitted so that a genuinely unclassified borrow error still fails the build.
+/// See errata ERR-022; the specification needed no change.
 const NOT_OWNERSHIP_ERRORS: &[u16] = &[3100];
 
 /// Every code in the ownership range that the compiler may emit and the
