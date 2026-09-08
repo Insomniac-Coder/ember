@@ -17,6 +17,7 @@ unit. `[TST-7]` therefore ships with a **recorded baseline** and fails only on
 """
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -61,11 +62,16 @@ def blocks():
             while n < len(lines) and not lines[n].startswith("```"):
                 body.append(lines[n])
                 n += 1
+            # Keyed by content, not by line: an edit elsewhere in the
+            # document shifts every line number and would invalidate the
+            # whole baseline, which is exactly when a gate must not cry wolf.
+            source = "\n".join(body) + "\n"
+            digest = hashlib.blake2s(source.encode("utf-8"), digest_size=6).hexdigest()
             out.append(
                 {
-                    "id": f"{part}:{start + 1}",
+                    "id": f"{part}:{digest}",
                     "line": start + 1,
-                    "source": "\n".join(body) + "\n",
+                    "source": source,
                     "ignored": ignored,
                     "reason": reason,
                 }

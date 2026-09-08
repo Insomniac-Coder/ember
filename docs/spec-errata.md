@@ -23,15 +23,15 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-011 | `[PAR-1]`, `[PAR-2]`, Part XI §4 | **decided** — `[PAR-2]` split out and de-duplicated |
 | ERR-012 | `[MOD-6]`, Part V §1 | **decided** — first half restored |
 | ERR-013 | `[CLO-2]`, Part VI §5 | **decided** — capture-mode rule restored |
-| ERR-014 | `[FFI-6]`, `[FFI-6b]`, Part XVI §2 | proposed — fragment repaired, macro contradiction open |
+| ERR-014 | `[FFI-6]`, `[FFI-6b]`, Part XVI §2 | **decided** — the pipeline defers to the two macro rules |
 | ERR-015 | `[EFF-11]`, Part X §1.1 | **decided** — fifth reason code defined |
 | ERR-016 | Part IV §8 interface list, `[GRM-18]`, `[TST-7]` | **decided** — block rewritten in indented form |
 | ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
 | ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
-| ERR-019 | `[RT-5]` | **decided** — the runtime's own two files are exempt |
-| ERR-020 | `[TST-6]` | fixture created; `compile-pass` deferred to `std` |
-| ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated |
-| ERR-022 | `[DIA-7]` with `[DIA-7a]` | **decided** — the classifier covers ownership errors, not the range |
+| ERR-019 | `[RT-5]` | **decided** — the rule now exempts the runtime's own two files |
+| ERR-020 | `[TST-6]` | **decided** — the rule now describes the appendix it has |
+| ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated and in the table |
+| ERR-022 | `[DIA-7]` with `[DIA-7a]` | **decided** — `[DIA-7a]` narrowed to ownership errors |
 
 ---
 
@@ -948,3 +948,38 @@ added without the build going red.
 
 **Found by** writing that test. The list of exceptions is one entry long, which
 is the useful outcome: it says the classifier's coverage is otherwise complete.
+
+---
+
+## All twenty-two are now in the document
+
+Every entry above is applied to `docs/spec-source/ember-spec.md`, which is the
+normative copy. Five were held back at first and patched on 2026-09-08 when the
+owner asked for them:
+
+- **ERR-014** — the C-header import diagram said function-like macros are
+  skipped while `[FFI-6b]` said an overlay may expose them. The diagram now
+  points at `[FFI-6]` and `[FFI-6b]` instead of stating its own answer, so
+  there is nothing left to contradict. What `W5001` should mean once a macro
+  *can* be imported is a Phase 5 question and does not need answering to remove
+  the contradiction.
+- **ERR-019** — `[RT-5]` forbade the runtime from spelling its own symbol
+  prefix in the same breath as requiring its header to carry literal
+  identifiers. The rule now exempts exactly `ember_rt.h` and `ember_rt.c`, on
+  the stated ground that a symbol has to be spelled where it is declared and
+  defined and nowhere else.
+- **ERR-020** — `[TST-6]` described an Appendix A with a `0.3` directive and
+  statement-form `match` arms, neither of which v0.5 has. It now describes the
+  appendix that exists, and says plainly that the fixture is held to
+  `--syntax-only` until `std` supplies the types the appendix names.
+- **ERR-021** — `[DIA-7a]`'s table gained the seven rows for `E3021`–`E3027`,
+  so the codes the compiler emits for `[BRW-1]` are keyed where the rule
+  requires.
+- **ERR-022** — `[DIA-7a]` said "every error code in `E3000–E3499`" where
+  `[DIA-7]` says "every ownership or borrow error". It now says the latter,
+  names `E3100` as the code that is neither, and requires an implementation to
+  carry its exceptions as a named list rather than by omission.
+
+`docs/spec-source/as-received/Ember_v0.5_spec.md` is still byte-identical to
+what the owner sent, so every one of these divergences can be diffed and each
+has a reason written above it.

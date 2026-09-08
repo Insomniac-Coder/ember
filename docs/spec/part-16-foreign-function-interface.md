@@ -28,8 +28,9 @@ Pipeline (`[FFI-6]`):
 header + flags ──► libclang (clang-sys) parse with the project's target triple, language standard, defines,
                    MSVC compatibility mode on Windows (-fms-compatibility -fms-extensions, same _MSC_VER as the
                    configured MSVC), include paths
-              ──► Clang AST walk: functions, structs, unions, enums, typedefs, global variables, object-like
-                   macros that expand to integer/float/string literals, function-like macros are ignored (W5001)
+              ──► Clang AST walk: functions, structs, unions, enums, typedefs, global variables,
+                   and macros per `[FFI-6]` (object-like) and `[FFI-6b]` (function-like, only where
+                   an overlay declares a signature; `W5001` names the rest)
               ──► Binding IR (BIR): a language-neutral description with layouts computed by Clang
               ──► overlay applied (contracts, renames, hides, wrappers)
               ──► serialised to .embind (§5), cached under target/<triple>/bind/
