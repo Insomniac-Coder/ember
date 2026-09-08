@@ -29,10 +29,10 @@ header + flags ──► libclang (clang-sys) parse with the project's target tr
                    MSVC compatibility mode on Windows (-fms-compatibility -fms-extensions, same _MSC_VER as the
                    configured MSVC), include paths
               ──► Clang AST walk: functions, structs, unions, enums, typedefs, global variables,
-                   and macros per `[FFI-6]` (object-like) and `[FFI-6b]` (function-like, only where
-                   an overlay declares a signature; `W5001` names the rest)
+                   object-like macros per `[FFI-6]`, function-like macros ignored (W5001)
               ──► Binding IR (BIR): a language-neutral description with layouts computed by Clang
-              ──► overlay applied (contracts, renames, hides, wrappers)
+              ──► overlay applied (contracts, renames, hides, wrappers, and the function-like
+                   macros `[FFI-6b]` exposes by declaring a signature)
               ──► serialised to .embind (§5), cached under target/<triple>/bind/
               ──► Ember compiler reads .embind as a synthetic module `c` (or the name given by `as`)
 ```

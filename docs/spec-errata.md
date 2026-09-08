@@ -23,7 +23,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-011 | `[PAR-1]`, `[PAR-2]`, Part XI §4 | **decided** — `[PAR-2]` split out and de-duplicated |
 | ERR-012 | `[MOD-6]`, Part V §1 | **decided** — first half restored |
 | ERR-013 | `[CLO-2]`, Part VI §5 | **decided** — capture-mode rule restored |
-| ERR-014 | `[FFI-6]`, `[FFI-6b]`, Part XVI §2 | **decided** — the pipeline defers to the two macro rules |
+| ERR-014 | `[FFI-6]`, Part XVI §2 | **decided** — the fragment repaired and the macro list brought up to date; **the contradiction I claimed was not one** |
 | ERR-015 | `[EFF-11]`, Part X §1.1 | **decided** — fifth reason code defined |
 | ERR-016 | Part IV §8 interface list, `[GRM-18]`, `[TST-7]` | **decided** — block rewritten in indented form |
 | ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
@@ -957,12 +957,25 @@ Every entry above is applied to `docs/spec-source/ember-spec.md`, which is the
 normative copy. Five were held back at first and patched on 2026-09-08 when the
 owner asked for them:
 
-- **ERR-014** — the C-header import diagram said function-like macros are
-  skipped while `[FFI-6b]` said an overlay may expose them. The diagram now
-  points at `[FFI-6]` and `[FFI-6b]` instead of stating its own answer, so
-  there is nothing left to contradict. What `W5001` should mean once a macro
-  *can* be imported is a Phase 5 question and does not need answering to remove
-  the contradiction.
+- **ERR-014** — **the contradiction recorded here did not exist, and the owner
+  said so.** The entry claimed the import diagram and `[FFI-6b]` disagreed
+  about function-like macros. They do not: the diagram describes the *Clang AST
+  walk*, and the overlay is applied at a later step of the same pipeline. A
+  macro ignored during the walk and supplied by an overlay afterwards is
+  sequential, not contradictory, and `[FFI-6b]` says exactly that — "MAY be
+  exposed … when an overlay declares its signature".
+
+  A first attempt to "fix" it made things worse by moving the function-like
+  case into the walk step, which misdescribes the ordering. That is reverted:
+  the walk ignores them with `W5001`, and the overlay step now says it is where
+  `[FFI-6b]` acts, which was the one thing the diagram left implicit.
+
+  What *was* stale is smaller and real: the diagram described object-like
+  macros as ones "that expand to integer/float/string literals", while
+  `[FFI-6]` widened them to any constant expression of integer, floating,
+  string-literal, null-pointer-constant or pointer/handle-cast type, after full
+  macro expansion. The diagram now defers to `[FFI-6]` for that list rather
+  than restating a narrower one.
 - **ERR-019** — `[RT-5]` forbade the runtime from spelling its own symbol
   prefix in the same breath as requiring its header to carry literal
   identifiers. The rule now exempts exactly `ember_rt.h` and `ember_rt.c`, on
