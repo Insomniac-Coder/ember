@@ -27,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "docs" / "spec-source" / "ember-spec.md"
 BASELINE = ROOT / "tools" / "spec_check_baseline.json"
+NEWLINE = chr(10)
 
 # Parts I-XVII and Appendix A. Part XVIII onward describes the compiler, whose
 # examples are Rust, C and shell.
@@ -96,11 +97,48 @@ def check_block(binary, block, workdir):
     return result.returncode == 0, (result.stdout + result.stderr).strip()
 
 
+APPENDIX_FIXTURE = ROOT / "docs" / "spec-source" / "appendix-a.em"
+
+
+def emit_appendix():
+    """`[TST-6]` — rewrite Appendix A's code block from the fixture.
+
+    The fixture is the source of truth: it is the file that is checked, so the
+    quick reference cannot drift away from something that parses. `#$` lines
+    belong to the harness and are stripped on the way in.
+    """
+    fixture = APPENDIX_FIXTURE.read_text(encoding="utf-8")
+    body = [l for l in fixture.split(NEWLINE) if not l.lstrip().startswith("#$")]
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+
+    spec = SPEC.read_text(encoding="utf-8")
+    lines = spec.split(NEWLINE)
+    start = next(n for n, l in enumerate(lines) if APPENDIX.match(l))
+    open_at = next(n for n in range(start, len(lines)) if lines[n].startswith("```ember"))
+    close_at = next(n for n in range(open_at + 1, len(lines)) if lines[n].startswith("```"))
+
+    new = NEWLINE.join(lines[: open_at + 1] + body + lines[close_at:])
+    if new == spec:
+        print("Appendix A already matches the fixture")
+        return 0
+    SPEC.write_text(new, encoding="utf-8", newline=NEWLINE)
+    print(f"Appendix A rewritten from {APPENDIX_FIXTURE.name} ({len(body)} lines)")
+    print("run: python tools/split_spec.py docs/spec-source/ember-spec.md docs/spec")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--emit-appendix", action="store_true")
     args = ap.parse_args()
+
+    if args.emit_appendix:
+        return emit_appendix()
 
     binary = ember_binary()
     if binary is None:

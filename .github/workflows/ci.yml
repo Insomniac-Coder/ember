@@ -74,3 +74,10 @@ jobs:
         run: cargo build -p ember_driver --bin ember
       - name: specification code blocks parse
         run: python tools/spec_check.py
+
+      # `[TST-6]` — Appendix A is generated from its fixture, so the quick
+      # reference cannot drift away from something that parses.
+      - name: Appendix A matches its fixture
+        run: |
+          python tools/spec_check.py --emit-appendix
+          git diff --exit-code docs/spec-source/ember-spec.md

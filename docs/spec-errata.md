@@ -29,6 +29,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
 | ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
 | ERR-019 | `[RT-5]` | **decided** — the runtime's own two files are exempt |
+| ERR-020 | `[TST-6]` | fixture created; `compile-pass` deferred to `std` |
 
 ---
 
@@ -822,3 +823,43 @@ rule exists to prevent.
 is byte-for-byte identical before and after. That check is also what caught the
 first attempt: `{RT}` in a string passed to `line()` rather than to `format!`
 emitted the braces literally, and no test would have noticed.
+
+---
+
+## ERR-020 — `[TST-6]`'s Appendix A fixture describes a different appendix
+
+**Status: fixture created; the `compile-pass` requirement is deferred and the
+two stale descriptions are recorded.**
+
+**Where.** `[TST-6]`: "`docs/spec-source/appendix-a.em` is a conformance
+fixture annotated `#$ test: compile-pass`, and Appendix A's code block is
+generated from it by `tools/spec_check.py --emit-appendix`. The fixture's
+directive is `#! language "0.3"`; `...` bodies are `pass`; the statement tail
+is wrapped in `fn demo():`; `match` arms are written in statement form."
+
+Three of those describe an appendix that v0.5 no longer has:
+
+- **the directive.** The fixture would say `0.3`; Appendix A says `0.5`, and
+  `[MOD-6]`'s supported set — now actually checked, `E0006` — holds only
+  `0.5`. A `0.3` fixture would fail to compile on the first line.
+- **`match` arms in statement form.** v0.5 rewrote the example as
+  `return match s:` with `=>` arms, because `OQ-14` made jumps expressions.
+  The sentence describes the shape ERR-008 produced and `OQ-14` replaced.
+- **`compile-pass`.** The appendix names `Entity`, `CommandList`, `Formatter`,
+  `SoA[Particle]`, `Arena` and `Mutex`. None exist: they are Phase 2 to Phase 6
+  library types. A full `ember check` reports 29 unresolved names.
+
+**What was done.** The fixture exists and is faithful — `--emit-appendix`
+regenerates Appendix A from it byte-for-byte, which is the property `[TST-6]`
+actually wants: the quick reference cannot drift away from something that
+parses. It carries `0.5` and the `=>` arms, matching the document rather than
+the description of it.
+
+It is annotated `#$ test: syntax-pass` and held to `ember check --syntax-only`,
+which is what `[TST-7]`'s gate runs over every block in the document. It
+becomes `compile-pass` when `std` supplies the types it names, and the
+annotation says so in the file rather than in a note nobody reads.
+
+**The two stale sentences in `[TST-6]` are left as written.** They describe the
+document's history accurately and correcting them would mean rewriting a rule
+to match a fixture, which is the wrong direction. This entry is the record.
