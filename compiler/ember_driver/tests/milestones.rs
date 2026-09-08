@@ -257,6 +257,55 @@ fn run_fail_programs_panic() {
     check_directory("tests/run-fail");
 }
 
+/// `[FMT-1]` — `fmt(fmt(x)) == fmt(x)` and `parse(fmt(x)) ≡ parse(x)`, over
+/// the whole corpus, which is what the rule asks for.
+#[test]
+fn formatting_is_idempotent_and_preserves_the_tree() {
+    let root = workspace_root();
+    let mut checked = 0;
+    for directory in ["tests/run-pass", "tests/milestones", "examples"] {
+        let dir = root.join(directory);
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .expect("the directory is readable")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "em"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let once = ember(&["fmt", &relative], &root);
+            assert_eq!(once.exit, 0, "`ember fmt {relative}` failed:\n{}", once.stderr);
+
+            // Formatting the output again must change nothing.
+            let scratch = std::env::temp_dir().join("ember-fmt-once.em");
+            std::fs::write(&scratch, &once.stdout).expect("the scratch file is writable");
+            let twice = ember(&["fmt", &scratch.to_string_lossy()], &root);
+            assert_eq!(
+                once.stdout, twice.stdout,
+                "{relative}: fmt(fmt(x)) differs from fmt(x)"
+            );
+
+            // And the formatted source must parse to the same tree.
+            let before = ember(&["build", &relative, "--emit", "ast"], &root);
+            let after = ember(&["build", &scratch.to_string_lossy(), "--emit", "ast"], &root);
+            assert_eq!(
+                before.stdout, after.stdout,
+                "{relative}: parse(fmt(x)) differs from parse(x)"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no files were formatted");
+}
+
 #[test]
 fn hello_world_builds_and_runs() {
     // Phase 0's exit criterion (Part XX.2).

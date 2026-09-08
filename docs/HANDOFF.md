@@ -2,8 +2,8 @@
 
 ## Start here
 
-**Phase 0 of nine is complete and pushed.** Phase 1 is in progress: blocks A,
-B, C, D and E of seven are done; F is half done and G is not started.
+**Phases 0 and 1 of nine are complete.** All seven of Phase 1's blocks are
+done; Phase 2 is next.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
@@ -15,8 +15,8 @@ ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`**, pushed through block D at `d3138ab`; E and half of F **uncommitted** |
-| Tests | `cargo test --workspace` → **150 passed, 0 failed** |
+| Working branch | **`phase-1-core-language`** — all of Phase 1, pushed |
+| Tests | `cargo test --workspace` → **151 passed, 0 failed** |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
 
 ## Hard constraint
@@ -46,7 +46,7 @@ a work queue.
 
 ## Phase 1 — where it stands
 
-Seven blocks, dependency-ordered. A to E are done; F is half done.
+Seven blocks, dependency-ordered. All are done.
 
 | | Block | State |
 |---|---|---|
@@ -55,8 +55,8 @@ Seven blocks, dependency-ordered. A to E are done; F is half done.
 | **C** | `for` over ranges, loop `else`, labelled break, `with`, `defer` | **done** |
 | **D** | interfaces, operator interfaces, method resolution, `extend`, visibility | **done** |
 | **E** | `String`/`Array`, f-strings, `Option`/`Result`, `?` | **done** |
-| **F** | modules across files, `const`, `static` | **half — `const` and `static` done, modules not started** |
-| G | formatter (`[FMT-1]`) | not started |
+| **F** | modules across files, `const`, `static` | **done** |
+| **G** | formatter (`[FMT-1]`) | **done** |
 
 ### Block A, in detail
 
@@ -216,7 +216,8 @@ an indented block. Worth an erratum.
 | `ember_analysis` | definite initialisation |
 | `ember_codegen_c` | MIR to C11, `#line`, shortest round-trip floats |
 | `ember_build` | MSVC via captured `vcvars64`, clang, gcc |
-| `ember_driver` | `build`, `run`, `check`, `explain`, `--emit`, `--json` |
+| `ember_fmt` | `[FMT-1]`'s canonical printer, comments preserved |
+| `ember_driver` | `build`, `run`, `check`, `fmt`, `explain`, `--emit`, `--json`; module loading |
 | `runtime/ember_rt` | C11: alloc, panics, checked arithmetic, printers, embedding API |
 
 ## What the language can do today
@@ -400,34 +401,78 @@ With no mutation and no runtime initialiser, a `static` and a `const` behave
 identically here; the stable address `static` promises is not observable until
 references to globals exist.
 
-**Not done: modules across files.** The driver compiles one file and the
-checker holds one set of name tables. Supporting `import` means package
-discovery through `ember.toml`, mapping a module path to a file (`[MOD-1]`),
-per-module visible-name scopes, and package-wide resolution with cycles
-allowed (`[MOD-4]`). That is an architectural change to the driver and the
-checker, not a feature to add to them.
+### Block F, the rest: modules across files
 
-## Next: Phase 1 block F's modules, then block G
+- **Every declared name is stored qualified** — `math.ops.Point` — and each
+  module carries a map from what it may write to what that means. Two modules
+  may each declare a `helper`; the mangled C symbols carry the module, so
+  nothing collides.
+- **Names are declared for every module before any import is bound**, because
+  `[MOD-4]` allows cycles inside a package: an import may name an item in a
+  module that has not been walked yet.
+- `[MOD-1]` maps `a.b.c` to `a/b/c.em`, or to `a/b/c/mod.em` when the directory
+  has submodules. The root is the directory of the file named on the command
+  line, until `ember.toml` is read.
+- `[MOD-2]` is enforced: importing a private item is `E1020`.
+- **`import a.b.ops` then `ops.add(x)` parses as a method call**, because the
+  parser cannot know `ops` is a module — the same shape `Shape.Circle(1.0)`
+  has. Both are settled in the checker.
+- **A `DefId` is no longer a position in `Program::functions`.** Functions are
+  gathered module by module, then methods, then interface defaults, so the
+  lookup searches by identity. It is linear; if it ever shows up in a profile,
+  a map is the fix.
+- Functions are **no longer emitted `static`**. Modules share one translation
+  unit, so a private helper another module never calls was an unused `static`
+  function — a warning, and `[CG-C-1]` forbids those.
 
-**Modules across files** is what is left of F, and it is the last real
-language feature in Phase 1. It needs, in order: reading `ember.toml` to find
-the package root; `[MOD-1]`'s module path to file path mapping; parsing every
-reachable module; a visible-name scope per module rather than the single set
-the checker holds now; and `[MOD-3]`'s import forms binding into those scopes.
-`[MOD-4]` allows cycles inside a package, so resolution has to be package-wide
-rather than one module at a time.
+### Block G: the formatter
 
-**Block G, the formatter**, is independent of all of it and can be done at any
-point. Note before starting: `[FMT-1]` requires comments and blank-line groups
-to be preserved, and **comments are not in the AST** — the lexer discards them
-except for doc comments. A formatter therefore needs either a token stream kept
-alongside the tree or a concrete syntax tree; deciding which is the first piece
-of work, not an afterthought. `fmt(fmt(x)) == fmt(x)` and `parse(fmt(x)) ≡
-parse(x)` are to be tested over the whole corpus.
+`ember fmt [--check|--write]`, in `compiler/ember_fmt`.
 
-Also still open, from earlier blocks: `[T; N]` coercing to `Span[T]`, and `for`
-over anything other than a range — both need `Iterator`, which block D's
-interface machinery can now express but nothing has written.
+- **Comments were not the obstacle they looked like.** `[II.7]` keeps them out
+  of the token stream, but Phase 0's lexer already records each one's span and
+  whether it had a line to itself — written for exactly this. The printer
+  flushes them in span order as it passes, so a comment above an item stays
+  with that item.
+- **The blank line comes before the comment**, not after: separation first,
+  then whatever introduces the next item. Getting that backwards detaches every
+  comment from what it describes, which is what the first version did.
+- `[FMT-1]`'s two guarantees — `fmt(fmt(x)) == fmt(x)` and `parse(fmt(x)) ≡
+  parse(x)` — are a test over the whole corpus, not an assertion in a comment.
+- **Anything the printer has no rule for is copied from the source.** A lambda,
+  an f-string, a `match` expression: reproducing one from the tree risks
+  changing what it means, and copying keeps parse-equivalence true for the
+  whole language rather than only the part with rules.
+
+**Not done:** width-based breaking inside expressions. A long call or condition
+stays on one line; only a long parameter list breaks. `[FMT-1]` asks for
+conditions broken after `and`/`or` and trailing commas in multi-line element
+lists, which needs a proper Wadler-style layout algebra rather than the
+string-building printer this is.
+
+## Next: Phase 2
+
+Phase 1 is complete. Part XX's Phase 2 is generics and the borrow checker; read
+Part XX §2 before planning it.
+
+**What Phase 1 left open, and where each belongs:**
+
+- **Nothing frees an `Array` or a `String`.** `ember_vec_free` exists in the
+  runtime and is never called, so both leak. Drop elaboration (Part XVIII §4.9)
+  is Phase 2's, and these are the first types that need it — this is the most
+  important open item.
+- **`dyn` and vtables** (`[TYP-22]`), which block D deliberately left out.
+- **`[T; N]` coercing to `Span[T]`**, and **`for` over anything but a range** —
+  both need `Iterator`, which block D's interface machinery can express but
+  nothing has written.
+- `[ERR-2]`'s `F.from(e)` conversion for `?`, which needs `From`, which needs
+  generics.
+- `@overflow(saturate)` (block A), `[TYP-13]`'s niche optimisation, slice and
+  range patterns, `from_repr`, small-string optimisation, `a += b` looking for
+  `add_assign`, and width-based breaking in the formatter. Each is written up
+  in its block's section above.
+- **`pub` visibility is enforced across modules but not within one.** Nothing
+  checks `pub(package)` yet, because there is one package.
 
 ## Environment
 

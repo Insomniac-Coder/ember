@@ -79,8 +79,45 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let options = parse_options(&args[2..])?;
             compile(Path::new(input), command, &options)
         }
+        // `[FMT-1]` — the canonical printer. `--check` reports whether the
+        // file is already formatted instead of rewriting it.
+        "fmt" => {
+            let input = args.get(1).ok_or("`ember fmt` needs a source file")?;
+            let check_only = args.iter().any(|a| a == "--check");
+            let write = args.iter().any(|a| a == "--write");
+            format_file(Path::new(input), check_only, write)
+        }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
     }
+}
+
+fn format_file(input: &Path, check_only: bool, write: bool) -> Result<ExitCode, String> {
+    let mut map = SourceMap::new();
+    let file = map.load(input).map_err(|e| e.to_string())?;
+    let source = map.file(file).text.clone();
+
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, &source, &mut sink);
+    let module = ember_parser::parse(file, &source, lexed.tokens, &mut sink);
+    if sink.has_errors() {
+        report(&sink, &map, &Options::default());
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let formatted = ember_fmt::format(&module, &source, &lexed.comments);
+    if check_only {
+        if formatted == source {
+            return Ok(ExitCode::SUCCESS);
+        }
+        eprintln!("{} is not formatted", input.display());
+        return Ok(ExitCode::FAILURE);
+    }
+    if write {
+        std::fs::write(input, formatted).map_err(|e| e.to_string())?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    print!("{formatted}");
+    Ok(ExitCode::SUCCESS)
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
@@ -145,6 +182,93 @@ fn explain(code: &str) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[MOD-1]` — every module reachable from the root, in load order with the
+/// root first.
+///
+/// `[MOD-4]` allows import cycles inside a package, so a module already loaded
+/// is skipped rather than reported.
+fn load_modules(
+    root: ember_ast::Module,
+    root_dir: &Path,
+    map: &mut SourceMap,
+    sink: &mut Sink,
+) -> Vec<ember_typeck::LoadedModule> {
+    let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut queue: Vec<(Vec<String>, ember_ast::Module)> = vec![(Vec::new(), root)];
+
+    while let Some((path, module)) = queue.pop() {
+        // Every import this module names, before it is moved into the list.
+        let mut wanted: Vec<(Vec<String>, ember_span::Span)> = Vec::new();
+        for import in &module.imports {
+            let segments = match &import.kind {
+                ember_ast::ImportKind::Module { path, .. } => path,
+                ember_ast::ImportKind::Items { path, .. } => path,
+                // `import c "header.h"` is Phase 5's.
+                ember_ast::ImportKind::Foreign { .. } => continue,
+            };
+            let names: Vec<String> = segments.iter().map(|s| s.name.to_string()).collect();
+            // `[MOD-5]` — `std.prelude` is implicit and has no file yet.
+            if names.first().is_some_and(|first| first == "std") {
+                continue;
+            }
+            wanted.push((names, import.span));
+        }
+
+        loaded.push(ember_typeck::LoadedModule { path: path.clone(), module });
+
+        for (names, span) in wanted {
+            let key = names.join(".");
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.insert(key.clone());
+            let Some(file_path) = module_file(root_dir, &names) else {
+                sink.emit(ember_diag::Diagnostic::error(
+                    ember_diag::codes::E1010,
+                    span,
+                    format!("cannot find module `{key}`"),
+                ));
+                continue;
+            };
+            let file = match map.load(&file_path) {
+                Ok(file) => file,
+                Err(error) => {
+                    sink.emit(ember_diag::Diagnostic::error(
+                        ember_diag::codes::E1010,
+                        span,
+                        format!("cannot read `{}`: {error}", file_path.display()),
+                    ));
+                    continue;
+                }
+            };
+            let text = map.file(file).text.clone();
+            let lexed = ember_lexer::lex(file, &text, sink);
+            let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+            queue.push((names, parsed));
+        }
+    }
+    loaded
+}
+
+/// `[MOD-1]` — a module path maps to `a/b/c.em`, or to `a/b/c/mod.em` when
+/// the directory has submodules of its own.
+fn module_file(root: &Path, segments: &[String]) -> Option<std::path::PathBuf> {
+    let mut direct = root.to_path_buf();
+    for segment in segments {
+        direct.push(segment);
+    }
+    let flat = direct.with_extension("em");
+    if flat.is_file() {
+        return Some(flat);
+    }
+    let nested = direct.join("mod.em");
+    if nested.is_file() {
+        return Some(nested);
+    }
+    None
+}
+
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
     let mut map = SourceMap::new();
     let file = map.load(input).map_err(|e| e.to_string())?;
@@ -172,11 +296,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Ok(finish(&sink, &map, options));
     }
 
+    // `[MOD-1]` — follow the imports and load every module they reach. The
+    // root module is the file named on the command line; its directory is the
+    // package root until `ember.toml` is read.
+    let root_dir = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    if sink.has_errors() {
+        return Ok(finish(&sink, &map, options));
+    }
+
     // Check.
     let (mut types, common) = TypeTable::new();
     // [TYP-8] -- the profile chooses the default overflow policy.
     let program =
-        ember_typeck::check(&module, &mut types, &common, &mut sink, overflow_policy(options.profile));
+        ember_typeck::check(&modules, &mut types, &common, &mut sink, overflow_policy(options.profile));
     if options.emit.as_deref() == Some("hir") {
         print!("{}", ember_hir::dump(&program, &types));
         return Ok(finish(&sink, &map, options));

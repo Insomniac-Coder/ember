@@ -34,8 +34,14 @@ pub struct Program {
 }
 
 impl Program {
+    /// Functions are gathered module by module, and methods after that, so a
+    /// `DefId` is not a position in this list — it is the identity assigned
+    /// when the signature was collected.
     pub fn function(&self, def: DefId) -> &Function {
-        &self.functions[def.0 as usize]
+        self.functions
+            .iter()
+            .find(|f| f.def == def)
+            .expect("every DefId names a function that was checked")
     }
 }
 

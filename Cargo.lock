@@ -54,6 +54,7 @@ dependencies = [
  "ember_build",
  "ember_codegen_c",
  "ember_diag",
+ "ember_fmt",
  "ember_hir",
  "ember_lexer",
  "ember_mir",
@@ -61,6 +62,15 @@ dependencies = [
  "ember_span",
  "ember_typeck",
  "ember_types",
+]
+
+[[package]]
+name = "ember_fmt"
+version = "0.1.0"
+dependencies = [
+ "ember_ast",
+ "ember_lexer",
+ "ember_span",
 ]
 
 [[package]]

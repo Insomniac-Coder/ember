@@ -29,8 +29,15 @@ use ember_types::{
     TypeTable, VariantDef, int_max,
 };
 
+/// One parsed module and where it sits in the package (`[MOD-1]`). The root
+/// module's path is empty.
+pub struct LoadedModule {
+    pub path: Vec<String>,
+    pub module: ast::Module,
+}
+
 pub fn check(
-    module: &ast::Module,
+    modules: &[LoadedModule],
     types: &mut TypeTable,
     common: &CommonTypes,
     sink: &mut Sink,
@@ -38,9 +45,34 @@ pub fn check(
 ) -> Program {
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
-    checker.collect(module);
-    checker.collect_methods(module);
-    checker.check_bodies(module)
+    checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
+    checker.visible = vec![HashMap::new(); modules.len()];
+    checker.namespaces = vec![HashMap::new(); modules.len()];
+
+    // Names first, across every module, so that an import can name an item in
+    // a module that has not been walked yet — `[MOD-4]` allows cycles.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.declare_names(&loaded.module);
+    }
+    checker.bind_imports(modules);
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect(&loaded.module);
+    }
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_methods(&loaded.module);
+    }
+    let mut functions = Vec::new();
+    let mut main = None;
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        let program = checker.check_bodies(&loaded.module);
+        main = main.or(program.main);
+        functions.extend(program.functions);
+    }
+    Program { functions, main }
 }
 
 struct Signature {
@@ -88,6 +120,20 @@ struct Checker<'a> {
     /// `const` and `static` values, substituted wherever their name is used.
     constants: HashMap<Symbol, Expr>,
 
+    // -- modules (`[MOD-1]` … `[MOD-3]`) -------------------------------------
+    /// Every name above is keyed by its **qualified** form, `a.b.Name`, so two
+    /// modules may each declare `helper` without colliding.
+    /// The dotted prefix of each module; the root module's is empty.
+    prefixes: Vec<String>,
+    /// Per module: the names it can write, mapped to the qualified name each
+    /// one means. Its own items plus whatever it imported.
+    visible: Vec<HashMap<Symbol, Symbol>>,
+    /// Per module: names bound to a whole module by `import a.b.c`, so that
+    /// `c.thing` resolves.
+    namespaces: Vec<HashMap<Symbol, usize>>,
+    /// Which module is being collected or checked right now.
+    current_module: usize,
+
     // Per-function state.
     locals: Vec<LocalDecl>,
     scopes: Vec<HashMap<Symbol, LocalId>>,
@@ -121,6 +167,10 @@ impl<'a> Checker<'a> {
             interfaces: HashMap::new(),
             implemented: Vec::new(),
             constants: HashMap::new(),
+            prefixes: vec![String::new()],
+            visible: vec![HashMap::new()],
+            namespaces: vec![HashMap::new()],
+            current_module: 0,
             locals: Vec::new(),
             scopes: Vec::new(),
             or_bindings: None,
@@ -135,6 +185,148 @@ impl<'a> Checker<'a> {
         self.sink.emit(Diagnostic::error(code, span, message));
     }
 
+    // -- modules -------------------------------------------------------------
+
+    /// The qualified form of a name declared in the module being walked.
+    fn qualified(&self, name: Symbol) -> Symbol {
+        let prefix = &self.prefixes[self.current_module];
+        if prefix.is_empty() {
+            return name;
+        }
+        Symbol::intern(&format!("{prefix}.{name}"))
+    }
+
+    /// What a written name means here: an item of this module, or something it
+    /// imported. An unknown name resolves to its own-module form so that the
+    /// diagnostic names what the programmer wrote.
+    fn resolve_name(&self, name: Symbol) -> Symbol {
+        if let Some(&found) = self.visible[self.current_module].get(&name) {
+            return found;
+        }
+        // A name that already carries a module prefix — one `resolve_qualified`
+        // built from `a.b` — is what it says it is.
+        if name.as_str().contains('.') {
+            return name;
+        }
+        let prefix = &self.prefixes[self.current_module];
+        if prefix.is_empty() { name } else { Symbol::intern(&format!("{prefix}.{name}")) }
+    }
+
+    /// `a.b` where `a` was bound by `import x.y.a` — the qualified name of
+    /// `b` in that module.
+    fn resolve_qualified(&self, segments: &[ast::Ident]) -> Option<Symbol> {
+        if segments.len() != 2 {
+            return None;
+        }
+        let module = *self.namespaces[self.current_module].get(&segments[0].name)?;
+        let prefix = &self.prefixes[module];
+        Some(if prefix.is_empty() {
+            segments[1].name
+        } else {
+            Symbol::intern(&format!("{prefix}.{}", segments[1].name))
+        })
+    }
+
+    /// Pass one: every item name in this module becomes visible to it, before
+    /// any import is bound. `[MOD-4]` allows cycles, so this must happen for
+    /// every module before any of them resolves anything.
+    fn declare_names(&mut self, module: &ast::Module) {
+        let index = self.current_module;
+        for item in &module.items {
+            let Some(name) = item_name(item) else { continue };
+            let qualified = self.qualified(name);
+            self.visible[index].insert(name, qualified);
+        }
+    }
+
+    /// `[MOD-3]` — bind what each module imported. `[MOD-2]` — only a `pub`
+    /// item may be imported.
+    fn bind_imports(&mut self, modules: &[LoadedModule]) {
+        let by_path: HashMap<String, usize> =
+            modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
+
+        for (index, loaded) in modules.iter().enumerate() {
+            self.current_module = index;
+            for import in &loaded.module.imports {
+                let (segments, binding) = match &import.kind {
+                    ast::ImportKind::Module { path, alias } => (path, Some(alias)),
+                    ast::ImportKind::Items { path, .. } => (path, None),
+                    ast::ImportKind::Foreign { .. } => continue,
+                };
+                let key = segments
+                    .iter()
+                    .map(|s| s.name.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if key.starts_with("std") {
+                    // `[MOD-5]` — the prelude is implicit; its names are
+                    // already built in.
+                    continue;
+                }
+                let Some(&target) = by_path.get(&key) else {
+                    self.error(
+                        codes::E1010,
+                        import.span,
+                        format!("cannot find module `{key}`"),
+                    );
+                    continue;
+                };
+
+                match (&import.kind, binding) {
+                    // `import a.b.c [as d]` binds the last segment, or the
+                    // alias, as a namespace.
+                    (ast::ImportKind::Module { path, .. }, Some(alias)) => {
+                        let bound = alias
+                            .map(|a| a.name)
+                            .or_else(|| path.last().map(|s| s.name));
+                        if let Some(bound) = bound {
+                            self.namespaces[index].insert(bound, target);
+                        }
+                    }
+                    // `from a.b import x, y as z` binds each item by name.
+                    (ast::ImportKind::Items { items, glob, .. }, _) => {
+                        if *glob {
+                            self.error(
+                                codes::E1040,
+                                import.span,
+                                "`import *` is only allowed from a `@prelude` module",
+                            );
+                            continue;
+                        }
+                        for item in items {
+                            let Some(vis) = public_item(&modules[target].module, item.name.name)
+                            else {
+                                self.error(
+                                    codes::E1010,
+                                    item.name.span,
+                                    format!("`{key}` has no item named `{}`", item.name.name),
+                                );
+                                continue;
+                            };
+                            if vis == ast::VisKind::Private {
+                                self.error(
+                                    codes::E1020,
+                                    item.name.span,
+                                    format!("`{}` is private to `{key}`", item.name.name),
+                                );
+                                continue;
+                            }
+                            let prefix = &self.prefixes[target];
+                            let qualified = if prefix.is_empty() {
+                                item.name.name
+                            } else {
+                                Symbol::intern(&format!("{prefix}.{}", item.name.name))
+                            };
+                            let bound = item.alias.map(|a| a.name).unwrap_or(item.name.name);
+                            self.visible[index].insert(bound, qualified);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     // -- collection ---------------------------------------------------------
 
     /// Two passes over the items: names first, so that a struct may refer to a
@@ -144,7 +336,9 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
-                    let name = decl.name.name;
+                    // Every declared name is stored qualified, so two modules
+                    // may both declare a `Point`.
+                    let name = self.qualified(decl.name.name);
                     if self.named_types.contains_key(&name) {
                         self.error(
                             codes::E1030,
@@ -165,7 +359,7 @@ impl<'a> Checker<'a> {
                     self.named_types.insert(name, ty);
                 }
                 ast::ItemKind::Enum(decl) => {
-                    let name = decl.name.name;
+                    let name = self.qualified(decl.name.name);
                     if self.named_types.contains_key(&name) {
                         self.error(
                             codes::E1030,
@@ -195,7 +389,7 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
-                    let Some(&id) = self.struct_ids.get(&decl.name.name) else { continue };
+                    let Some(&id) = self.struct_ids.get(&self.qualified(decl.name.name)) else { continue };
                     let mut fields = Vec::new();
                     let mut has_drop = false;
                     for member in &decl.members {
@@ -220,7 +414,7 @@ impl<'a> Checker<'a> {
                     def.has_drop = has_drop;
 
                     if has_derive(&item.attrs, "Copy") {
-                        let ty = self.named_types[&decl.name.name];
+                        let ty = self.named_types[&self.qualified(decl.name.name)];
                         let offenders: Vec<(Symbol, Ty, Span)> = self
                             .types
                             .struct_def(id)
@@ -241,7 +435,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 ast::ItemKind::Enum(decl) => {
-                    let Some(&id) = self.enum_ids.get(&decl.name.name) else { continue };
+                    let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
                     let variants = self.collect_variants(decl);
                     let has_drop = decl.members.iter().any(|m| {
                         matches!(&m.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
@@ -272,7 +466,8 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
-                    if self.constants.contains_key(&decl.name.name) {
+                    let const_name = self.qualified(decl.name.name);
+                    if self.constants.contains_key(&const_name) {
                         self.error(
                             codes::E1030,
                             decl.name.span,
@@ -280,7 +475,7 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
-                    self.constants.insert(decl.name.name, value);
+                    self.constants.insert(const_name, value);
                 }
                 // `static NAME: T = literal` — one instance with a stable
                 // address. `[STA-2]` — there are no runtime initialisers, so
@@ -308,7 +503,8 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
-                    if self.constants.contains_key(&decl.name.name) {
+                    let const_name = self.qualified(decl.name.name);
+                    if self.constants.contains_key(&const_name) {
                         self.error(
                             codes::E1030,
                             decl.name.span,
@@ -320,10 +516,10 @@ impl<'a> Checker<'a> {
                     // and a `const` behave identically; the difference is the
                     // stable address, which nothing can observe until
                     // references to globals exist.
-                    self.constants.insert(decl.name.name, value);
+                    self.constants.insert(const_name, value);
                 }
                 ast::ItemKind::Fn(decl) => {
-                    let name = decl.name.name;
+                    let name = self.qualified(decl.name.name);
                     if self.fn_ids.contains_key(&name) {
                         // `[TYP-26]` — overloading is not supported.
                         self.error(
@@ -505,12 +701,12 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
-                    let Some(&ty) = self.named_types.get(&decl.name.name) else { continue };
+                    let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
                     self.collect_members(ty, &decl.members, None, item.span);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Enum(decl) => {
-                    let Some(&ty) = self.named_types.get(&decl.name.name) else { continue };
+                    let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
                     self.collect_members(ty, &decl.members, None, item.span);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
@@ -608,7 +804,7 @@ impl<'a> Checker<'a> {
     }
 
     fn collect_interface(&mut self, decl: &ast::InterfaceDecl, span: Span) {
-        let name = decl.name.name;
+        let name = self.qualified(decl.name.name);
         if self.interfaces.contains_key(&name) || self.named_types.contains_key(&name) {
             self.error(
                 codes::E1030,
@@ -748,7 +944,7 @@ impl<'a> Checker<'a> {
                 self.error(codes::E1010, entry.span, "expected an interface name");
                 continue;
             };
-            if !self.interfaces.contains_key(&name) {
+            if !self.interfaces.contains_key(&self.resolve_name(name)) {
                 self.error(
                     codes::E1010,
                     entry.span,
@@ -863,7 +1059,7 @@ impl<'a> Checker<'a> {
                     let u8_ty = self.common.u8;
                     return self.types.intern(TyKind::Vec { elem: u8_ty });
                 }
-                if let Some(&ty) = self.named_types.get(&name) {
+                if let Some(&ty) = self.named_types.get(&self.resolve_name(name)) {
                     return ty;
                 }
                 self.error(
@@ -1259,7 +1455,7 @@ impl<'a> Checker<'a> {
 
         for item in &module.items {
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
-            let Some(&def) = self.fn_ids.get(&decl.name.name) else { continue };
+            let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
 
             self.locals = Vec::new();
             self.scopes = vec![HashMap::new()];
@@ -1289,15 +1485,19 @@ impl<'a> Checker<'a> {
                 None => Block { stmts: Vec::new(), span: item.span },
             };
 
-            let name = decl.name.name;
-            if name.is("main") {
+            // `[MNG-1]` — the symbol carries the module, so two modules may
+            // each declare a `helper`. Only the root module's `main` is the
+            // entry point; another module's is `a.main`, which is not it.
+            let name = self.qualified(decl.name.name);
+            let is_main = name.is("main");
+            if is_main {
                 main = Some(def);
             }
             let overflow = self.overflow_policy(&item.attrs, item.span);
             functions.push(Function {
                 def,
                 name,
-                symbol: mangle(name, name.is("main")),
+                symbol: mangle(name, is_main),
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -1318,10 +1518,10 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             let (members, owner) = match &item.kind {
                 ast::ItemKind::Struct(decl) => {
-                    (&decl.members, self.named_types.get(&decl.name.name).copied())
+                    (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
                 }
                 ast::ItemKind::Enum(decl) => {
-                    (&decl.members, self.named_types.get(&decl.name.name).copied())
+                    (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
                 }
                 ast::ItemKind::Extend(decl) => {
                     let ty = self.resolve_type(&decl.target);
@@ -2324,7 +2524,7 @@ impl<'a> Checker<'a> {
                     return self.read_local(local, span);
                 }
                 // A `const` or `static` is substituted where its name appears.
-                if let Some(value) = self.constants.get(&name) {
+                if let Some(value) = self.constants.get(&self.resolve_name(name)) {
                     let kind = match &value.kind {
                         ExprKind::Int(v) => ExprKind::Int(*v),
                         ExprKind::Float(v) => ExprKind::Float(*v),
@@ -2577,6 +2777,21 @@ impl<'a> Checker<'a> {
             // `Shape.Circle(1.0)` parses as a method call on `Shape`, because
             // the parser cannot know `Shape` is a type. If it names an enum,
             // this is a variant constructor (`[ENM-1]`).
+            // `[MOD-3]` — `import a.b.ops` then `ops.add(x)`. The parser sees
+            // a method call, because it cannot know `ops` is a module.
+            ast::ExprKind::MethodCall { recv, name, args, .. }
+                if self.namespace_named(recv).is_some() =>
+            {
+                let module = self.namespace_named(recv).expect("just checked");
+                let prefix = &self.prefixes[module];
+                let qualified = if prefix.is_empty() {
+                    name.name
+                } else {
+                    Symbol::intern(&format!("{prefix}.{}", name.name))
+                };
+                self.synth_qualified_call(qualified, name.span, args, span)
+            }
+
             ast::ExprKind::MethodCall { recv, name, args, .. }
                 if self.enum_named(recv).is_some() =>
             {
@@ -2740,14 +2955,29 @@ impl<'a> Checker<'a> {
             self.error(codes::E1010, span, "only direct calls are supported in this phase");
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
-        if segments.len() != 1 {
-            self.error(codes::E1010, span, "qualified calls are not supported yet in this phase");
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
-        let name = segments[0].name;
+        // `[MOD-3]` — `import a.b.c` binds `c` as a namespace, so `c.f(x)` is
+        // a call into that module.
+        let name = match segments.len() {
+            1 => segments[0].name,
+            2 => match self.resolve_qualified(segments) {
+                Some(qualified) => qualified,
+                None => {
+                    self.error(
+                        codes::E1010,
+                        span,
+                        format!("`{}` is not a module in scope", segments[0].name),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+            },
+            _ => {
+                self.error(codes::E1010, span, "a path this long is not supported yet");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+        };
 
         // `Vec3(1, 2, 3)` — the synthesised memberwise constructor (`[STR-1]`).
-        if let Some(&id) = self.struct_ids.get(&name) {
+        if let Some(&id) = self.struct_ids.get(&self.resolve_name(name)) {
             return self.synth_struct_literal(id, name, args, span);
         }
 
@@ -2801,7 +3031,7 @@ impl<'a> Checker<'a> {
             };
         }
 
-        let Some(&def) = self.fn_ids.get(&name) else {
+        let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
             self.error(codes::E1010, segments[0].span, format!("cannot find `{name}` in this scope"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -2824,6 +3054,47 @@ impl<'a> Checker<'a> {
         Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
     }
 
+    /// The module an expression names, if it is a bare path bound by
+    /// `import a.b.c`. A local of the same name wins.
+    fn namespace_named(&self, expr: &ast::Expr) -> Option<usize> {
+        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
+        if segments.len() != 1 || self.lookup(segments[0].name).is_some() {
+            return None;
+        }
+        self.namespaces[self.current_module].get(&segments[0].name).copied()
+    }
+
+    /// A call to a function named by its qualified name, which is what a
+    /// namespace-qualified call resolves to.
+    fn synth_qualified_call(
+        &mut self,
+        qualified: Symbol,
+        name_span: Span,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let Some(&def) = self.fn_ids.get(&qualified) else {
+            self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let signature: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        let ret = self.signatures[def.0 as usize].ret;
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{qualified}` takes {} arguments, found {}", signature.len(), args.len()),
+            );
+        }
+        let checked = args
+            .iter()
+            .zip(signature.iter())
+            .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
+            .collect();
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+    }
+
     /// The enum an expression names, if it is a bare path naming one. A local
     /// of the same name wins, so shadowing behaves as it does everywhere else.
     fn enum_named(&self, expr: &ast::Expr) -> Option<EnumId> {
@@ -2835,7 +3106,7 @@ impl<'a> Checker<'a> {
         if self.lookup(name).is_some() {
             return None;
         }
-        self.enum_ids.get(&name).copied()
+        self.enum_ids.get(&self.resolve_name(name)).copied()
     }
 
     /// `[ENM-1]` — a variant constructor, positional or by name. A unit
@@ -3358,6 +3629,33 @@ fn mode_of(mode: ast::Mode) -> Mode {
     }
 }
 
+/// The name an item declares, if it declares one.
+fn item_name(item: &ast::Item) -> Option<Symbol> {
+    Some(match &item.kind {
+        ast::ItemKind::Fn(d) => d.name.name,
+        ast::ItemKind::Struct(d) => d.name.name,
+        ast::ItemKind::Enum(d) => d.name.name,
+        ast::ItemKind::Interface(d) => d.name.name,
+        ast::ItemKind::Const(d) => d.name.name,
+        ast::ItemKind::Static(d) => d.name.name,
+        ast::ItemKind::Class(d) => d.name.name,
+        ast::ItemKind::TypeAlias(d) => d.name.name,
+        ast::ItemKind::Extend(_)
+        | ast::ItemKind::ExternBlock(_)
+        | ast::ItemKind::Comptime(_) => return None,
+    })
+}
+
+/// The visibility of a named item in a module, or `None` if it has no such
+/// item.
+fn public_item(module: &ast::Module, name: Symbol) -> Option<ast::VisKind> {
+    module
+        .items
+        .iter()
+        .find(|item| item_name(item) == Some(name))
+        .map(|item| item.vis.kind)
+}
+
 /// A printed type squeezed into an identifier, so that a synthesised name
 /// such as `Option_i32` is unique per type argument.
 fn type_stem(shown: &str) -> String {
@@ -3462,5 +3760,6 @@ fn mangle(name: Symbol, is_main: bool) -> String {
         // The C entry point calls this; `[MNG-2]` reserves the plain name.
         return "em_main".to_string();
     }
-    format!("em_{name}")
+    // A qualified name carries dots, which C does not allow in an identifier.
+    format!("em_{}", name.as_str().replace('.', "_"))
 }

@@ -171,8 +171,8 @@ impl Emitter<'_> {
 
     fn node_name(&self, node: TypeNode) -> String {
         match node {
-            TypeNode::Struct(id) => format!("em_{}", self.types.struct_def(id).name),
-            TypeNode::Enum(id) => format!("em_{}", self.types.enum_def(id).name),
+            TypeNode::Struct(id) => c_name(&self.types.struct_def(id).name.to_string()),
+            TypeNode::Enum(id) => c_name(&self.types.enum_def(id).name.to_string()),
             TypeNode::Structural(ty) => self.structural_name(ty),
         }
     }
@@ -260,7 +260,11 @@ impl Emitter<'_> {
         self.line("/* prototypes */");
         for body in bodies {
             let signature = self.signature(body);
-            self.line(&format!("static {signature};"));
+            // Not `static`: modules share one translation unit, and a private
+            // helper another module never calls would be an unused `static`
+            // function, which `-Wall` reports and `[CG-C-1]` forbids. The
+            // mangled names carry the module, so nothing can collide.
+            self.line(&format!("{signature};"));
         }
         self.line("");
     }
@@ -277,7 +281,7 @@ impl Emitter<'_> {
 
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
-        self.line(&format!("static {signature} {{"));
+        self.line(&format!("{signature} {{"));
 
         // Locals. Parameters are already C parameters; the return slot and
         // every other local are declared here.
@@ -760,7 +764,7 @@ impl Emitter<'_> {
                 }
                 let name = match kind {
                     AggregateKind::Struct(id) => {
-                        format!("em_{}", self.types.struct_def(*id).name)
+                        c_name(&self.types.struct_def(*id).name.to_string())
                     }
                     _ => self.c_type(target),
                 };
@@ -803,7 +807,7 @@ impl Emitter<'_> {
     /// and `-Wmissing-field-initializers` has nothing to say.
     fn enum_value(&self, id: EnumId, variant: usize, values: &[String]) -> String {
         let def = self.types.enum_def(id);
-        let name = format!("em_{}", def.name);
+        let name = c_name(&def.name.to_string());
         let tag = def.variants[variant].discriminant;
         if def.is_unit_only() {
             return format!("(({name}){tag})");
@@ -857,8 +861,8 @@ impl Emitter<'_> {
             .into(),
             TyKind::Void | TyKind::Never | TyKind::Error => "void".into(),
             TyKind::Str => "ember_str".into(),
-            TyKind::Struct(id) => format!("em_{}", self.types.struct_def(*id).name),
-            TyKind::Enum(id) => format!("em_{}", self.types.enum_def(*id).name),
+            TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
+            TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
             TyKind::Ref { mutable, inner } | TyKind::Ptr { mutable, inner } => {
                 let inner = self.c_type(*inner);
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }
@@ -900,8 +904,8 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
         active: BTreeSet::new(),
         taken: types
             .structs()
-            .map(|(_, d)| format!("em_{}", d.name))
-            .chain(types.enums().map(|(_, d)| format!("em_{}", d.name)))
+            .map(|(_, d)| c_name(&d.name.to_string()))
+            .chain(types.enums().map(|(_, d)| c_name(&d.name.to_string())))
             .collect(),
     };
     // Named types first, so the output stays close to declaration order; each
@@ -1028,6 +1032,12 @@ fn identifier_from(shown: &str) -> String {
         }
     }
     out.trim_matches('_').to_string()
+}
+
+/// The C name of a declared Ember type. A name from another module carries a
+/// dotted prefix (`math.ops.Point`), which C cannot spell.
+fn c_name(name: &str) -> String {
+    format!("em_{}", name.replace('.', "_"))
 }
 
 /// Locals and parameters that are never read anywhere in the body.

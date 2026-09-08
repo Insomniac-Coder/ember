@@ -12,6 +12,7 @@ members = [
     "compiler/ember_mir",
     "compiler/ember_analysis",
     "compiler/ember_codegen_c",
+    "compiler/ember_fmt",
     "compiler/ember_build",
     "compiler/ember_driver",
 ]
@@ -28,6 +29,7 @@ ember_span = { path = "compiler/ember_span" }
 ember_diag = { path = "compiler/ember_diag" }
 ember_lexer = { path = "compiler/ember_lexer" }
 ember_ast = { path = "compiler/ember_ast" }
+ember_fmt = { path = "compiler/ember_fmt" }
 ember_parser = { path = "compiler/ember_parser" }
 ember_types = { path = "compiler/ember_types" }
 ember_typeck = { path = "compiler/ember_typeck" }
