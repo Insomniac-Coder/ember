@@ -160,9 +160,9 @@ defects found in v0.5 itself.
 | | |
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
-| Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`** — Phase 1, Phase 2 blocks A-C and G's core pushed at `58cb057`. The v0.5 intake and the conformance work above are **uncommitted** |
-| Tests | `cargo test --workspace` → **156 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
+| Pushed | `60f3269` on `origin/main` — everything below, merged 2026-09-08 |
+| Working branch | `phase-1-core-language`, now identical to `main`. The owner merged it on 2026-09-08; work from here can go on `main` or a new branch |
+| Tests | `cargo test --workspace` → **157 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3` |
 
 ## Hard constraint
