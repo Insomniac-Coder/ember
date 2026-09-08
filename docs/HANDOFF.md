@@ -837,11 +837,15 @@ now for view-typed parameters only.
 
 ### What block E still needs, in order
 
-1. **`[LT-2]`'s view structs and `[TYP-15]`'s escape through a return.** A view
-   struct has one region, and constructing one from several references gives it
-   the intersection; `E3064` for two independent regions and `E3063` for a view
-   stored where nothing bounds it are both registered and unemitted. The
-   provenance the return check reads is the same machinery.
+1. **`E3064`, two independent regions in one view struct.** It is registered
+   and keyed and nothing emits it, and **no case that reaches it has been
+   found**: `[LT-2]` says a struct built from several references takes the
+   *intersection* of their regions, so the compiler narrows rather than
+   refusing. The rest of `[LT-2]` is done and tested (2026-09-09) — a view
+   struct carries its region through a return, through `@borrows`, and through
+   a call, because the aggregate that builds it is an edge in the constraint
+   graph like any other. Before writing a diagnostic for `E3064`, find the
+   program that needs it.
 2. **`[BRW-4]` through method calls.** Disjoint fields work by prefix overlap;
    shape B8 — "a method takes all of `self`" — needs the call to know which
    fields it touches.
