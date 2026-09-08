@@ -34,7 +34,8 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    BasicBlockId, Body, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator,
+    BasicBlockId, Body, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
+    Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
@@ -142,6 +143,56 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
             block.terminator_span,
             sink,
             &mut reported,
+        );
+
+        // §4.7 step 6 — a loan still live where the borrowed place's storage
+        // ends. Returning is the case that matters: the reference leaves the
+        // frame while what it points at does not.
+        if matches!(block.terminator, Terminator::Return) {
+            check_escapes(body, types, &loans, &live, point, block.terminator_span, sink);
+        }
+    }
+}
+
+/// `E3060` — the borrowed value does not live long enough.
+///
+/// A borrow of a **parameter** is fine: the caller owns what it points at and
+/// `[LT-1]`'s elision ties the return's region to it. A borrow of a local is
+/// not: the local's storage ends with the frame, so the reference dangles.
+fn check_escapes(
+    body: &Body,
+    types: &TypeTable,
+    loans: &[Loan],
+    live: &HashMap<Point, HashSet<LocalId>>,
+    point: Point,
+    span: Span,
+    sink: &mut Sink,
+) {
+    for loan in in_scope(loans, live, point) {
+        let root = body.local(loan.place.local);
+        if root.kind == LocalKind::Arg {
+            continue;
+        }
+        // Only a borrow that actually leaves: the return slot holds it, or a
+        // local that the return slot was assigned from does.
+        if !live.get(&point).is_some_and(|l| l.contains(&loan.borrower)) {
+            continue;
+        }
+        let name = place_name(body, types, &loan.place);
+        sink.emit(
+            Diagnostic::error(
+                codes::E3060,
+                span,
+                format!("`{name}` does not live long enough"),
+            )
+            .primary_label("the borrow is still live when the function returns")
+            .secondary(loan.span, format!("`{name}` is borrowed here"))
+            .secondary(root.span, format!("`{name}` is a local, so its storage ends with the frame"))
+            .help(
+                "return an owned value, take the destination as a `mut` parameter, or borrow \
+                 something the caller owns",
+            )
+            .note("a returned reference must derive from a parameter (LT-1)"),
         );
     }
 }
@@ -590,6 +641,12 @@ fn terminator_transfer(terminator: &Terminator, live: &mut HashSet<LocalId>) {
                 live.insert(p.local);
             }
         }
-        Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+        // The return slot is read by the caller, so it is live at every
+        // `Return`. Without this a borrow that leaves the frame looks dead
+        // exactly where it matters, and §4.7 step 6 never fires.
+        Terminator::Return => {
+            live.insert(ember_mir::RETURN_LOCAL);
+        }
+        Terminator::Goto(_) | Terminator::Unreachable => {}
     }
 }

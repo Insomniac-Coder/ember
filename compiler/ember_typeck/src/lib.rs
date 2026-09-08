@@ -2468,18 +2468,27 @@ impl<'a> Checker<'a> {
 
     /// Reading a local by name. A `mut` parameter holds a reference, so the
     /// name means the thing it points at.
-    fn read_local(&mut self, local: LocalId, span: Span) -> Expr {
+    /// `[TYP-14]` — "use of `r` in an expression of type `T` reads through".
+    /// The rule is about a context that wants `T`; a context that wants
+    /// `ref T` wants the reference itself, which is how a reference is
+    /// returned or passed on. Without the expectation there is no way to
+    /// name the reference at all, since every mention would deref.
+    fn read_local_expecting(
+        &mut self,
+        local: LocalId,
+        span: Span,
+        expected: Option<Ty>,
+    ) -> Expr {
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
-        match *self.types.kind(ty) {
-            // `[TYP-14]` — "use of `r` in an expression of type `T` reads
-            // through". Shared references auto-deref exactly as mutable ones
-            // do; only what may be *written* through them differs.
-            TyKind::Ref { inner, .. } => {
-                Expr { ty: inner, kind: ExprKind::Deref(Box::new(read)), span }
+        let TyKind::Ref { inner, .. } = *self.types.kind(ty) else { return read };
+        if let Some(expected) = expected {
+            if expected == ty || matches!(self.types.kind(expected), TyKind::Ref { .. }) {
+                return read;
             }
-            _ => read,
         }
+        let _ = inner;
+        Expr { ty: inner, kind: ExprKind::Deref(Box::new(read)), span }
     }
 
     fn lookup(&self, name: Symbol) -> Option<LocalId> {
@@ -3593,6 +3602,15 @@ impl<'a> Checker<'a> {
         if expr.ty == self.common.never {
             return Expr { ty: expected, ..expr };
         }
+        // `[TYP-14]` — a reference used where its referent is wanted reads
+        // through, whatever produced it. Handling this only for a local read
+        // left `v: i32 = f(r)` rejected, where `f` returns `ref i32`.
+        if let TyKind::Ref { inner, .. } = *self.types.kind(expr.ty) {
+            if inner == expected {
+                let span = expr.span;
+                return Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span };
+            }
+        }
         if self.types.is_untyped_literal(expr.ty) && self.literal_fits(&expr, expected) {
             return self.adopt_literal(expr, expected);
         }
@@ -3665,7 +3683,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::SelfExpr => {
                 let name = Symbol::intern("self");
                 match self.lookup(name) {
-                    Some(local) => self.read_local(local, span),
+                    Some(local) => self.read_local_expecting(local, span, expected),
                     None => {
                         self.error(codes::E1010, span, "`self` outside a method");
                         Expr { ty: self.common.error, kind: ExprKind::Error, span }
@@ -3676,7 +3694,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
                 if let Some(local) = self.lookup(name) {
-                    return self.read_local(local, span);
+                    return self.read_local_expecting(local, span, expected);
                 }
                 // A `const` or `static` is substituted where its name appears.
                 if let Some(value) = self.constants.get(&self.resolve_name(name)) {

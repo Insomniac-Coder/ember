@@ -161,6 +161,9 @@ wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
 24-block baseline, which needs the grammar gaps those fragments expose. With
 those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
+`docs/LIBRARIES.md` records what ships in `std` and what the ecosystem
+should gain once the phases are done, at the owner's request.
+
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 before touching anything. `docs/spec-errata.md` now lists **twenty-one** entries;
 ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-021 are the
@@ -696,8 +699,20 @@ a field is borrowed does. Places are named as the programmer wrote them —
 `p.x`, not MIR's `p.0` — by walking the type alongside the projections, and the
 help line never names a compiler temporary.
 
-**Not done in block E:** `@view` structs; `E3060`'s borrow-outlives-source,
-which needs storage-end tracking; `@borrows` (`[LT-1a]`); real region variables
+**`E3060` is in and milestone M2 exists.** Returning a reference to a local
+compiled in silence before this — a dangling pointer in safe code. A borrow of
+a *parameter* may be returned, because the caller owns what it points at; a
+borrow of a local may not. Two things had to change to make the check fire at
+all: the return slot is live at every `Return` (without that the borrow looks
+dead exactly where it matters), and `[TYP-14]`'s auto-deref now consults the
+expected type, since a reference that always derefs cannot be returned or
+passed on.
+
+M2 is written over `ref i32` rather than the specification's `Array[i32]` and
+`xs[0]`, which needs `Index` to return a `ref` — block D. The rule under test
+is the same, and the file says so.
+
+**Not done in block E:** `@view` structs; `@borrows` (`[LT-1a]`); real region variables
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
 what the liveness approximation cannot do; and the shape classifier
 (`[DIA-7]`, block H), which has to be designed into this pass rather than
