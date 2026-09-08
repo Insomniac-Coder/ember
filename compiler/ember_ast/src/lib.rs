@@ -505,7 +505,7 @@ pub enum ExprKind {
     TupleField { base: Box<Expr>, index: u32 },
     /// `[GRM-8]` — `name[...]` is an index or a generic instantiation, and
     /// which one is not known until name resolution.
-    IndexOrInstantiate { base: Box<Expr>, args: Vec<Expr> },
+    IndexOrInstantiate { base: Box<Expr>, args: Vec<TypeOrExpr> },
     Call { callee: Box<Expr>, args: Vec<Arg> },
     MethodCall { recv: Box<Expr>, name: Ident, generic_args: Vec<GenericArg>, args: Vec<Arg> },
     Unary { op: UnOp, operand: Box<Expr> },
@@ -559,6 +559,33 @@ impl Jump {
             Jump::Return(_) => "return",
             Jump::Break { .. } => "break",
             Jump::Continue { .. } => "continue",
+        }
+    }
+}
+
+/// `[GRM-8a]` — one argument inside `name[…]` in expression position, before
+/// name resolution has decided whether the brackets index or instantiate.
+///
+/// The parser commits to a type only on the seven tokens that cannot begin an
+/// expression (`ref`, `*`, `dyn`, `fn`, `extern`, `void`, `!`); everything
+/// else is parsed as an expression and reinterpreted later if the node turns
+/// out to be an instantiation (`[GRM-8b]`).
+#[derive(Debug)]
+pub enum TypeOrExpr {
+    Type(TypeExpr),
+    Expr(Expr),
+    /// `[GRM-8c]` — `Item = i32`, an associated-type binding. Never a named
+    /// argument and never an assignment, in either type or expression
+    /// position.
+    Binding { name: Ident, ty: TypeExpr },
+}
+
+impl TypeOrExpr {
+    pub fn span(&self) -> Span {
+        match self {
+            TypeOrExpr::Type(t) => t.span,
+            TypeOrExpr::Expr(e) => e.span,
+            TypeOrExpr::Binding { name, ty } => name.span.to(ty.span),
         }
     }
 }

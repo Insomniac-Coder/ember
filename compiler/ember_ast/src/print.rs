@@ -296,7 +296,13 @@ impl Printer {
                 self.nest("IndexOrInstantiate", |p| {
                     p.expr(base);
                     for a in args {
-                        p.expr(a);
+                        match a {
+                            TypeOrExpr::Type(ty) => p.line(&format!("Type {}", type_str(ty))),
+                            TypeOrExpr::Expr(e) => p.expr(e),
+                            TypeOrExpr::Binding { name, ty } => {
+                                p.line(&format!("Binding {} = {}", name.name, type_str(ty)))
+                            }
+                        }
                     }
                 });
             }

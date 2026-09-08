@@ -717,8 +717,17 @@ impl Printer<'_> {
                 format!("{}.{}({})", self.expr_pure(recv), name.name, args.join(", "))
             }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
-                let args: Vec<String> = args.iter().map(|a| self.expr_pure(a)).collect();
-                format!("{}[{}]", self.expr_pure(base), args.join(", "))
+                let rendered: Vec<String> = args
+                    .iter()
+                    .map(|a| match a {
+                        ast::TypeOrExpr::Type(ty) => self.type_expr(ty),
+                        ast::TypeOrExpr::Expr(e) => self.expr_pure(e),
+                        ast::TypeOrExpr::Binding { name, ty } => {
+                            format!("{} = {}", name.name, self.type_expr(ty))
+                        }
+                    })
+                    .collect();
+                format!("{}[{}]", self.expr_pure(base), rendered.join(", "))
             }
             ast::ExprKind::Unary { op, operand } => {
                 let op = match op {

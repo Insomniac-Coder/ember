@@ -121,6 +121,8 @@ the new document. All of it is green.
 | every MIR statement and terminator must carry a source span, checked by the verifier | `[CG-C-8]` |
 | `from` made contextual so `interface From[T]` can declare `fn from(…)` | `[LEX-15]`, ERR-017 |
 | the `branding` module: the symbol prefix, CLI name, manifest and extensions are spelled once | `[RT-5]`, `[MAN-4]`, `[MNG-5]` |
+| Appendix A generated from a fixture that is checked | `[TST-6]` |
+| type arguments inside `name[…]` in expression position, with `E2172`/`E2173` | `[GRM-8a]`..`[GRM-8c]` |
 | `tools/rule_index.py`, `tools/spec_check.py`, `tools/check_branding.py`, `tools/split_spec.py --check`, CI workflow | `[XXII.4]`, `[TST-4]`, `[TST-7]`, `[RT-5]`, Phase 0 |
 
 **Three defects found by writing the tests, not by reading:**
@@ -154,15 +156,14 @@ emitted the braces literally and no test would have noticed. The 13 that remain
 are fixture file names inside tests, baselined; the runtime's own two files are
 exempt for the reason ERR-019 records.
 
-**Still open from v0.5, in rough order of leverage:** the
-`docs/spec-source/appendix-a.em` fixture (`[TST-6]`); `[GRM-8a]`..`[GRM-8c]`
-type arguments in expression position; `[GRM-17]`/`[LEX-6a]` closures inside
-brackets; and shrinking `[TST-7]`'s 24-block baseline, which needs the grammar
-gaps those fragments expose.
+**Still open from v0.5:** `[GRM-17]`/`[LEX-6a]` closures inside brackets, which
+wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
+24-block baseline, which needs the grammar gaps those fragments expose. With
+those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-before touching anything. `docs/spec-errata.md` now lists **nineteen** entries;
-ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-019 are the
+before touching anything. `docs/spec-errata.md` now lists **twenty** entries;
+ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-020 are the
 defects found in v0.5 itself.
 
 | | |

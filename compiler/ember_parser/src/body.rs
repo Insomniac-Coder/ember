@@ -384,6 +384,35 @@ impl Parser<'_> {
     /// `[GRM-15]` — `owned e` is an expression form legal in exactly two
     /// places. Parsed here rather than in `parse_prefix` so that everywhere
     /// else it reaches `E0109` with the fix named.
+    /// `[GRM-8a]`, `[GRM-8c]` — one argument inside `name[…]` in expression
+    /// position.
+    ///
+    /// The parser commits to a type on exactly seven tokens: `ref`, `*`,
+    /// `dyn`, `fn`, `extern`, `void`, `!`. The set is unambiguous because
+    /// Ember has no prefix `*` and no prefix `!` — `not` and `~` are the
+    /// operators — and the rest are keywords, so committing on them cannot
+    /// misparse an expression. Everything else is parsed as an expression and
+    /// reinterpreted by name resolution if the node turns out to be an
+    /// instantiation.
+    fn parse_type_or_expr(&mut self) -> TypeOrExpr {
+        // `Item = T` binds an associated type in both positions, and is
+        // never a named argument or an assignment (`[GRM-8c]`).
+        if self.at_ident() && self.at_punct_at(1, Punct::Eq) {
+            let name = self.expect_ident();
+            self.bump();
+            return TypeOrExpr::Binding { name, ty: self.parse_type() };
+        }
+        let type_only = matches!(
+            self.peek(),
+            TokenKind::Keyword(Kw::Ref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void)
+        ) || self.at_punct(Punct::Star)
+            || self.at_punct(Punct::Bang);
+        if type_only {
+            return TypeOrExpr::Type(self.parse_type());
+        }
+        TypeOrExpr::Expr(self.parse_expr())
+    }
+
     fn parse_consumable_expr(&mut self) -> Expr {
         if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
             let start = self.span();
@@ -956,7 +985,7 @@ impl Parser<'_> {
                     self.bump();
                     let mut args = Vec::new();
                     while !self.at_punct(Punct::RBracket) && !self.at_eof() {
-                        args.push(self.parse_expr());
+                        args.push(self.parse_type_or_expr());
                         if !self.eat_punct(Punct::Comma) {
                             break;
                         }

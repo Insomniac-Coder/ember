@@ -3874,8 +3874,19 @@ impl<'a> Checker<'a> {
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                // `[GRM-8b]` — the node resolved to an index, so a type or
+                // an associated-type binding among its arguments is an error
+                // that names the argument rather than a type mismatch.
+                let ast::TypeOrExpr::Expr(index_expr) = &args[0] else {
+                    self.error(
+                        codes::E2172,
+                        args[0].span(),
+                        "cannot index with a type",
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
                 let usize_ty = self.common.usize;
-                let index = self.check_expr(&args[0], usize_ty);
+                let index = self.check_expr(index_expr, usize_ty);
                 Expr {
                     ty: elem,
                     kind: ExprKind::Index { base: Box::new(base), index: Box::new(index) },
@@ -4124,9 +4135,24 @@ impl<'a> Checker<'a> {
             ast::ExprKind::IndexOrInstantiate { base, args }
                 if matches!(base.kind, ast::ExprKind::Path { .. }) =>
             {
+                // `[GRM-8b]` — the node resolved to an instantiation, so each
+                // argument parsed as an expression is reinterpreted as a type
+                // or a const-generic argument by the ordinary rules.
                 let tys = args
                     .iter()
-                    .map(|a| self.type_from_expr(a))
+                    .map(|a| match a {
+                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
+                        ast::TypeOrExpr::Binding { name, .. } => {
+                            let name = name.name;
+                            self.error(
+                                codes::E2173,
+                                a.span(),
+                                format!("`{name} = …` binds an associated type, which this instantiation does not take"),
+                            );
+                            self.common.error
+                        }
+                    })
                     .collect::<Vec<Ty>>();
                 (base.as_ref(), tys)
             }
