@@ -284,6 +284,93 @@ impl<'a> Checker<'a> {
         self.sink.emit(Diagnostic::error(code, span, message));
     }
 
+    /// `[LT-1a]` — `@borrows(p₁, …, pₙ)` overrides the region that `[LT-1]`'s
+    /// elision would give a view-typed return, so that the caller may keep
+    /// using the parameters it does *not* name.
+    ///
+    /// "Naming a parameter that is not view-typed, or writing `@borrows` on a
+    /// function whose return is not view-typed, is `E2031`." A name that
+    /// matches no parameter is the same mistake and is reported the same way,
+    /// with the parameters that would have been valid listed — the attribute
+    /// is a contract (`[VER-2]` makes widening it a breaking change), so a
+    /// typo in it is worth catching loudly.
+    fn check_borrows_attribute(
+        &mut self,
+        attrs: &[ast::Attribute],
+        params: &[(Symbol, Ty, Mode, Span)],
+        ret: Ty,
+    ) {
+        let Some(attr) = attrs
+            .iter()
+            .find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"))
+        else {
+            return;
+        };
+
+        if !self.types.is_view(ret) {
+            let shown = self.types.display(ret);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2031,
+                    attr.span,
+                    "`@borrows` is only meaningful on a function that returns a view",
+                )
+                .primary_label(format!("this function returns `{shown}`"))
+                .help("remove the attribute, or return a `ref`, a `Span` or a `@view` struct")
+                .note("`@borrows` chooses which parameter the *returned* view borrows (LT-1a)"),
+            );
+            return;
+        }
+
+        let viewable: Vec<String> = params
+            .iter()
+            .filter(|(_, ty, _, _)| self.types.is_view(*ty))
+            .map(|(name, _, _, _)| name.to_string())
+            .collect();
+
+        for arg in &attr.args {
+            let ast::AttrArg::Expr(expr) = arg else { continue };
+            let ast::ExprKind::Path { segments } = &expr.kind else { continue };
+            if segments.len() != 1 {
+                continue;
+            }
+            let named = segments[0].name;
+            match params.iter().find(|(name, _, _, _)| *name == named) {
+                None => {
+                    let known = if viewable.is_empty() {
+                        "this function has no view-typed parameter".to_string()
+                    } else {
+                        format!("the view-typed parameters are {}", viewable.join(", "))
+                    };
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2031,
+                            expr.span,
+                            format!("`@borrows` names `{named}`, which is not a parameter"),
+                        )
+                        .help(known),
+                    );
+                }
+                Some((_, ty, _, span)) if !self.types.is_view(*ty) => {
+                    let shown = self.types.display(*ty);
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2031,
+                            expr.span,
+                            format!("`@borrows` names `{named}`, which is not view-typed"),
+                        )
+                        .secondary(*span, format!("`{named}` is `{shown}`, which borrows nothing"))
+                        .help(concat!(
+                            "name a parameter the return can point into, or drop the ",
+                            "attribute and let elision tie the region (LT-1)"
+                        )),
+                    );
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
     /// `[TYP-15]` — "a view-typed value MUST NOT be stored in a place whose
     /// region is not outlived by the view's region. Class fields, non-view
     /// struct fields, `static`s, `Box[T]` and `Shared[T]` contents, container
@@ -883,7 +970,7 @@ impl<'a> Checker<'a> {
                     // `[TYP-16]` — the parameters are in scope for the
                     // signature as well as for the body.
                     let generics = self.declare_generics(&decl.generics);
-                    let params = decl
+                    let params: Vec<(Symbol, Ty, Mode, Span)> = decl
                         .params
                         .iter()
                         .filter_map(|p| match &p.kind {
@@ -900,6 +987,7 @@ impl<'a> Checker<'a> {
                         .as_ref()
                         .map(|t| self.resolve_type(t))
                         .unwrap_or(self.common.void);
+                    self.check_borrows_attribute(&item.attrs, &params, ret);
                     self.type_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);

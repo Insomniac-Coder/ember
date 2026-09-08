@@ -747,7 +747,17 @@ help — an owned copy with its per-element cost named, or an index or handle
 with the container it indexes named. A view escaping through a *return* is
 `[LT-1]`'s job and needs the region graph.
 
-**Not done in block E:** `[TYP-15]`'s storage check; `@borrows` (`[LT-1a]`); real region variables
+**`[LT-1a]`'s `@borrows` is validated.** It was parsed, listed in Part III §7's
+attribute table, and read by nobody, so a function could name a parameter that
+does not exist, or one that is not view-typed, or carry the attribute with no
+view-typed return, and compile. All three are `E2031` now, with the valid
+parameters listed when a name matches none. It is a public contract — `[VER-2]`
+makes widening it a breaking change — so a typo in it is worth catching loudly.
+What `@borrows` *means* still needs the region graph; this is the signature
+half.
+
+**Not done in block E:** `[LT-1b]`'s `L3014`, which needs `[MAN-3]`'s `[lints]`
+configuration to exist before an opt-in lint has anywhere to be opted into; real region variables
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
 what the liveness approximation cannot do; and the shape classifier
 (`[DIA-7]`, block H), which has to be designed into this pass rather than
