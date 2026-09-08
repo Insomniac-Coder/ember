@@ -79,6 +79,15 @@ pub enum TyKind {
     /// write it in Ember. `String` is this with `u8` elements.
     Vec { elem: Ty },
     Fn { params: Vec<Ty>, ret: Ty },
+    /// `[TYP-16]` — a generic parameter, opaque while the body that declares
+    /// it is checked. `[TYP-17]` allows only what its bounds provide, so the
+    /// bound list travels with the declaration rather than with the type.
+    /// Monomorphisation substitutes it away before MIR.
+    Param { index: u32, name: Symbol },
+    /// `[IFC-4]` — an associated type: `Iterator`'s `Item`, standing for
+    /// whatever the implementing type declared it to be. Resolved once the
+    /// receiver is concrete.
+    Assoc { name: Symbol },
     /// An unsolved inference variable.
     Infer(InferId),
     /// `[LEX-16]` — an integer literal with no suffix, awaiting context.
@@ -272,6 +281,89 @@ impl TypeTable {
         &self.kinds[ty.0 as usize]
     }
 
+    /// Whether a type mentions any generic parameter, and so still has to be
+    /// substituted before it means anything at run time.
+    pub fn is_generic(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Param { .. } => true,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.is_generic(*inner),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic(*elem),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic(t)),
+            TyKind::Fn { params, ret } => {
+                params.iter().any(|&t| self.is_generic(t)) || self.is_generic(*ret)
+            }
+            _ => false,
+        }
+    }
+
+    /// `[TYP-16]` — replace each parameter with the type it was instantiated
+    /// with. `args` is indexed by the parameter's position.
+    pub fn substitute(&mut self, ty: Ty, args: &[Ty]) -> Ty {
+        match self.kind(ty).clone() {
+            TyKind::Param { index, .. } => {
+                args.get(index as usize).copied().unwrap_or(ty)
+            }
+            TyKind::Ref { mutable, inner } => {
+                let inner = self.substitute(inner, args);
+                self.intern(TyKind::Ref { mutable, inner })
+            }
+            TyKind::Ptr { mutable, inner } => {
+                let inner = self.substitute(inner, args);
+                self.intern(TyKind::Ptr { mutable, inner })
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.substitute(elem, args);
+                self.intern(TyKind::Array { elem, len })
+            }
+            TyKind::Vec { elem } => {
+                let elem = self.substitute(elem, args);
+                self.intern(TyKind::Vec { elem })
+            }
+            TyKind::Tuple(items) => {
+                let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
+                self.intern(TyKind::Tuple(items))
+            }
+            TyKind::Fn { params, ret } => {
+                let params: Vec<Ty> = params.iter().map(|&t| self.substitute(t, args)).collect();
+                let ret = self.substitute(ret, args);
+                self.intern(TyKind::Fn { params, ret })
+            }
+            _ => ty,
+        }
+    }
+
+    /// `[TYP-18]` — match a declared parameter type against the type an
+    /// argument actually has, filling in `args` where a parameter is met.
+    /// Returns false only on a shape mismatch the caller should report.
+    pub fn unify(&self, declared: Ty, actual: Ty, args: &mut Vec<Option<Ty>>) -> bool {
+        match (self.kind(declared).clone(), self.kind(actual).clone()) {
+            (TyKind::Param { index, .. }, _) => {
+                let slot = index as usize;
+                if slot >= args.len() {
+                    return false;
+                }
+                match args[slot] {
+                    // A parameter met twice must be met with the same type.
+                    Some(existing) => existing == actual,
+                    None => {
+                        args[slot] = Some(actual);
+                        true
+                    }
+                }
+            }
+            (TyKind::Ref { inner: a, .. }, TyKind::Ref { inner: b, .. })
+            | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
+            | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. })
+            | (TyKind::Vec { elem: a }, TyKind::Vec { elem: b }) => self.unify(a, b, args),
+            (TyKind::Tuple(a), TyKind::Tuple(b)) if a.len() == b.len() => {
+                a.iter().zip(b.iter()).all(|(&x, &y)| self.unify(x, y, args))
+            }
+            // A concrete declared type has nothing to infer; the ordinary
+            // coercion check decides whether the argument fits.
+            _ => true,
+        }
+    }
+
     pub fn fresh_infer(&mut self) -> Ty {
         let id = InferId(self.next_infer);
         self.next_infer += 1;
@@ -384,6 +476,8 @@ impl TypeTable {
                 align: self.pointer_size,
                 field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
             },
+            // A parameter has no layout until it is substituted away.
+            TyKind::Param { .. } | TyKind::Assoc { .. } => Layout::ZERO,
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => Layout::ZERO,
         }
     }
@@ -470,7 +564,9 @@ impl TypeTable {
             // An `Array` owns its buffer, so copying it would share one
             // allocation between two owners.
             TyKind::Vec { .. } => false,
-            TyKind::Infer(_) => false,
+            // `[TYP-17]` — whether a parameter is `Copy` is what its bounds
+            // say, which the checker consults rather than the type table.
+            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_) => false,
         }
     }
 
@@ -616,6 +712,8 @@ impl TypeTable {
             TyKind::Str => "str".into(),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
+            TyKind::Param { name, .. } => name.to_string(),
+            TyKind::Assoc { name } => format!("Self.{name}"),
             // `String` prints as itself, not as `Array[u8]`.
             TyKind::Vec { elem } if matches!(self.kind(*elem), TyKind::Uint(UintTy::U8)) => {
                 "String".into()

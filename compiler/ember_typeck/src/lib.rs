@@ -72,12 +72,34 @@ pub fn check(
         main = main.or(program.main);
         functions.extend(program.functions);
     }
+    // `[TYP-16]` — every instantiation reached while checking gets a real
+    // body. One of those can reach another, so this drains until empty.
+    functions.extend(checker.check_instantiations(modules));
     Program { functions, main }
 }
 
 struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
+    /// `[TYP-16]` — the generic parameters this function declares, with the
+    /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
+    generics: Vec<GenericParam>,
+}
+
+/// One declared type parameter and what it is allowed to do.
+#[derive(Clone)]
+struct GenericParam {
+    name: Symbol,
+    /// `[TYP-17]` — only what these interfaces provide is permitted inside the
+    /// body. There is no duck typing.
+    bounds: Vec<Symbol>,
+}
+
+/// One instantiation of a generic function: which one, and with what.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Instance {
+    def: DefId,
+    args: Vec<Ty>,
 }
 
 /// One method that can be found by `recv.name(...)`.
@@ -93,9 +115,14 @@ struct MethodEntry {
 /// A declared interface: the methods a type must provide, and which of them
 /// carry a default body.
 struct InterfaceDef {
-    /// Method name, its signature, the receiver's mode, and whether the
-    /// interface supplies a body.
-    methods: Vec<(Symbol, Signature, Mode, bool)>,
+    /// Method name, the `DefId` its declared signature was given, the
+    /// receiver's mode, and whether the interface supplies a body.
+    ///
+    /// The `DefId` exists so that `[TYP-17]`'s "only what the bounds provide"
+    /// can be checked: inside `fn f[T: Shape]`, `x.area()` resolves to the
+    /// interface's declaration and takes its type. Nothing calls it — a
+    /// generic body is never emitted, only its instantiations are.
+    methods: Vec<(Symbol, DefId, Mode, bool)>,
     supertraits: Vec<Symbol>,
 }
 
@@ -133,6 +160,22 @@ struct Checker<'a> {
     namespaces: Vec<HashMap<Symbol, usize>>,
     /// Which module is being collected or checked right now.
     current_module: usize,
+    /// `[TYP-16]` — the type parameters in scope right now: opaque while a
+    /// generic body is checked, concrete while one is instantiated.
+    type_params: HashMap<Symbol, Ty>,
+    /// The generic parameters of the function being checked, so a method call
+    /// on one can find its bounds (`[TYP-17]`).
+    current_generics: Vec<GenericParam>,
+    /// `[IFC-4]` — the associated type names in scope while an interface
+    /// declaration is read.
+    assoc_scope: std::collections::BTreeSet<Symbol>,
+    /// What each implementing type declared its associated types to be:
+    /// `(the type, the name) -> the type it stands for`.
+    assoc_values: HashMap<(Ty, Symbol), Ty>,
+    /// Instantiations reached so far, so each is emitted once (`[MONO-1]`).
+    instances: HashMap<Instance, DefId>,
+    /// Instantiations still to have their bodies checked.
+    pending: Vec<(Instance, DefId)>,
 
     // Per-function state.
     locals: Vec<LocalDecl>,
@@ -171,6 +214,12 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             namespaces: vec![HashMap::new()],
             current_module: 0,
+            type_params: HashMap::new(),
+            current_generics: Vec::new(),
+            assoc_scope: std::collections::BTreeSet::new(),
+            assoc_values: HashMap::new(),
+            instances: HashMap::new(),
+            pending: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             or_bindings: None,
@@ -186,6 +235,33 @@ impl<'a> Checker<'a> {
     }
 
     // -- modules -------------------------------------------------------------
+
+    /// `[TYP-16]` — bring a declaration's type parameters into scope as opaque
+    /// types, so the signature and the body are checked against the bounds
+    /// rather than against whatever they are eventually instantiated with.
+    fn declare_generics(&mut self, params: &[ast::GenericParam]) -> Vec<GenericParam> {
+        self.type_params.clear();
+        let mut declared = Vec::new();
+        for (index, param) in params.iter().enumerate() {
+            // A const generic is a value, not a type; `[TYP-16]`'s type
+            // parameters are what this phase handles.
+            if param.const_ty.is_some() {
+                self.error(
+                    codes::E1010,
+                    param.span,
+                    "a const generic is not supported yet in this phase",
+                );
+                continue;
+            }
+            let ty = self
+                .types
+                .intern(TyKind::Param { index: index as u32, name: param.name.name });
+            self.type_params.insert(param.name.name, ty);
+            let bounds = param.bounds.iter().filter_map(interface_name).collect();
+            declared.push(GenericParam { name: param.name.name, bounds });
+        }
+        declared
+    }
 
     /// The qualified form of a name declared in the module being walked.
     fn qualified(&self, name: Symbol) -> Symbol {
@@ -529,6 +605,9 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
+                    // `[TYP-16]` — the parameters are in scope for the
+                    // signature as well as for the body.
+                    let generics = self.declare_generics(&decl.generics);
                     let params = decl
                         .params
                         .iter()
@@ -546,9 +625,10 @@ impl<'a> Checker<'a> {
                         .as_ref()
                         .map(|t| self.resolve_type(t))
                         .unwrap_or(self.common.void);
+                    self.type_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
-                    self.signatures.push(Signature { params, ret });
+                    self.signatures.push(Signature { params, ret, generics });
                 }
                 _ => {}
             }
@@ -813,16 +893,39 @@ impl<'a> Checker<'a> {
             );
             return;
         }
+        // `[IFC-4]` — associated types first: a method signature may mention
+        // one, so they have to be in scope before the signatures are read.
+        let assoc: Vec<Symbol> = decl
+            .members
+            .iter()
+            .filter_map(|m| match &m.kind {
+                ast::MemberKind::TypeAlias(t) if t.value.is_none() => Some(t.name.name),
+                _ => None,
+            })
+            .collect();
+        let saved_assoc = std::mem::take(&mut self.assoc_scope);
+        for name in &assoc {
+            self.assoc_scope.insert(*name);
+        }
         let mut methods = Vec::new();
         for member in &decl.members {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
             let Some((receiver, signature)) = self.method_signature(f, None, member.span) else {
                 continue;
             };
-            methods.push((f.name.name, signature, receiver, f.body.is_some()));
+            // A `DefId` for the declaration, so a call through a bound has a
+            // signature to take its type from.
+            let def = DefId(self.signatures.len() as u32);
+            self.signatures.push(signature);
+            methods.push((f.name.name, def, receiver, f.body.is_some()));
         }
         let supertraits = decl.supertraits.iter().filter_map(interface_name).collect();
         let _ = span;
+        self.assoc_scope = saved_assoc;
+        // `[IFC-4]` — the associated names were in scope while the
+        // signatures were read, which is all the declaration needs them for;
+        // an implementation records what each one stands for.
+        let _ = &assoc;
         self.interfaces.insert(name, InterfaceDef { methods, supertraits });
     }
 
@@ -866,7 +969,7 @@ impl<'a> Checker<'a> {
             return None;
         };
         let ret = decl.ret.as_ref().map(|t| self.resolve_type(t)).unwrap_or(self.common.void);
-        Some((receiver, Signature { params, ret }))
+        Some((receiver, Signature { params, ret, generics: Vec::new() }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -877,6 +980,14 @@ impl<'a> Checker<'a> {
         from_interface: Option<Symbol>,
         span: Span,
     ) {
+        // `[IFC-4]` — `type Item = i32` in an implementation says what the
+        // interface's associated type is for this type.
+        for member in members {
+            let ast::MemberKind::TypeAlias(alias) = &member.kind else { continue };
+            let Some(value) = &alias.value else { continue };
+            let value = self.resolve_type(value);
+            self.assoc_values.insert((ty, alias.name.name), value);
+        }
         for member in members {
             let ast::MemberKind::Fn(decl) = &member.kind else { continue };
             if decl.body.is_none() {
@@ -1050,6 +1161,14 @@ impl<'a> Checker<'a> {
 
             ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 => {
                 let name = segments[0].name;
+                // A type parameter shadows everything: inside `fn f[T]`, `T`
+                // is the parameter.
+                if self.assoc_scope.contains(&name) {
+                    return self.types.intern(TyKind::Assoc { name });
+                }
+                if let Some(&ty) = self.type_params.get(&name) {
+                    return ty;
+                }
                 if let Some(ty) = self.scalar_named(name.as_str()) {
                     return ty;
                 }
@@ -1457,6 +1576,47 @@ impl<'a> Checker<'a> {
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
 
+            // `[TYP-17]` — a generic body is checked **once**, with its
+            // parameters opaque, so that using an operation its bounds do not
+            // provide is an error here rather than at some instantiation.
+            // Nothing is emitted for it: only its instantiations exist at run
+            // time.
+            if !self.signatures[def.0 as usize].generics.is_empty() {
+                let generics = self.signatures[def.0 as usize].generics.clone();
+                self.type_params.clear();
+                self.current_generics = generics.clone();
+                for (index, param) in generics.iter().enumerate() {
+                    let ty = self
+                        .types
+                        .intern(TyKind::Param { index: index as u32, name: param.name });
+                    self.type_params.insert(param.name, ty);
+                }
+                if let Some(block) = &decl.body {
+                    self.locals = Vec::new();
+                    self.scopes = vec![HashMap::new()];
+                    self.ret_ty = self.signatures[def.0 as usize].ret;
+                    let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
+                        [def.0 as usize]
+                        .params
+                        .iter()
+                        .map(|(n, t, m, s)| (*n, *t, *m, *s))
+                        .collect();
+                    for (name, ty, mode, param_span) in signature_params {
+                        let local_ty = match mode {
+                            Mode::Mut => {
+                                self.types.intern(TyKind::Ref { mutable: true, inner: ty })
+                            }
+                            _ => ty,
+                        };
+                        self.declare(Some(name), local_ty, param_span);
+                    }
+                    self.check_block(block);
+                }
+                self.type_params.clear();
+                self.current_generics.clear();
+                continue;
+            }
+
             self.locals = Vec::new();
             self.scopes = vec![HashMap::new()];
             self.ret_ty = self.signatures[def.0 as usize].ret;
@@ -1509,6 +1669,98 @@ impl<'a> Checker<'a> {
 
         functions.extend(self.check_method_bodies(module));
         Program { functions, main }
+    }
+
+    /// `[TYP-16]` — one real body per instantiation. Each is the generic body
+    /// re-checked with its parameters bound to the concrete types, which is
+    /// what monomorphisation means for a backend with no generics of its own.
+    ///
+    /// Checking an instantiation can reach another generic call, so this
+    /// drains a queue rather than walking a list once.
+    fn check_instantiations(&mut self, modules: &[LoadedModule]) -> Vec<Function> {
+        let mut out = Vec::new();
+        // Where each generic function's declaration lives, so its body can be
+        // found again.
+        let mut sources: HashMap<DefId, (usize, usize)> = HashMap::new();
+        for (module_index, loaded) in modules.iter().enumerate() {
+            for (item_index, item) in loaded.module.items.iter().enumerate() {
+                let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+                self.current_module = module_index;
+                if let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) {
+                    sources.insert(def, (module_index, item_index));
+                }
+            }
+        }
+
+        // Errors were already reported when the generic body was checked
+        // once; an instantiation must not repeat them.
+        let mut quiet = Sink::new();
+        while let Some((key, instance)) = self.pending.pop() {
+            let Some(&(module_index, item_index)) = sources.get(&key.def) else { continue };
+            let item = &modules[module_index].module.items[item_index];
+            let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+            let Some(block) = &decl.body else { continue };
+
+            self.current_module = module_index;
+            // The parameters are now the concrete types.
+            let generics = self.signatures[key.def.0 as usize].generics.clone();
+            self.type_params.clear();
+            for (param, &ty) in generics.iter().zip(key.args.iter()) {
+                self.type_params.insert(param.name, ty);
+            }
+
+            let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
+            let function = self.check_one_function(decl, block, instance, &item.attrs, item.span);
+            quiet = std::mem::replace(self.sink, saved);
+            self.type_params.clear();
+            out.push(function);
+        }
+        out
+    }
+
+    /// One function body, checked into a `Function` with a given `DefId`.
+    fn check_one_function(
+        &mut self,
+        decl: &ast::FnDecl,
+        block: &ast::Block,
+        def: DefId,
+        attrs: &[ast::Attribute],
+        span: Span,
+    ) -> Function {
+        self.locals = Vec::new();
+        self.scopes = vec![HashMap::new()];
+        self.ret_ty = self.signatures[def.0 as usize].ret;
+
+        let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .map(|(n, t, m, s)| (*n, *t, *m, *s))
+            .collect();
+        let mut params = Vec::new();
+        for (name, ty, mode, param_span) in signature_params {
+            let local_ty = match mode {
+                Mode::Mut => self.types.intern(TyKind::Ref { mutable: true, inner: ty }),
+                _ => ty,
+            };
+            let local = self.declare(Some(name), local_ty, param_span);
+            params.push(Param { local, mode });
+        }
+        let body = self.check_block(block);
+        let overflow = self.overflow_policy(attrs, span);
+        // `[MONO-1]` — the symbol carries the instantiation, so two of them
+        // never collide and identical ones dedupe at link time.
+        let name = self.qualified(decl.name.name);
+        Function {
+            def,
+            name,
+            symbol: format!("em_{}__{}", name.as_str().replace('.', "_"), def.0),
+            params,
+            locals: std::mem::take(&mut self.locals),
+            ret: self.ret_ty,
+            body,
+            span,
+            overflow,
+        }
     }
 
     /// Method bodies, in the same walk `collect_methods` used so the two
@@ -2313,12 +2565,8 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Option<Stmt> {
         let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &iter.kind else {
-            self.error(
-                codes::E1010,
-                iter.span,
-                "`for` supports a range with both ends in this phase of the compiler",
-            );
-            return None;
+            // `[CTL-1]` — anything else is driven through `next()`.
+            return self.check_for_iterator(label, pattern, iter, body, else_block, span);
         };
 
         // Either end may be an untyped literal, and it is the other end that
@@ -2372,6 +2620,253 @@ impl<'a> Checker<'a> {
             body,
             else_block,
         })
+    }
+
+    /// `for x in xs` over an `Array[T]`:
+    ///
+    /// ```text
+    /// __xs = xs
+    /// for __i in 0..__xs.len():
+    ///     x = __xs[__i]
+    ///     <body>
+    /// ```
+    ///
+    /// A counted loop, so iterating a collection costs an index and a bounds
+    /// check rather than an iterator object — the same shape `[CTL-3]` asks
+    /// for over a range.
+    fn check_for_array(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        source: (Expr, Ty),
+
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let (iterable, elem) = source;
+        let usize_ty = self.common.usize;
+        self.scopes.push(HashMap::new());
+        let xs_local = self.declare(Some(Symbol::intern("__xs")), iterable.ty, span);
+        let index_local = self.declare(Some(Symbol::intern("__i")), usize_ty, span);
+
+        let xs = |ty: Ty| Expr { ty, kind: ExprKind::Local(xs_local), span };
+        let length = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArrayLen,
+                args: vec![xs(iterable.ty)],
+            },
+            span,
+        };
+
+        // The loop variable is the element, read at the index.
+        self.scopes.push(HashMap::new());
+        let item_local = self.declare(binding_name(pattern), elem, pattern.span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let mut inner = vec![Stmt::Let {
+            local: item_local,
+            init: Some(Expr {
+                ty: elem,
+                kind: ExprKind::Index {
+                    base: Box::new(xs(iterable.ty)),
+                    index: Box::new(Expr {
+                        ty: usize_ty,
+                        kind: ExprKind::Local(index_local),
+                        span,
+                    }),
+                },
+                span,
+            }),
+        }];
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        inner.extend(checked.stmts);
+
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+
+        Some(Stmt::Block(Block {
+            stmts: vec![
+                Stmt::Let { local: xs_local, init: Some(iterable) },
+                Stmt::ForRange {
+                    local: index_local,
+                    start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+                    end: length,
+                    inclusive: false,
+                    body: Block { stmts: inner, span },
+                    else_block,
+                },
+            ],
+            span,
+        }))
+    }
+
+    /// `[CTL-1]` — `for x in it` over anything that provides `next()`:
+    ///
+    /// ```text
+    /// __it = it
+    /// __done = false
+    /// while not __done:
+    ///     match __it.next():
+    ///         Some(x): <body>
+    ///         None:    __done = true
+    /// else:
+    ///     <else>
+    /// ```
+    ///
+    /// Exhaustion ends the loop through the condition rather than through a
+    /// `break`, so `[CTL-4]`'s `else` still tells the two apart.
+    fn check_for_iterator(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let iterable = self.synth_committed(iter);
+        if iterable.ty == self.common.error {
+            return None;
+        }
+        // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
+        // counted loop over its indices, with no iterator object at all.
+        if let TyKind::Vec { elem } = *self.types.kind(iterable.ty) {
+            return self.check_for_array(label, pattern, (iterable, elem), body, else_block, span);
+        }
+
+        // The iterator itself is a local, because `next` mutates it.
+        self.scopes.push(HashMap::new());
+        let it_local = self.declare(Some(Symbol::intern("__it")), iterable.ty, iter.span);
+        let bool_ty = self.common.bool_;
+        let done_local = self.declare(Some(Symbol::intern("__done")), bool_ty, iter.span);
+
+        // `__it.next()`, checked through ordinary method resolution so that a
+        // type without one is reported the same way any missing method is.
+        let receiver = Expr { ty: iterable.ty, kind: ExprKind::Local(it_local), span: iter.span };
+        let Some(entry) = self.methods.get(&(iterable.ty, Symbol::intern("next"))) else {
+            let shown = self.types.display(iterable.ty);
+            self.scopes.pop();
+            self.error(
+                codes::E2040,
+                iter.span,
+                format!("`{shown}` cannot be iterated: it has no `next` method"),
+            );
+            return None;
+        };
+        let def = entry.def;
+        let receiver_mode = entry.receiver;
+        let raw_ret = self.signatures[def.0 as usize].ret;
+        let item_option = self.resolve_assoc(raw_ret, iterable.ty);
+
+        let TyKind::Enum(option_id) = *self.types.kind(item_option) else {
+            let shown = self.types.display(item_option);
+            self.scopes.pop();
+            self.error(
+                codes::E2020,
+                iter.span,
+                format!("`next` must return an `Option`, not `{shown}`"),
+            );
+            return None;
+        };
+        let item_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
+
+        let call = Expr {
+            ty: item_option,
+            kind: ExprKind::Call {
+                callee: def,
+                args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
+            },
+            span: iter.span,
+        };
+
+        // `Some(x): <body>` — the loop variable is the payload.
+        self.scopes.push(HashMap::new());
+        let bound = self.declare(binding_name(pattern), item_ty, pattern.span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let body = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+
+        let some_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: item_option,
+                kind: hir::PatternKind::Variant {
+                    enum_id: option_id,
+                    variant: 1,
+                    fields: vec![hir::Pattern {
+                        ty: item_ty,
+                        kind: hir::PatternKind::Bind { local: bound, sub: None },
+                        span: pattern.span,
+                    }],
+                },
+                span: pattern.span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Block(body),
+            span,
+        };
+        let none_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: item_option,
+                kind: hir::PatternKind::Variant {
+                    enum_id: option_id,
+                    variant: 0,
+                    fields: Vec::new(),
+                },
+                span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Block(Block {
+                stmts: vec![Stmt::Assign {
+                    place: Expr { ty: bool_ty, kind: ExprKind::Local(done_local), span },
+                    value: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+                }],
+                span,
+            }),
+            span,
+        };
+
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+
+        let loop_body = Block {
+            stmts: vec![Stmt::Expr(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Match {
+                    scrutinee: Box::new(call),
+                    arms: vec![some_arm, none_arm],
+                },
+                span,
+            })],
+            span,
+        };
+        let condition = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Unary {
+                op: UnOp::Not,
+                operand: Box::new(Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Local(done_local),
+                    span,
+                }),
+            },
+            span,
+        };
+
+        Some(Stmt::Block(Block {
+            stmts: vec![
+                Stmt::Let { local: it_local, init: Some(iterable) },
+                Stmt::Let {
+                    local: done_local,
+                    init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }),
+                },
+                Stmt::While { cond: condition, body: loop_body, else_block },
+            ],
+            span,
+        }))
     }
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt) -> Stmt {
@@ -2951,6 +3446,20 @@ impl<'a> Checker<'a> {
                 return self.synth_variant(id, *name, args, span);
             }
         }
+        // `[TYP-18]` — `f[i32](x)` names the instantiation explicitly, which
+        // parses as a call on an index.
+        let (callee, explicit): (&ast::Expr, Vec<Ty>) = match &callee.kind {
+            ast::ExprKind::IndexOrInstantiate { base, args }
+                if matches!(base.kind, ast::ExprKind::Path { .. }) =>
+            {
+                let tys = args
+                    .iter()
+                    .map(|a| self.type_from_expr(a))
+                    .collect::<Vec<Ty>>();
+                (base.as_ref(), tys)
+            }
+            _ => (callee, Vec::new()),
+        };
         let ast::ExprKind::Path { segments } = &callee.kind else {
             self.error(codes::E1010, span, "only direct calls are supported in this phase");
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -3036,6 +3545,13 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
+        // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
+        // arguments say what its parameters are, and the instance gets its own
+        // symbol.
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_call(def, name, args, explicit, span);
+        }
+
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -3052,6 +3568,218 @@ impl<'a> Checker<'a> {
             .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
             .collect();
         Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+    }
+
+    /// `f[i32]` writes its type argument in expression position, so the
+    /// argument arrives as an expression and has to be read back as a type.
+    fn type_from_expr(&mut self, expr: &ast::Expr) -> Ty {
+        let ast::ExprKind::Path { segments } = &expr.kind else {
+            self.error(codes::E1010, expr.span, "expected a type argument");
+            return self.common.error;
+        };
+        let ty = ast::TypeExpr {
+            id: ast::NodeId(0),
+            kind: ast::TypeKind::Path {
+                segments: segments.clone(),
+                args: Vec::new(),
+            },
+            span: expr.span,
+        };
+        self.resolve_type(&ty)
+    }
+
+    /// `[TYP-16]`, `[TYP-18]` — a call to a generic function. The parameters
+    /// are inferred from the arguments (or given explicitly), the bounds are
+    /// checked, and the instantiation gets its own `DefId` and symbol.
+    fn synth_generic_call(
+        &mut self,
+        def: DefId,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: Vec<Ty>,
+        span: Span,
+    ) -> Expr {
+        let generics = self.signatures[def.0 as usize].generics.clone();
+        let declared: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        let ret = self.signatures[def.0 as usize].ret;
+
+        if args.len() != declared.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {} arguments, found {}", declared.len(), args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        // Explicit arguments come first; the rest are inferred by unifying
+        // each declared parameter type with what the argument actually is.
+        let mut solved: Vec<Option<Ty>> = vec![None; generics.len()];
+        for (slot, ty) in explicit.iter().enumerate() {
+            if slot < solved.len() {
+                solved[slot] = Some(*ty);
+            }
+        }
+        let mut checked_args: Vec<Expr> = Vec::new();
+        for (arg, &(param_ty, _)) in args.iter().zip(declared.iter()) {
+            let value = self.synth_committed(&arg.value);
+            if !self.types.unify(param_ty, value.ty, &mut solved) {
+                let want = self.types.display(param_ty);
+                let got = self.types.display(value.ty);
+                self.error(
+                    codes::E2020,
+                    arg.value.span,
+                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                );
+            }
+            checked_args.push(value);
+        }
+
+        // `[TYP-18]` — a parameter no argument mentions must be written out.
+        let mut substitution = Vec::new();
+        for (index, param) in generics.iter().enumerate() {
+            match solved[index] {
+                Some(ty) => substitution.push(ty),
+                None => {
+                    self.error(
+                        codes::E2060,
+                        span,
+                        format!(
+                            "cannot tell what `{}` is here; write it out, as `{name}[T](...)`",
+                            param.name
+                        ),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+            }
+        }
+
+        // `[TYP-17]` — every bound must actually be implemented.
+        for (param, &ty) in generics.iter().zip(substitution.iter()) {
+            for bound in &param.bounds {
+                if !self.implements(ty, *bound) {
+                    let shown = self.types.display(ty);
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
+                    );
+                }
+            }
+        }
+
+        // Re-check the arguments against the substituted parameter types, so
+        // an untyped literal adopts the right one and a mismatch is reported
+        // where it happens.
+        let instance = self.instantiate(def, &substitution, name, span);
+        let concrete: Vec<(Ty, Mode)> = declared
+            .iter()
+            .map(|&(ty, mode)| (self.types.substitute(ty, &substitution), mode))
+            .collect();
+        let checked = args
+            .iter()
+            .zip(concrete.iter())
+            .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
+            .collect();
+        let ret = self.types.substitute(ret, &substitution);
+        let _ = checked_args;
+        Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
+    }
+
+    /// `[IFC-4]` — replace every associated type in `ty` with what `owner`
+    /// declared it to be. A name the owner never declared is left alone; the
+    /// implementation check reports that separately.
+    fn resolve_assoc(&mut self, ty: Ty, owner: Ty) -> Ty {
+        match self.types.kind(ty).clone() {
+            TyKind::Assoc { name } => {
+                self.assoc_values.get(&(owner, name)).copied().unwrap_or(ty)
+            }
+            TyKind::Ref { mutable, inner } => {
+                let inner = self.resolve_assoc(inner, owner);
+                self.types.intern(TyKind::Ref { mutable, inner })
+            }
+            TyKind::Ptr { mutable, inner } => {
+                let inner = self.resolve_assoc(inner, owner);
+                self.types.intern(TyKind::Ptr { mutable, inner })
+            }
+            TyKind::Vec { elem } => {
+                let elem = self.resolve_assoc(elem, owner);
+                self.types.intern(TyKind::Vec { elem })
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.resolve_assoc(elem, owner);
+                self.types.intern(TyKind::Array { elem, len })
+            }
+            TyKind::Tuple(items) => {
+                let items: Vec<Ty> =
+                    items.iter().map(|&t| self.resolve_assoc(t, owner)).collect();
+                self.types.intern(TyKind::Tuple(items))
+            }
+            // A synthesised `Option[Self.Item]` is a distinct enum per `Item`,
+            // so it has to be rebuilt rather than patched.
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(id);
+                if !def.name.as_str().starts_with("Option_") {
+                    return ty;
+                }
+                let payload = def.variants[1].fields[0].ty;
+                let resolved = self.resolve_assoc(payload, owner);
+                if resolved == payload {
+                    return ty;
+                }
+                self.option_of(resolved)
+            }
+            _ => ty,
+        }
+    }
+
+    /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
+    fn implements(&self, ty: Ty, interface: Symbol) -> bool {
+        if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
+            return true;
+        }
+        // A bound naming an interface nothing declares cannot be satisfied;
+        // the declaration site already reported that.
+        !self.interfaces.contains_key(&interface)
+    }
+
+    /// `[MONO-1]` — one `DefId` per (function, type arguments), created once
+    /// and named deterministically.
+    fn instantiate(
+        &mut self,
+        def: DefId,
+        args: &[Ty],
+        name: Symbol,
+        span: Span,
+    ) -> DefId {
+        let key = Instance { def, args: args.to_vec() };
+        if let Some(&existing) = self.instances.get(&key) {
+            return existing;
+        }
+        let generic = &self.signatures[def.0 as usize];
+        let params: Vec<(Symbol, Ty, Mode, Span)> = generic
+            .params
+            .iter()
+            .map(|(n, t, m, s)| (*n, *t, *m, *s))
+            .collect();
+        let ret = generic.ret;
+        let concrete_params = params
+            .into_iter()
+            .map(|(n, t, m, s)| (n, self.types.substitute(t, args), m, s))
+            .collect();
+        let concrete_ret = self.types.substitute(ret, args);
+
+        let instance = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature {
+            params: concrete_params,
+            ret: concrete_ret,
+            generics: Vec::new(),
+        });
+        self.instances.insert(key.clone(), instance);
+        self.pending.push((key, instance));
+        let _ = (name, span);
+        instance
     }
 
     /// The module an expression names, if it is a bare path bound by
@@ -3212,6 +3940,11 @@ impl<'a> Checker<'a> {
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
             return self.synth_vec_method(receiver, elem, name, args, span);
         }
+        // `[TYP-17]` — on a generic parameter, only what its bounds provide
+        // is permitted, and that is exactly what is looked up.
+        if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
+            return self.synth_bound_method(index, param, receiver, name, args, span);
+        }
         let Some(entry) = self.methods.get(&(receiver.ty, name.name)) else {
             let shown = self.types.display(receiver.ty);
             self.error(
@@ -3264,8 +3997,88 @@ impl<'a> Checker<'a> {
                 format!("`{}` takes {expected} arguments, found {}", name.name, args.len()),
             );
         }
+        // `[IFC-4]` — the receiver is concrete here, so an associated type in
+        // the signature resolves to what this type declared it to be.
+        let ret = self.resolve_assoc(ret, receiver.ty);
         let mut checked = vec![self.pass_receiver(receiver, receiver_mode, recv.span)];
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
+            checked.push(self.check_argument(&arg.value, param_ty, mode));
+        }
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+    }
+
+    /// `[TYP-17]` — a method call on a generic parameter. Only the interfaces
+    /// bounding it may provide the method; there is no duck typing, so a
+    /// missing bound is `E2040` with the bound that would fix it.
+    fn synth_bound_method(
+        &mut self,
+        index: u32,
+        param: Symbol,
+        receiver: Expr,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let bounds = self
+            .current_generics
+            .get(index as usize)
+            .map(|p| p.bounds.clone())
+            .unwrap_or_default();
+
+        let mut found: Option<(DefId, Mode, Symbol)> = None;
+        for bound in &bounds {
+            let Some(def) = self.interfaces.get(bound) else { continue };
+            if let Some((_, method, receiver_mode, _)) =
+                def.methods.iter().find(|(m, _, _, _)| *m == name.name)
+            {
+                // `[TYP-24]` — two bounds offering the same name is ambiguous.
+                if let Some((_, _, first)) = found {
+                    self.error(
+                        codes::E2070,
+                        name.span,
+                        format!("`{}` is offered by both `{first}` and `{bound}`", name.name),
+                    );
+                    break;
+                }
+                found = Some((*method, *receiver_mode, *bound));
+            }
+        }
+
+        let Some((def, receiver_mode, _)) = found else {
+            let candidates: Vec<Symbol> = self
+                .interfaces
+                .iter()
+                .filter(|(_, d)| d.methods.iter().any(|(m, _, _, _)| *m == name.name))
+                .map(|(name, _)| *name)
+                .collect();
+            let mut diagnostic = Diagnostic::error(
+                codes::E2040,
+                name.span,
+                format!("`{param}` has no method `{}`; its bounds do not provide one", name.name),
+            )
+            .note("inside a generic body only the bounds' operations are available [TYP-17]");
+            if let Some(bound) = candidates.first() {
+                diagnostic = diagnostic
+                    .help(format!("add the bound: `{param}: {bound}`"));
+            }
+            self.sink.emit(diagnostic);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+
+        let signature: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        let ret = self.signatures[def.0 as usize].ret;
+        // An interface declaration has no receiver in its parameter list, so
+        // every declared parameter is a written argument.
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {} arguments, found {}", name.name, signature.len(), args.len()),
+            );
+        }
+        let mut checked = vec![self.pass_receiver(receiver, receiver_mode, span)];
+        for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter()) {
             checked.push(self.check_argument(&arg.value, param_ty, mode));
         }
         Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }

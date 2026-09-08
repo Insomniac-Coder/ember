@@ -979,6 +979,10 @@ impl Emitter<'_> {
             // size travels with each runtime call instead of with the type.
             TyKind::Vec { .. } => "ember_vec".into(),
             TyKind::Fn { .. } => "void*".into(),
+            // A generic parameter never reaches the backend: monomorphisation
+            // substitutes it away, and a body still holding one was never
+            // instantiated.
+            TyKind::Param { .. } | TyKind::Assoc { .. } => "void*".into(),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit => "int32_t".into(),
         }
     }

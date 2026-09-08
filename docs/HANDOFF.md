@@ -3,9 +3,9 @@
 ## Start here
 
 **Phases 0 and 1 of nine are complete. Phase 2 is in progress.** All seven of
-Phase 1's blocks are done. Phase 2's first block — moves, drops and drop
-flags — is done; generics, iterators, the borrow checker, closures and arenas
-are not started.
+Phase 1's blocks are done. Phase 2's blocks A to C — moves, drops and drop
+flags, generics, and iterators — are done; the borrow checker, closures and
+arenas are not started, and the collections in Ember are blocked on them.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
 (the nine owner decisions) before touching anything. `docs/spec-errata.md`
@@ -17,7 +17,7 @@ ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`** — all of Phase 1, pushed |
+| Working branch | **`phase-1-core-language`** — all of Phase 1 and Phase 2 blocks A-C, pushed |
 | Tests | `cargo test --workspace` → **151 passed, 0 failed** |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
 
@@ -460,9 +460,9 @@ and arenas. Split the same way Phase 1 was:
 | | Block | State |
 |---|---|---|
 | **A** | moves, `Copy`, drop elaboration, drop flags, `E3040` | **done** |
-| B | generics with bounds, monomorphisation, associated types | not started |
-| C | `Iterator`/`Iterable` and the adaptors; `for` over anything | not started |
-| D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | not started |
+| **B** | generics with bounds, monomorphisation, associated types | **done** |
+| **C** | `Iterator` and `for` over anything | **done; the adaptor set is not written** |
+| D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | **blocked on G** — see below |
 | E | the NLL borrow checker (§4.7), two-phase borrows, `@view` | not started |
 | F | closures (`[CLO-*]`), `Callable`, `fn(A)->R` parameters | not started |
 | G | arenas, `unsafe`, raw pointers, `MaybeUninit`, `transmute` | not started |
@@ -496,6 +496,50 @@ runtime's own allocation counter reports 204 allocations and 204 frees over
 - The drop glue is written straight into the C rather than as a synthesised
   function: a struct drops its fields in reverse, an enum switches on its tag
   and drops the active variant's payload, an array drops its elements.
+
+### Blocks B and C: generics, bounds, associated types, `for`
+
+- **A generic body is checked once, with its parameters opaque** (`TyKind::Param`),
+  which is what `[TYP-17]` demands: only what the bounds provide is available,
+  and there is no duck typing. `a.area()` inside `fn f[T]` is an error even
+  when every caller happens to pass something with an `area` — and the
+  diagnostic names the bound that would fix it (`help: add the bound: T: Shape`).
+- **Nothing is emitted for the generic body itself.** Each call instantiates
+  it: the arguments are unified against the declared parameter types
+  (`[TYP-18]`), the bounds are checked, and the body is re-checked with the
+  parameters bound to the concrete types, producing its own `DefId` and symbol
+  (`[MONO-1]`). Instantiations are cached by `(DefId, args)` and drained from a
+  queue, because instantiating one can reach another.
+- Errors from an instantiation go to a **discarded sink** — the generic body
+  was already checked once, and reporting the same mistake per instantiation
+  would bury it.
+- `f[i32](x)` parses as a call on an index, which is where explicit
+  instantiation is picked up. `[TYP-18]` requires it when no argument mentions
+  the parameter, and that is `E2060` with the shape to write.
+- **`[IFC-4]` associated types** are `TyKind::Assoc { name }`, in scope while an
+  interface declaration is read and resolved once the receiver is concrete
+  through `assoc_values[(type, name)]`. That is what lets `Iterator` say
+  `fn next(mut self) -> Option[Item]` and an implementation say `type Item = i32`.
+- **`[CTL-1]`'s `for`** now has three shapes: a range is still a counted loop
+  (`[CTL-3]`); an `Array[T]` is a counted loop over its indices, so iterating a
+  collection also costs no iterator object; anything else is driven through
+  `next()`. Exhaustion ends the loop through its condition rather than a
+  `break`, so `[CTL-4]`'s `else` still tells the two apart.
+
+**Not done in B and C:** const generics (`E1010` with a clear message); generic
+structs and enums — only functions are parameterised, so `Pair[A, B]` is not
+yet writable; generic interfaces (`Add[Rhs]`); the `Iterator` adaptor set
+(`map`, `filter`, …), which needs closures — block F.
+
+### Block D is blocked on block G
+
+`Array`, `Span`, `MutSpan`, `Box` and `Map` cannot be written in Ember until
+raw pointers, `MaybeUninit` and `unsafe` exist, which is block G. Generics are
+in place, so the type signatures are now expressible; the bodies are not. **Do
+G before D.**
+
+What D was worth in the meantime is delivered: `for x in xs` over an `Array[T]`
+works, and it is a counted loop rather than an iterator object.
 
 **Not done in this block:** partial moves (moving one field out of a struct)
 are not tracked — only whole locals; `mem.take`/`replace`/`swap`/`forget`
