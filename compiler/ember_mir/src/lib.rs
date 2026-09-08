@@ -298,15 +298,17 @@ pub enum AssertKind {
 }
 
 impl AssertKind {
-    /// The `ember_rt` function a failure calls.
-    pub fn runtime_entry(&self) -> &'static str {
-        match self {
-            AssertKind::Overflow(_) => "ember_panic_overflow",
-            AssertKind::DivisionByZero => "ember_panic_div_zero",
-            AssertKind::SignedDivisionOverflow => "ember_panic_overflow",
-            AssertKind::ShiftTooLarge => "ember_panic_overflow",
-            AssertKind::Bounds { .. } => "ember_panic_bounds",
-        }
+    /// The runtime function a failure calls. `[RT-5]` — the prefix comes
+    /// from `ember_branding`, so it is spelled once in the workspace.
+    pub fn runtime_entry(&self) -> String {
+        let name = match self {
+            AssertKind::Overflow(_) => "panic_overflow",
+            AssertKind::DivisionByZero => "panic_div_zero",
+            AssertKind::SignedDivisionOverflow => "panic_overflow",
+            AssertKind::ShiftTooLarge => "panic_overflow",
+            AssertKind::Bounds { .. } => "panic_bounds",
+        };
+        ember_branding::runtime(name)
     }
 }
 

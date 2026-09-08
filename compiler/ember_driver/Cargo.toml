@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ember_branding.workspace = true
 ember_span.workspace = true
 ember_diag.workspace = true
 ember_lexer.workspace = true

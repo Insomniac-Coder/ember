@@ -20,6 +20,16 @@
 extern "C" {
 #endif
 
+/* [RT-5] The symbol prefix, defined in exactly one place on the C side. The
+ * compiler holds the same constant once, in ember_branding, and
+ * tools/check_branding.py fails CI if either is spelled anywhere else.
+ *
+ * The declarations below carry literal identifiers rather than macro
+ * concatenations, because [RT-5] makes this header the interface document C
+ * embedders read: `ember_alloc` must be greppable, and
+ * `EMBER_SYM(alloc)` would not be. */
+#define EMBER_SYMBOL_PREFIX ember
+
 /* The ABI version macro of Part XVIII §9. Bumped when anything below changes
  * shape; ember_rt_abi_version() reports what the linked library was built as. */
 #define EMBER_RT_ABI 1

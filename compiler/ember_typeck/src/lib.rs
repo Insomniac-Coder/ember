@@ -2291,7 +2291,7 @@ impl<'a> Checker<'a> {
         Function {
             def,
             name,
-            symbol: format!("em_{}__{}", name.as_str().replace('.', "_"), def.0),
+            symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -5173,7 +5173,7 @@ fn method_symbol(owner: &str, name: Symbol) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    format!("em_{}_{name}", owner.trim_matches('_'))
+    ember_branding::mangled(&format!("{}_{name}", owner.trim_matches('_')))
 }
 
 /// The name of an interface written in an `implements` list or a supertrait
@@ -5254,8 +5254,8 @@ fn literal_int(expr: &ast::Expr) -> Option<i128> {
 fn mangle(name: Symbol, is_main: bool) -> String {
     if is_main {
         // The C entry point calls this; `[MNG-2]` reserves the plain name.
-        return "em_main".to_string();
+        return ember_branding::mangled("main");
     }
     // A qualified name carries dots, which C does not allow in an identifier.
-    format!("em_{}", name.as_str().replace('.', "_"))
+    ember_branding::mangled(name.as_str())
 }

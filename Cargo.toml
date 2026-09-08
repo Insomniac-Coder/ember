@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "compiler/ember_branding",
     "compiler/ember_span",
     "compiler/ember_diag",
     "compiler/ember_lexer",
@@ -25,6 +26,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Insomniac-Coder/ember"
 
 [workspace.dependencies]
+ember_branding = { path = "compiler/ember_branding" }
 ember_span = { path = "compiler/ember_span" }
 ember_diag = { path = "compiler/ember_diag" }
 ember_lexer = { path = "compiler/ember_lexer" }

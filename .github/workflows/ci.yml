@@ -61,6 +61,11 @@ jobs:
       - name: rule and error-code index
         run: python tools/rule_index.py
 
+      # `[RT-5]`, `[MAN-4]`, `[MNG-5]` — the symbol prefix, CLI name, manifest
+      # name and extensions are spelled in `ember_branding` and nowhere else.
+      - name: no hard-coded project names
+        run: python tools/check_branding.py
+
       # `[TST-7]` — every fenced `ember` block in Parts I-XVII and Appendix A
       # passes `ember check --syntax-only`, against a recorded baseline of the
       # fragments that cannot yet parse as compilation units.

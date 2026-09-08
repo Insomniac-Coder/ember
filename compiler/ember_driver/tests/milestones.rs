@@ -266,7 +266,7 @@ fn check_directory(name: &str) -> usize {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("the test directory is readable")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "em"))
+        .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
         .collect();
     entries.sort();
     for path in entries {
@@ -323,7 +323,7 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
             .expect("the directory is readable")
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == "em"))
+            .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
             .collect();
         entries.sort();
         for path in entries {

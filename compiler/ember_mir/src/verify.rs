@@ -182,7 +182,7 @@ mod tests {
     fn body_with(stmts: Vec<Stmt>, terminator_span: Span) -> Body {
         Body {
             name: "t".to_string(),
-            symbol: "em_t".to_string(),
+            symbol: ember_branding::mangled("t"),
             locals: vec![LocalDecl {
                 ty: ember_types::TypeTable::new().1.void,
                 name: None,

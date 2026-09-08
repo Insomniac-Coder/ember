@@ -286,11 +286,11 @@ fn module_file(root: &Path, segments: &[String]) -> Option<std::path::PathBuf> {
     for segment in segments {
         direct.push(segment);
     }
-    let flat = direct.with_extension("em");
+    let flat = direct.with_extension(ember_branding::SOURCE_EXT);
     if flat.is_file() {
         return Some(flat);
     }
-    let nested = direct.join("mod.em");
+    let nested = direct.join(ember_branding::source_file("mod"));
     if nested.is_file() {
         return Some(nested);
     }
@@ -409,7 +409,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let exe = layout.bin.join(exe_name);
 
     let toolchain = Toolchain::detect(options.cc.as_deref()).map_err(|e| e.to_string())?;
-    let sources = vec![c_path.clone(), runtime.join("src/ember_rt.c")];
+    let runtime_source = format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX);
+    let sources = vec![c_path.clone(), runtime.join(runtime_source)];
     let includes = vec![runtime.join("include")];
     ember_build::compile_and_link(
         &toolchain,
@@ -448,20 +449,23 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 fn runtime_dir() -> Result<PathBuf, String> {
     let from_env = std::env::var_os("EMBER_RUNTIME_DIR").map(PathBuf::from);
     if let Some(dir) = from_env {
-        if dir.join("include/ember_rt.h").is_file() {
+        if dir.join(format!("include/{}", ember_branding::runtime_header())).is_file() {
             return Ok(dir);
         }
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut dir = exe.parent().map(Path::to_path_buf);
     while let Some(candidate) = dir {
-        let runtime = candidate.join("runtime/ember_rt");
-        if runtime.join("include/ember_rt.h").is_file() {
+        let runtime = candidate.join(format!("runtime/{}_rt", ember_branding::SYMBOL_PREFIX));
+        if runtime.join(format!("include/{}", ember_branding::runtime_header())).is_file() {
             return Ok(runtime);
         }
         dir = candidate.parent().map(Path::to_path_buf);
     }
-    Err("cannot find the ember_rt sources; set EMBER_RUNTIME_DIR".to_string())
+    Err(format!(
+        "cannot find the {}_rt sources; set EMBER_RUNTIME_DIR",
+        ember_branding::SYMBOL_PREFIX
+    ))
 }
 
 /// `[TYP-8]`, and Part XIX §2's profile table: `debug` panics on overflow,

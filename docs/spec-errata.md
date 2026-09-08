@@ -28,6 +28,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-016 | Part IV §8 interface list, `[GRM-18]`, `[TST-7]` | **decided** — block rewritten in indented form |
 | ERR-017 | `[LEX-15]`, Part II §4, Part IV §8 `From` | **decided** — `from` is contextual; reserved set back to 48 |
 | ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
+| ERR-019 | `[RT-5]` | **decided** — the runtime's own two files are exempt |
 
 ---
 
@@ -783,3 +784,41 @@ Appendix A, **14 parse and 24 do not**. The 24 are fragments — bare statements
 at file level, which `[GRM-2]` forbids — and are recorded in
 `tools/spec_check_baseline.json` so the gate fails only on new breakage.
 Shrinking that baseline is what `[TST-7]` exists to drive.
+
+---
+
+## ERR-019 — `[RT-5]` forbids the runtime from spelling its own symbols
+
+**Status: decided, 2026-09-08. The runtime's own two files are exempt.**
+
+**Where.** `[RT-5]` says: "No file in the compiler, **runtime**, CMake module,
+examples or test corpus may hard-code the symbol prefix …". Its next two
+sentences say the opposite for the runtime specifically: "`ember_rt.h` is a
+**generation output** carrying literal identifiers, not a header of macro
+concatenations — it is the interface document C embedders read, and it must
+stay readable."
+
+Both cannot hold. `ember_rt.h` declares `ember_alloc`, `ember_retain` and
+seventy more; `ember_rt.c` defines exactly those. Routing them through a macro
+is the thing the second sentence forbids, and it would make the header
+ungreppable for the embedders it is written for.
+
+**Decision.** `runtime/ember_rt/include/ember_rt.h` and
+`runtime/ember_rt/src/ember_rt.c` are exempt from `tools/check_branding.py`,
+and the prefix is defined once on the C side as `EMBER_SYMBOL_PREFIX` in the
+header. The compiler holds the same constant once, in `ember_branding`. The
+two definitions must agree; nothing mechanical enforces that today, and the
+first symbol that disagrees is a link error — worth a build-time assertion when
+the runtime gains a generation step.
+
+**What the rule buys elsewhere.** Occurrences outside those two files went from
+96 to 13. The 13 are fixture file names inside tests (`"test.em"`,
+`"src/main.em"`, milestone paths), recorded in
+`tools/check_branding_baseline.json`. They are left because a rename breaks
+them *loudly* — a failing test is the opposite of the silent link error the
+rule exists to prevent.
+
+**Proof the refactor changed nothing.** The emitted C for all 17 test programs
+is byte-for-byte identical before and after. That check is also what caught the
+first attempt: `{RT}` in a string passed to `line()` rather than to `format!`
+emitted the braces literally, and no test would have noticed.

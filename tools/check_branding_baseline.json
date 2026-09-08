@@ -1,0 +1,15 @@
+[
+  "compiler/ember_diag/src/lib.rs: \"src/main.em\",",
+  "compiler/ember_diag/src/lib.rs: assert!(text.contains(\"--> src/main.em:5:11\"), \"{text}\");",
+  "compiler/ember_diag/src/lib.rs: let d = Diagnostic::error(codes::E9001, Span::DUMMY, \"unknown key `bakcend` in ember.toml\"",
+  "compiler/ember_driver/tests/milestones.rs: &[\"build\", \"tests/milestones/m1_value_code_has_no_runtime_cost.em\", \"--emit\", \"c\"],",
+  "compiler/ember_driver/tests/milestones.rs: &[\"run\", \"examples/hello.em\", \"--out-dir\", &out_dir.to_string_lossy()],",
+  "compiler/ember_driver/tests/milestones.rs: assert_eq!(parsed.assert_c, vec![(false, \"ember_alloc\".to_string())]);",
+  "compiler/ember_driver/tests/milestones.rs: assert_eq!(run.exit, 0, \"hello.em failed:\\n{}\", run.stderr);",
+  "compiler/ember_driver/tests/milestones.rs: let scratch = std::env::temp_dir().join(\"ember-fmt-once.em\");",
+  "compiler/ember_lexer/tests/lexing.rs: let file = map.add(\"test.em\", text.clone());",
+  "compiler/ember_parser/tests/parsing.rs: let file = map.add(\"test.em\", text.clone());",
+  "compiler/ember_span/src/lib.rs: let a = map.add(\"x.em\", \"one\");",
+  "compiler/ember_span/src/lib.rs: let b = map.add(\"x.em\", \"two\");",
+  "compiler/ember_span/src/lib.rs: let id = map.add(\"test.em\", text);"
+]

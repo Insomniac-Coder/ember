@@ -120,7 +120,8 @@ the new document. All of it is green.
 | `E0006` — `#! language` is checked; `--syntax-only` and flags before the file | `[MOD-6]`, `[CLI-9]` |
 | every MIR statement and terminator must carry a source span, checked by the verifier | `[CG-C-8]` |
 | `from` made contextual so `interface From[T]` can declare `fn from(…)` | `[LEX-15]`, ERR-017 |
-| `tools/rule_index.py`, `tools/spec_check.py`, `tools/split_spec.py --check`, CI workflow | `[XXII.4]`, `[TST-4]`, `[TST-7]`, Phase 0 |
+| the `branding` module: the symbol prefix, CLI name, manifest and extensions are spelled once | `[RT-5]`, `[MAN-4]`, `[MNG-5]` |
+| `tools/rule_index.py`, `tools/spec_check.py`, `tools/check_branding.py`, `tools/split_spec.py --check`, CI workflow | `[XXII.4]`, `[TST-4]`, `[TST-7]`, `[RT-5]`, Phase 0 |
 
 **Three defects found by writing the tests, not by reading:**
 
@@ -145,16 +146,23 @@ The other 24 are fragments — bare statements at file level, which `[GRM-2]`
 forbids — and are baselined in `tools/spec_check_baseline.json`. Shrinking that
 number is what the gate exists to drive.
 
-**Still open from v0.5, in rough order of leverage:** the `branding` module and
-`tools/check_branding.py` (`[RT-5]`, `[MAN-4]`, `[MNG-5]`); `L1001`/`L1002`
-unused-binding lints emitted by `build` and `check` (`[LNT-1]`..`[LNT-3]`);
-`tools/spec_check.py` and the `docs/spec-source/appendix-a.em` fixture
-(`[TST-6]`, `[TST-7]`); `[GRM-8a]`..`[GRM-8c]` type arguments in expression
-position; `[GRM-17]`/`[LEX-6a]` closures inside brackets.
+**The branding refactor is done and was proved by construction.** Hard-coded
+occurrences went from 96 to 13, and the emitted C for all 17 test programs is
+byte-for-byte identical before and after — which is also what caught the first
+attempt, where `{RT}` in a string passed to `line()` rather than `format!`
+emitted the braces literally and no test would have noticed. The 13 that remain
+are fixture file names inside tests, baselined; the runtime's own two files are
+exempt for the reason ERR-019 records.
+
+**Still open from v0.5, in rough order of leverage:** the
+`docs/spec-source/appendix-a.em` fixture (`[TST-6]`); `[GRM-8a]`..`[GRM-8c]`
+type arguments in expression position; `[GRM-17]`/`[LEX-6a]` closures inside
+brackets; and shrinking `[TST-7]`'s 24-block baseline, which needs the grammar
+gaps those fragments expose.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-before touching anything. `docs/spec-errata.md` now lists **eighteen** entries;
-ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-018 are the
+before touching anything. `docs/spec-errata.md` now lists **nineteen** entries;
+ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-019 are the
 defects found in v0.5 itself.
 
 | | |
@@ -162,7 +170,7 @@ defects found in v0.5 itself.
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `60f3269` on `origin/main` — everything below, merged 2026-09-08 |
 | Working branch | `phase-1-core-language`, now identical to `main`. The owner merged it on 2026-09-08; work from here can go on `main` or a new branch |
-| Tests | `cargo test --workspace` → **157 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
+| Tests | `cargo test --workspace` → **159 passed, 0 failed**; 35 `.em` programs under `tests/`. The count of Rust tests does not move when `.em` files are added: one `#[test]` walks a whole directory |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3` |
 
 ## Hard constraint
