@@ -17,7 +17,7 @@ cannot go in `std` at all, because `[STD-1]` holds `std.core`, `std.mem`,
 
 | | |
 |---|---|
-| Total | 31 tasks — 18 must-have, 13 nice-to-have |
+| Total | 32 tasks — 20 must-have, 12 nice-to-have |
 | Started | none |
 | Blocked on phases | all |
 
@@ -47,12 +47,13 @@ The ones a systems language is not credible without.
 | **LIB-16** | `compress` — zlib, zstd, lz4 | 5 | C FFI with an Ember streaming interface |
 | **LIB-17** | `proptest` — property testing with shrinking | 4 | generative testing over the conformance corpus |
 | **LIB-18** | `tracing` — span instrumentation | 4 | feeds `std.debug`'s profiler zones |
+| **LIB-19** | `bench` — bootstrap confidence intervals | 4 | implements `[BEN-1]`..`[BEN-7]` properly, so `ember bench --compare` stops approximating |
+| **LIB-32** | `glob` and `path-match` | 4 | file tooling; `@noalloc` matching against a caller's buffer |
 
 ## Nice to have
 
 | Id | Task | Gate | Done when |
 |---|---|---|---|
-| **LIB-19** | `bench` — bootstrap confidence intervals | 4 | implements `[BEN-1]`..`[BEN-7]` properly, so `ember bench --compare` stops approximating |
 | **LIB-20** | `sqlite` | 5 | C FFI; prepared statements and a transaction guard that is `@must_drop` |
 | **LIB-21** | `image` — PNG, JPEG, KTX2, DDS | 5 | decodes into a `std.gpu` format without a copy |
 | **LIB-22** | `audio` — miniaudio wrapper | 5 | miniaudio is already a Phase 5 FFI fixture |
