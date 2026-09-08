@@ -1,5 +1,82 @@
 # Ember — handoff
 
+## Read this before anything else: a new specification is coming
+
+**The owner is supplying a new design document, v0.5.** Said on 2026-09-08,
+after the v0.2 memory-safety amendment had been merged: it "makes some
+substantial changes to the design so a few areas will have to be revisited."
+
+**It has not arrived yet.** Nothing in this file describes it, because nothing
+about it is known beyond that sentence. When it arrives, apply it before
+writing any more Phase 2 code — the procedure and the things it must not
+overwrite are in "Applying a new specification version" below.
+
+**Do not start block E, F, I or the rest of G while waiting.** The owner did
+not say to stop, so this is judgement rather than an instruction, and an
+explicit request for work overrides it. The reasoning: the NLL borrow checker
+is the largest single piece left in Phase 2, the v0.2 amendment already changed
+what it has to produce (`[DIA-7]`'s classifier needs the borrow checker's own
+loan and region tables), and a v0.5 that revisits ownership at all would mean
+building it a second time. Waiting costs nothing; the work is committed and
+pushed.
+
+**One question is with the owner and unanswered:** is v0.5 the *whole*
+document, or another partial replacement? v0.2 was one 2,671-line file;
+the 2026-09-08 amendment replaced six parts wholesale and left the rest alone.
+The answer decides whether `docs/spec/` is regenerated or patched.
+
+**Everything is committed and pushed** (`58cb057` on
+`origin/phase-1-core-language`), so a rewrite costs time and nothing else.
+
+### Where the owner's source documents live
+
+Outside the repository, in `C:\Users\ism19\Downloads\`:
+
+| File | What it is |
+|---|---|
+| `Ember_Design_Document_v0.2_Implementation_Spec.md` | the original 2,671-line specification; `docs/spec/` is this, split |
+| `Ember_Updated_Parts_Memory_Safety.md` | the 2026-09-08 amendment: Parts IX, XI, XV, XIX, XX, XXII |
+| `Ember_Part_XIX_Toolchain.md` | an earlier Part XIX the owner withdrew — **superseded, do not apply** |
+
+None of them is in the repository. If that folder is cleared, the ability to
+re-split or to diff `docs/spec/` against what the owner actually sent goes with
+it. Worth proposing to the owner that they be vendored under `docs/spec/source/`;
+not done unasked, because what belongs in the repository is their call.
+
+## Applying a new specification version
+
+The procedure that worked for the 2026-09-08 amendment, in order:
+
+1. **Split the owner's file per part** into a scratch directory —
+   `awk` on `^# Part ` / `^# Appendix ` headings, or `tools/split_spec.py` if
+   the document is complete. Never overwrite `docs/spec/` from it directly.
+2. **Diff each part against the committed one** before changing anything,
+   ignoring blank lines and trailing space. The diff is the specification of
+   the work; read all of it before applying any of it.
+3. **Apply, then diff again** and confirm the only remaining differences are
+   ones you can name.
+4. **Record every difference you deliberately kept** in `docs/spec-errata.md`,
+   against the entry that decided it. A future reader will diff the owner's
+   file against `docs/spec/` and must find an explanation for each one.
+5. **Watch the line endings.** `.gitattributes` pins LF, `core.autocrlf` is
+   `true` locally, and most working-tree files are CRLF while every committed
+   blob is LF. A scripted edit can leave a file *mixed*, which is the state
+   that makes later scripted edits fail silently. Normalise anything you touch
+   and check `git diff --stat` shows only real changes.
+
+**Owner rulings a new document will probably contradict, because they postdate
+it.** Each is *decided*; keep the ruling, not the document, and say so in the
+errata:
+
+- **`#$`, not `#!`, for test annotations** (ERR-006). `#!` is `[MOD-6]`'s
+  language directive and the lexer cannot tell them apart. Every `.em` file
+  under `tests/` uses `#$`, as do Part XIX §5 and Part XX §3's milestones.
+  `[TST-0]` and the `assert-c` annotation came in with it.
+- **`return` is a statement, so `Circle(r) => return ...` does not parse**
+  (ERR-008). Appendix A's `match` example is corrected to the `:` form.
+- **`E0102`/`E0103`/`E0104`**, not `E0010`/`E0011`/`E0020` (ERR-001).
+- **A doc comment that documents nothing is silent**, no `W0001` (ERR-007).
+
 ## Start here
 
 **Phases 0 and 1 of nine are complete. Phase 2 is in progress.** All seven of
@@ -24,7 +101,7 @@ ERR-005, ERR-006, ERR-007, ERR-008); the other three are still proposals.
 |---|---|
 | Repository | `https://github.com/Insomniac-Coder/ember.git` |
 | Pushed | `95f3269` on `origin/main` — all of Phase 0 |
-| Working branch | **`phase-1-core-language`** — all of Phase 1 and Phase 2 blocks A-C, pushed |
+| Working branch | **`phase-1-core-language`** — all of Phase 1, Phase 2 blocks A-C and G's core, pushed at `58cb057`. Not merged to `main`; the owner has not decided when. |
 | Tests | `cargo test --workspace` → **151 passed, 0 failed**; 31 `.em` programs under `tests/` |
 | Build | warning-free; the emitted C is warning-free under `clang -Wall -Wextra` and MSVC `/W3`, which is what `ember_build` passes and what `[CG-C-1]` asks for |
 
