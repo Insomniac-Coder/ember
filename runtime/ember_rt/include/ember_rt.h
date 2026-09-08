@@ -3,10 +3,9 @@
  * [RT-1] No dependencies beyond libc and the OS.
  * [RT-2] No global constructors; ember_rt_init is explicit and idempotent.
  *
- * Phase 0 provides allocation, panics and printing. Objects, reference
- * counting, exclusivity, threads and arenas arrive with the phases that give
- * them meaning. The declarations that Part XVIII §9 fixes are written here as
- * they will be, so that the ABI does not move under callers later.
+ * Objects, reference counting, exclusivity, threads and arenas arrive with the
+ * phases that give them meaning. The declarations Part XVIII §9 fixes are
+ * written here as they will be, so the ABI does not move under callers later.
  */
 
 #ifndef EMBER_RT_H
@@ -61,6 +60,168 @@ typedef struct ember_loc {
     uint32_t column;
 } ember_loc;
 
+static inline ember_loc ember_loc_at(const char* file, uint32_t line, uint32_t column) {
+    ember_loc loc;
+    loc.file = file;
+    loc.line = line;
+    loc.column = column;
+    return loc;
+}
+
+static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0); }
+
+/* -- checked arithmetic ------------------------------------------------------
+ *
+ * [TYP-8] Under the `panic` overflow policy the compiler emits one of these per
+ * arithmetic operation and then asserts on the result. Each writes the
+ * two's-complement (wrapped) result whatever happens — so the destination is
+ * defined on both paths — and returns whether the true result was out of range.
+ *
+ * Clang and GCC have __builtin_*_overflow, which lowers to a single flag test.
+ * MSVC has no equivalent, so the fallbacks compute in a wider type and
+ * range-check. Both are exact; only the code size differs.
+ *
+ * Signed arithmetic goes through the unsigned type of the same width, because
+ * conversion is modular and signed overflow is undefined behaviour in C.
+ */
+
+#define EMBER_SMAX(BITS) ((int64_t)((((uint64_t)1) << ((BITS) - 1)) - 1))
+#define EMBER_SMIN(BITS) (-EMBER_SMAX(BITS) - 1)
+#define EMBER_UMAX(BITS) ((BITS) == 64 ? UINT64_MAX : ((((uint64_t)1) << (BITS)) - 1))
+
+#if defined(__GNUC__) || defined(__clang__)
+
+#define EMBER_CHECKED_OPS(SUFFIX, TYPE)                                      \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return __builtin_add_overflow(a, b, out);                            \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return __builtin_sub_overflow(a, b, out);                            \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return __builtin_mul_overflow(a, b, out);                            \
+    }
+
+#else
+
+/* Narrow signed types: compute in int64_t, which cannot itself overflow for
+ * operands of 32 bits or fewer, then range-check. */
+#define EMBER_CHECKED_OPS_SNARROW(SUFFIX, TYPE, BITS)                        \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        int64_t wide = (int64_t)a + (int64_t)b;                              \
+        *out = (TYPE)wide;                                                   \
+        return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        int64_t wide = (int64_t)a - (int64_t)b;                              \
+        *out = (TYPE)wide;                                                   \
+        return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        int64_t wide = (int64_t)a * (int64_t)b;                              \
+        *out = (TYPE)wide;                                                   \
+        return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
+    }
+
+#define EMBER_CHECKED_OPS_UNARROW(SUFFIX, TYPE, BITS)                        \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        uint64_t wide = (uint64_t)a + (uint64_t)b;                           \
+        *out = (TYPE)wide;                                                   \
+        return wide > EMBER_UMAX(BITS);                                      \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)((uint64_t)a - (uint64_t)b);                            \
+        return a < b;                                                        \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        uint64_t wide = (uint64_t)a * (uint64_t)b;                           \
+        *out = (TYPE)wide;                                                   \
+        return wide > EMBER_UMAX(BITS);                                      \
+    }
+
+/* 64-bit: nothing wider to compute in, so check the operands directly. */
+#define EMBER_CHECKED_OPS_S64(SUFFIX, TYPE)                                  \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)((uint64_t)a + (uint64_t)b);                            \
+        return (b > 0 && a > (TYPE)(INT64_MAX - b))                          \
+            || (b < 0 && a < (TYPE)(INT64_MIN - b));                         \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)((uint64_t)a - (uint64_t)b);                            \
+        return (b < 0 && a > (TYPE)(INT64_MAX + b))                          \
+            || (b > 0 && a < (TYPE)(INT64_MIN + b));                         \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)((uint64_t)a * (uint64_t)b);                            \
+        if (a == 0 || b == 0) { return false; }                              \
+        if (a == (TYPE)-1) { return b == (TYPE)INT64_MIN; }                  \
+        if (b == (TYPE)-1) { return a == (TYPE)INT64_MIN; }                  \
+        return (TYPE)(*out) / b != a;                                        \
+    }
+
+#define EMBER_CHECKED_OPS_U64(SUFFIX, TYPE)                                  \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)(a + b);                                                \
+        return *out < a;                                                     \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)(a - b);                                                \
+        return a < b;                                                        \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        *out = (TYPE)(a * b);                                                \
+        if (a == 0) { return false; }                                        \
+        return *out / a != b;                                                \
+    }
+
+#endif /* builtin overflow */
+
+#if defined(__GNUC__) || defined(__clang__)
+EMBER_CHECKED_OPS(i8, int8_t)
+EMBER_CHECKED_OPS(i16, int16_t)
+EMBER_CHECKED_OPS(i32, int32_t)
+EMBER_CHECKED_OPS(i64, int64_t)
+EMBER_CHECKED_OPS(isize, ptrdiff_t)
+EMBER_CHECKED_OPS(u8, uint8_t)
+EMBER_CHECKED_OPS(u16, uint16_t)
+EMBER_CHECKED_OPS(u32, uint32_t)
+EMBER_CHECKED_OPS(u64, uint64_t)
+EMBER_CHECKED_OPS(usize, size_t)
+#else
+EMBER_CHECKED_OPS_SNARROW(i8, int8_t, 8)
+EMBER_CHECKED_OPS_SNARROW(i16, int16_t, 16)
+EMBER_CHECKED_OPS_SNARROW(i32, int32_t, 32)
+EMBER_CHECKED_OPS_S64(i64, int64_t)
+EMBER_CHECKED_OPS_S64(isize, ptrdiff_t)
+EMBER_CHECKED_OPS_UNARROW(u8, uint8_t, 8)
+EMBER_CHECKED_OPS_UNARROW(u16, uint16_t, 16)
+EMBER_CHECKED_OPS_UNARROW(u32, uint32_t, 32)
+EMBER_CHECKED_OPS_U64(u64, uint64_t)
+EMBER_CHECKED_OPS_U64(usize, size_t)
+#endif
+
+/* Division. The compiler has already emitted the zero-divisor check, so the
+ * only thing left to report is T.MIN / -1, whose true result is not
+ * representable ([TYP-8]). Unsigned division cannot overflow and never gets
+ * here. */
+#define EMBER_CHECKED_DIV(SUFFIX, TYPE, MINVAL)                              \
+    static inline bool ember_ck_div_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = a; return true; } \
+        *out = (TYPE)(a / b);                                                \
+        return false;                                                        \
+    }                                                                        \
+    static inline bool ember_ck_rem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = 0; return true; } \
+        *out = (TYPE)(a % b);                                                \
+        return false;                                                        \
+    }
+
+EMBER_CHECKED_DIV(i8, int8_t, INT8_MIN)
+EMBER_CHECKED_DIV(i16, int16_t, INT16_MIN)
+EMBER_CHECKED_DIV(i32, int32_t, INT32_MIN)
+EMBER_CHECKED_DIV(i64, int64_t, INT64_MIN)
+EMBER_CHECKED_DIV(isize, ptrdiff_t, INT64_MIN)
+
 /* -- memory ---------------------------------------------------------------- */
 
 /* [HEAP-1] Every heap type allocates through these. ember_alloc never returns
@@ -83,9 +244,8 @@ void ember_backtrace_print(void);
 
 /* -- printing -------------------------------------------------------------- */
 
-/* Phase 0 has no `Display` interface, so the compiler picks a printer from the
- * argument's type. These are replaced by std.fmt in Phase 1; they stay for the
- * runtime's own diagnostics.
+/* Before `Display` exists the compiler picks a printer from the argument's
+ * type. std.fmt replaces these; they stay for the runtime's own diagnostics.
  *
  * [STD-2] println of a literal or a str does not allocate. */
 void ember_print_str(ember_str s);
@@ -106,8 +266,7 @@ void ember_println_char(uint32_t v);
 /* -- lifecycle and embedding ------------------------------------------------ */
 
 /* [FFI-27] The embedding API. A host may route allocation and logging into its
- * own systems; RageV's plan is cfg.log = its logger with the allocator left at
- * the default. */
+ * own systems. */
 typedef struct ember_rt_config {
     void* (*alloc)(size_t size, size_t align);
     void (*free)(void* p, size_t size, size_t align);
@@ -121,9 +280,7 @@ int ember_rt_init(const ember_rt_config* cfg);
 void ember_rt_shutdown(void);
 uint32_t ember_rt_abi_version(void);
 
-/* Per-thread attach. Idempotent and cheap after the first call ([FFI-22]).
- * Phase 0 is single-threaded; the entry points exist so that generated
- * trampolines can call them from the start. */
+/* Per-thread attach. Idempotent and cheap after the first call ([FFI-22]). */
 void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);
 

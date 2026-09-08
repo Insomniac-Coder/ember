@@ -6,7 +6,7 @@
 //! backend against HIR would mean writing it twice.
 
 use ember_span::Span;
-use ember_types::{StructId, Ty};
+use ember_types::{EnumId, StructId, Ty};
 
 pub mod lower;
 pub mod verify;
@@ -78,6 +78,9 @@ impl Body {
 pub struct BasicBlock {
     pub stmts: Vec<Stmt>,
     pub terminator: Terminator,
+    /// Where the terminator came from. A call, a branch condition and a loop
+    /// test are all reads that an analysis has to be able to point at.
+    pub terminator_span: Span,
 }
 
 /// A memory location: a local with a chain of projections.
@@ -97,6 +100,16 @@ impl Place {
         self
     }
 
+    pub fn index(mut self, local: LocalId) -> Place {
+        self.projection.push(Projection::Index(local));
+        self
+    }
+
+    pub fn downcast(mut self, variant: usize) -> Place {
+        self.projection.push(Projection::Downcast(variant));
+        self
+    }
+
     pub fn is_local(&self) -> bool {
         self.projection.is_empty()
     }
@@ -105,10 +118,15 @@ impl Place {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Projection {
     Field(usize),
-    /// Indexing by a local's value. Phase 2 adds the bounds `Assert`.
+    /// Indexing by a local's value, with the bounds `Assert` already lowered
+    /// beside it.
     Index(LocalId),
     ConstIndex(u64),
     Deref,
+    /// Read an enum place as one particular variant, so that `Field` after it
+    /// names that variant's payload. Only valid where the tag has already been
+    /// tested — `match` puts it after the `SwitchInt` that proved it.
+    Downcast(usize),
     /// An `SoA` column (`[SOA-2]`). Reserved; Phase 6 emits it.
     Column(usize),
 }
@@ -139,14 +157,28 @@ pub enum Rvalue {
     BinaryOp { op: BinOp, lhs: Operand, rhs: Operand },
     UnaryOp { op: UnOp, operand: Operand },
     Cast { kind: CastKind, operand: Operand, to: Ty },
-    /// Building a struct or tuple from its fields, in declaration order.
+    /// Building a struct, tuple or array from its elements, in order.
     Aggregate { kind: AggregateKind, operands: Vec<Operand> },
+    /// `[value; count]`. Kept apart from `Aggregate` so that a large array
+    /// stays one statement instead of `count` operands — `[0; 4096]` would
+    /// otherwise be four thousand entries in the IR and in the emitted C.
+    Repeat { value: Operand, count: u64 },
+    /// The tag of an enum value, as its repr integer. This is what `match`
+    /// switches on and what `as` on a unit-only enum reads (`[ENM-3]`).
+    Discriminant(Place),
+    /// The address of a place. A `mut` argument is passed this way, so the
+    /// callee writes through to the caller's variable.
+    Ref { place: Place, mutable: bool },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AggregateKind {
     Struct(StructId),
     Tuple,
+    Array,
+    /// One variant of an enum, with its payload in field order. The whole
+    /// value — tag and payload together — is built in one statement.
+    Enum(EnumId, usize),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -159,9 +191,29 @@ pub enum CastKind {
 
 pub use ember_hir::{BinOp, Builtin, UnOp};
 
+/// One statement, with the source location it came from.
 #[derive(Debug)]
-pub enum Stmt {
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
+}
+
+impl Stmt {
+    pub fn new(kind: StmtKind, span: Span) -> Stmt {
+        Stmt { kind, span }
+    }
+}
+
+#[derive(Debug)]
+pub enum StmtKind {
     Assign { place: Place, rvalue: Rvalue },
+    /// Arithmetic that reports whether it overflowed.
+    ///
+    /// Rust MIR models this as an rvalue producing a `(T, bool)` tuple. Here
+    /// it writes two places instead, which maps directly onto the C helper
+    /// `bool ember_ck_add_i32(a, b, &dest)` and needs no tuple support in the
+    /// backend. The `Assert` on `overflow` follows in the terminator.
+    CheckedBinaryOp { dest: Place, overflow: Place, op: BinOp, lhs: Operand, rhs: Operand },
     /// A local comes into scope. Drives `[DRP-2]`'s reverse-order drops and,
     /// from Phase 2, the borrow checker's loan-kill analysis.
     StorageLive(LocalId),
@@ -173,10 +225,59 @@ pub enum Stmt {
 pub enum Terminator {
     Goto(BasicBlockId),
     /// A conditional branch on an integer or boolean discriminant.
-    SwitchInt { discr: Operand, targets: Vec<(u128, BasicBlockId)>, otherwise: BasicBlockId },
+    /// Case values are signed: an enum discriminant may be negative
+    /// (`Forward = -1`), and rendering one through `u128` would print a huge
+    /// positive number into the emitted `switch`.
+    SwitchInt { discr: Operand, targets: Vec<(i128, BasicBlockId)>, otherwise: BasicBlockId },
     Return,
     Unreachable,
     Call { func: FuncRef, args: Vec<Operand>, dest: Place, next: BasicBlockId },
+    /// A runtime check. Control reaches `next` when `cond` equals `expected`;
+    /// otherwise the program panics with `msg`.
+    ///
+    /// Kept as a terminator rather than a statement so that the borrow checker
+    /// and the effect analysis both see the branch: a function containing one
+    /// carries the `Panic` effect (`[EFF-*]`).
+    Assert {
+        cond: Operand,
+        expected: bool,
+        msg: AssertKind,
+        next: BasicBlockId,
+        /// The operation being checked, so the panic names the right line.
+        span: Span,
+    },
+}
+
+/// What a failed [`Terminator::Assert`] panics about. Each maps to one
+/// `ember_panic_*` entry point in the runtime (Part XVIII §9).
+#[derive(Clone, Debug)]
+pub enum AssertKind {
+    /// `[TYP-8]` — an overflowing `+`, `-`, `*` or `<<` under
+    /// `OverflowPolicy::Panic`.
+    Overflow(BinOp),
+    /// `[TYP-8]` — `/` or `%` by zero. Always checked, whatever the policy.
+    DivisionByZero,
+    /// `[TYP-8]` — `T.MIN / -1`, whose true result is not representable.
+    /// Always checked.
+    SignedDivisionOverflow,
+    /// `[TYP-10]` — a shift amount at or past the type's width.
+    ShiftTooLarge,
+    /// Bounds. Phase 2 emits these; the shape is here so the backend needs no
+    /// change then.
+    Bounds { len: Operand, index: Operand },
+}
+
+impl AssertKind {
+    /// The `ember_rt` function a failure calls.
+    pub fn runtime_entry(&self) -> &'static str {
+        match self {
+            AssertKind::Overflow(_) => "ember_panic_overflow",
+            AssertKind::DivisionByZero => "ember_panic_div_zero",
+            AssertKind::SignedDivisionOverflow => "ember_panic_overflow",
+            AssertKind::ShiftTooLarge => "ember_panic_overflow",
+            AssertKind::Bounds { .. } => "ember_panic_bounds",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -214,13 +315,21 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
 }
 
 fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
-    match stmt {
-        Stmt::Assign { place, rvalue } => {
+    match &stmt.kind {
+        StmtKind::Assign { place, rvalue } => {
             format!("{} = {}", dump_place(place), dump_rvalue(rvalue, types))
         }
-        Stmt::StorageLive(l) => format!("StorageLive(_{})", l.0),
-        Stmt::StorageDead(l) => format!("StorageDead(_{})", l.0),
-        Stmt::Nop => "nop".to_string(),
+        StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => format!(
+            "({}, {}) = checked {} {} {}",
+            dump_place(dest),
+            dump_place(overflow),
+            dump_operand(lhs, types),
+            op.c_operator(),
+            dump_operand(rhs, types)
+        ),
+        StmtKind::StorageLive(l) => format!("StorageLive(_{})", l.0),
+        StmtKind::StorageDead(l) => format!("StorageDead(_{})", l.0),
+        StmtKind::Nop => "nop".to_string(),
     }
 }
 
@@ -232,6 +341,7 @@ fn dump_place(place: &Place) -> String {
             Projection::Index(l) => out.push_str(&format!("[_{}]", l.0)),
             Projection::ConstIndex(i) => out.push_str(&format!("[{i}]")),
             Projection::Deref => out = format!("(*{out})"),
+            Projection::Downcast(v) => out.push_str(&format!(" as variant {v}")),
             Projection::Column(i) => out.push_str(&format!(".col{i}")),
         }
     }
@@ -270,8 +380,21 @@ fn dump_rvalue(rvalue: &Rvalue, types: &ember_types::TypeTable) -> String {
             let name = match kind {
                 AggregateKind::Struct(id) => types.struct_def(*id).name.to_string(),
                 AggregateKind::Tuple => "tuple".to_string(),
+                AggregateKind::Array => "array".to_string(),
+                AggregateKind::Enum(id, variant) => {
+                    let def = types.enum_def(*id);
+                    format!("{}.{}", def.name, def.variants[*variant].name)
+                }
             };
             format!("{name}({})", inner.join(", "))
+        }
+        Rvalue::Repeat { value, count } => {
+            format!("[{}; {count}]", dump_operand(value, types))
+        }
+        Rvalue::Discriminant(place) => format!("discriminant({})", dump_place(place)),
+        Rvalue::Ref { place, mutable } => {
+            let kind = if *mutable { "&mut " } else { "&" };
+            format!("{kind}{}", dump_place(place))
         }
     }
 }
@@ -289,6 +412,13 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                 otherwise.0
             )
         }
+        Terminator::Assert { cond, expected, msg, next, .. } => format!(
+            "assert({}{}) -> [success: bb{}, {:?}]",
+            if *expected { "" } else { "!" },
+            dump_operand(cond, types),
+            next.0,
+            msg
+        ),
         Terminator::Return => "return".to_string(),
         Terminator::Unreachable => "unreachable".to_string(),
         Terminator::Call { func, args, dest, next } => {

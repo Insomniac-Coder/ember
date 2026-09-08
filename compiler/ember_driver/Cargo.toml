@@ -15,6 +15,7 @@ ember_types.workspace = true
 ember_typeck.workspace = true
 ember_hir.workspace = true
 ember_mir.workspace = true
+ember_analysis.workspace = true
 ember_codegen_c.workspace = true
 ember_build.workspace = true
 

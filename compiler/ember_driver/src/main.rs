@@ -174,24 +174,34 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Check.
     let (mut types, common) = TypeTable::new();
-    let program = ember_typeck::check(&module, &mut types, &common, &mut sink);
+    // [TYP-8] -- the profile chooses the default overflow policy.
+    let program =
+        ember_typeck::check(&module, &mut types, &common, &mut sink, overflow_policy(options.profile));
     if options.emit.as_deref() == Some("hir") {
         print!("{}", ember_hir::dump(&program, &types));
         return Ok(finish(&sink, &map, options));
     }
-    if sink.has_errors() || command == "check" {
-        if !sink.has_errors() && command == "check" {
-            report(&sink, &map, options);
-            return Ok(ExitCode::SUCCESS);
-        }
+    if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
 
-    // Lower.
-    let bodies = ember_mir::lower(&program, &types);
+    // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
+    // as "type-check + borrow-check without codegen", so it cannot stop here.
+    let bodies = ember_mir::lower(&program, &types, &common);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }
+    // Definite initialisation (Part XVIII §4.6) runs on MIR, before any
+    // optimisation could remove the read it is looking for.
+    ember_analysis::check_definite_init_all(&bodies, &mut sink);
+    if sink.has_errors() {
+        return Ok(finish(&sink, &map, options));
+    }
+    if command == "check" {
+        report(&sink, &map, options);
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if options.emit.as_deref() == Some("mir") {
         print!("{}", ember_mir::dump(&bodies, &types));
         return Ok(finish(&sink, &map, options));
@@ -241,9 +251,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     if command == "run" {
         let status = std::process::Command::new(&exe).status().map_err(|e| e.to_string())?;
+        // A panic calls abort(), and Windows reports that as a status well
+        // outside 0..=255 (0xC0000409 arrives as a large negative i32).
+        // Clamping it into a u8 turned a crash into a clean exit, so anything
+        // that is not representable becomes a plain failure.
         return Ok(match status.code() {
             Some(0) => ExitCode::SUCCESS,
-            Some(code) => ExitCode::from(code.clamp(0, 255) as u8),
+            Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
             None => ExitCode::FAILURE,
         });
     }
@@ -272,6 +286,16 @@ fn runtime_dir() -> Result<PathBuf, String> {
         dir = candidate.parent().map(Path::to_path_buf);
     }
     Err("cannot find the ember_rt sources; set EMBER_RUNTIME_DIR".to_string())
+}
+
+/// `[TYP-8]`, and Part XIX §2's profile table: `debug` panics on overflow,
+/// `release` and `shipping` wrap. `[PRF-1]` allows exactly this one difference
+/// in semantics between profiles.
+fn overflow_policy(profile: Profile) -> ember_types::OverflowPolicy {
+    match profile {
+        Profile::Debug => ember_types::OverflowPolicy::Panic,
+        Profile::Release | Profile::Shipping => ember_types::OverflowPolicy::Wrap,
+    }
 }
 
 fn report(sink: &Sink, map: &SourceMap, options: &Options) {

@@ -737,6 +737,25 @@ impl Parser<'_> {
         Expr { id, kind, span: start.to(self.prev_span()) }
     }
 
+    /// Two tuple indices that the lexer joined into one float literal.
+    ///
+    /// After a `.`, a token like `0.1` can only be a pair of tuple indices —
+    /// the lexer cannot tell that without knowing what came before the dot,
+    /// so the split happens here. The token's text is read from the source
+    /// rather than from the literal's `f64`, which no longer distinguishes
+    /// `.1` from `.10`. Nothing is consumed unless the split succeeds.
+    fn eat_tuple_index_pair(&mut self) -> Option<(u32, u32)> {
+        let TokenKind::Lit(Lit::Float { suffix: None, .. }) = self.peek() else {
+            return None;
+        };
+        let span = self.span();
+        let text = self.src.get(span.start as usize..span.end as usize)?;
+        let (outer, inner) = text.split_once('.')?;
+        let pair = (outer.parse::<u32>().ok()?, inner.parse::<u32>().ok()?);
+        self.bump();
+        Some(pair)
+    }
+
     fn parse_postfix(&mut self, mut expr: Expr, min_bp: u8, allow_block_lambda: bool) -> Expr {
         loop {
             let start = expr.span;
@@ -776,6 +795,16 @@ impl Parser<'_> {
                         let index = *value as u32;
                         self.bump();
                         ExprKind::TupleField { base: Box::new(expr), index }
+                    } else if let Some((outer, inner)) = self.eat_tuple_index_pair() {
+                        // `t.0.1` reaches into a nested tuple, but the lexer
+                        // has already read `0.1` as one float literal, so the
+                        // pair is taken apart here.
+                        let first = Expr {
+                            id: self.next_id(),
+                            kind: ExprKind::TupleField { base: Box::new(expr), index: outer },
+                            span: start.to(self.prev_span()),
+                        };
+                        ExprKind::TupleField { base: Box::new(first), index: inner }
                     } else {
                         let name = self.expect_ident();
                         ExprKind::Field { base: Box::new(expr), name }

@@ -205,6 +205,12 @@ impl<'a> Parser<'a> {
         if self.at_eof() || matches!(self.peek(), TokenKind::Dedent) {
             return;
         }
+        // A statement whose expression ended by closing an indented block —
+        // `n = match d:` and its arms — consumed the line's end together with
+        // that block's `Dedent`, so there is no newline left to expect.
+        if self.pos > 0 && matches!(self.tokens[self.pos - 1].kind, TokenKind::Dedent) {
+            return;
+        }
         let found = self.peek().to_string();
         let span = self.span();
         self.report(

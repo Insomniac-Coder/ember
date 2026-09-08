@@ -17,6 +17,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-005 | `[LEX-8]` with `[LEX-11]` | proposed — resolved by buffering |
 | ERR-006 | Part II §3 with `[TST-1]` | **decided** — annotations moved to `#$` |
 | ERR-007 | `[LEX-11]` | **decided** — a dangling doc comment is silent |
+| ERR-008 | Part III §109 with Part IV §2, Appendix A | **decided** — `return` stays a statement |
 
 ---
 
@@ -305,3 +306,48 @@ is ever amended in `docs/spec/`, that sentence is the one to change.
 `-Dwarnings` therefore cannot fail a build over a comment, which was the
 practical argument: a stray `##` should never be the thing that stops a
 release build.
+
+## ERR-008 — Is `return` a statement or an expression?
+
+**Status: decided by the owner, 2026-09-08. It stays a statement.**
+
+**Where.** Three places disagree.
+
+Part III's grammar puts it among the statements:
+
+```
+small_stmt := var_decl | assignment | expression | "return" [expression] | "break" [label]
+```
+
+Part IV §2's type table gives it a type, which only a value has:
+
+> `!` — never type; coerces to every type; result of `panic`, `return`,
+> `break`, `continue`, infinite `while true`
+
+And Appendix A's `match` example uses it where `[GRM-10]` requires an
+expression:
+
+```ember
+match s:
+    Circle(r) => return PI * r * r
+```
+
+**Decision.** The grammar wins. `return`, `break` and `continue` are
+statements, and `=>` arms take an expression, so that example does not
+compile. The statement form is what to write:
+
+```ember
+match s:
+    Circle(r):
+        return PI * r * r
+```
+
+**Consequences.** Appendix A's example is corrected to the statement form.
+Part IV §2's row is left alone: `!` is still the type of an expression that
+never produces a value, which `panic` and an infinite `while true` still are.
+
+**If the owner rules the other way**, `return`/`break`/`continue` become
+expressions of type `!`. The type system already supports it — `!` coerces to
+every type, so an arm yielding `!` sits beside arms yielding `f32` with no
+further work. The change is in the parser: `parse_prefix` would need to accept
+these three keywords, and `[GRM-10]`'s expression arms would then take them.

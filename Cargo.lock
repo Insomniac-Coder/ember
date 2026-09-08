@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "ember_analysis"
+version = "0.1.0"
+dependencies = [
+ "ember_diag",
+ "ember_mir",
+ "ember_span",
+ "ember_types",
+]
+
+[[package]]
 name = "ember_ast"
 version = "0.1.0"
 dependencies = [
@@ -39,6 +49,7 @@ dependencies = [
 name = "ember_driver"
 version = "0.1.0"
 dependencies = [
+ "ember_analysis",
  "ember_ast",
  "ember_build",
  "ember_codegen_c",

@@ -12,11 +12,14 @@
 use std::fmt::Write as _;
 
 use ember_mir::{
-    AggregateKind, Builtin, Body, CastKind, Const, FuncRef, LocalKind, Operand, Place, Projection, Rvalue,
-    Stmt, Terminator,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FuncRef, LocalKind, Operand, Place,
+    Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
+use std::path::MAIN_SEPARATOR;
+
 use ember_span::SourceMap;
-use ember_types::{FloatTy, IntTy, TyKind, TypeTable, UintTy};
+use ember_types::{EnumId, FloatTy, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Output {
     /// The single translation unit for this module.
@@ -30,7 +33,9 @@ pub fn emit(
     module_name: &str,
     has_main: bool,
 ) -> Output {
-    let mut emitter = Emitter { types, map, out: String::new(), line_directives: true };
+    let (order, structural) = plan_types(types);
+    let mut emitter =
+        Emitter { types, map, out: String::new(), line_directives: true, order, structural };
     emitter.emit_module(bodies, module_name, has_main);
     Output { c_source: emitter.out }
 }
@@ -40,6 +45,41 @@ struct Emitter<'a> {
     map: &'a SourceMap,
     out: String,
     line_directives: bool,
+    /// Every type definition to emit, in an order where a type is defined
+    /// after everything it contains by value.
+    order: Vec<TypeNode>,
+    /// The generated C name of each tuple and fixed-array type.
+    structural: BTreeMap<Ty, String>,
+}
+
+/// Where a projection walk has reached: a type, plus the variant a
+/// `Downcast` selected, which the `Field` after it needs.
+#[derive(Clone, Copy)]
+struct Cursor {
+    ty: Ty,
+    variant: Option<usize>,
+}
+
+/// How one type is written in C: a `struct` with members, or a name for
+/// another type.
+enum Definition {
+    Struct(Vec<String>),
+    Alias(String),
+}
+
+/// A C type definition: either a named Ember struct or a generated struct
+/// standing in for a tuple or a fixed array.
+///
+/// C has no tuple, and a bare C array cannot be assigned, passed or returned
+/// by value — but an Ember tuple and an Ember `[T; N]` are ordinary values
+/// (Part IV.3). Wrapping both in a generated struct gives them C's value
+/// semantics for free, with the same layout, and leaves every copy, argument
+/// and return path in this backend unchanged.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TypeNode {
+    Struct(StructId),
+    Enum(EnumId),
+    Structural(Ty),
 }
 
 impl Emitter<'_> {
@@ -72,40 +112,118 @@ impl Emitter<'_> {
     /// which is declaration order, so a struct's fields are always already
     /// complete types.
     fn emit_type_declarations(&mut self) {
-        let structs: Vec<(String, Vec<(String, String)>)> = self
-            .types
-            .structs()
-            .map(|(_, def)| {
-                let fields = def
-                    .fields
-                    .iter()
-                    .map(|f| (self.c_type(f.ty), f.name.to_string()))
-                    .collect();
-                (def.name.to_string(), fields)
-            })
+        let plan: Vec<(String, Definition)> = self
+            .order
+            .clone()
+            .into_iter()
+            .map(|node| (self.node_name(node), self.definition(node)))
             .collect();
 
-        if structs.is_empty() {
+        if plan.is_empty() {
             return;
         }
         self.line("/* types */");
-        for (name, _) in &structs {
-            self.line(&format!("typedef struct em_{name} em_{name};"));
+        // Every struct is forward-declared, so one may hold a pointer to
+        // another defined later. An alias is complete where it stands.
+        for (name, definition) in &plan {
+            if matches!(definition, Definition::Struct(_)) {
+                self.line(&format!("typedef struct {name} {name};"));
+            }
         }
-        for (name, fields) in &structs {
-            self.line(&format!("struct em_{name} {{"));
-            if fields.is_empty() {
-                // `[STR-4]` — a zero-sized struct is legal in Ember but not in
-                // C, so it gets a padding byte. Its size is never observed
-                // through the C type.
-                self.line("    char _empty;");
+        for (name, definition) in &plan {
+            match definition {
+                Definition::Alias(underlying) => {
+                    self.line(&format!("typedef {underlying} {name};"));
+                }
+                Definition::Struct(members) => {
+                    self.line(&format!("struct {name} {{"));
+                    if members.is_empty() {
+                        // `[STR-4]` — a zero-sized struct is legal in Ember but
+                        // not in C, so it gets a padding byte. Its size is
+                        // never observed through the C type.
+                        self.line("    char _empty;");
+                    }
+                    for member in members {
+                        self.line(&format!("    {member};"));
+                    }
+                    self.line("};");
+                }
             }
-            for (ty, field) in fields {
-                self.line(&format!("    {ty} {field};"));
-            }
-            self.line("};");
         }
         self.line("");
+    }
+
+    fn node_name(&self, node: TypeNode) -> String {
+        match node {
+            TypeNode::Struct(id) => format!("em_{}", self.types.struct_def(id).name),
+            TypeNode::Enum(id) => format!("em_{}", self.types.enum_def(id).name),
+            TypeNode::Structural(ty) => self.structural_name(ty),
+        }
+    }
+
+    /// What one type definition looks like in C. Members are already written
+    /// as declarators — an array member interleaves its type and its name, so
+    /// this cannot be a `(type, name)` pair.
+    fn definition(&self, node: TypeNode) -> Definition {
+        match node {
+            TypeNode::Struct(id) => Definition::Struct(
+                self.types
+                    .struct_def(id)
+                    .fields
+                    .iter()
+                    .map(|f| format!("{} {}", self.c_type(f.ty), f.name))
+                    .collect(),
+            ),
+            // `[ENM-3]` — a unit-only enum *is* its discriminant, so it is a
+            // name for the repr integer and nothing more. `[TYP-12]` — a
+            // payload enum is `{tag, union of variants}`.
+            TypeNode::Enum(id) => {
+                let def = self.types.enum_def(id);
+                if def.is_unit_only() {
+                    return Definition::Alias(self.c_type(def.repr));
+                }
+                let mut members = vec![format!("{} tag", self.c_type(def.repr))];
+                let mut union = vec!["union {".to_string()];
+                for variant in def.variants.iter().filter(|v| !v.fields.is_empty()) {
+                    let fields: Vec<String> = variant
+                        .fields
+                        .iter()
+                        .map(|f| format!("{} {}; ", self.c_type(f.ty), f.name))
+                        .collect();
+                    union.push(format!("        struct {{ {}}} {};", fields.concat(), variant.name));
+                }
+                union.push("    } payload".to_string());
+                members.push(union.join("\n"));
+                Definition::Struct(members)
+            }
+            TypeNode::Structural(ty) => Definition::Struct(match self.types.kind(ty) {
+                TyKind::Tuple(items) => items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &item)| format!("{} _{i}", self.c_type(item)))
+                    .collect(),
+                // `[T; 0]` is legal in Ember; a zero-length array is not legal
+                // C, so the member is padded to one element the same way an
+                // empty struct is.
+                TyKind::Array { elem, len } => {
+                    vec![format!("{} _0[{}]", self.c_type(*elem), (*len).max(1))]
+                }
+                _ => Vec::new(),
+            }),
+        }
+    }
+
+    /// The generated name of a tuple or fixed-array type.
+    ///
+    /// `plan_types` walks every interned type, so a missing name is a bug in
+    /// this backend rather than anything a program can cause — and a silent
+    /// `void*` here would produce C that compiles and computes the wrong
+    /// thing, so it fails loudly instead.
+    fn structural_name(&self, ty: Ty) -> String {
+        match self.structural.get(&ty) {
+            Some(name) => name.clone(),
+            None => panic!("no generated C type for `{}`", self.types.display(ty)),
+        }
     }
 
     fn emit_prototypes(&mut self, bodies: &[Body]) {
@@ -153,6 +271,22 @@ impl Emitter<'_> {
             self.line("");
         }
 
+        // A pattern may bind a payload the arm never reads — `Circle(r): return 1`
+        // is legal Ember — and the assignment that binds it then trips
+        // `-Wunused-but-set-variable`. `[CG-C-1]` requires warning-free output,
+        // so each such local is discarded once, explicitly.
+        // A `void` local is never declared, so it cannot be discarded either.
+        let unread: Vec<usize> = unread_locals(body)
+            .into_iter()
+            .filter(|index| !self.is_void(body.locals[*index].ty))
+            .collect();
+        if !unread.is_empty() {
+            let discards: Vec<String> =
+                unread.iter().map(|index| format!("(void)_{index};")).collect();
+            self.line(&format!("    {}", discards.join(" ")));
+            self.line("");
+        }
+
         // Only blocks something actually jumps to get a label: an unreferenced
         // label is a warning under `-Wall` and MSVC's C4102, and `[CG-C-1]`
         // requires the emitted C to compile without warnings.
@@ -174,37 +308,58 @@ impl Emitter<'_> {
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
-        match stmt {
-            Stmt::Assign { place, rvalue } => {
+        match &stmt.kind {
+            StmtKind::Assign { place, rvalue } => {
                 let ty = self.place_ty(place, body);
                 if self.is_void(ty) {
                     return;
                 }
-                self.emit_line_directive(body, place);
+                self.emit_line_directive(stmt.span);
                 let lhs = self.place_in(place, body);
-                let rhs = self.rvalue(rvalue, body);
+                // `[value; count]` fills the array with a loop rather than
+                // `count` copies of the operand's text, so a large array costs
+                // one statement here and one in the emitted C.
+                if let Rvalue::Repeat { value, count } = rvalue {
+                    let value = self.operand(value, body);
+                    self.line(&format!(
+                        "    for (size_t _i = 0; _i < {count}u; ++_i) {{ {lhs}._0[_i] = {value}; }}"
+                    ));
+                    return;
+                }
+                let rhs = self.rvalue(rvalue, body, ty);
                 self.line(&format!("    {lhs} = {rhs};"));
+            }
+            StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => {
+                // `bool ember_ck_add_i32(a, b, &dest)` returns whether the
+                // operation overflowed and writes the wrapped result either
+                // way, so the value is defined on both paths.
+                let ty = self.place_ty(dest, body);
+                let helper = format!("ember_ck_{}_{}", checked_name(*op), self.checked_suffix(ty));
+                self.emit_line_directive(stmt.span);
+                self.line(&format!(
+                    "    {} = {helper}({}, {}, &{});",
+                    self.place_in(overflow, body),
+                    self.operand(lhs, body),
+                    self.operand(rhs, body),
+                    self.place_in(dest, body)
+                ));
             }
             // Storage markers carry no code in C; the borrow checker and drop
             // elaboration consume them before this point.
-            Stmt::StorageLive(_) | Stmt::StorageDead(_) | Stmt::Nop => {}
+            StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
         }
     }
 
     /// `#line` maps every emitted statement back to its Ember source
     /// (Part XVIII §6, "Debug info").
-    fn emit_line_directive(&mut self, body: &Body, place: &Place) {
-        if !self.line_directives {
-            return;
-        }
-        let span = body.local(place.local).span;
-        if span.is_dummy() || self.map.get(span.file).is_none() {
+    fn emit_line_directive(&mut self, span: ember_span::Span) {
+        if !self.line_directives || span.is_dummy() || self.map.get(span.file).is_none() {
             return;
         }
         let file = self.map.file(span.file);
         let line = file.line_of(span.start);
         // Forward slashes: a backslash in a `#line` path is an escape.
-        let path = file.path.display().to_string().replace('\\', "/");
+        let path = file.path.display().to_string().replace(MAIN_SEPARATOR, "/");
         let _ = writeln!(self.out, "#line {line} \"{path}\"");
     }
 
@@ -235,6 +390,34 @@ impl Emitter<'_> {
                     self.line("    }");
                 }
             }
+            Terminator::Assert { cond, expected, msg, next, span } => {
+                let cond = self.operand(cond, body);
+                let negate = if *expected { "!" } else { "" };
+                let location = self.location(*span);
+                let call = match msg {
+                    AssertKind::Overflow(op) => {
+                        format!("ember_panic_overflow(\"{}\", {location})", op.c_operator())
+                    }
+                    AssertKind::SignedDivisionOverflow => {
+                        format!("ember_panic_overflow(\"/\", {location})")
+                    }
+                    AssertKind::ShiftTooLarge => {
+                        format!("ember_panic_overflow(\"shift\", {location})")
+                    }
+                    AssertKind::DivisionByZero => format!("ember_panic_div_zero({location})"),
+                    AssertKind::Bounds { len, index: at } => format!(
+                        "ember_panic_bounds({}, {}, {location})",
+                        self.operand(at, body),
+                        self.operand(len, body)
+                    ),
+                };
+                self.line(&format!("    if ({negate}{cond}) {{ {call}; }}"));
+                if next.0 as usize == index + 1 {
+                    self.line("    /* fallthrough */");
+                } else {
+                    self.line(&format!("    goto bb{};", next.0));
+                }
+            }
             Terminator::Return => {
                 if self.is_void(body.return_ty()) {
                     self.line("    return;");
@@ -261,6 +444,42 @@ impl Emitter<'_> {
                 }
             }
         }
+    }
+
+    /// An `ember_loc` for a panic, from the span of the operation itself.
+    fn location(&self, span: ember_span::Span) -> String {
+        if span.is_dummy() || self.map.get(span.file).is_none() {
+            return "ember_loc_unknown()".to_string();
+        }
+        let file = self.map.file(span.file);
+        let lc = file.line_col(span.start);
+        let path = file.path.display().to_string().replace('\\', "/");
+        format!("ember_loc_at({}, {}, {})", c_string_literal(&path), lc.line, lc.col)
+    }
+
+    /// The `ember_ck_*` suffix for a type: the helpers are per width and
+    /// signedness.
+    fn checked_suffix(&self, ty: ember_types::Ty) -> String {
+        match self.types.kind(ty) {
+            TyKind::Int(i) => match i {
+                IntTy::I8 => "i8",
+                IntTy::I16 => "i16",
+                IntTy::I32 => "i32",
+                IntTy::I64 => "i64",
+                IntTy::I128 => "i64",
+                IntTy::Isize => "isize",
+            },
+            TyKind::Uint(u) => match u {
+                UintTy::U8 => "u8",
+                UintTy::U16 => "u16",
+                UintTy::U32 => "u32",
+                UintTy::U64 => "u64",
+                UintTy::U128 => "u64",
+                UintTy::Usize => "usize",
+            },
+            _ => "i64",
+        }
+        .to_string()
     }
 
     fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
@@ -297,37 +516,79 @@ impl Emitter<'_> {
 
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
-        let mut ty = body.local(place.local).ty;
+        let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
         for projection in &place.projection {
             match projection {
-                Projection::Field(index) => {
-                    let TyKind::Struct(id) = *self.types.kind(ty) else {
-                        out.push_str(&format!(".f{index}"));
-                        continue;
-                    };
-                    let def = self.types.struct_def(id);
-                    out.push_str(&format!(".{}", def.fields[*index].name));
-                    ty = def.fields[*index].ty;
-                }
-                Projection::Index(local) => out.push_str(&format!("[_{}]", local.0)),
-                Projection::ConstIndex(i) => out.push_str(&format!("[{i}]")),
+                Projection::Field(index) => match (at.variant, self.types.kind(at.ty)) {
+                    // After a downcast, a field is that variant's payload.
+                    (Some(variant), TyKind::Enum(id)) => {
+                        let def = self.types.enum_def(*id);
+                        let variant = &def.variants[variant];
+                        out.push_str(&format!(
+                            ".payload.{}.{}",
+                            variant.name, variant.fields[*index].name
+                        ));
+                    }
+                    (_, TyKind::Struct(id)) => {
+                        let def = self.types.struct_def(*id);
+                        out.push_str(&format!(".{}", def.fields[*index].name));
+                    }
+                    // A tuple's elements are the generated struct's `_0`,
+                    // `_1`, … in order.
+                    _ => out.push_str(&format!("._{index}")),
+                },
+                // An array is a generated struct wrapping one C array, so the
+                // subscript goes through that member.
+                Projection::Index(local) => out.push_str(&format!("._0[_{}]", local.0)),
+                Projection::ConstIndex(i) => out.push_str(&format!("._0[{i}]")),
                 Projection::Deref => out = format!("(*{out})"),
+                // A downcast writes nothing on its own; the `Field` after it
+                // names the variant and the member together.
+                Projection::Downcast(_) => {}
                 Projection::Column(i) => out.push_str(&format!(".col{i}")),
             }
+            at = self.project(at, projection);
         }
         out
     }
 
-    fn place_ty(&self, place: &Place, body: &Body) -> ember_types::Ty {
-        let mut ty = body.local(place.local).ty;
+    fn place_ty(&self, place: &Place, body: &Body) -> Ty {
+        let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
         for projection in &place.projection {
-            if let Projection::Field(index) = projection {
-                if let TyKind::Struct(id) = *self.types.kind(ty) {
-                    ty = self.types.struct_def(id).fields[*index].ty;
-                }
-            }
+            at = self.project(at, projection);
         }
-        ty
+        at.ty
+    }
+
+    /// Where one projection arrives. A projection that does not apply to the
+    /// type leaves it alone; the type checker has already rejected that
+    /// program, and the backend only has to stay on its feet.
+    fn project(&self, at: Cursor, projection: &Projection) -> Cursor {
+        let plain = |ty| Cursor { ty, variant: None };
+        match (projection, self.types.kind(at.ty)) {
+            (Projection::Downcast(variant), TyKind::Enum(_)) => {
+                Cursor { ty: at.ty, variant: Some(*variant) }
+            }
+            (Projection::Field(index), TyKind::Enum(id)) => {
+                let Some(variant) = at.variant else { return plain(at.ty) };
+                let fields = &self.types.enum_def(*id).variants[variant].fields;
+                plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
+            }
+            (Projection::Field(index), TyKind::Struct(id)) => {
+                let fields = &self.types.struct_def(*id).fields;
+                plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
+            }
+            (Projection::Field(index), TyKind::Tuple(items)) => {
+                plain(items.get(*index).copied().unwrap_or(at.ty))
+            }
+            (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => {
+                plain(*elem)
+            }
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
+                plain(*inner)
+            }
+            _ => at,
+        }
     }
 
     fn operand(&self, operand: &Operand, body: &Body) -> String {
@@ -362,7 +623,9 @@ impl Emitter<'_> {
         }
     }
 
-    fn rvalue(&self, rvalue: &Rvalue, body: &Body) -> String {
+    /// `target` is the type of the place being assigned. A tuple or array
+    /// aggregate needs it to name the generated struct it is building.
+    fn rvalue(&self, rvalue: &Rvalue, body: &Body, target: Ty) -> String {
         match rvalue {
             Rvalue::Use(o) => self.operand(o, body),
             Rvalue::BinaryOp { op, lhs, rhs } => {
@@ -392,19 +655,67 @@ impl Emitter<'_> {
             }
             Rvalue::Aggregate { kind, operands } => {
                 let values: Vec<String> = operands.iter().map(|o| self.operand(o, body)).collect();
-                match kind {
+                if let AggregateKind::Enum(id, variant) = kind {
+                    return self.enum_value(*id, *variant, &values);
+                }
+                let name = match kind {
                     AggregateKind::Struct(id) => {
-                        let name = self.types.struct_def(*id).name;
-                        if values.is_empty() {
-                            format!("(em_{name}){{ 0 }}")
-                        } else {
-                            format!("(em_{name}){{ {} }}", values.join(", "))
-                        }
+                        format!("em_{}", self.types.struct_def(*id).name)
                     }
-                    AggregateKind::Tuple => format!("{{ {} }}", values.join(", ")),
+                    _ => self.c_type(target),
+                };
+                // An empty aggregate still has the padding member `[STR-4]`
+                // gives it, and C wants an initialiser for it.
+                if values.is_empty() {
+                    return format!("({name}){{ 0 }}");
+                }
+                match kind {
+                    // The array's elements sit inside the wrapper's one
+                    // member, so they need their own brace level.
+                    AggregateKind::Array => format!("({name}){{ {{ {} }} }}", values.join(", ")),
+                    _ => format!("({name}){{ {} }}", values.join(", ")),
                 }
             }
+            // `[ENM-3]` — a unit-only enum is its tag, so reading the
+            // discriminant is reading the value.
+            Rvalue::Discriminant(place) => {
+                let read = self.place_in(place, body);
+                let ty = self.place_ty(place, body);
+                match self.types.kind(ty) {
+                    TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => {
+                        format!("{read}.tag")
+                    }
+                    _ => read,
+                }
+            }
+            Rvalue::Ref { place, .. } => format!("&{}", self.place_in(place, body)),
+            // `[value; count]` is emitted as a loop by `emit_stmt`; it is
+            // built only ever as the right-hand side of an assignment.
+            Rvalue::Repeat { .. } => {
+                unreachable!("Rvalue::Repeat is emitted by emit_stmt, not as an expression")
+            }
         }
+    }
+
+    /// One enum value. A unit-only enum is just its discriminant; a payload
+    /// enum sets the tag and the one union member that variant uses.
+    /// Designated initialisers name both, so nothing is left uninitialised
+    /// and `-Wmissing-field-initializers` has nothing to say.
+    fn enum_value(&self, id: EnumId, variant: usize, values: &[String]) -> String {
+        let def = self.types.enum_def(id);
+        let name = format!("em_{}", def.name);
+        let tag = def.variants[variant].discriminant;
+        if def.is_unit_only() {
+            return format!("(({name}){tag})");
+        }
+        if values.is_empty() {
+            return format!("({name}){{ .tag = {tag} }}");
+        }
+        format!(
+            "({name}){{ .tag = {tag}, .payload = {{ .{} = {{ {} }} }} }}",
+            def.variants[variant].name,
+            values.join(", ")
+        )
     }
 
     // -- types ----------------------------------------------------------------
@@ -447,12 +758,13 @@ impl Emitter<'_> {
             TyKind::Void | TyKind::Never | TyKind::Error => "void".into(),
             TyKind::Str => "ember_str".into(),
             TyKind::Struct(id) => format!("em_{}", self.types.struct_def(*id).name),
+            TyKind::Enum(id) => format!("em_{}", self.types.enum_def(*id).name),
             TyKind::Ref { mutable, inner } | TyKind::Ptr { mutable, inner } => {
                 let inner = self.c_type(*inner);
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }
             }
-            TyKind::Array { elem, .. } => format!("{}*", self.c_type(*elem)),
-            TyKind::Tuple(_) | TyKind::Fn { .. } => "void*".into(),
+            TyKind::Array { .. } | TyKind::Tuple(_) => self.structural_name(ty),
+            TyKind::Fn { .. } => "void*".into(),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit => "int32_t".into(),
         }
     }
@@ -472,6 +784,241 @@ impl Emitter<'_> {
     }
 }
 
+/// Work out what type definitions the module needs and in what order.
+///
+/// `[CG-C-2]` — the walk is over the interner and the struct table in their
+/// own order, so the result is the same for the same input.
+fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
+    let mut planner = Planner {
+        types,
+        order: Vec::new(),
+        names: BTreeMap::new(),
+        done: BTreeSet::new(),
+        active: BTreeSet::new(),
+        taken: types
+            .structs()
+            .map(|(_, d)| format!("em_{}", d.name))
+            .chain(types.enums().map(|(_, d)| format!("em_{}", d.name)))
+            .collect(),
+    };
+    // Named types first, so the output stays close to declaration order; each
+    // pulls in whatever it contains.
+    let structs: Vec<StructId> = types.structs().map(|(id, _)| id).collect();
+    for id in structs {
+        planner.visit(TypeNode::Struct(id));
+    }
+    let enums: Vec<EnumId> = types.enums().map(|(id, _)| id).collect();
+    for id in enums {
+        planner.visit(TypeNode::Enum(id));
+    }
+    let structural: Vec<Ty> = types
+        .all()
+        .filter(|(_, k)| matches!(k, TyKind::Tuple(_) | TyKind::Array { .. }))
+        .map(|(ty, _)| ty)
+        .collect();
+    for ty in structural {
+        planner.visit(TypeNode::Structural(ty));
+    }
+    (planner.order, planner.names)
+}
+
+struct Planner<'a> {
+    types: &'a TypeTable,
+    order: Vec<TypeNode>,
+    names: BTreeMap<Ty, String>,
+    done: BTreeSet<TypeNode>,
+    active: BTreeSet<TypeNode>,
+    taken: BTreeSet<String>,
+}
+
+impl Planner<'_> {
+    fn visit(&mut self, node: TypeNode) {
+        // `!insert` means the node is already on the stack, which is a type
+        // that contains itself by value. `E2200` reports that; stopping here
+        // keeps the backend from recursing forever on a program that is
+        // already rejected.
+        if self.done.contains(&node) || !self.active.insert(node) {
+            return;
+        }
+        match node {
+            TypeNode::Struct(id) => {
+                let fields: Vec<Ty> =
+                    self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
+                for field in fields {
+                    self.require(field);
+                }
+            }
+            TypeNode::Enum(id) => {
+                let payloads: Vec<Ty> = self
+                    .types
+                    .enum_def(id)
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|f| f.ty))
+                    .collect();
+                for payload in payloads {
+                    self.require(payload);
+                }
+            }
+            TypeNode::Structural(ty) => {
+                let contains: Vec<Ty> = match self.types.kind(ty) {
+                    TyKind::Tuple(items) => items.clone(),
+                    TyKind::Array { elem, .. } => vec![*elem],
+                    _ => Vec::new(),
+                };
+                for inner in contains {
+                    self.require(inner);
+                }
+                let name = self.fresh_name(ty);
+                self.names.insert(ty, name);
+            }
+        }
+        self.active.remove(&node);
+        self.done.insert(node);
+        self.order.push(node);
+    }
+
+    /// A type held by value needs its definition first. Behind a reference or
+    /// a pointer it does not, because every definition is forward-declared.
+    fn require(&mut self, ty: Ty) {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.visit(TypeNode::Struct(*id)),
+            TyKind::Enum(id) => self.visit(TypeNode::Enum(*id)),
+            TyKind::Tuple(_) | TyKind::Array { .. } => self.visit(TypeNode::Structural(ty)),
+            _ => {}
+        }
+    }
+
+    /// A readable name derived from how the type prints, made unique against
+    /// every name already used. The suffix only ever appears when a user type
+    /// happens to be named like a generated one.
+    fn fresh_name(&mut self, ty: Ty) -> String {
+        let stem = identifier_from(&self.types.display(ty));
+        let prefix = match self.types.kind(ty) {
+            TyKind::Tuple(_) => "em_tup_",
+            _ => "em_arr_",
+        };
+        let base = format!("{prefix}{stem}");
+        if self.taken.insert(base.clone()) {
+            return base;
+        }
+        let mut n: u32 = 2;
+        loop {
+            let candidate = format!("{base}_{n}");
+            if self.taken.insert(candidate.clone()) {
+                return candidate;
+            }
+            n += 1;
+        }
+    }
+}
+
+/// Turn a printed type such as `(i32, f32)` or `[f32; 4]` into the readable
+/// core of a C identifier: `i32_f32`, `f32_4`.
+fn identifier_from(shown: &str) -> String {
+    let mut out = String::new();
+    for ch in shown.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+/// Locals and parameters that are never read anywhere in the body.
+///
+/// A method that ignores its receiver — `fn sides(self) -> i32: return 4` — is
+/// ordinary Ember, and so is a `_`-shaped parameter, but both trip
+/// `-Wunused-parameter`.
+fn unread_locals(body: &Body) -> Vec<usize> {
+    let mut read = vec![false; body.locals.len()];
+
+    fn read_place(place: &Place, read: &mut [bool]) {
+        read[place.local.0 as usize] = true;
+        for projection in &place.projection {
+            if let Projection::Index(local) = projection {
+                read[local.0 as usize] = true;
+            }
+        }
+    }
+    fn read_operand(operand: &Operand, read: &mut [bool]) {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => read_place(place, read),
+            Operand::Const(_) => {}
+        }
+    }
+    // A projection on the left of an assignment reads the local it starts
+    // from: `x.f = 1` needs `x`.
+    fn write_place(place: &Place, read: &mut [bool]) {
+        if !place.projection.is_empty() {
+            read_place(place, read);
+        }
+    }
+
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    write_place(place, &mut read);
+                    match rvalue {
+                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
+                            read_operand(o, &mut read)
+                        }
+                        Rvalue::Cast { operand, .. } => read_operand(operand, &mut read),
+                        Rvalue::BinaryOp { lhs, rhs, .. } => {
+                            read_operand(lhs, &mut read);
+                            read_operand(rhs, &mut read);
+                        }
+                        Rvalue::Aggregate { operands, .. } => {
+                            operands.iter().for_each(|o| read_operand(o, &mut read))
+                        }
+                        Rvalue::Repeat { value, .. } => read_operand(value, &mut read),
+                        Rvalue::Discriminant(place) => read_place(place, &mut read),
+                        // Taking a local's address counts as using it: the
+                        // callee may write through the reference.
+                        Rvalue::Ref { place, .. } => {
+                            read[place.local.0 as usize] = true;
+                            read_place(place, &mut read);
+                        }
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    write_place(dest, &mut read);
+                    write_place(overflow, &mut read);
+                    read_operand(lhs, &mut read);
+                    read_operand(rhs, &mut read);
+                }
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::SwitchInt { discr, .. } => read_operand(discr, &mut read),
+            Terminator::Call { args, dest, .. } => {
+                args.iter().for_each(|a| read_operand(a, &mut read));
+                write_place(dest, &mut read);
+            }
+            Terminator::Assert { cond, msg, .. } => {
+                read_operand(cond, &mut read);
+                if let AssertKind::Bounds { len, index } = msg {
+                    read_operand(len, &mut read);
+                    read_operand(index, &mut read);
+                }
+            }
+            Terminator::Return => read[RETURN_LOCAL.0 as usize] = true,
+            Terminator::Goto(_) | Terminator::Unreachable => {}
+        }
+    }
+
+    body.locals
+        .iter()
+        .enumerate()
+        .filter(|(index, decl)| decl.kind != LocalKind::Return && !read[*index])
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Which blocks are the target of a `goto` in the emitted C.
 ///
 /// This must agree exactly with `emit_terminator`'s fallthrough rule: a jump
@@ -481,7 +1028,9 @@ fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
     let mut referenced = std::collections::BTreeSet::new();
     for (index, block) in body.blocks.iter().enumerate() {
         match &block.terminator {
-            Terminator::Goto(target) | Terminator::Call { next: target, .. } => {
+            Terminator::Goto(target)
+            | Terminator::Call { next: target, .. }
+            | Terminator::Assert { next: target, .. } => {
                 if target.0 as usize != index + 1 {
                     referenced.insert(target.0 as usize);
                 }
@@ -496,6 +1045,20 @@ fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
         }
     }
     referenced
+}
+
+/// The `ember_ck_*` stem for an operator.
+fn checked_name(op: ember_mir::BinOp) -> &'static str {
+    use ember_mir::BinOp;
+    match op {
+        BinOp::Add => "add",
+        BinOp::Sub => "sub",
+        BinOp::Mul => "mul",
+        BinOp::Div => "div",
+        BinOp::Rem => "rem",
+        // Nothing else is lowered through `CheckedBinaryOp`.
+        _ => "add",
+    }
 }
 
 /// Render a float so that the C compiler reads back exactly the value Ember

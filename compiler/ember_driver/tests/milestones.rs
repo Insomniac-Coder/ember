@@ -38,6 +38,16 @@ struct Expectations {
     exit: Option<i32>,
     /// `!contains("…")` or `contains("…")` against the emitted C.
     assert_c: Vec<(bool, String)>,
+    /// A `run-fail` test: the program must panic, and the message must contain
+    /// this text.
+    panics: Option<String>,
+    /// `#$ error[EXXXX]: text` — a diagnostic the compiler must produce.
+    ///
+    /// `[TST-1]` also ties an annotation to the line its primary span starts
+    /// on. That form waits for the conformance suite; here the code and a
+    /// substring of the message are matched anywhere in the output, which is
+    /// what a `compile-fail` test in `tests/` needs.
+    errors: Vec<(String, String)>,
 }
 
 fn parse_expectations(source: &str) -> Expectations {
@@ -72,6 +82,16 @@ fn parse_expectations(source: &str) -> Expectations {
             {
                 expectations.assert_c.push((expect_present, inner.trim_matches('"').to_string()));
             }
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("error[") {
+            if let Some((code, message)) = value.split_once("]:") {
+                expectations
+                    .errors
+                    .push((code.trim().to_string(), message.trim().to_string()));
+            }
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("panics:") {
+            expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("stdout:") {
             collecting_stdout = true;
@@ -118,6 +138,32 @@ fn check_file(path: &Path, root: &Path) {
     );
     let out_dir_arg = out_dir.to_string_lossy().into_owned();
 
+    // A `compile-fail` test must be rejected, with the diagnostics it names.
+    if !expectations.errors.is_empty() || expectations.kind.as_deref() == Some("compile-fail") {
+        let checked = ember(&["check", &relative], root);
+        assert_ne!(
+            checked.exit, 0,
+            "{relative}: expected compilation to fail, but it succeeded"
+        );
+        for (code, message) in &expectations.errors {
+            assert!(
+                checked.stderr.contains(code.as_str()),
+                "{relative}: expected {code}
+stderr:
+{}",
+                checked.stderr
+            );
+            assert!(
+                checked.stderr.contains(message.as_str()),
+                "{relative}: expected a message containing {message:?}
+stderr:
+{}",
+                checked.stderr
+            );
+        }
+        return;
+    }
+
     // The emitted C, for `assert-c`.
     if !expectations.assert_c.is_empty() {
         let emitted = ember(&["build", &relative, "--emit", "c"], root);
@@ -134,6 +180,25 @@ fn check_file(path: &Path, root: &Path) {
     }
 
     let run = ember(&["run", &relative, "--out-dir", &out_dir_arg], root);
+
+    // A `run-fail` test compiles and runs, then panics with a given message.
+    if let Some(message) = &expectations.panics {
+        assert_ne!(
+            run.exit, 0,
+            "{relative}: expected a panic, but the program exited cleanly
+stdout:
+{}",
+            run.stdout
+        );
+        assert!(
+            run.stderr.contains(message.as_str()),
+            "{relative}: expected a panic mentioning {message:?}
+stderr:
+{}",
+            run.stderr
+        );
+        return;
+    }
 
     if let Some(expected) = &expectations.stdout {
         assert_eq!(
@@ -180,6 +245,16 @@ fn milestones_pass() {
 #[test]
 fn run_pass_programs_pass() {
     check_directory("tests/run-pass");
+}
+
+#[test]
+fn compile_fail_programs_are_rejected() {
+    check_directory("tests/compile-fail");
+}
+
+#[test]
+fn run_fail_programs_panic() {
+    check_directory("tests/run-fail");
 }
 
 #[test]

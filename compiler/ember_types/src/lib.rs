@@ -17,8 +17,12 @@ use ember_span::{Span, Symbol};
 pub struct Ty(u32);
 
 /// Index of a user-declared struct in the type table.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct StructId(pub u32);
+
+/// Index of a user-declared enum in the type table.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct EnumId(pub u32);
 
 /// An inference variable, resolved by `ember_typeck`'s union-find.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -65,6 +69,7 @@ pub enum TyKind {
     /// A view over UTF-8 bytes with a region; `Span[u8]` known to be valid.
     Str,
     Struct(StructId),
+    Enum(EnumId),
     Tuple(Vec<Ty>),
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
@@ -124,11 +129,60 @@ impl StructDef {
     }
 }
 
+/// One variant of an enum. A variant with no fields is a unit variant; its
+/// value is its discriminant and nothing else.
+#[derive(Clone, Debug)]
+pub struct VariantDef {
+    pub name: Symbol,
+    /// The payload, in declaration order. `[ENM-1]` allows these to be named,
+    /// so they are `FieldDef`s and not bare types; an unnamed one is `_0`,
+    /// `_1`, … so that positional patterns and named patterns are the same
+    /// lookup.
+    pub fields: Vec<FieldDef>,
+    /// `[TYP-12]` — the tag value. Assigned in declaration order unless the
+    /// declaration gave one.
+    pub discriminant: i128,
+    pub span: Span,
+}
+
+impl VariantDef {
+    pub fn field(&self, name: Symbol) -> Option<(usize, &FieldDef)> {
+        self.fields.iter().enumerate().find(|(_, f)| f.name == name)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EnumDef {
+    pub name: Symbol,
+    pub variants: Vec<VariantDef>,
+    pub span: Span,
+    /// `[TYP-12]` — the integer type the tag is stored in.
+    pub repr: Ty,
+    /// Whether `@repr` was written. `[TYP-12]` requires it for FFI.
+    pub repr_is_explicit: bool,
+    /// `[ENM-4]` — a payload enum is `Copy` only via `@derive(Copy)`.
+    pub derives_copy: bool,
+    pub has_drop: bool,
+}
+
+impl EnumDef {
+    /// `[ENM-3]` — an enum whose every variant is a unit variant. These are
+    /// just their discriminant: `Copy`, and convertible with `as`.
+    pub fn is_unit_only(&self) -> bool {
+        self.variants.iter().all(|v| v.fields.is_empty())
+    }
+
+    pub fn variant(&self, name: Symbol) -> Option<(usize, &VariantDef)> {
+        self.variants.iter().enumerate().find(|(_, v)| v.name == name)
+    }
+}
+
 /// The interner and type table for one compilation.
 pub struct TypeTable {
     kinds: Vec<TyKind>,
     lookup: HashMap<TyKind, Ty>,
     structs: Vec<StructDef>,
+    enums: Vec<EnumDef>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -168,6 +222,7 @@ impl TypeTable {
             kinds: Vec::new(),
             lookup: HashMap::new(),
             structs: Vec::new(),
+            enums: Vec::new(),
             next_infer: 0,
             pointer_size: 8,
         };
@@ -237,6 +292,34 @@ impl TypeTable {
         self.structs.iter().enumerate().map(|(i, d)| (StructId(i as u32), d))
     }
 
+    pub fn add_enum(&mut self, def: EnumDef) -> EnumId {
+        let id = EnumId(self.enums.len() as u32);
+        self.enums.push(def);
+        id
+    }
+
+    pub fn enum_def(&self, id: EnumId) -> &EnumDef {
+        &self.enums[id.0 as usize]
+    }
+
+    pub fn enum_def_mut(&mut self, id: EnumId) -> &mut EnumDef {
+        &mut self.enums[id.0 as usize]
+    }
+
+    pub fn enums(&self) -> impl Iterator<Item = (EnumId, &EnumDef)> {
+        self.enums.iter().enumerate().map(|(i, d)| (EnumId(i as u32), d))
+    }
+
+    /// Every type that has been interned, in interning order.
+    ///
+    /// The C backend walks this to find the structural types — tuples and
+    /// fixed arrays — that need a generated `struct` definition. Interning
+    /// order is not relied upon for correctness; the backend sorts what it
+    /// finds by containment.
+    pub fn all(&self) -> impl Iterator<Item = (Ty, &TyKind)> {
+        self.kinds.iter().enumerate().map(|(i, k)| (Ty(i as u32), k))
+    }
+
     pub fn pointer_size(&self) -> u64 {
         self.pointer_size
     }
@@ -290,7 +373,33 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
+            TyKind::Enum(id) => self.enum_layout(*id),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => Layout::ZERO,
+        }
+    }
+
+    /// `[TYP-12]` — a unit-only enum is its discriminant. A payload enum is
+    /// `{tag, union of variants}`, tag first. `[TYP-13]`'s niche optimisation
+    /// is not applied yet, so `Option[T]` is still tag-plus-payload.
+    fn enum_layout(&self, id: EnumId) -> Layout {
+        let def = self.enum_def(id);
+        let tag = self.layout(def.repr);
+        if def.is_unit_only() {
+            return tag;
+        }
+        let mut payload_size = 0u64;
+        let mut payload_align = 1u64;
+        for variant in &def.variants {
+            let inner = self.aggregate_layout(variant.fields.iter().map(|f| f.ty));
+            payload_size = payload_size.max(inner.size);
+            payload_align = payload_align.max(inner.align);
+        }
+        let align = tag.align.max(payload_align);
+        let offset = align_to(tag.size, payload_align);
+        Layout {
+            size: align_to(offset + payload_size, align),
+            align,
+            field_offsets: vec![0, offset],
         }
     }
 
@@ -335,6 +444,19 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.is_copy(f.ty))
             }
+            // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
+            // is only its discriminant. `[ENM-4]` — a payload enum needs
+            // `@derive(Copy)`, like a struct.
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                def.is_unit_only()
+                    || (def.derives_copy
+                        && !def.has_drop
+                        && def
+                            .variants
+                            .iter()
+                            .all(|v| v.fields.iter().all(|f| self.is_copy(f.ty))))
+            }
             TyKind::Infer(_) => false,
         }
     }
@@ -346,6 +468,14 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 def.has_drop || def.fields.iter().any(|f| self.needs_drop(f.ty))
+            }
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                def.has_drop
+                    || def
+                        .variants
+                        .iter()
+                        .any(|v| v.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             TyKind::Tuple(items) => items.iter().any(|&t| self.needs_drop(t)),
             TyKind::Array { elem, .. } => self.needs_drop(*elem),
@@ -363,6 +493,11 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().any(|f| self.is_view(f.ty))
             }
+            TyKind::Enum(id) => self
+                .enum_def(*id)
+                .variants
+                .iter()
+                .any(|v| v.fields.iter().any(|f| self.is_view(f.ty))),
             _ => false,
         }
     }
@@ -464,6 +599,7 @@ impl TypeTable {
             TyKind::Never => "!".into(),
             TyKind::Str => "str".into(),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
+            TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Tuple(items) => {
                 let inner: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
                 format!("({})", inner.join(", "))
@@ -523,6 +659,73 @@ fn uint_bits(ty: UintTy, pointer_size: u64) -> u64 {
 pub fn align_to(offset: u64, align: u64) -> u64 {
     debug_assert!(align.is_power_of_two(), "alignment {align} is not a power of two");
     (offset + align - 1) & !(align - 1)
+}
+
+/// `[TYP-8]` — what an arithmetic overflow does.
+///
+/// The profile chooses the default (`debug` panics, `release` and `shipping`
+/// wrap); `@overflow(panic|wrap|saturate)` on a function or module overrides
+/// it. `[PRF-1]` names this as one of only three things a profile may change
+/// about a program's semantics.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum OverflowPolicy {
+    /// Every overflowing `+ - * <<` panics.
+    #[default]
+    Panic,
+    /// `+ - *` and `<<` wrap two's-complement; shift amounts are masked
+    /// (`[TYP-10]`).
+    Wrap,
+    /// Results clamp to the type's bounds.
+    Saturate,
+}
+
+impl OverflowPolicy {
+    pub fn from_name(name: &str) -> Option<OverflowPolicy> {
+        Some(match name {
+            "panic" => OverflowPolicy::Panic,
+            "wrap" => OverflowPolicy::Wrap,
+            "saturate" => OverflowPolicy::Saturate,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OverflowPolicy::Panic => "panic",
+            OverflowPolicy::Wrap => "wrap",
+            OverflowPolicy::Saturate => "saturate",
+        }
+    }
+}
+
+/// Whether an integer type is signed. `None` for anything that is not an
+/// integer.
+pub fn is_signed(table: &TypeTable, ty: Ty) -> Option<bool> {
+    match table.kind(ty) {
+        TyKind::Int(_) => Some(true),
+        TyKind::Uint(_) => Some(false),
+        _ => None,
+    }
+}
+
+/// The width of an integer type in bits, for `[TYP-10]`'s shift check.
+pub fn bit_width(table: &TypeTable, ty: Ty) -> Option<u64> {
+    match table.kind(ty) {
+        TyKind::Int(i) => Some(int_bits(*i, table.pointer_size())),
+        TyKind::Uint(u) => Some(uint_bits(*u, table.pointer_size())),
+        _ => None,
+    }
+}
+
+/// The most negative value a signed integer type can hold, as a magnitude.
+///
+/// `[TYP-8]` — `i32.MIN / -1` always panics, whatever the overflow policy is,
+/// because the true result is not representable.
+pub fn signed_min_magnitude(table: &TypeTable, ty: Ty) -> Option<u128> {
+    match table.kind(ty) {
+        TyKind::Int(i) => Some(1u128 << (int_bits(*i, table.pointer_size()) - 1)),
+        _ => None,
+    }
 }
 
 /// The largest value an integer type can hold, for `[LEX-16]`'s range check.

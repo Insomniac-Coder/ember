@@ -11,7 +11,7 @@
 //! `[MIR-5]` retain/release only on handles) are added by the phases that
 //! introduce the constructs they govern.
 
-use crate::{BasicBlockId, Body, LocalId, Operand, Place, Rvalue, Stmt, Terminator};
+use crate::{BasicBlockId, Body, LocalId, Operand, Place, Rvalue, StmtKind, Terminator};
 
 #[derive(Debug)]
 pub struct Violation {
@@ -67,6 +67,9 @@ impl Verifier<'_> {
                     self.operand(o, at);
                 }
             }
+            Rvalue::Repeat { value, .. } => self.operand(value, at),
+            Rvalue::Discriminant(place) => self.place(place, at),
+            Rvalue::Ref { place, .. } => self.place(place, at),
         }
     }
 
@@ -105,13 +108,19 @@ pub fn verify(body: &Body) -> Vec<Violation> {
     for (index, block) in body.blocks.iter().enumerate() {
         let at = format!("bb{index}");
         for stmt in &block.stmts {
-            match stmt {
-                Stmt::Assign { place, rvalue } => {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
                     v.place(place, &at);
                     v.rvalue(rvalue, &at);
                 }
-                Stmt::StorageLive(l) | Stmt::StorageDead(l) => v.local(*l, &at),
-                Stmt::Nop => {}
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    v.place(dest, &at);
+                    v.place(overflow, &at);
+                    v.operand(lhs, &at);
+                    v.operand(rhs, &at);
+                }
+                StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => v.local(*l, &at),
+                StmtKind::Nop => {}
             }
         }
         match &block.terminator {
@@ -128,6 +137,14 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(a, &at);
                 }
                 v.place(dest, &at);
+                v.target(*next, &at);
+            }
+            Terminator::Assert { cond, msg, next, .. } => {
+                v.operand(cond, &at);
+                if let crate::AssertKind::Bounds { len, index } = msg {
+                    v.operand(len, &at);
+                    v.operand(index, &at);
+                }
                 v.target(*next, &at);
             }
             Terminator::Return | Terminator::Unreachable => {}

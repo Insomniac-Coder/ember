@@ -200,24 +200,45 @@ void ember_panic_unwrap(const char* what, ember_loc loc) {
  * per call. std.fmt replaces it in Phase 1.
  */
 
+/* The shortest text that reads back as the same value.
+ *
+ * Taking the first precision that round-trips is not the same thing: `%.1g`
+ * of 10.0 is "1e+01", which round-trips exactly, so a loop that stops there
+ * prints 10.0 as "1e+01". Every precision is tried and the shortest result
+ * kept, which picks "10" here and still picks "1e+20" over twenty-one
+ * digits. */
 static void write_shortest_f64(double v, char* buffer, size_t cap) {
+    char candidate[32];
+    buffer[0] = '\0';
     for (int precision = 1; precision <= 17; ++precision) {
-        snprintf(buffer, cap, "%.*g", precision, v);
-        if (strtod(buffer, NULL) == v) {
-            return;
+        snprintf(candidate, sizeof candidate, "%.*g", precision, v);
+        if (strtod(candidate, NULL) != v) {
+            continue;
+        }
+        if (buffer[0] == '\0' || strlen(candidate) < strlen(buffer)) {
+            snprintf(buffer, cap, "%s", candidate);
         }
     }
-    snprintf(buffer, cap, "%.17g", v);
+    if (buffer[0] == '\0') {
+        snprintf(buffer, cap, "%.17g", v);
+    }
 }
 
 static void write_shortest_f32(float v, char* buffer, size_t cap) {
+    char candidate[32];
+    buffer[0] = '\0';
     for (int precision = 1; precision <= 9; ++precision) {
-        snprintf(buffer, cap, "%.*g", precision, (double)v);
-        if (strtof(buffer, NULL) == v) {
-            return;
+        snprintf(candidate, sizeof candidate, "%.*g", precision, (double)v);
+        if (strtof(candidate, NULL) != v) {
+            continue;
+        }
+        if (buffer[0] == '\0' || strlen(candidate) < strlen(buffer)) {
+            snprintf(buffer, cap, "%s", candidate);
         }
     }
-    snprintf(buffer, cap, "%.9g", (double)v);
+    if (buffer[0] == '\0') {
+        snprintf(buffer, cap, "%.9g", (double)v);
+    }
 }
 
 /* Encode one Unicode scalar value as UTF-8. Returns the byte count. */

@@ -1,0 +1,15 @@
+[package]
+name = "ember_analysis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ember_span.workspace = true
+ember_diag.workspace = true
+ember_mir.workspace = true
+ember_types.workspace = true
+
+[lints]
+workspace = true

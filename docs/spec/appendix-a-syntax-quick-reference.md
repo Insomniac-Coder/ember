@@ -40,10 +40,13 @@ extend Vec3 implements Display:            # external impl
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]: ...
 
 fn area(s: Shape) -> f32:                  # params: borrowed by default
-    match s:
-        Circle(r) => return PI * r * r
-        Rect(w, h) => return w * h
-        Empty => return 0
+    match s:                               # `[GRM-10]`: `:` takes statements,
+        Circle(r):                         # `=>` takes an expression. `return`
+            return PI * r * r              # is a statement (ERR-008), so the
+        Rect(w, h):                        # arms here use the `:` form.
+            return w * h
+        Empty:
+            return 0
 
 fn fill(mut buf: MutSpan[f32], v: f32):    # `mut` = inout
     for x in buf.iter_mut(): x = v         # ref mut local writes through

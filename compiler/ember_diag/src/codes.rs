@@ -164,6 +164,7 @@ codes! {
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
+    E2131 = (Error, 2131, Types, "[IV.3]", "array length must be a constant");
     E2140 = (Error, 2140, Types, "[EXP-5]", "cannot assign to a value expression");
     E2150 = (Error, 2150, Types, "[VI.3]", "`is` requires a type with identity");
     E2151 = (Error, 2151, Types, "[VI.3]", "integer `**` with a negative exponent");
