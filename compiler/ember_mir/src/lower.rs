@@ -562,7 +562,21 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Call { callee, args } => {
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
-                let args: Vec<Operand> = args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
+                // `[FN-1]` — the mode decides. `owned` consumes, so the
+                // argument is a move and `[OWN-3]`'s analysis sees it;
+                // borrowed and `mut` do not, and reading the place for one
+                // must not consume it. Threading the mode was outstanding
+                // from block A: every argument was borrowed, so an `owned`
+                // parameter silently did not take ownership.
+                let modes: Vec<hir::Mode> = function.params.iter().map(|p| p.mode).collect();
+                let args: Vec<Operand> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, a)| match modes.get(index) {
+                        Some(hir::Mode::Owned) => self.lower_operand(a),
+                        _ => self.lower_operand_borrowed(a),
+                    })
+                    .collect();
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Direct { symbol },

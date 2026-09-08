@@ -302,10 +302,21 @@ fn step(stmt: &Stmt, state: &mut [Owned], reporter: Option<&mut Reporter>, body:
             // `[OWN-3]` — reading a moved value is `E3040`.
             let mut read = Vec::new();
             read_by_rvalue(rvalue, &mut read);
+            // `[BRW-7]` — a borrow does not consume, so it is not in `read`,
+            // but a reference into memory that was moved out of dangles.
+            let borrowed = match rvalue {
+                Rvalue::Ref { place, .. } => Some(place.local),
+                _ => None,
+            };
             if let Some(reporter) = reporter {
                 for local in &read {
                     if state[local.0 as usize] != Owned::Live {
                         reporter.report(*local, state[local.0 as usize], stmt.span, body);
+                    }
+                }
+                if let Some(local) = borrowed {
+                    if state[local.0 as usize] != Owned::Live {
+                        reporter.report_borrow(local, state[local.0 as usize], stmt.span, body);
                     }
                 }
             }
@@ -451,11 +462,47 @@ impl Reporter<'_> {
             Owned::Moved => format!("`{name}` has been moved out of"),
             _ => format!("`{name}` may have been moved out of"),
         };
-        self.sink.emit(
+        self.sink.emit_classified(
             Diagnostic::error(codes::E3040, span, message)
                 .primary_label("used here after the move")
                 .note("a move gives the value away; the old owner cannot use it again")
                 .help("clone the value, or borrow it instead of moving it"),
+        );
+    }
+
+    /// `[BRW-7]` — "no borrow of a moved or uninitialised place. `E3050`."
+    /// Shape O6, whose required help is to name the path the place is not
+    /// initialised on and to move the borrow after the initialisation.
+    fn report_borrow(&mut self, local: LocalId, state: Owned, span: Span, body: &Body) {
+        let index = local.0 as usize;
+        if self.reported[index] {
+            return;
+        }
+        let decl = body.local(local);
+        if decl.kind == LocalKind::Temp || decl.name.is_none() {
+            return;
+        }
+        self.reported[index] = true;
+        self.errors += 1;
+        let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
+        let (message, note) = match state {
+            Owned::Moved => (
+                format!("`{name}` is borrowed after it has been moved out of"),
+                "the borrow would point at memory whose owner gave it away",
+            ),
+            _ => (
+                format!("`{name}` may have been moved out of when it is borrowed here"),
+                "on at least one path reaching this line the value is gone",
+            ),
+        };
+        self.sink.emit_classified(
+            Diagnostic::error(codes::E3050, span, message)
+                .primary_label("borrowed here")
+                .secondary(decl.span, format!("`{name}` is declared here"))
+                .note(note)
+                .help(
+                    "borrow before the move, or clone the value so the move takes the copy",
+                ),
         );
     }
 }

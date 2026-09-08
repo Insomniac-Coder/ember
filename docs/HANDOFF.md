@@ -715,6 +715,11 @@ M2 is written over `ref i32` rather than the specification's `Array[i32]` and
 `xs[0]`, which needs `Index` to return a `ref` — block D. The rule under test
 is the same, and the file says so.
 
+**`[BRW-7]` is in.** A borrow of a moved place is `E3050`, shape O6, separate
+from `[OWN-3]`'s use-after-move: taking an address does not consume, so a
+borrow is not in the move analysis's reads, but a reference into memory whose
+owner gave it away dangles just the same.
+
 **`[DIA-7]`'s classifier is in, and designed into the pass rather than bolted
 on** — which is what the rule requires, because the classifier needs the
 borrow checker's own loan and region tables and cannot be reconstructed from
@@ -760,8 +765,11 @@ runtime's own allocation counter reports 204 allocations and 204 frees over
   argument must not consume it.** `xs.len()` was moving `xs` away, because a
   non-`Copy` place always read as a move; the drop was then removed as
   "already moved" and the buffer leaked. `lower_operand_borrowed` is the fix.
-  An `owned` parameter still needs the mode threaded through — nothing uses one
-  yet.
+  **`owned` now consumes**, as of 2026-09-08: the callee's parameter modes are
+  read at the call site, and an `owned` argument lowers to a move rather than a
+  borrow. Until then every argument was borrowed, so `owned` parsed, reached
+  the signature, and silently did nothing — the trap this file warns about,
+  found by a `[BRW-7]` test that would not fire.
 - The drop glue is written straight into the C rather than as a synthesised
   function: a struct drops its fields in reverse, an enum switches on its tag
   and drops the active variant's payload, an array drops its elements.
