@@ -695,6 +695,35 @@ impl<'a> Checker<'a> {
                             _ => {}
                         }
                     }
+                    // `[TYP-14]` — a struct carrying a borrow *is* a view
+                    // type whatever it says; the attribute is required as
+                    // documentation, because a reader has to know that the
+                    // struct cannot be stored (`[TYP-15]`) without checking
+                    // every field's type.
+                    let carries_a_borrow: Vec<(Symbol, Span)> = fields
+                        .iter()
+                        .filter(|f| self.types.is_view(f.ty))
+                        .map(|f| (f.name, f.span))
+                        .collect();
+                    if !carries_a_borrow.is_empty() && !has_attribute(&item.attrs, "view") {
+                        let (field, field_span) = carries_a_borrow[0];
+                        let name = decl.name.name;
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2030,
+                                decl.name.span,
+                                format!("`{name}` carries a borrow, so it is a view type"),
+                            )
+                            .secondary(field_span, format!("`{field}` is a borrow"))
+                            .help("write `@view` on the declaration")
+                            .note(concat!(
+                                "a view type may live in a local, a parameter or a return ",
+                                "value, and may not be stored in a field, a `static` or a ",
+                                "container (TYP-15)"
+                            )),
+                        );
+                    }
+
                     let def = self.types.struct_def_mut(id);
                     def.fields = fields;
                     def.has_drop = has_drop;
@@ -5278,6 +5307,11 @@ fn binding_name(pattern: &ast::Pattern) -> Option<Symbol> {
         ast::PatternKind::Bind { name, .. } => Some(name.name),
         _ => None,
     }
+}
+
+/// `@view`, `@packed` and the rest: an attribute by bare name.
+fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
 }
 
 fn has_derive(attrs: &[ast::Attribute], name: &str) -> bool {

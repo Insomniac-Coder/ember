@@ -736,7 +736,14 @@ ownership range and is not an ownership error. `[DIA-7]` and `[DIA-7a]`
 disagree about the classifier's scope; ERR-022 records that `[DIA-7]`'s is the
 real one, and the exception list is one entry long.
 
-**Not done in block E:** `@view` structs; `@borrows` (`[LT-1a]`); real region variables
+**`[TYP-14]`'s `@view` requirement is in.** A struct carrying a borrow *is* a
+view type whatever it says, and omitting the attribute is `E2030`. The
+attribute is documentation, and the reason it is mandatory is that without it a
+reader has to check every field's type to learn the struct may not be stored.
+`[TYP-15]`'s storage restriction itself — `E3063`, shape B12 — needs the region
+work below and is not in.
+
+**Not done in block E:** `[TYP-15]`'s storage check; `@borrows` (`[LT-1a]`); real region variables
 with a constraint graph, which is what `[LT-1]`, `[LT-2]` and `[LT-7]` need and
 what the liveness approximation cannot do; and the shape classifier
 (`[DIA-7]`, block H), which has to be designed into this pass rather than
