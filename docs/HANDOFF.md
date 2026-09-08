@@ -161,6 +161,14 @@ wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
 24-block baseline, which needs the grammar gaps those fragments expose. With
 those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
+**`docs/RFC-v0.6.md` is the v0.6 proposal** (new, 2026-09-09), written after
+reading the owner's friend's Aegis design specification alongside the owner's own
+v0.6 RFC. Eleven features taken from Aegis, stated in Ember's grammar and rule
+numbering, amending v0.5 by rule id rather than restating it. **Nothing in it is
+normative until the owner rules**, and §10 carries the three decisions that block
+everything else: how contracts are spelled, how a range type is declared, and
+what arithmetic a contract expression uses.
+
 **`docs/DEFECTS.md` is the defect ledger** (new, 2026-09-09). Every defect and
 whether it is closed, with how the fix was verified. Defects used to be recorded
 in prose here, spread across the per-block sections, where "found" and "fixed"
