@@ -162,8 +162,8 @@ wait on closures themselves (Phase 2 block F); and shrinking `[TST-7]`'s
 those, the conformance catch-up is done and Phase 2 resumes at block D or E.
 
 Read `docs/spec/` (the specification, split by part) and `docs/DECISIONS.md`
-before touching anything. `docs/spec-errata.md` now lists **twenty** entries;
-ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-020 are the
+before touching anything. `docs/spec-errata.md` now lists **twenty-one** entries;
+ERR-001..ERR-008 are closed or carried by v0.5, ERR-009..ERR-021 are the
 defects found in v0.5 itself.
 
 | | |
@@ -637,7 +637,7 @@ and arenas. Split the same way Phase 1 was:
 | **B** | generics with bounds, monomorphisation, associated types, generic structs | **done** |
 | **C** | `Iterator` and `for` over anything | **done; the adaptor set is not written** |
 | D | `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember | **unblocked; not written** |
-| E | the NLL borrow checker (§4.7), two-phase borrows, `@view` | not started |
+| E | the NLL borrow checker (§4.7), two-phase borrows, `@view` | **started** — see below |
 | F | closures (`[CLO-*]`), `Callable`, `fn(A)->R` parameters | not started |
 | **G**, core | `unsafe:` blocks, `*T`/`*mut T`, `alloc`/`free`/`read`/`write`/`size_of` | **done** |
 | G, the rest | arenas (`[ARN-*]`), `MaybeUninit`, `transmute`, pointer arithmetic, inline asm | not started |
@@ -648,6 +648,44 @@ Blocks D and G were planned the other way round. G's core was pulled forward
 because D could not be written without it, and the rest of G — arenas,
 `MaybeUninit`, `transmute` — turned out not to be needed for D at all.
 Block I did not exist until the amendment.
+
+### Block E: the borrow checker
+
+**References had to become expressible first.** `ref place` / `ref mut place`
+parsed since Phase 1 and the type checker reported them as unsupported, so the
+language could not state a borrow at all and there was nothing to check.
+Everything below the type checker was already there — HIR's `ExprKind::Ref`,
+MIR's `Rvalue::Ref`, `T*` in the C — so it was one arm plus `[TYP-14]` for
+shared references.
+
+**What `compiler/ember_analysis/src/borrows.rs` does now**, against §4.7's
+seven steps: exact backward liveness over the CFG (step 3); loans collected
+from every `Rvalue::Ref` (step 2, partially); loan scope as "the borrower local
+is live" (step 4); `[BRW-1]` over overlapping places (step 5); and `[DIA-3]`'s
+two labels plus the later-use line (step 7).
+
+**The approximation, stated plainly:** a region is the set of points where a
+borrow must be valid, and for a borrow held in a local that is exactly where
+the local is live. That is right until a reference is returned, stored in a
+`@view` struct, or passed into a callback — `[LT-1]`, `[LT-2]`, `[LT-7]` — none
+of which is expressible yet. Those are what real region variables and a
+constraint graph buy, and they are the next piece.
+
+**`E3021`–`E3027` had to be allocated.** `[DIA-7a]` keys every `E3xxx` code to
+a diagnostic shape and forbids emitting one that is absent from its table — and
+seven shapes, including `[BRW-1]` itself, have no code anywhere in v0.5. See
+ERR-021.
+
+**The checker's first real catch was a test this session had just written.**
+`tests/run-pass/references.em` ended with a reborrow, which held the first
+borrow live across every access above it. The program was wrong, not the
+checker.
+
+**Not done in block E:** two-phase borrows (`[BRW-3]`), disjoint fields
+(`[BRW-4]`) beyond prefix overlap, `@view` structs, `E3060`'s
+borrow-outlives-source (needs storage-end tracking), `@borrows` (`[LT-1a]`),
+and the shape classifier (`[DIA-7]`, block H) which has to be designed into
+this pass rather than bolted on.
 
 ### Block A: moves and drops
 

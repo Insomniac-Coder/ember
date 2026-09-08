@@ -366,6 +366,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
     // by `ember lint`. A lint that fires on a separate command does not close
     // the footgun `[GRM-4]` opens.
+    // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
+    // elaboration, so the drops it sees are the ones that will exist.
+    ember_analysis::check_borrows_all(&bodies, &mut sink);
     ember_analysis::check_unused_all(&bodies, &mut sink);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);

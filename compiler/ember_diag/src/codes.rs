@@ -189,6 +189,18 @@ codes! {
     E3012 = (Error, 3012, Ownership, "[EXP-6]", "cannot move out of a class field");
     E3013 = (Error, 3013, Ownership, "[EXP-6]", "cannot move out of a reference");
     E3020 = (Error, 3020, Ownership, "[CTL-2]", "iterable is mutated while the loop borrows it");
+    // `[DIA-7a]` keys every E3xxx code to a diagnostic shape and forbids
+    // emitting one that is absent from its table — but shapes B1, B3, B4, B5,
+    // B8, B9 and B10 are given no code there, which leaves the most basic
+    // borrow error in the language unreportable. Allocated here beside E3020,
+    // which is the aliasing error the table does key. See errata ERR-021.
+    E3021 = (Error, 3021, Ownership, "[BRW-1]", "a shared and a mutable borrow overlap");
+    E3022 = (Error, 3022, Ownership, "[BRW-1]", "two mutable borrows of the same place");
+    E3023 = (Error, 3023, Ownership, "[BRW-1]", "aliased mutation of a value type");
+    E3024 = (Error, 3024, Ownership, "[LT-2]", "a struct field would borrow another field of the same struct");
+    E3025 = (Error, 3025, Ownership, "[BRW-4]", "a method takes all of `self`, defeating disjoint-field access");
+    E3026 = (Error, 3026, Ownership, "[CLO-4]", "a closure outlives what it captures");
+    E3027 = (Error, 3027, Ownership, "[FN-2a]", "a `mut` argument is not a mutable place");
     E3030 = (Error, 3030, Ownership, "[CLO-2]", "closure would move a captured value out");
     E3040 = (Error, 3040, Ownership, "[OWN-3]", "use of moved value");
     E3041 = (Error, 3041, Ownership, "[OWN-4]", "value moved in a previous loop iteration");

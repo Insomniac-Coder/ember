@@ -30,6 +30,7 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-018 | Part VI §6 with Part XIV §1 and Appendix A | **decided** — `assert` takes parentheses |
 | ERR-019 | `[RT-5]` | **decided** — the runtime's own two files are exempt |
 | ERR-020 | `[TST-6]` | fixture created; `compile-pass` deferred to `std` |
+| ERR-021 | `[DIA-7a]`, XIX.6.1 shapes B1..B10 | **decided** — E3021-E3027 allocated |
 
 ---
 
@@ -863,3 +864,53 @@ annotation says so in the file rather than in a note nobody reads.
 **The two stale sentences in `[TST-6]` are left as written.** They describe the
 document's history accurately and correcting them would mean rewriting a rule
 to match a fixture, which is the wrong direction. This entry is the record.
+
+---
+
+## ERR-021 — Seven borrow shapes have no error code, and `[DIA-7a]` forbids inventing one
+
+**Status: decided, 2026-09-08. `E3021`–`E3027` allocated.**
+
+**Where.** `[DIA-7a]` keys every code in `E3000–E3499` to a diagnostic shape
+and ends: "A code absent from this table MUST NOT be emitted."
+
+Its table keys fourteen codes. §XIX.6.1 lists twenty-one shapes. Seven of the
+shapes have no code anywhere in the document:
+
+| Shape | What it is |
+|---|---|
+| **B1** | two mutable borrows through computed indices |
+| **B3** | a shared borrow live across a mutating call |
+| **B4** | aliased mutation of a value type |
+| **B5** | a self-referential struct |
+| **B8** | a method takes all of `self`, defeating `[BRW-4]` |
+| **B9** | a closure outlives its captures |
+| **B10** | a `mut` argument is not a mutable place |
+
+**B1 and B3 are `[BRW-1]` itself** — aliasing XOR mutability, the rule the
+whole value world rests on. As the document stands, a compiler that rejects
+`ref mut n` twice cannot say so: every code it might use is forbidden by
+`[DIA-7a]`, and the shape it must cite has none.
+
+**Decision.** Allocated beside `E3020`, which is the one aliasing error the
+table does key:
+
+| Code | Shape | Title |
+|---|---|---|
+| `E3021` | B3 | a shared and a mutable borrow overlap |
+| `E3022` | B1 | two mutable borrows of the same place |
+| `E3023` | B4 | aliased mutation of a value type |
+| `E3024` | B5 | a struct field would borrow another field of the same struct |
+| `E3025` | B8 | a method takes all of `self` |
+| `E3026` | B9 | a closure outlives what it captures |
+| `E3027` | B10 | a `mut` argument is not a mutable place |
+
+All seven are in the registry now, because `[DIA-6a]` makes it exhaustive
+whether or not the compiler emits a code yet. `E3021` and `E3022` are emitted
+by the borrow checker; the rest wait on the constructs they describe.
+
+**Not a fork.** There was no second sensible answer: the codes had to exist,
+the range and the neighbouring number were determined, and each maps to exactly
+one shape §XIX.6.1 already specifies down to its required `help`. Recorded
+rather than asked about, and `[DIA-7a]`'s table should gain these seven rows in
+the next revision the owner writes.
