@@ -1,5 +1,27 @@
 # Ember — defect ledger
 
+## Which ledger a finding belongs in
+
+Every finding sorts into one of four, and the sort decides who moves. Getting
+this wrong in either direction is how an implementation workaround quietly
+becomes the language's semantics.
+
+| Kind | Evidence | Where it goes | Who moves |
+|---|---|---|---|
+| **Implementation defect** | the rule is clear, the compiler violates it | `DEFECTS.md` (here) | the compiler |
+| **Missing coverage** | the compiler may be right and nobody had proved it | a conformance case; no ledger entry unless it fails | nobody |
+| **Normative contradiction** | two rules require different things, neither marked as governing | `spec-errata.md` | **neither, until the owner rules** |
+| **Deliberate divergence** | the rule is clear, the compiler knowingly differs, with a reason | `DEVIATIONS.md` | the compiler, later |
+
+The third is the one that needs discipline, because a compiler cannot be called
+wrong against a document that says both things — so the temptation is to pick
+the reading that matches what is already built and move on. ERR-044 is the
+worked example: `[TYP-15]`'s enumeration forbids a static-region `str` in a
+class field, `[LT-3]` permits it in as many words, and `[TYP-15]`'s own
+principle sides with `[LT-3]`. The compiler follows the enumeration and stays
+there, unchanged, until the owner decides.
+
+
 Every defect found and what closed it. One row per defect, newest first.
 
 **Why this exists.** Defects were recorded in prose, spread across

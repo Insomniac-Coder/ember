@@ -94,6 +94,7 @@ ERR-008) is worth being able to read again.
 | ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
 | ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
 | ERR-043 | `[CELL-9]` with `[UNS-5]` | **open — reported to the owner** — `UnsafeCell` is named as *the* primitive a package uses for unchecked interior mutability, and no rule defines it |
+| ERR-044 | `[TYP-15]` with `[LT-3]` | **open — reported to the owner** — one says a static-region view is *always forbidden* in a class field, the other says a `str` literal *may* be stored in one |
 
 ---
 
@@ -1849,4 +1850,68 @@ about.
 exposes, what the `unsafe` block promises in exchange, and how `[UNS-4]`'s
 "no two views that are simultaneously live may overlap unless both are shared"
 is discharged around it. It is a small rule and it cannot be guessed.
+
+---
+
+## ERR-044 — `[TYP-15]` and `[LT-3]` disagree about where a static-region view may be stored
+
+**Status: open. Reported to the owner.** Neither side has been moved.
+
+**Where.** `[TYP-15]` states a principle and then an enumeration:
+
+> A view-typed value MUST NOT be stored in a place whose region is not outlived
+> by the view's region. Class fields, non-view struct fields, `static`s,
+> `Box[T]` and `Shared[T]` contents, container elements and `owned fn` captures
+> have no bounding region and are therefore **always forbidden** (`E3063`).
+
+`[LT-3]` says the opposite for the static-region case, in as many words:
+
+> String literals, `static` items, and `Span`s over them have the `static`
+> region, which outlives everything and **satisfies `[TYP-15]`'s storage
+> restrictions** (a `str` literal **may** be stored in a class field because
+> its type is `str` with static region — the compiler records region `static`
+> in the field's type; a non-static `str` cannot be stored there: `E3060`…)
+
+**The contradiction is exact.** `[TYP-15]` lists class fields among the places
+that are *always* forbidden; `[LT-3]` says a `str` literal *may* be stored in
+one. Both are normative and neither is marked as governing.
+
+**And the two rules name different codes** for the same rejection — `[TYP-15]`
+says `E3063`, `[LT-3]` says `E3060` — which is a second, smaller inconsistency
+in the same pair.
+
+**Which side is coherent.** `[TYP-15]`'s own principle sides with `[LT-3]`: a
+place is forbidden when its region "is not outlived by the view's region", and
+a static-region view outlives everything, including a `static`. It is the
+*enumeration* that overreaches, by assuming every listed place has no bounding
+region — true of a class field holding a borrowed view, false of one holding a
+literal, which is precisely the case `[LT-3]` calls out.
+
+**What the compiler does.** It follows `[TYP-15]`'s enumeration:
+
+```ember
+static GREETING: str = "hi"
+error[E3063]: `str` is a view, so it may not be stored in a `static`
+```
+
+That is defensible against the letter of one rule and wrong against the letter
+of the other, which is why it is not being changed.
+
+**What is not affected.** A `@view struct` holding a `str` works today, because
+`[TYP-14]` gives it a bounding region and no exemption is needed. Classes are
+Phase 3 and unbuilt, so `[LT-3]`'s own example cannot be written yet either
+way. Nothing is blocked; what is at stake is whether
+
+```ember
+static GREETING: str = "hi"
+class Label:
+    text: str
+```
+
+are legal Ember, and the document currently says both yes and no.
+
+**What it needs from the owner.** One of: `[TYP-15]`'s enumeration gains "unless
+the view's region is `static`"; or `[LT-3]`'s parenthetical is struck and
+static-region views are genuinely forbidden in those places; or the two are
+merged. Also which code the rejection carries.
 
