@@ -49,6 +49,19 @@ pub fn check(
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
 
+    // `RangeError` before anything else. `[RNG-3]` writes the signature
+    // `T.checked(v) -> Result[T, RangeError]`, so a program that declares a
+    // function of that type — which is `[RNG-3]`'s own worked example — needs
+    // the name to resolve while **signatures** are being collected, long
+    // before any body mentions `checked`. Creating it on first use meant it
+    // did not exist yet and the example did not compile (D-025).
+    //
+    // It is a prelude type rather than a `std.core` declaration because the
+    // compiler is what produces it: `checked` is a language-defined
+    // construction under `[RNG-10]`, not a library function, so its error type
+    // cannot depend on a module having been imported.
+    checker.range_error_ty();
+
     // Names first, across every module, so that an import can name an item in
     // a module that has not been walked yet — `[MOD-4]` allows cycles.
     for (index, loaded) in modules.iter().enumerate() {

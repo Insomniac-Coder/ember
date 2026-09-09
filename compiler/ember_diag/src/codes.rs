@@ -136,7 +136,13 @@ codes! {
     // ERR-001 for the mapping.
     E0102 = (Error, 102, Parse, "[III.5]", "chained comparison");
     E0103 = (Error, 103, Parse, "[GRM-10]", "match arms mix statement and expression form");
-    E0104 = (Error, 104, Parse, "[ATT-1]", "unknown attribute");
+    // Two rules name this code. `[ATT-1]`/`[ATT-2]`/`[ATT-5]`/`[FFI-34a]` use
+    // it for an attribute or grade suffix that is not admitted where it
+    // appears; `[GRM-23]` uses it for `a in b in c`. `[DIA-6a]` asks for one
+    // code per rule and the document does not honour that here — the reading
+    // that keeps both is that `E0104` means "this construct is not admitted in
+    // this position", which covers both uses (errata ERR-026).
+    E0104 = (Error, 104, Parse, "[ATT-1], [GRM-23]", "construct not admitted in this position");
     E0105 = (Error, 105, Parse, "[GRM-18]", "`;` is not a statement separator");
     E0106 = (Error, 106, Parse, "[GRM-17]", "a multi-statement closure cannot be written inside brackets");
     E0107 = (Error, 107, Parse, "[GRM-16]", "a jump expression may not be an operand");
@@ -317,7 +323,8 @@ codes! {
     E8001 = (Error, 8001, Layout, "[GPU-10]", "GPU layout does not match the CPU layout");
 
     // --- build, manifest, toolchain -------------------------------------------
-    E9010 = (Error, 9010, Build, "[TYP-9c]", "toolchain cannot honour a float-control attribute");
+    // `[TYP-9c]` and `[MAN-3]` both name `E9010`. Both are followed.
+    E9010 = (Error, 9010, Build, "[TYP-9c], [MAN-3]", "the toolchain or the manifest names something it cannot honour");
     E9011 = (Error, 9011, Build, "[TYP-9a]", "toolchain cannot disable FP contraction");
     E9020 = (Error, 9020, Build, "[BLD-FFI-1a]", "translation units of one target disagree on an inherited flag");
     E9021 = (Error, 9021, Build, "[BLD-FFI-1b]", "C++ standard library and CRT heap could not be determined");
@@ -325,10 +332,13 @@ codes! {
     E9002 = (Error, 9002, Build, "[BLD-4]", "the C toolchain could not be found or failed");
     E9003 = (Error, 9003, Build, "[CLI-1]", "invalid command line");
 
-    // `[MAN-3]` also names `E9010`, which `[TYP-9c]` already owns; `[DIA-6a]`
-    // requires one code per rule, and XX §6 leaves `E9012`/`E9013` described
-    // only as "manifest sections". They are allocated here — errata ERR-039.
-    E9012 = (Error, 9012, Build, "[MAN-3]", "`[lints]` names a lint the compiler does not define");
+    // Registered, never emitted: XX §6 names `E9012` under "manifest sections"
+    // and no rule assigns it. `[MAN-3]` was given it here for a while, because
+    // `[DIA-6a]` wants one code per rule and `E9010` was already `[TYP-9c]`'s
+    // — but `[MAN-3]` says `E9010` in as many words, and the document decides
+    // (errata ERR-039). It is kept in the registry because XX §6 names it and
+    // `[DIA-6a]` requires every named code to be registered.
+    E9012 = (Error, 9012, Build, "[MAN-3]", "reserved for a manifest section");
     E9013 = (Error, 9013, Build, "[MAN-5]", "invalid `[ffi]` manifest section");
     E9030 = (Error, 9030, Build, "[HR-18]", "hot reload refused");
     E9031 = (Error, 9031, Build, "[MAN-7]", "invalid `reload` value");

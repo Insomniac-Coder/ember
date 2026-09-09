@@ -650,9 +650,29 @@ impl Parser<'_> {
                 if let Some((next, _, _, _)) = self.infix_op() {
                     if matches!(next, InfixOp::Bin(b) if b.is_comparison()) {
                         let span = self.span();
+                        // Two rules govern this position and they name
+                        // different codes. Part III §5's precedence table
+                        // gives `E0102` for a chained comparison; `[GRM-23]`
+                        // gives **`E0104`** for `a in b in c` specifically.
+                        // The membership operators answer to `[GRM-23]`, so
+                        // they report its code — the document is explicit and
+                        // the compiler follows it rather than unifying the two
+                        // on the tidier code (errata ERR-026).
+                        let membership = |o: &InfixOp| {
+                            matches!(o, InfixOp::Bin(BinOp::In | BinOp::NotIn))
+                        };
+                        let (code, what) = if membership(&op) || membership(&next) {
+                            (codes::E0104, "chained membership")
+                        } else {
+                            (codes::E0102, "chained comparison")
+                        };
                         self.report(
-                            Diagnostic::error(codes::E0102, span, "chained comparison")
-                                .help("write `a < b and b < c`"),
+                            Diagnostic::error(code, span, what)
+                                .help("write `a < b and b < c`")
+                                .note(concat!(
+                                    "comparison and membership are non-associative: ",
+                                    "Ember has no chained comparison [GRM-23]"
+                                )),
                         );
                     }
                 }
