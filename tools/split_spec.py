@@ -77,6 +77,17 @@ def main(source, out_dir):
              " `docs/spec-source/ember-spec.md`, which is the normative"
              " document. Do not hand-edit these files: apply the ruling to the"
              " source, record it in `docs/spec-errata.md`, and regenerate.\n",
+             "\n**Five sections are numbered for one Part and printed inside"
+             " another** (errata ERR-035). The split cuts on `# Part` headings,"
+             " so each lands in the file it is physically inside — a faithful"
+             " split of the source, which Part XXI §1 ground rule 3 forbids"
+             " tidying by hand. Find a rule by its id, not by its Part:\n",
+             "\n| Section | Numbered for | Printed in |\n|---|---|---|\n"
+             "| `VIII.5a` Cycle diagnosis (`[WK-4]`) | VIII | XV |\n"
+             "| `IX.5a` Unsafe categorisation (`[UNS-9]`) | IX | XV |\n"
+             "| `XX.13` C++ importer corpus (`[CXX-*]`) | XX | XVI |\n"
+             "| `XVI.7a` C++ exception policy (`[FFI-43]`) | XVI | XX |\n"
+             "| Compile-time budget (`[BUD-*]`) | unnumbered | XX |\n",
              "\n| File | Part |\n|---|---|\n"]
     for name, title in written:
         index.append(f"| [{name}]({name}) | {title} |\n")

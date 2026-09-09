@@ -2,6 +2,16 @@
 
 **Generated** by `tools/split_spec.py` from `docs/spec-source/ember-spec.md`, which is the normative document. Do not hand-edit these files: apply the ruling to the source, record it in `docs/spec-errata.md`, and regenerate.
 
+**Five sections are numbered for one Part and printed inside another** (errata ERR-035). The split cuts on `# Part` headings, so each lands in the file it is physically inside — a faithful split of the source, which Part XXI §1 ground rule 3 forbids tidying by hand. Find a rule by its id, not by its Part:
+
+| Section | Numbered for | Printed in |
+|---|---|---|
+| `VIII.5a` Cycle diagnosis (`[WK-4]`) | VIII | XV |
+| `IX.5a` Unsafe categorisation (`[UNS-9]`) | IX | XV |
+| `XX.13` C++ importer corpus (`[CXX-*]`) | XX | XVI |
+| `XVI.7a` C++ exception policy (`[FFI-43]`) | XVI | XX |
+| Compile-time budget (`[BUD-*]`) | unnumbered | XX |
+
 | File | Part |
 |---|---|
 | [part-00-preface.md](part-00-preface.md) | Preface — how to use this document |

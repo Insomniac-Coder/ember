@@ -1,140 +1,111 @@
 # Ember — handoff
 
-## READ THIS FIRST — a new v0.6 specification is arriving (2026-09-09)
+## READ THIS FIRST — v0.8.3 is the law (2026-09-09)
 
-**The owner is supplying a substantially expanded v0.6 specification that supersedes
-every v0.6 document in this repository.** When it arrives, apply it with the
-procedure in "Applying a new specification version" below — copy to
-`docs/spec-source/as-received/` untouched, split to a scratch directory, **diff every
-part against the committed one and read the whole diff before changing anything**,
-then regenerate. That order exists because `[MOD-6]` and `[CLO-2]` lost text in v0.5
-that survived in no copy of the new document and was recoverable only from the
-committed split.
+`docs/spec-source/ember-spec.md` **is v0.8.3**, installed as the normative
+document and split into `docs/spec/`. The owner's untouched copy is
+`docs/spec-source/as-received/Ember_v0.8.3_spec.md`; the two differ only by the
+errata applied under ERR-025..ERR-040, each of which asserts its replacement
+matched exactly once.
 
-### The three v0.6 documents that exist now, and what each one is
+**Read `docs/MIGRATION-0.8.3.md` next.** It is the analysis that decided the
+work: what changed, what the compiler already had, and the ordered route
+through the rest. This section is the short form.
 
-| Where | What | Status |
-|---|---|---|
-| `docs/spec-source/Ember_v0.6_spec.md` | **the full v0.6 spec I generated**: v0.5 with eleven Aegis features substituted into the Parts they belong to. 3,725 lines | superseded by the incoming document |
-| `docs/spec-source/Ember_v0.6_owner_revision.md` | **the owner's revision of that file**, 3,782 lines (copied in from `Downloads/Ember_v0.6_Specification.md` so it is diffable). Fixes eight of the ten flaws found in mine | superseded by the incoming document, but see the two open defects below |
-| `docs/RFC-v0.6.md` | the rationale: why each feature was taken, the three decisions, the amendment table | keep; it explains the *why* the spec does not |
+### What arrived
 
-**Nothing v0.6 is normative.** `docs/spec-source/ember-spec.md` is still v0.5 and
-`docs/spec/` is still generated from it. `split_spec.py --check` passes against v0.5.
+Seven revisions at once — 0.6, 0.6.2, 0.6.3, 0.7.1, 0.7.2, 0.8, 0.8.1, 0.8.2b,
+0.8.2c, 0.8.3 — the repository having been on 0.5. **833 rule ids, 677 stated,
+205 diagnostic codes.** A new Part XVIII (Hot Reload); everything after it
+renumbered by one, so the old Part XVIII (Compiler Architecture) is now XIX,
+XIX (Toolchain) is XX, XX (Implementation Plan) is XXI, XXI (RageV) is XXII,
+and XXII (Open Questions) is XXIII.
 
-### Where v0.6 came from
+**Checked before anything was changed: no v0.5 rule id is absent from v0.8.3.**
+The set difference is empty in that direction. Nothing already implemented was
+invalidated — the diffs over Parts II–VII are 3, 22, 92, 12, 31 and 2 lines,
+and Part IV's 92 are §IV.2a's range types in their entirety.
 
-The owner supplied two source documents: a v0.6 RFC of his own, and a friend's
-**Aegis** safety-critical language design specification
-(`C:\Users\ism19\Downloads\Aegis_Safety_Critical_Language_Design_Spec_v0.1.docx`).
-The task was to decide what Ember should take from Aegis.
+**Contracts are gone.** 0.6.2 removed `@requires`, `@ensures`, `@invariant`,
+`@decreases`, `@verified`, `@assume`, the `[CTR-*]`/`[PRV-*]` rules, the proof
+manifest and the solver (`OQ-27`). `docs/RFC-v0.6.md` argued for taking them
+from Aegis; that argument was heard and declined. It is **history, not a
+plan** — kept because eight of its eleven features did ship and it records why.
 
-**The finding that reordered the work: roughly a third of the owner's RFC
-re-specified things v0.5 already had, in Aegis's vocabulary.** Part XVI §7–§11
-already specifies the C++ importer, the overlay contract vocabulary, the generated
-`extern "C"` thunks, the exception-catching wrapper, the standard-library mapping,
-and `ember bind --report`'s adoption gate — with libclang in MSVC-compatibility mode
-named, which the RFC left blank. Had it landed as written, `[FFI-17]` and the new
-text would both have been normative and disagreeing: the shape that put six defects
-into v0.5.
+### Two questions left open for the owner
 
-**What Aegis genuinely has that Ember did not**, and what was taken:
+Both are Phase 5/7 and nothing before them depends on the answer. Neither was
+decided silently; provisional readings are in `docs/spec-errata.md` and
+`docs/DECISIONS.md`, and the grammar is **not** changed until the owner rules.
 
-1. nominal range/domain types
-2. contracts (`@requires`, `@ensures`, `@invariant`, `@decreases`)
-3. an external solver discharging obligations, aimed at bounds checks
-4. a proof manifest
-5. a trusted-base report where **every foreign claim is graded** asserted /
-   checked / instrumented / proven — Ember had only known-vs-unknown, so a promise
-   typed into an overlay and a fact derived from the header were indistinguishable
-6. a standard library that can be **built without its allocating half**, plus
-   fixed-capacity containers
-7. `Io` and `Lock` as effects distinct from `Block` and `Sync`
-8. foreign references and pointers importing **unsafe** until a lifetime is written
-9. ownership transfer across the C++ boundary as an explicit `adopt` at the call site
-10. declared foreign effects **checked by instrumentation** rather than believed
-11. foreign reachability reporting (`ember calls --foreign`)
+* **ERR-036** — Part III §2's `fn_header` has no `extern` prefix, so
+  `pub extern "C" fn on_update(…)` — which XVI.10 writes and `[FFI-26]`,
+  `[FFI-28]`, `[FFI-31b]` and `[HR-21]` all depend on — parses under no
+  production. Provisional: the prefix belongs on `fn_header` (ADR-014).
+* **ERR-037** — Part III §2 has no `extern class` production, though
+  `[FFI-39]` spends forty lines specifying one. **No provisional reading
+  taken**: there is no smallest-change answer, and writing a production would
+  decide the shape of the C++ inheritance surface silently.
 
-### Three decisions the v0.6 draft takes, and why they matter to the new document
+Both blocks sit in `[TST-7]`'s baseline, which is where a gap the gate exists
+to expose belongs.
 
-They are the load-bearing part; check the incoming spec answers them the same way or
-deliberately differently.
+### Where the work is
 
-1. **Contracts are attributes, not clauses.** `requires`, `ensures`, `invariant`
-   and `decreases` are ordinary identifiers in v0.5 and appear in neither list in
-   `[LEX-15]`. Clause syntax breaks any program using one as a name.
-2. **A range type is declared with `in`** (`type Roughness = f32 in 0.0 ..= 1.0`),
-   not a new `range` keyword, because `range` is a plausible variable name. `[RNG-1]`
-   states the nominal-vs-transparent split so `type` stays readable.
-3. **Contract arithmetic is always checked, in every profile.** Otherwise
-   `@ensures(result > x)` is true under `debug`'s panicking arithmetic and false
-   under `release`'s wrapping, and `[PRF-1]` — one source, one verdict — is false.
+**Phase 0 and Phase 1 complete; Phase 2 in progress.** Against `[CONF-2]` —
+Ember Core is "Parts II–VII and XIII […] and range types" — what landed on
+2026-09-09:
 
-### Ten flaws were found in my v0.6 spec; eight were real
+| What | Rules |
+|---|---|
+| `yield` a v1 keyword (49, not 48); `gen` contextual | `[LEX-15b]`, ERR-025 |
+| `range_clause`, `gen fn`, `yield` parse | `[GRM-8d]`, `[GRM-21]`, `[GRM-22]` |
+| 62 diagnostic codes registered; the registry is exhaustive again | `[DIA-6a]` |
+| **Range and domain types**, all of §IV.2a except `[RNG-4]` | `[RNG-1..10]`, `[TYP-5]` |
+| `std` is a resolvable package with three modules | `[MOD-1]`, `[STD-1]` |
+| `Self` resolves in every signature | Part IV §8 |
+| interface collection is whole-program | `[IFC-1]`, `[MOD-4]` |
+| field visibility, `pub(read)`, the memberwise constructor's | `[MOD-2]`, `[MOD-7]`, `[STR-1]` |
+| the conformance suite is **run**, and its baseline ratchets | `[TST-4]`, `[TST-4a]`, `[TST-4c]` |
 
-Recorded because the same classes will apply to the incoming document.
+**Eight defects found and fixed in the same period** (D-014..D-021 in
+`docs/DEFECTS.md`), every one of them something the compiler let a program do
+that the specification forbids. Two are worth knowing about before touching
+anything:
 
-**Eight real, and all eight are fixed in the owner's revision:** the effect table
-still listed six effects while the new rule added two; the contracts rule literally
-contained the false sentence "so `[PRF-1]` is not weakened"; a second owned-wrapper
-type (`Foreign[T]`) was invented beside the existing `ForeignBox[T]`; the
-verification switch's middle setting was never defined; the compatibility claim was
-false; a missing-name error carried a build-system code; contracts were specified for
-virtual overrides and nothing else; instrumented evidence had no storage and no
-expiry.
+* interfaces were collected **per module**, immediately before that module's
+  `implements`, so a module checked first could not implement an interface
+  declared later. `[MOD-4]` allows import cycles inside a package, so no load
+  order would have worked;
+* **field visibility was not enforced at all**, and fixing it turned
+  `tests/run-pass/modules_across_files.em` red — a test that had been green on
+  the strength of the gap.
 
-**Two were wrong, and both were my error, not the document's** — the lesson being
-that a claimed contradiction must be checked before it is recorded, which is what
-ERR-014, ERR-019 and ERR-022 already cost once:
+### What is next, in order
 
-- I claimed `roughness + metallic` compiles. I could not show it. The rule says a
-  range type converts to its representation implicitly but never says *where*, and
-  the type checker only converts where an expected type exists — an operand has
-  none. The real flaw was the missing "where", not the behaviour I described.
-- I claimed fixed-capacity containers need a feature Ember lacks. The grammar has
-  it: `generic_arg := ... | expression (* const generic argument *)`, and fixed
-  arrays already use it. The gap is in the compiler, not the design.
+`docs/MIGRATION-0.8.3.md` §4 is the full route. The head of it:
 
-### Two defects in the owner's revision, both introduced by the fixes
+1. `[RNG-4]`'s range tracking (D-018, open: precision, not soundness — half of
+   it waits for a generic `min`/`max` over a numeric bound).
+2. Closures (`[CLO-*]`), `Span`/`MutSpan` (`[SPN-*]`), `Cell`/`RefCell`
+   (`[CELL-*]`), `Arena` (`[ARN-*]`), `assert_disjoint` (`[DSJ-*]`) — the rest
+   of Phase 2's list.
+3. The diagnostic shape catalogue with `tests/ui/` snapshots and `[PHIL-8a]`'s
+   before-and-after verification, which is a **Phase 2 exit criterion** and has
+   never been run.
+4. `docs/errors/EXXXX.md` for every code emitted, per `[DOC-1]`.
 
-**Carry these forward and re-check them against the incoming document.**
 
-- **`E1020` is taken.** `[BLD-11]` now reports a reference to a type from an
-  omitted library layer as `E1020`. `[GRM-4]` already uses `E1020` for redeclaring
-  a name in the same block. Two errors, one number — the same class as the defect it
-  was fixing.
-- **`[CG-1]`..`[CG-4]` do not exist.** `[STD-7a]` says those four rules govern
-  const-generic parsing, constant evaluation, monomorphisation and identity. No such
-  rules are defined anywhere in the document.
+## Where the specification lives
 
-Everything else in the revision checks out: 485 rule definitions with no duplicate
-id, and `E2214` and `E4054` are unused elsewhere.
-
-### Repository state at the hand-off
-
-**Nine commits on `main`, `1204a5e` onwards, and they are NOT pushed.** The working
-tree is clean. `cargo test --workspace` is 161 green, the build is warning-free, and
-all four gates pass (`rule_index.py`, `spec_check.py`, `check_branding.py`,
-`split_spec.py --check`). Today's compiler work is Phase 2 block E's region graph,
-described under "Block E: the borrow checker" further down; that section is current
-and nothing in v0.6 affects it.
-
----
-
-## Read this before anything else: v0.5 has landed and is applied
-
-**The owner supplied the v0.5 specification on 2026-09-08.** It is the whole
-document, not a partial replacement, and it carries the change logs for 0.3,
-0.4 and 0.5 — three revisions at once. The open question in the previous
-handoff ("is it the whole document?") is answered: `docs/spec/` was
-regenerated, not patched.
-
-**Where it lives now.**
+**Superseded by v0.8.3 above.** This section records the three-way split,
+which is unchanged and is the reason a revision can be applied without losing
+a ruling.
 
 | Path | What it is |
 |---|---|
-| `docs/spec-source/as-received/Ember_v0.5_spec.md` | byte-identical to what the owner sent. **Never edit it.** It is what a future revision is diffed against |
-| `docs/spec-source/ember-spec.md` | the **normative** document: as-received plus the errata rulings below |
+| `docs/spec-source/as-received/Ember_v0.8.3_spec.md` | byte-identical to what the owner sent. **Never edit it.** It is what the next revision is diffed against. `Ember_v0.5_spec.md` beside it is the previous one, kept for the same reason |
+| `docs/spec-source/ember-spec.md` | the **normative** document: as-received plus the errata rulings in `docs/spec-errata.md` |
 | `docs/spec/` | generated from it by `tools/split_spec.py`. **Never hand-edit.** `tools/split_spec.py --check` fails CI if anyone does |
 
 That three-way split exists because v0.5's own ground rule 3 records how 0.3

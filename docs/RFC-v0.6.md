@@ -1,5 +1,15 @@
 # Ember v0.6 — proposed
 
+> **HISTORY, NOT A PLAN.** v0.8.3 is the specification (2026-09-09), and
+> 0.6.2 **removed** the contract and verification layer this document argues
+> for: `@requires`, `@ensures`, `@invariant`, `@decreases`, `@verified`,
+> `@assume`, the `[CTR-*]` and `[PRV-*]` rules, the proof manifest and the
+> solver are all gone, and `OQ-27` records it as an owner decision. Eight of
+> the eleven Aegis features below **did** ship — range types, the graded
+> trusted base, the layered standard library, `Io`/`Lock`, `[FFI-35]`'s unsafe
+> import, `adopt`, instrumented effects and foreign reachability — and this
+> file is why each was taken. Read it for that; do not implement from it.
+
 **Status:** proposal. Nothing here is normative until the owner rules on it.
 **Depends on:** the v0.5 normative specification (`docs/spec/`).
 **Principle:** safe by default, provable by request, native when necessary.
