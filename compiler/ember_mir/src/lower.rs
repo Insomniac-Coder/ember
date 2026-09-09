@@ -592,6 +592,12 @@ impl<'a> Builder<'a> {
             // It is lowered here rather than in the backend because it
             // produces an enum value, which is a branch and two aggregates
             // rather than a C expression.
+            // `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the
+            // checked-without-panic form". One compare, a branch, and the two
+            // `Option` variants.
+            hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
+                self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::RangeChecked(id), args } => {
                 self.lower_range_checked(place, *id, &args[0], expr.ty, expr.span);
             }
@@ -989,6 +995,92 @@ impl<'a> Builder<'a> {
 
     /// Emit `op` together with the check it needs, leaving the result in
     /// `place` and the cursor on the success path.
+    /// `[SPN-2]` — `s.get(i)`.
+    ///
+    /// `Some(ref s[i])` where `i < s.len()`, `None` otherwise. Unlike `s[i]`
+    /// this emits no `Assert`: the comparison **is** the answer, which is what
+    /// "checked without panic" means.
+    fn lower_span_get(
+        &mut self,
+        place: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_place(receiver);
+        let index_op = self.lower_operand(index);
+        let slot = self.temp(self.usize_ty, span);
+        self.push(StmtKind::StorageLive(slot));
+        self.push(StmtKind::Assign {
+            place: Place::local(slot),
+            rvalue: Rvalue::Use(index_op),
+        });
+
+        let in_range = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(in_range),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(slot)),
+                rhs: Operand::Copy(base.clone().field(1)),
+            },
+        });
+
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("[SPN-2] `get` returns an Option");
+        };
+        // `option_of` builds `None` first and `Some` second, so `None` is
+        // variant 0 — which is also what makes `Option`'s discriminant zero
+        // for the absent case. Read from the table rather than assumed: the
+        // order is a choice in one function, not a language rule.
+        let none_index = self
+            .types
+            .enum_def(option)
+            .variants
+            .iter()
+            .position(|v| v.fields.is_empty())
+            .expect("an Option has a payload-free variant");
+        let some_index = 1 - none_index;
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(in_range)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        let element = base.index(slot);
+        let reference =
+            self.temp(self.types.enum_def(option).variants[some_index].fields[0].ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(reference),
+            rvalue: Rvalue::Ref { place: element, mutable: false },
+        });
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some_index),
+                operands: vec![Operand::Move(Place::local(reference))],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none_index),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = join_bb;
+    }
+
     /// `[RNG-3]` — `T.checked(v)`.
     ///
     /// `in_range = v >= lo and v <= hi` (or `v < hi` for a half-open range),
@@ -1319,8 +1411,10 @@ impl<'a> Builder<'a> {
     fn lower_index(&mut self, base: &'a hir::Expr, index: &'a hir::Expr, span: ember_span::Span) -> Place {
         let fixed_len = match self.types.kind(base.ty) {
             TyKind::Array { len, .. } => Some(*len),
-            // An `Array[T]`'s length is a field, read at the point of use.
-            TyKind::Vec { .. } => None,
+            // An `Array[T]`'s length is a field, read at the point of use;
+            // a view's is the same field of the same shape (`[SPN-2]`:
+            // "Indexing a `Span` is bounds-checked").
+            TyKind::Vec { .. } | TyKind::Span { .. } => None,
             // The type checker has already reported this; carry on with a
             // length that makes every access fail rather than pass.
             _ => Some(0),

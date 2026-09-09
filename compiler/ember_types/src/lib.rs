@@ -72,6 +72,17 @@ pub enum TyKind {
     Never,
     /// A view over UTF-8 bytes with a region; `Span[u8]` known to be valid.
     Str,
+    /// `Span[T]` and `MutSpan[T]` (Part VII §7): pointer plus length, with a
+    /// compile-time region. Part IV §1 puts them in the **View** category
+    /// beside `ref T` and `str`, which is why they are a kind here rather than
+    /// a library struct over a raw pointer: a struct holding a `*T` carries no
+    /// region, so `[TYP-15]` could not see it and `[UNS-4]`'s "no two views
+    /// that are simultaneously live may overlap unless both are shared" would
+    /// have nothing to hold.
+    ///
+    /// `[SPN-3]` — `Span[T]` is `Copy`; `MutSpan[T]` is move-only and
+    /// reborrowable.
+    Span { elem: Ty, mutable: bool },
     Struct(StructId),
     Enum(EnumId),
     /// `[RNG-1]` — a **nominal** numeric type over a representation,
@@ -655,7 +666,7 @@ impl TypeTable {
             }),
             TyKind::Void | TyKind::Never => Layout::ZERO,
             // A view: pointer plus length.
-            TyKind::Str => Layout {
+            TyKind::Str | TyKind::Span { .. } => Layout {
                 size: self.pointer_size * 2,
                 align: self.pointer_size,
                 field_offsets: vec![0, self.pointer_size],
@@ -746,6 +757,10 @@ impl TypeTable {
             | TyKind::IntLit
             | TyKind::FloatLit
             | TyKind::Error => true,
+            // `[SPN-3]` — "`Span[T]` is `Copy`; `MutSpan[T]` is move-only
+            // and reborrowable", for the same reason `ref` and `ref mut`
+            // differ: two live copies of a writable view are two writers.
+            TyKind::Span { mutable, .. } => !mutable,
             // `ref T` is Copy; `ref mut T` is move-only and reborrowable.
             TyKind::Ref { mutable, .. } => !mutable,
             TyKind::Array { elem, .. } => self.is_copy(*elem),
@@ -810,7 +825,8 @@ impl TypeTable {
     /// class fields, statics, containers or across threads (`[TYP-15]`).
     pub fn is_view(&self, ty: Ty) -> bool {
         match self.kind(ty) {
-            TyKind::Ref { .. } | TyKind::Str => true,
+            // Part IV §1's View category, in full.
+            TyKind::Ref { .. } | TyKind::Str | TyKind::Span { .. } => true,
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_view(t)),
             TyKind::Array { elem, .. } => self.is_view(*elem),
             TyKind::Struct(id) => {
@@ -921,6 +937,10 @@ impl TypeTable {
             TyKind::Void => "void".into(),
             TyKind::Never => "!".into(),
             TyKind::Str => "str".into(),
+            TyKind::Span { elem, mutable } => {
+                let name = if *mutable { "MutSpan" } else { "Span" };
+                format!("{name}[{}]", self.display(*elem))
+            }
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),

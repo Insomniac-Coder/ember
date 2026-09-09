@@ -1752,6 +1752,30 @@ impl<'a> Checker<'a> {
                 if segments.len() == 1 && !args.is_empty() =>
             {
                 let name = segments[0].name;
+                // `Span[T]` / `MutSpan[T]` — Part IV §1's View category, so
+                // a compiler-known type like `str` rather than a library
+                // struct: a struct over a raw pointer carries no region, and
+                // the region is what `[TYP-15]` and `[UNS-4]` rest on.
+                if name.is("Span") || name.is("MutSpan") {
+                    let mutable = name.is("MutSpan");
+                    if args.len() != 1 {
+                        self.error(
+                            codes::E2020,
+                            ty.span,
+                            format!("`{name}` takes one type argument"),
+                        );
+                        return self.common.error;
+                    }
+                    let ast::GenericArg::Type(t) = &args[0] else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    let elem = self.resolve_type(t);
+                    // `[TYP-15]` — a view of views has two regions and
+                    // `[LT-2]` gives a type one.
+                    self.reject_stored_view(elem, t.span, "a span element");
+                    return self.types.intern(TyKind::Span { elem, mutable });
+                }
                 // `Array[T]` — a compiler-known growable sequence (Part XX.1).
                 if name.is("Array") {
                     if args.len() != 1 {
@@ -2531,9 +2555,7 @@ impl<'a> Checker<'a> {
                         .collect();
                     for (name, ty, mode, param_span) in signature_params {
                         let local_ty = match mode {
-                            Mode::Mut => {
-                                self.types.intern(TyKind::Ref { mutable: true, inner: ty })
-                            }
+                            Mode::Mut => self.mut_param_ty(ty),
                             _ => ty,
                         };
                         self.declare(Some(name), local_ty, param_span);
@@ -2561,7 +2583,7 @@ impl<'a> Checker<'a> {
                 // Without this the callee writes to a copy and the caller
                 // never sees it.
                 let local_ty = match mode {
-                    Mode::Mut => self.types.intern(TyKind::Ref { mutable: true, inner: ty }),
+                    Mode::Mut => self.mut_param_ty(ty),
                     _ => ty,
                 };
                 let local = self.declare(Some(name), local_ty, span);
@@ -2719,7 +2741,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for (name, ty, mode, param_span) in signature_params {
             let local_ty = match mode {
-                Mode::Mut => self.types.intern(TyKind::Ref { mutable: true, inner: ty }),
+                Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -2833,7 +2855,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for (name, ty, mode, param_span) in signature_params {
             let local_ty = match mode {
-                Mode::Mut => self.types.intern(TyKind::Ref { mutable: true, inner: ty }),
+                Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -4158,6 +4180,27 @@ impl<'a> Checker<'a> {
                 return if repr == expected { erased } else { self.coerce(erased, expected) };
             }
         }
+        // `[SPN-1]` — "`Array[T]` coerces to `Span[T]` at borrow sites and to
+        // `MutSpan[T]` at `mut` sites; `[T; N]` likewise". A view, not a
+        // conversion: it points into the container, and the borrow checker
+        // keeps the container borrowed for the view's region.
+        if let TyKind::Span { elem: want, mutable } = *self.types.kind(expected) {
+            let source = match *self.types.kind(expr.ty) {
+                TyKind::Vec { elem } | TyKind::Array { elem, .. } => Some(elem),
+                _ => None,
+            };
+            if source == Some(want) {
+                let span = expr.span;
+                return Expr {
+                    ty: expected,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::SpanFrom { mutable },
+                        args: vec![expr],
+                    },
+                    span,
+                };
+            }
+        }
         // `[RNG-3]` — construction. A constant the compiler can place in range
         // needs no check; one it can place outside is `E2211`; anything else
         // is outside `[RNG-10]`'s closed set and is `E2215`.
@@ -4551,7 +4594,10 @@ impl<'a> Checker<'a> {
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 let base = self.synth(base);
                 let elem = match self.types.kind(base.ty) {
-                    TyKind::Array { elem, .. } | TyKind::Vec { elem } => Some(*elem),
+                    // `[SPN-2]` — "Indexing a `Span` is bounds-checked".
+                    TyKind::Array { elem, .. }
+                    | TyKind::Vec { elem }
+                    | TyKind::Span { elem, .. } => Some(*elem),
                     _ => None,
                 };
                 let Some(elem) = elem else {
@@ -5355,6 +5401,38 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[FN-1]` — what a `mut` parameter is inside the callee.
+    ///
+    /// Normally `ref mut T`: the mode is an inout borrow, so every mention of
+    /// the name reads through it and the caller sees the writes.
+    ///
+    /// A `MutSpan[T]` is the exception, and Part VII §7's own example is what
+    /// forces it: `fn normalize(mut xs: MutSpan[f32])` is called as
+    /// `normalize(buf.as_mut_span())`, whose argument is a call result and not
+    /// a place at all. A `MutSpan` **is** the mutable access — it carries the
+    /// pointer, and `[SPN-3]` makes it move-only so there is exactly one — so
+    /// `mut` on one means "you may write through it", and the place
+    /// requirement lands on whatever the view was taken of. Wrapping it would
+    /// make a reference to a reference and reject the document's own example.
+    /// ADR-017.
+    fn mut_param_ty(&mut self, ty: Ty) -> Ty {
+        if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
+            return ty;
+        }
+        self.types.intern(TyKind::Ref { mutable: true, inner: ty })
+    }
+
+    /// Whether a checked expression denotes a place, seeing through the view
+    /// `[SPN-1]`'s coercion may have wrapped it in.
+    fn viewed_place(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Builtin { which: Builtin::SpanFrom { .. }, args } => {
+                args.first().is_some_and(|a| is_place(&a.kind))
+            }
+            other => is_place(other),
+        }
+    }
+
     /// `[MOD-7]` — a `pub(read)` field is writable only from the declaring
     /// module.
     ///
@@ -5598,6 +5676,9 @@ impl<'a> Checker<'a> {
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
             return self.synth_vec_method(receiver, elem, name, args, span);
         }
+        if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty) {
+            return self.synth_span_method(receiver, elem, mutable, name, args, span);
+        }
         // `[TYP-17]` — on a generic parameter, only what its bounds provide
         // is permitted, and that is exactly what is looked up.
         if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
@@ -5754,6 +5835,89 @@ impl<'a> Checker<'a> {
     }
 
     /// The compiler-known methods on `Array[T]` and `String`.
+    /// `[SPN-2]`, `[SPN-3]` — the methods on `Span[T]` and `MutSpan[T]`.
+    ///
+    /// Part VII §7 names the full set (`.len()`, `.iter()`, `.iter_mut()`,
+    /// `.split_at(i)`, `.chunks(n)`, `.as_ptr()`); this is the part the
+    /// compiler can answer without closures or an `Iterator` written in Ember,
+    /// and a name it does not know is an error rather than a silent miss.
+    fn synth_span_method(
+        &mut self,
+        receiver: Expr,
+        elem: Ty,
+        mutable: bool,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let usize_ty = self.common.usize;
+        let (which, arity, ret) = if name.name.is("len") {
+            (Builtin::SpanLen, 0, usize_ty)
+        } else if name.name.is("get") {
+            // `[SPN-2]` — "`get(i) -> Option[ref T]` is the checked-without-
+            // panic form". A `ref` into the view, so the region travels.
+            let inner = self.types.intern(TyKind::Ref { mutable, inner: elem });
+            (Builtin::SpanGet, 1, self.option_of(inner))
+        } else if name.name.is("get_unchecked") {
+            if !self.in_unsafe {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E3100,
+                        span,
+                        "`get_unchecked` needs an `unsafe` block",
+                    )
+                    .help("`get(i)` returns an `Option`, and `s[i]` is bounds-checked")
+                    .note("`[UNS-1]` lists the operations that need one"),
+                );
+            }
+            let inner = self.types.intern(TyKind::Ref { mutable, inner: elem });
+            (Builtin::SpanGetUnchecked, 1, inner)
+        } else if name.name.is("is_empty") {
+            (Builtin::SpanLen, 0, self.common.bool_)
+        } else {
+            let shown = self.types.display(receiver.ty);
+            self.error(
+                codes::E2020,
+                name.span,
+                format!("`{shown}` has no method `{}` in this phase", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {arity} arguments, found {}", name.name, args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mut checked = vec![receiver];
+        for arg in args {
+            checked.push(self.check_expr(&arg.value, usize_ty));
+        }
+        // `is_empty` is `len() == 0`, written here rather than given a builtin
+        // of its own: one fewer thing for the backend to know.
+        if name.name.is("is_empty") {
+            let len = Expr {
+                ty: usize_ty,
+                kind: ExprKind::Builtin { which, args: checked },
+                span,
+            };
+            let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+            return Expr {
+                ty: self.common.bool_,
+                kind: ExprKind::Binary {
+                    op: BinOp::Eq,
+                    lhs: Box::new(len),
+                    rhs: Box::new(zero),
+                },
+                span,
+            };
+        }
+        Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span }
+    }
+
     fn synth_vec_method(
         &mut self,
         receiver: Expr,
@@ -5835,6 +5999,24 @@ impl<'a> Checker<'a> {
     fn check_argument(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode) -> Expr {
         if mode != Mode::Mut {
             return self.check_expr(arg, param_ty);
+        }
+        // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it
+        // carries the pointer, and `[SPN-3]` makes it move-only so there is
+        // exactly one. Part VII §7's own example calls
+        // `fn normalize(mut xs: MutSpan[f32])` as `normalize(buf)`, so the
+        // `mut` mode's place requirement lands on the container being viewed
+        // and the view itself is passed by value. Wrapping it in another
+        // `ref mut` would be a reference to a reference.
+        if matches!(self.types.kind(param_ty), TyKind::Span { mutable: true, .. }) {
+            let view = self.check_expr(arg, param_ty);
+            if view.ty != self.common.error && !self.viewed_place(&view) {
+                self.error(
+                    codes::E2140,
+                    arg.span,
+                    "a `mut` view must be taken of a variable, not of a value",
+                );
+            }
+            return view;
         }
         let place = self.check_expr(arg, param_ty);
         // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`

@@ -294,6 +294,17 @@ pub enum Builtin {
     PtrWrite,
     /// `size_of[T]() -> usize`, which needs no `unsafe`.
     SizeOf,
+    /// `[SPN-2]` — `s.len()`. The length field of the view.
+    SpanLen,
+    /// `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the checked-without-panic
+    /// form".
+    SpanGet,
+    /// `[SPN-2]` — `unsafe s.get_unchecked(i)`.
+    SpanGetUnchecked,
+    /// `[SPN-1]` — an `Array[T]` or a `[T; N]` viewed as a `Span[T]` or a
+    /// `MutSpan[T]`. Not a conversion: the view points into the container, and
+    /// the borrow checker keeps the container borrowed for the view's region.
+    SpanFrom { mutable: bool },
     /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
@@ -337,6 +348,12 @@ impl Builtin {
             Builtin::SizeOf => "size_of",
             // `[RNG-10]`'s construction set. Named as they are
             // written, so a diagnostic quoting one reads as source.
+            Builtin::SpanLen => "len",
+            Builtin::SpanGet => "get",
+            Builtin::SpanGetUnchecked => "get_unchecked",
+            Builtin::SpanFrom { mutable } => {
+                if mutable { "as_mut_span" } else { "as_span" }
+            }
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",

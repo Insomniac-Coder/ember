@@ -64,6 +64,27 @@ typedef struct ember_str {
 #define ember_str_lit(text, length) \
     ((ember_str){ (const unsigned char*)(text), (size_t)(length) })
 
+/* -- Span[T] and MutSpan[T] ------------------------------------------------ */
+
+/* Part VII §7. A view over a run of elements: pointer plus length, with a
+ * compile-time region the C side never sees. One struct serves every element
+ * type — the element type is recovered at each use, exactly as it is for
+ * `ember_vec` — because the length counts elements and the pointer is cast at
+ * the point of access.
+ *
+ * [SPN-3]: the two differ in Ember (`Span[T]` is `Copy`, `MutSpan[T]` is
+ * move-only and reborrowable) and not in C, where constness is the only part
+ * of that difference C can express. */
+typedef struct ember_span {
+    const void* ptr;
+    size_t len;
+} ember_span;
+
+typedef struct ember_mutspan {
+    void* ptr;
+    size_t len;
+} ember_mutspan;
+
 /* -- source locations ------------------------------------------------------ */
 
 typedef struct ember_loc {

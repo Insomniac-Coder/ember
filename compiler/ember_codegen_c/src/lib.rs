@@ -382,6 +382,16 @@ impl Emitter<'_> {
         }
     }
 
+    /// The element type of a `Span[T]`/`MutSpan[T]`, through any references
+    /// the receiver arrived behind.
+    fn span_element(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Span { elem, .. } => *elem,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.span_element(*inner),
+            _ => ty,
+        }
+    }
+
     /// The element type of an `Array[T]`, given the receiver's type — which
     /// may be a `ref mut Array[T]`, because `push` takes the receiver by
     /// reference.
@@ -776,6 +786,49 @@ impl Emitter<'_> {
                     Builtin::RangeNewUnchecked(_) => {
                         return format!("({})", rendered[0]);
                     }
+                    // `[SPN-2]` — the length field of the view.
+                    Builtin::SpanLen => {
+                        return format!("({}).len", rendered[0]);
+                    }
+                    // `[SPN-2]` — `unsafe s.get_unchecked(i)`. No check, by
+                    // construction: `[UNS-4]` makes the bound the caller's
+                    // obligation.
+                    Builtin::SpanGetUnchecked => {
+                        let elem = self.span_element(*arg_ty);
+                        return format!(
+                            "&(({}*)({}).ptr)[{}]",
+                            self.c_type(elem),
+                            rendered[0],
+                            rendered[1]
+                        );
+                    }
+                    // `[SPN-1]` — an `Array[T]` or a `[T; N]` viewed. A
+                    // buffer keeps its pointer and length; a fixed array's
+                    // length is in its type, and its storage is the wrapper
+                    // struct's `_0` (Part IV.3 makes `[T; N]` a value, and a
+                    // bare C array is not one).
+                    Builtin::SpanFrom { mutable } => {
+                        let view = if *mutable {
+                            format!("{RT}mutspan")
+                        } else {
+                            format!("{RT}span")
+                        };
+                        return match self.types.kind(*arg_ty) {
+                            TyKind::Array { len, .. } => {
+                                format!("(({view}){{ ({})._0, {len} }})", rendered[0])
+                            }
+                            _ => format!(
+                                "(({view}){{ ({}).ptr, ({}).len }})",
+                                rendered[0], rendered[0]
+                            ),
+                        };
+                    }
+                    // `[SPN-2]`'s `get` returns an `Option`, which is a branch
+                    // and two aggregates rather than a C expression, so MIR
+                    // lowers it and it never reaches here.
+                    Builtin::SpanGet => {
+                        unreachable!("[SPN-2] `get` is lowered in MIR")
+                    }
                     // `[RNG-3]` — the fallible form. Lowered in MIR into a
                     // branch and two enum aggregates, so it never reaches
                     // here.
@@ -840,8 +893,9 @@ impl Emitter<'_> {
                         out.push_str(&format!(".{}", def.fields[*index].name));
                     }
                     // An `Array[T]` is the runtime's buffer: pointer, length,
-                    // capacity, in that order.
-                    (_, TyKind::Vec { .. }) => {
+                    // capacity, in that order. A view is the same shape with
+                    // no capacity (Part VII §7).
+                    (_, TyKind::Vec { .. } | TyKind::Span { .. }) => {
                         out.push_str(match index {
                             0 => ".ptr",
                             1 => ".len",
@@ -855,14 +909,18 @@ impl Emitter<'_> {
                 // A fixed array is a generated struct wrapping one C array, so
                 // the subscript goes through that member. An `Array[T]` keeps
                 // its elements behind a `void*`, so the subscript casts first.
+                // A buffer and a view are both `{ptr, len, …}`, so both
+                // index through `ptr`; a fixed array is the wrapper struct's
+                // `_0` member (Part IV.3 makes `[T; N]` a value, and a bare C
+                // array is not one).
                 Projection::Index(local) => match self.types.kind(at.ty) {
-                    TyKind::Vec { elem } => {
+                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
                         out = format!("(({}*){out}.ptr)[_{}]", self.c_type(*elem), local.0);
                     }
                     _ => out.push_str(&format!("._0[_{}]", local.0)),
                 },
                 Projection::ConstIndex(i) => match self.types.kind(at.ty) {
-                    TyKind::Vec { elem } => {
+                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
                         out = format!("(({}*){out}.ptr)[{i}]", self.c_type(*elem));
                     }
                     _ => out.push_str(&format!("._0[{i}]")),
@@ -909,11 +967,12 @@ impl Emitter<'_> {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => plain(*elem),
             // `.len` and `.cap` on the runtime buffer are `usize`; `.ptr` is
-            // never projected through, so it keeps the buffer's own type.
-            (Projection::Field(index), TyKind::Vec { .. }) => {
+            // never projected through, so it keeps the buffer's own type. A
+            // view is the same shape with no `.cap`.
+            (Projection::Field(index), TyKind::Vec { .. } | TyKind::Span { .. }) => {
                 if *index == 0 { at } else { plain(self.usize_ty) }
             }
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
@@ -1089,6 +1148,14 @@ impl Emitter<'_> {
             .into(),
             TyKind::Void | TyKind::Never | TyKind::Error => "void".into(),
             TyKind::Str => format!("{RT}str"),
+            // A view is a pointer and a length. One C struct serves
+            // every element type, as `ember_vec` does: the element
+            // type is recovered at each use, and `[TYP-11]`'s C
+            // layout guarantee is about `struct`s the programmer
+            // declares, not about this.
+            TyKind::Span { mutable, .. } => {
+                if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") }
+            }
             TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
             TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
             // `[COST-3]` — a range type is "not observable": erased to the

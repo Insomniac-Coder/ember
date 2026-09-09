@@ -413,3 +413,58 @@ implementation for one feature's benefit, it costs a table lookup on every
 `i32 + i32` unless it is then specialised back out, and `[BUD-5]` gives the
 compile-time budget veto power over exactly this kind of change. The narrow
 form is recorded and can be widened; the wide form cannot be narrowed.
+
+---
+
+## ADR-017 — `mut xs: MutSpan[T]` passes the view by value
+
+**Spec rule:** `[FN-1]`, `[SPN-1]`, `[SPN-3]`, Part VII §7's worked example.
+**Status:** taken 2026-09-09.
+
+**Context.** `[FN-1]` says of the `mut` mode: "**inout** (mutable borrow). The
+argument MUST be a mutable place; the callee may mutate; no move out." Every
+other `mut` parameter is therefore a `ref mut T` inside the callee, and the
+call site passes an address.
+
+Part VII §7 then writes:
+
+```ember
+fn normalize(mut xs: MutSpan[f32]):
+    total = xs.iter().sum()
+    for x in xs.iter_mut():
+        x /= total
+
+buf = Array[f32]([1, 2, 3])
+normalize(buf.as_mut_span())          # or simply normalize(buf)
+left, right = buf.as_mut_span().split_at(1)
+```
+
+`buf.as_mut_span()` is a **call result**. It is not a place, and under the
+uniform reading of `[FN-1]` the document's own example is `E2140`.
+
+**Decision.** Where a `mut` parameter's declared type is `MutSpan[T]`, the view
+is passed **by value** and is not wrapped in a `ref mut`. `mut` on it means
+"the callee may write through this view", and `[FN-1]`'s mutable-place
+requirement lands on whatever the view was taken *of* — which `[SPN-1]`'s
+coercion checks when it builds one from an `Array[T]` or a `[T; N]`.
+
+**Why this is the reading rather than a relaxation.** A `MutSpan[T]` already
+*is* a mutable borrow: it carries the pointer, and `[SPN-3]` makes it move-only
+precisely so that there is exactly one of it, which is the same guarantee
+`[BRW-1]` gets from `ref mut`. Wrapping one in a `ref mut` would make a
+reference to a reference, and the second level would guarantee nothing the
+first does not. `[BRW-6]`'s "Passing a `ref mut` local to a `mut` parameter
+reborrows rather than moving it" is the same observation about the same shape.
+
+**Consequences.** `normalize(buf)`, `normalize(buf.as_mut_span())` and
+`normalize(v)` for a `MutSpan` local all compile, which is the set Part VII §7
+shows. Reassigning the parameter inside the callee — `xs = other` — rebinds the
+callee's own view and is not visible to the caller, which is what `[SPN-3]`'s
+move-only-ness already implies and what a `ref mut` to a view would have made
+confusingly different.
+
+**The alternative rejected:** spilling the coerced view into a temporary and
+passing its address, so that `mut` stays uniformly `ref mut`. It compiles
+`normalize(buf)` and still rejects `normalize(buf.as_mut_span())`, so it does
+not save the example; and it adds an indirection to every element access in
+exactly the code `[SPN-*]` exists to make fast.
