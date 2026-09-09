@@ -600,3 +600,15 @@ implementation concern and not the concept.
 these in Ember, plus an owner-defined `UnsafeCell`. Then all three move out of
 the compiler, and `[CELL-9]`'s sentence starts governing `std` too.
 
+**What this ADR must never become.** It decides *how the standard `Cell` is
+recognised by the compiler*. It does **not** decide what the language permits an
+arbitrary package to implement, and it must not later be cited as though it did.
+The failure mode to guard against is precise: someone reaches ERR-043, finds
+that the compiler already mutates through a shared borrow for `Cell`, and
+concludes that the language therefore permits it — turning an implementation
+mechanism into the justification for a language rule. That is the same
+compiler-justifies-specification move this project spent a session unlearning,
+arriving by a longer road. `UnsafeCell`'s semantics remain unwritten and remain
+the owner's, and the existence of `Builtin::CellSet` is not evidence about
+them.
+

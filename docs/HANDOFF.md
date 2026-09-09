@@ -172,7 +172,14 @@ The procedure that worked for v0.5, in order:
    LF; `split_spec.py` now writes LF explicitly, because Python's text mode was
    turning it into CRLF on Windows and leaving the tree mixed.
 
-## Start here
+## Start here — SUPERSEDED
+
+> **This section is history, kept for the record. Read
+> `docs/SESSION-2026-09-09.md` instead.** Everything below that it calls "not
+> started" is built: the NLL borrow checker (block E) with real region
+> variables, and closures including capturing ones under `[CLO-3]`. Leaving a
+> stale "start here" in place is worse than having none, because a cold start
+> reads exactly this paragraph and acts on it.
 
 **Phases 0 and 1 of nine were complete; Phase 2 is in progress and is roughly a
 third done.** Phase 2's blocks A to C — moves, drops and drop flags, generics,
