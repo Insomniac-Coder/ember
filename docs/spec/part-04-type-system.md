@@ -81,7 +81,15 @@ fn clamped(x: f32) -> Roughness:
 * `[RNG-3]` Construction from a value not statically known to be in range is
   `T.checked(v) -> Result[T, RangeError]`. Construction from a constant in
   range, or from a value whose known range is contained in the target's, emits
-  no check.
+  no check. **`RangeError` is a prelude type**, in scope in every module without
+  an import and nameable wherever a type may be written, so that this rule's own
+  signature can be written by a program. It is not a `std` declaration: `checked`
+  is a language-defined construction under `[RNG-10]` rather than a library
+  function, so its error type cannot depend on a module having been imported, and
+  an implementation MUST have the name resolvable while *signatures* are being
+  collected and not merely once some body mentions `checked`. It is a unit-only
+  enum under `[ENM-3]`, so `Copy`, `Eq` and `Debug` come free and it costs
+  nothing in a `Result` that `[TYP-13]` can niche. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[RNG-4]` The compiler tracks a known range for every numeric expression it
   can — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
   compared the value, and arithmetic on operands with known ranges — and uses it

@@ -529,8 +529,14 @@ class DebugOverlay(cpp.RageV.Layer):
   and it is the dominant engine idiom. Under `owner="foreign"` the upcast of
   `[FFI-39c]` releases Ember's strong reference, and dropping the last Ember handle
   does **not** run the C++ destructor. A `@ffi(trampoline)` type whose base has no
-  virtual destructor MUST declare `owner=`; `[FFI-17b]`'s `@ffi(no_virtual_dtor)`
-  covers the remaining case, and omitting both is `E5059`.
+  virtual destructor MUST declare `owner=`; `@ffi(no_virtual_dtor)` covers the
+  remaining case, and omitting both is `E5059`. **`@ffi(no_virtual_dtor)` is
+  defined here and nowhere else**: on a `@ffi(trampoline)` type it asserts that
+  the programmer has established, outside the language, that no instance of it is
+  ever destroyed through a base pointer, so the missing virtual destructor cannot
+  be reached. It licenses no operation and grants no tier under `[TIER-1]` — it
+  records an obligation the way `[UNS-7]`'s `@safety` does, and an implementation
+  MUST carry its text into the `[TCB-*]` report. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[FFI-39c]` **Upcasting.** `self` in an override, and an owning handle at a call
   site, upcast implicitly to the foreign base pointer for passing to foreign APIs.
   The upcast is a `[FFI-23]` retention point: under `owner="ember"` it produces a

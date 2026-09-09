@@ -644,7 +644,7 @@ visibility      := "pub" ["(" vis_args ")"]
 vis_args        := "package" | "read" | "package" "," "read"      (* `read` is valid on fields only *)
 item_body       := fn_decl | struct_decl | class_decl | enum_decl | interface_decl
                  | extend_decl | const_decl | static_decl | type_alias | extern_block
-                 | comptime_block | test_decl
+                 | extern_class | comptime_block | test_decl
 attribute       := "@" identifier ["(" [attr_args] ")"] NEWLINE?
 attr_args       := attr_arg {"," attr_arg}
 attr_arg        := (expression | identifier "=" expression) [grade]
@@ -656,8 +656,15 @@ grade           := "@" ("asserted" | "checked" | "instrumented" | "proven")
 ```ebnf
 fn_decl         := fn_header ":" block
                  | fn_header NEWLINE                                    (* only inside interface/extern *)
-fn_header       := ["unsafe"] ["virtual" | "override"] "fn" identifier [generic_params]
+fn_header       := ["extern" string_lit] ["unsafe"] ["virtual" | "override"]
+                   "fn" identifier [generic_params]
                    "(" [param_list] ")" ["->" type] [where_clause]
+                 (* `extern "C" fn f(...)` at item level DEFINES a function with that
+                    ABI and is what `@export` (XVI.10) attaches to; it is distinct from
+                    `extern_block`, which DECLARES foreign functions. Its parameter and
+                    return types MUST be FFI-safe under `[FFI-5]`, a range type among
+                    them is `E5054` under `[RNG-10b]`, and a panic reaching the boundary
+                    is `[FFI-20]`'s. `virtual`/`override` on one is `E0104`. *)
 generic_params  := "[" generic_param {"," generic_param} "]"
 generic_param   := identifier [":" bound_list] ["=" type]
                  | "const" identifier ":" type                          (* const generic *)
@@ -695,6 +702,14 @@ range_clause    := "in" expression                                      (* a `..
 
 extern_block    := ["unsafe"] "extern" string_lit ":" NEWLINE INDENT {extern_item} DEDENT
 extern_item     := {attribute} (fn_header NEWLINE | static_decl | "type" identifier NEWLINE)
+extern_class    := "extern" "class" path [implements_clause] ":" type_body
+                 (* `[FFI-39]`. A DECLARED foreign base: sized, of known layout, and
+                    implicitly `open` so that `[CLS-4]` admits it as a base — as against
+                    `extern_item`'s `type`, which is opaque, unsized, and may not be
+                    inherited. Inheriting one REQUIRES `@ffi(trampoline, virtuals=[...])`
+                    on the declaration; without it the class may be used and not
+                    subclassed. Multiple inheritance, virtual bases and unnamed virtuals
+                    remain unsupported. *)
 
 comptime_block  := "comptime" ":" block
 test_decl       := "@test" NEWLINE fn_decl                              (* attribute form; no special syntax *)
@@ -972,7 +987,15 @@ fn clamped(x: f32) -> Roughness:
 * `[RNG-3]` Construction from a value not statically known to be in range is
   `T.checked(v) -> Result[T, RangeError]`. Construction from a constant in
   range, or from a value whose known range is contained in the target's, emits
-  no check.
+  no check. **`RangeError` is a prelude type**, in scope in every module without
+  an import and nameable wherever a type may be written, so that this rule's own
+  signature can be written by a program. It is not a `std` declaration: `checked`
+  is a language-defined construction under `[RNG-10]` rather than a library
+  function, so its error type cannot depend on a module having been imported, and
+  an implementation MUST have the name resolvable while *signatures* are being
+  collected and not merely once some body mentions `checked`. It is a unit-only
+  enum under `[ENM-3]`, so `Copy`, `Eq` and `Debug` come free and it costs
+  nothing in a `Result` that `[TYP-13]` can niche. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[RNG-4]` The compiler tracks a known range for every numeric expression it
   can — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
   compared the value, and arithmetic on operands with known ranges — and uses it
@@ -1213,7 +1236,7 @@ pub fn name[T: Bound](a: A, mut b: B, owned c: C, d: D = default) -> R where T: 
 
 * Parameter modes `[FN-1]`:
   * `a: A` — **borrowed** (shared). The callee reads through a `ref A`. For `Copy` types smaller than 2 pointers the compiler passes by value in registers (ABI detail; semantics identical). The callee cannot mutate or move `a`.
-  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`).
+  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`). Where `B` is itself a borrow — `ref mut T`, `MutSpan[T]`, or a `@view struct` carrying one — the argument **is** that borrow and is passed by value, and the mutable-place requirement applies to whatever the borrow was taken of. Without this, Part VII's own example `normalize(buf.as_mut_span())` is rejected, and `split_at` — which `[SPN-*]` names as the sanctioned way to obtain two mutable borrows into one container — could not be called on its own result. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
   * `owned c: C` — **consumed**. The argument is moved (or copied if `Copy`; retained if a handle). The callee owns it and will drop it or move it on.
   * `[FN-2]` Missing mode is `borrowed`. There is no by-value-copy mode; if the callee wants its own copy it writes `owned` and the caller writes `f(x.clone())` or `f(x)` for `Copy` types.
 * `[FN-3]` Return values are moved out; returning a `ref`/view requires that the region be tied to a parameter by elision (Part VII §5).
@@ -1424,7 +1447,7 @@ task   = owned fn() => process(data)      # captures `data` by move/copy/retain;
 
 * `[CLO-1]` A closure's type is a unique anonymous struct type implementing `Callable`. It is a **view type** if it captures anything by reference (the default). It is a plain value type if declared `owned fn` (captures by move/copy/retain) or captures nothing.
 * `[CLO-2]` Capture mode is inferred per variable: read-only use ⇒ shared borrow; mutation ⇒ mutable borrow (the closure then requires a mutable place to call: `mut f`); `owned fn` ⇒ move (or copy/retain). A closure that moves a captured non-`Copy` value out of its own storage implements `CallableOnce` but not `Callable` (`[CLO-6]`).
-* `[CLO-3]` Calling: `f(args)`. A parameter declared `f: fn(A) -> R` is a generic over `Callable` (static dispatch, monomorphised). A boxed dynamic closure is `Box[dyn fn(A) -> R]` (`E4001` in `@noalloc` because boxing allocates). An `extern "C" fn` parameter accepts only capture-free closures and named functions.
+* `[CLO-3]` Calling: `f(args)`. A parameter declared `f: fn(A) -> R` is a generic over `Callable` (static dispatch, monomorphised). A boxed dynamic closure is `Box[dyn fn(A) -> R]` (`E4001` in `@noalloc` because boxing allocates). An `extern "C" fn` parameter accepts only capture-free closures and named functions. **`fn(A) -> R` is a bound, not a representation.** It denotes an implicit generic parameter bounded by `Callable[(A), R]` — or by `CallableOnce` under `[CLO-6]`'s `owned` mode — so each argument monomorphises the callee against its own type: a named function has a zero-sized function type and its call becomes a direct call, and a lambda has an anonymous type whose fields are its `[CLO-2]` captures and whose `call` is its body. **A conforming implementation MUST NOT realise `fn(A) -> R` as a function pointer**, which erases the captures and so admits only capture-free lambdas; the ABI-level function pointer is `extern "C" fn(A) -> R`, and keeping the two distinct is what lets `[COST-3]` report a direct call for the ordinary case. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[CLO-4]` A non-`owned` closure cannot escape the scope of what it borrows: storing it, returning it, or passing it to a function whose parameter is `owned`/stored triggers the normal view-type rules (`[TYP-15]`).
 * `[CLO-5]` Closures capturing class handles retain them (a strong reference) — the usual cycle caution applies (Part VIII §5).
 * `[CLO-6a]` **`CallableOnce` is not `dyn`-compatible in v1**: `call_once` takes `owned self`, which `[TYP-22]` does not admit through a vtable. `[CLO-3]`'s `Box[dyn fn(A) -> R]` therefore remains a `Callable`, and a boxed once-callable payload is expressed by moving the payload into the closure's captures and having the boxed closure take it by `mem.take` from an `Option` field — the one place the `Option` dance survives, and the reason `[TYP-22]`'s by-value-self restriction is worth revisiting in v2.
@@ -1496,7 +1519,7 @@ A **borrow** creates a reference (`ref T` or `ref mut T`) — or a view containi
 
 The rules (`[BRW-*]`) are Rust's, restated:
 
-* `[BRW-1]` **Aliasing XOR mutability.** At any program point, a place may have either any number of live shared borrows, or exactly one live mutable borrow, and while a mutable borrow is live the owner may not read, write, move, or drop the place; while shared borrows are live the owner may read (and copy) but not write, move, or drop.
+* `[BRW-1]` **Aliasing XOR mutability.** At any program point, a place may have either any number of live shared borrows, or exactly one live mutable borrow, and while a mutable borrow is live the owner may not read, write, move, or drop the place; while shared borrows are live the owner may read (and copy) but not write, move, or drop. **A reference local is not re-seatable**: where `r` has a reference type, `r = e` writes *through* `r` to the place it denotes, and never points `r` somewhere new — which is what allows an implementation's regions to be insensitive to program location. It follows that `r = e` is permitted only where `r` is `ref mut T`; through a shared `ref T` it is the write this rule forbids, and is rejected at the assignment by the type alone, needing no flow analysis. A v2 with named lifetimes may admit re-seating; v1 does not. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[BRW-2]` **Liveness (NLL).** A borrow is live from its creation until the last use of any value derived from it (the reference itself, a reborrow, a view built from it, a return value tied to it). Scope end is irrelevant. This is what makes `n = v.len(); v.push(n)` legal.
 * `[BRW-3]` **Two-phase borrows.** For `v.push(v.len())`, the mutable auto-borrow of `v` for the receiver is *reserved* first and *activated* only when the call happens; shared borrows in the arguments are permitted in between. This applies to method receivers and `mut` arguments whose argument expression is a simple place.
 * `[BRW-4]` **Disjoint fields.** `ref mut a.x` and `ref mut a.y` may be live simultaneously if `x` and `y` are distinct fields of a struct/tuple (not through a method call — a method takes all of `self`). This holds through arbitrary nesting of field projections. It does **not** hold through class-handle access (`h.x` and `h.y` are accesses on an aliased object: Part VIII §3 governs) — for *conflicting accesses*. Keeping the object allocated is governed by `[RC-5]`, which applies to class-handle projections exactly as to any other place.
@@ -1519,7 +1542,7 @@ Ember does not have user-written lifetime names in v1. Instead:
   2. else if exactly one parameter is view-typed, the return's region is that parameter's;
   3. else, the return's region is the **intersection** of all view-typed parameters' regions (the returned reference may point into any of them; the caller treats it as borrowing all of them). This is more permissive than Rust's elision failure and remains sound.
   `@borrows(param)` on a function overrides rule 3 to tie the return to one named parameter (e.g. `fn longest(a: str, b: str) -> str @borrows(a)`), which lets the caller keep using `b`.
-* `[LT-2]` **View structs** have one region parameter. Constructing a view struct from several references gives it the intersection of their regions. A view-typed field's region is the struct's region. Multiple independent regions inside one struct are not expressible in v1; nest structs or copy data.
+* `[LT-2]` **View structs** have one region parameter. Constructing a view struct from several references gives it the intersection of their regions. A view-typed field's region is the struct's region. Multiple independent regions inside one struct are not expressible in v1; nest structs or copy data. Because the intersection is *taken* rather than required to exist, **construction never fails on this rule**, and the same holds of a view returned from a call: `[LT-1]`'s elision ties the result to every view parameter, so a caller must treat all of them as borrowed even where the body returned only one. `E3064` therefore reports a program that **demands** two independent regions, which no v1 source can express — named lifetimes are reserved for v2 (`[LT-6]`), and `[TYP-15a]`'s `BorrowList`/`ViewList` are the only construct that could require one. A v1 implementation is conforming with `E3064` registered and never emitted; the code MUST NOT be repurposed. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[LT-3]` **Static region.** String literals, `static` items, and `Span`s over them have the `static` region, which outlives everything and satisfies `[TYP-15]`'s storage restrictions (a `str` literal *may* be stored in a class field because its type is `str` with static region — the compiler records region `static` in the field's type; a non-static `str` cannot be stored there: `E3060 stored view may not outlive its source`).
 * `[LT-4]` **Arena region.** `Arena` allocations return `ref mut T`/`MutSpan[T]` whose region is the arena's borrow; they cannot outlive the arena (`E3061`).
 * `[LT-5]` **Inference.** Regions are inferred by the NLL algorithm in Part XIX §5.7 for all locals; the programmer never writes them. Diagnostics report regions in terms of "the borrow of `x` on line N is still needed on line M".
@@ -1551,7 +1574,7 @@ normalize(buf.as_mut_span())          # or simply normalize(buf) — Array coerc
 left, right = buf.as_mut_span().split_at(1)   # two disjoint MutSpans
 ```
 
-* `[SPN-1]` `Array[T]` coerces to `Span[T]` at borrow sites and to `MutSpan[T]` at `mut` sites; `[T; N]` likewise; `String` to `str`.
+* `[SPN-1]` `Array[T]` coerces to `Span[T]` at borrow sites and to `MutSpan[T]` at `mut` sites; `[T; N]` likewise; `String` to `str`. **This coercion takes a borrow of the source; it is not a conversion.** Coercing to `Span[T]` creates a live shared borrow of the source place and coercing to `MutSpan[T]` a mutable one, and the resulting view's region is that borrow's, under the ordinary rules of `[BRW-1]` and `[BRW-2]` — so the source may not be mutated, moved or dropped while the view is live, and the borrow ends at the view's last use and not at the end of scope. The same holds however the view is spelled: the implicit coercion, `as_span()`/`as_mut_span()`, and a view returned from a call under `[LT-1]`'s elision are one construction, and all three take the borrow. An implementation MUST make this borrow explicit in its IR rather than implied by the coercion, because an implied borrow is invisible to the borrow checker: `v: Span[i32] = a` followed by `a.push(...)` is then accepted, the push reallocates, and safe code reads freed memory. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[SPN-2]` Indexing a `Span` is bounds-checked; `get(i) -> Option[ref T]` is the checked-without-panic form; `unsafe: s.get_unchecked(i)`.
 * `[SPN-3]` `Span[T]` is `Copy`; `MutSpan[T]` is move-only and reborrowable (`s.reborrow()` or implicit at `mut` sites).
 
@@ -3063,8 +3086,14 @@ class DebugOverlay(cpp.RageV.Layer):
   and it is the dominant engine idiom. Under `owner="foreign"` the upcast of
   `[FFI-39c]` releases Ember's strong reference, and dropping the last Ember handle
   does **not** run the C++ destructor. A `@ffi(trampoline)` type whose base has no
-  virtual destructor MUST declare `owner=`; `[FFI-17b]`'s `@ffi(no_virtual_dtor)`
-  covers the remaining case, and omitting both is `E5059`.
+  virtual destructor MUST declare `owner=`; `@ffi(no_virtual_dtor)` covers the
+  remaining case, and omitting both is `E5059`. **`@ffi(no_virtual_dtor)` is
+  defined here and nowhere else**: on a `@ffi(trampoline)` type it asserts that
+  the programmer has established, outside the language, that no instance of it is
+  ever destroyed through a base pointer, so the missing virtual destructor cannot
+  be reached. It licenses no operation and grants no tier under `[TIER-1]` — it
+  records an obligation the way `[UNS-7]`'s `@safety` does, and an implementation
+  MUST carry its text into the `[TCB-*]` report. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[FFI-39c]` **Upcasting.** `self` in an override, and an owning handle at a call
   site, upcast implicitly to the foreign base pointer for passing to foreign APIs.
   The upcast is a `[FFI-23]` retention point: under `owner="ember"` it produces a

@@ -23,7 +23,7 @@ visibility      := "pub" ["(" vis_args ")"]
 vis_args        := "package" | "read" | "package" "," "read"      (* `read` is valid on fields only *)
 item_body       := fn_decl | struct_decl | class_decl | enum_decl | interface_decl
                  | extend_decl | const_decl | static_decl | type_alias | extern_block
-                 | comptime_block | test_decl
+                 | extern_class | comptime_block | test_decl
 attribute       := "@" identifier ["(" [attr_args] ")"] NEWLINE?
 attr_args       := attr_arg {"," attr_arg}
 attr_arg        := (expression | identifier "=" expression) [grade]
@@ -35,8 +35,15 @@ grade           := "@" ("asserted" | "checked" | "instrumented" | "proven")
 ```ebnf
 fn_decl         := fn_header ":" block
                  | fn_header NEWLINE                                    (* only inside interface/extern *)
-fn_header       := ["unsafe"] ["virtual" | "override"] "fn" identifier [generic_params]
+fn_header       := ["extern" string_lit] ["unsafe"] ["virtual" | "override"]
+                   "fn" identifier [generic_params]
                    "(" [param_list] ")" ["->" type] [where_clause]
+                 (* `extern "C" fn f(...)` at item level DEFINES a function with that
+                    ABI and is what `@export` (XVI.10) attaches to; it is distinct from
+                    `extern_block`, which DECLARES foreign functions. Its parameter and
+                    return types MUST be FFI-safe under `[FFI-5]`, a range type among
+                    them is `E5054` under `[RNG-10b]`, and a panic reaching the boundary
+                    is `[FFI-20]`'s. `virtual`/`override` on one is `E0104`. *)
 generic_params  := "[" generic_param {"," generic_param} "]"
 generic_param   := identifier [":" bound_list] ["=" type]
                  | "const" identifier ":" type                          (* const generic *)
@@ -74,6 +81,14 @@ range_clause    := "in" expression                                      (* a `..
 
 extern_block    := ["unsafe"] "extern" string_lit ":" NEWLINE INDENT {extern_item} DEDENT
 extern_item     := {attribute} (fn_header NEWLINE | static_decl | "type" identifier NEWLINE)
+extern_class    := "extern" "class" path [implements_clause] ":" type_body
+                 (* `[FFI-39]`. A DECLARED foreign base: sized, of known layout, and
+                    implicitly `open` so that `[CLS-4]` admits it as a base — as against
+                    `extern_item`'s `type`, which is opaque, unsized, and may not be
+                    inherited. Inheriting one REQUIRES `@ffi(trampoline, virtuals=[...])`
+                    on the declaration; without it the class may be used and not
+                    subclassed. Multiple inheritance, virtual bases and unnamed virtuals
+                    remain unsupported. *)
 
 comptime_block  := "comptime" ":" block
 test_decl       := "@test" NEWLINE fn_decl                              (* attribute form; no special syntax *)
