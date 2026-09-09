@@ -833,15 +833,24 @@ impl<'a> Builder<'a> {
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
-                // `push` copies the value through a pointer, so the value has
-                // to live somewhere addressable: `&10` is not C.
+                // `push` copies the value through a pointer, so a constant
+                // has to live somewhere addressable: `&10` is not C. Anything
+                // with a place keeps the shape `lower_operand` gives it:
+                // `push` takes ownership (`[OWN-3]` — moves transfer
+                // ownership; the source is dead), so a move stays a move and
+                // `[OWN-3]`'s elaboration deletes the temporary's
+                // statement-end drop. Erasing it to a copy destroys the value
+                // twice — once as the temporary, once with the buffer.
                 let spill = matches!(which, hir::Builtin::ArrayPush);
                 let args: Vec<Operand> = args
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
                         if spill && index == 1 {
-                            self.lower_into_temp(a)
+                            match self.lower_operand(a) {
+                                Operand::Const(_) => self.lower_into_temp(a),
+                                other => other,
+                            }
                         } else {
                             self.lower_operand_borrowed(a)
                         }

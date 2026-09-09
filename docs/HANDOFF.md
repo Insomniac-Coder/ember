@@ -14,9 +14,9 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `9468602` — the COLD-START twin correction. Below it: `a38aa59` (§0.18 correction + task list), `c4fa15c` (§0.16 consistency pass), `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
-| Last commit touching compiler sources | `365122d`. Everything above it is doc/CI-only |
-| Working tree | this task (file `L3011` as D6 + tracking); committed herein, clean after push |
+| HEAD | `5628a73` — task 1 (file `L3011` as D6). Below it: `9468602` (COLD-START twins), `a38aa59` (§0.18 + task list), `c4fa15c` (§0.16), `a2c0032` (snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| Last commit touching compiler sources | `365122d` — until this task lands (fixes in `ember_mir`, `ember_typeck`, `ember_codegen_c`, `ember_analysis` committed herein) |
+| Working tree | task 2 (sweep: 3 compiler fixes, 13 cases, 5 ledger rows); committed herein, clean after push |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
 | `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
@@ -490,11 +490,13 @@ splitting it across agents would have cost more than it saved.
 
 ### 0.12 Open issues carried forward — verified against the repository
 
-**Open defect — one.**
+**Open defects — three.**
 
 | # | What | Rule | Status |
 |---|---|---|---|
 | **D-030** | a `drop` body may move a field out of `mut self`, which the rule forbids; the field is then dropped again after `drop` returns | `[DRP-5]`, `[EXP-6]` | **open.** Filed rather than fixed: reaching it needs a `drop` body that moves, and nothing in the corpus does |
+| **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
+| **D-040** | a method call defeating disjoint-field access reports `E3022`, where `[DIA-7a]` keys shape B8 to `E3025` — registered, shape-mapped, emitted by nothing | `[BRW-4]`, `[DIA-7a]` | **open.** Needs call provenance threaded to the reporter. Found by task 2 |
 
 **Open deviations — six, in `docs/DEVIATIONS.md`.**
 
@@ -779,10 +781,14 @@ was already green; the one `non_snake_case` test-target warning
 Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
 ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
-restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D1–D6**
+restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D-038**
+(implicit `String`→`str` coercion rejected); **D-040** (method conflicts lack
+B8/`E3025`); **D1–D6**
 (D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D6 `L3011`
 unemitted until `RefCell`; D1, D3, D4 as ledgered); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
-`CELL-SYNC-1`; Phase 2 coverage gaps per COLD-START §4. Not reopened or
+`CELL-SYNC-1`, `SPN-API-1`; Phase 2 coverage gaps per COLD-START §4 (13 new
+conformance cases added by task 2 — fix-linked ones revert-verified, all
+probe-verified). Not reopened or
 renumbered here: D-018 and D-025 are **fixed** (see `DEFECTS.md`), `[CLO-3]` /
 ADR-018 is **closed** with D2 as the live residual, and **no `[FFI-17]` open
 issue exists in any ledger** — `DEFECTS.md`, `DEVIATIONS.md` and
@@ -922,6 +928,41 @@ machinery D-035 was found in. Building guards on an unaudited drop path is how
 a second D-035 gets buried under a feature. **Method:** probe with a minimal
 program (§0.10); where the behaviour is invisible in output, `assert-c` or
 `assert-c-order`; break every new case red once before trusting it.
+
+**Done — ran solo, no subagents** (probes batch cleanly against one binary;
+coordination would have cost more than it saved — same call as §0.11's Cell
+note). Found two live defects and fixed both; filed two more; added 13 cases:
+
+* **D-036 (fixed): `Array.push` of a moved value destroyed it twice** — the
+  spill temporary kept its statement-end drop while the buffer took ownership
+  (`[OWN-3]`). `tests/conformance/DRP-2/accept_array_elements_drop_in_index_order.em`
+  prints 1, 2 and goes "1 2 1 2" red on revert.
+* **D-037 (fixed): `as_str()` built a view with no borrow** — D-022's twin for
+  strings; mutating while the `str` lived compiled and dangled.
+  `tests/conformance/SPN-1/reject_mutating_around_a_live_str_view.em` fails as
+  required and compiles on revert.
+* **D-038 (open): implicit `String`→`str` coercion rejected** — fails closed;
+  no case pins the rejection since the rule admits the program.
+* **D-039 (fixed) / D-040 (open): reservation windows opened for user-local
+  borrows** (two `ref mut` borrows reported B3/`E3021` instead of B1/`E3022`;
+  now temp-only, with a case red-checked both ways). Method-call conflicts
+  still lack B8/`E3025` — registered, shape-mapped, emitted by nothing — which
+  needs call provenance at the reporter; no case pins that shape.
+* **SPN-API-1 (debt): the span view-method surface** (`split_at`, `reborrow`,
+  …) is refused by name and untracked until now; one case pins the message.
+* **Nine more clause cases**, each probed first: DRP-2 tuple order, DRP-2 enum
+  payload, OWN-4 every-path quantifier, BRW-6 shared-reborrow freeze, BRW-3
+  `mut`-argument two-phase (+`[FN-1]` adhesiveness), BRW-4 nested disjointness,
+  LT-1 rule-3 force, SPN-3 `MutSpan` move-only, OWN-7 derived-`Copy`.
+* **Deliberately not cased:** LT-3 static-item stores (documented S1
+  conservatism, fails closed — G1 probe); `CallIndirect` owned args (same
+  erasure shape as D-036, dispatch machinery, noted for a future sweep, not
+  probed); OWN-7 no-drop and OWN-1 owner-kinds (structural/non-observable).
+
+Coverage claimed and checked corpus-wide, not per-directory: LT-1 rules 1–2,
+LT-1a `E2031`/`E3062`, BRW-6 suspend/resume and the OWN-3 drop-flag path all
+live in `run-pass/`/`compile-fail/` with tags — the D-035 lesson cuts both
+ways, and the sweep mapped clauses to cases wherever they live.
 
 ### 3. `RefCell[T]` — the milestone
 

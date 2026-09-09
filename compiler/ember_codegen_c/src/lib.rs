@@ -812,7 +812,9 @@ impl Emitter<'_> {
                         return format!("({}).len", rendered[0]);
                     }
                     Builtin::StringAsStr => {
-                        return format!("{RT}vec_as_str(&{})", rendered[0]);
+                        // The argument is a borrow of the string, so it
+                        // arrives as a pointer (as with `SpanFrom` above).
+                        return format!("{RT}vec_as_str({})", rendered[0]);
                     }
                     Builtin::Format => {
                         return format!(

@@ -4631,7 +4631,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 _ => None,
             };
             if source == Some(want) {
-                return self.view_of(expr, expected, mutable);
+                return self.view_of(expr, expected, mutable, Builtin::SpanFrom { mutable });
             }
         }
         // `[RNG-3]` — construction. A constant the compiler can place in range
@@ -7038,7 +7038,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// **The only way a view is built.** `[SPN-1]`'s coercion and `[STD-*]`'s
     /// `as_span`/`as_mut_span` both come here, and anything else that produces
-    /// a view must too.
+    /// a view must too. `as_str` is the third caller: a `str` built from a
+    /// `String` points into it exactly as a `Span` points into its container
+    /// (D-037 was this call missing — the view arrived with no borrow behind
+    /// it and survived the container's next mutation).
     ///
     /// A view is not a conversion. It points **into** its container, so the
     /// container has to be borrowed for as long as the view lives — and the
@@ -7053,7 +7056,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// borrow would reintroduce the same defect silently, so there is no
     /// second path; `verify_views` in `ember_mir` then checks after the fact
     /// that no view in the finished MIR arrived without one.
-    fn view_of(&mut self, container: Expr, view_ty: Ty, mutable: bool) -> Expr {
+    fn view_of(
+        &mut self,
+        container: Expr,
+        view_ty: Ty,
+        mutable: bool,
+        which: hir::Builtin,
+    ) -> Expr {
         let span = container.span;
         let reference =
             self.types.intern(TyKind::Ref { mutable, inner: container.ty });
@@ -7064,10 +7073,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         Expr {
             ty: view_ty,
-            kind: ExprKind::Builtin {
-                which: Builtin::SpanFrom { mutable },
-                args: vec![borrowed],
-            },
+            kind: ExprKind::Builtin { which, args: vec![borrowed] },
             span,
         }
     }
@@ -7340,7 +7346,35 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let view = self.types.intern(TyKind::Span { elem, mutable });
-            return self.view_of(receiver, view, mutable);
+            return self.view_of(
+                receiver,
+                view,
+                mutable,
+                Builtin::SpanFrom { mutable },
+            );
+        }
+        // `as_str()` is `[SPN-1]`'s "String to `str`" spelling, and a `str`
+        // points into its `String` — so it goes through the one producer too,
+        // with a shared borrow. Before this it arrived with no borrow behind
+        // it and survived the string's next mutation (D-037).
+        if name.name.is("as_str") && is_string {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes 0 arguments, found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !is_place(&receiver.kind) {
+                self.error(
+                    codes::E2140,
+                    span,
+                    format!("`{}` needs a variable to point into", name.name),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.view_of(receiver, str_ty, false, Builtin::StringAsStr);
         }
 
         let (which, takes, ret) = if name.name.is("len") {

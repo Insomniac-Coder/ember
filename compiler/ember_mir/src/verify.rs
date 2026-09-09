@@ -319,7 +319,15 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
         }
 
         if let Terminator::Call { func, args, .. } = &block.terminator {
-            let FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. } = func else {
+            // `StringAsStr` rides the same shape: a `str` points into its
+            // `String`, so its argument must be the borrow too (D-037).
+            let FuncRef::Builtin { which, .. } = func else {
+                continue;
+            };
+            if !matches!(
+                which,
+                Builtin::SpanFrom { .. } | Builtin::StringAsStr
+            ) {
                 continue;
             };
             let borrowed = match args.first() {

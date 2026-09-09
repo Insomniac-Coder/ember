@@ -97,8 +97,11 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. } => Elision::Named(vec![0]),
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
         // view, so the view stays borrowed too.
+        // A `str` built by `as_str()` points into its `String` the same way
+        // a `Span` built by `as_span()` points into its container: without
+        // this the view dangles across the next mutation (D-037).
         FuncRef::Builtin {
-            which: Builtin::SpanGet | Builtin::SpanGetUnchecked,
+            which: Builtin::SpanGet | Builtin::SpanGetUnchecked | Builtin::StringAsStr,
             ..
         } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
@@ -417,6 +420,16 @@ fn collect_loans(body: &Body, regions: &Regions) -> Vec<Loan> {
 /// argument, everything before it is the window; if it is anything else, the
 /// borrow was never two-phase and the window is empty.
 fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> HashSet<Point> {
+    // `[BRW-3]` — a reservation is a borrow taken *for* a call's receiver or
+    // a `mut` argument: its borrower is always a temporary the lowering
+    // created during argument evaluation. A borrow bound to a user local is a
+    // full borrow from creation. Treating it as reserved merely because the
+    // local is later used as a call argument downgrades genuine mutable
+    // conflicts: two `ref mut` borrows reported B3/`E3021` instead of
+    // B1/`E3022` (D-039 — found by probing, not by a test failing).
+    if body.local(borrower).kind == LocalKind::User {
+        return HashSet::new();
+    }
     let mut window = HashSet::new();
     let mut block_index = created_at.block;
     let mut start = created_at.index + 1;
