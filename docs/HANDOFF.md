@@ -14,9 +14,9 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD (last code commit) | `a2c0032` — handoff snapshot; `365122d` (`Cell[T]`) and `8459a1f` (D-035) below it |
-| This handoff | doc/CI-only delta on top of `a2c0032` (§0.16, §0.17); no compiler sources touched |
-| Working tree | 8 doc/CI files (§0.16); committed herein, clean after push |
+| HEAD | `c4fa15c` — the §0.16 consistency pass. Below it: `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| Last commit touching compiler sources | `365122d`. `a2c0032`, `c4fa15c` and the §0.18 correction are doc/CI-only |
+| Working tree | **clean** |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
 | `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
@@ -71,8 +71,9 @@ why it is compiler-known and not written in Ember on `UnsafeCell`.
 | `[CELL-4]` | `Copy` iff `T: Copy`, move-only otherwise, `Drop` iff `T` is |
 | `[CELL-11]` | in the prelude — the name resolves with no import |
 
-11 conformance cases across `tests/conformance/CELL-1`, `CELL-2`, `CELL-4`,
-`CELL-11`.
+**9** conformance cases across `tests/conformance/CELL-1` (3), `CELL-2` (2),
+`CELL-4` (3) and `CELL-11` (1). (An earlier revision said 11: it counted the two
+`OWN-5` cases from D-035 into the `Cell` total.)
 
 **`[CELL-4]` needed no code at all**, and this is worth reusing rather than
 rediscovering: `is_copy` on a struct is already `derives_copy && !has_drop &&
@@ -372,8 +373,11 @@ Therefore:
   `BorrowList[T]` / `ViewList[T]` remain the specialised model.
 
 **Do not regress the implementation to the old blanket prohibition.**
-`tests/conformance/LT-3/` holds `accept_a_static_region_view_in_a_static.em` and
-`reject_a_non_static_view_in_a_static.em`, which are exactly this pair.
+`tests/conformance/TYP-15/` holds `accept_a_static_region_view_in_a_static.em`
+and `reject_a_non_static_view_in_a_static.em`, which are exactly this pair.
+(`tests/conformance/LT-3/` is a different directory with one case,
+`accept_a_literal_in_a_view_struct.em` — an earlier revision of this section
+named it here and was wrong.)
 
 The owner asked for this to be recorded as a semantic decision rather than a
 hardening — *"Please resolve ERR-044 as an owner semantic decision, not as a
@@ -621,16 +625,32 @@ profile and forbids `exclusivity = "unchecked"` from reaching it; `[CELL-6a]`
 forbids any profile making `try_borrow` infallible, because that would change
 which branch of a `match` runs, which `[PRF-1]` forbids; `[CELL-5]`'s panic
 message must name **the conflicting borrow's source location**, recorded in
-debug *and* release; and `[CELL-7]`'s `L3011` lint needs `LNT-CFG-1` first, or
-there is nowhere to opt in. `[CELL-10]` constrains the *diagnostics*: shape B4
+debug *and* release; and `[CELL-7]`'s `L3011` — "`RefCell` guard held across a
+call" — **is registered in `compiler/ember_diag/src/codes.rs` and emitted by
+nothing**, so it is work this task closes. It is **not** blocked and **not**
+opt-in: `[CELL-7]` says it *fires* when a guard is live across a call that could
+re-enter the same cell. (An earlier revision of this section said it needed
+`LNT-CFG-1` first — that entry is about `[LT-1b]`'s `L3014`, which is a
+different lint and is the opt-in one.) `[CELL-10]` constrains the
+*diagnostics*: shape B4
 may suggest `RefCell` **only** when the conflicting accesses are provably not
 simultaneous, and never as a first suggestion.
 
 **What carries over from `Cell`:** the transparent-struct shape and the
 `cells`-style side table; privacy as the mechanism for an unreachable field; and
-`assert-c-order` for any rule that is about order. **What does not:** `RefCell`
-is **never `Copy`** — copying the counter would fork the borrow state — so the
-`[CELL-4]` derivation that came free for `Cell` must be deliberately overridden.
+`assert-c-order` for any rule that is about order.
+
+**What does not, and it is an open question rather than a settled one:** whether
+`RefCell[T]` may be `Copy`. `Cell` got `[CELL-4]` free because a struct's
+`is_copy` reduces to its field's; a `RefCell` carrying a borrow counter would
+get the same answer mechanically, and **copying the counter would fork the
+borrow state** — two cells each believing they hold the only mutable borrow.
+That reasoning is sound but it is **inference, not specification**: Part IX
+states `[CELL-4]` for `Cell` and says nothing about `RefCell`'s `Copy`-ness, and
+an earlier revision of this section asserted "`RefCell` is never `Copy`" as
+though the document said so. **Escalate it** (§0.10's rule) rather than deciding
+it while implementing: quote `[CELL-4]` and `[CELL-5]`, show the two-holders
+program, and let the owner rule.
 
 **Read before starting, in this order:**
 
@@ -814,6 +834,123 @@ difference between them, the working source wins for implementation *if and
 only if* the difference is a declared amendment — `hardening_check.py`
 enforces exactly this. Anything else is a defect in the handoff, not a licence
 to pick a reading.
+
+---
+
+### 0.18 Four factual errors in §0, corrected — and the task list
+
+Written by the agent that authored §0, after re-auditing its own claims against
+the repository at `c4fa15c`. **The four below were wrong in §0 as first
+committed** (`a2c0032`) and survived the §0.16 pass because nobody had checked
+them. They are corrected in place above; recorded here so that a reader who took
+notes from the earlier text can find out what changed.
+
+| # | Where | Said | Actually |
+|---|---|---|---|
+| 1 | §0.9 | the S1 conformance pair is in `tests/conformance/LT-3/` | **`tests/conformance/TYP-15/`**. `LT-3/` is a different directory holding one case, `accept_a_literal_in_a_view_struct.em` |
+| 2 | §0.2 | "11 conformance cases" for `Cell` | **9**. The count included the two `OWN-5` cases from D-035 |
+| 3 | §0.14 | `[CELL-7]`'s `L3011` "needs `LNT-CFG-1` first, or there is nowhere to opt in" | **False, and it mattered**: `LNT-CFG-1` is about `[LT-1b]`'s `L3014`. `[CELL-7]` says `L3011` *fires*; it is not opt-in and not blocked. It **is** registered in `compiler/ember_diag/src/codes.rs` and emitted by nothing — real `RefCell` work, and would have been skipped as blocked |
+| 4 | §0.14 | "`RefCell` is **never `Copy`**", stated flat | **Inference, not specification.** Part IX says nothing about `RefCell`'s `Copy`-ness. The reasoning is sound; presenting it as the document's is the exact failure §0.8 exists to prevent |
+
+Error 4 is the instructive one. It is the shape of both withdrawn amendments —
+**a correct analysis written down as though the specification had said it** —
+committed by the same agent that wrote §0.8 warning against it, in the same
+document. The lesson is not "be careful": it is that **the discipline has to be
+mechanical**, because judgement does not catch this. Before asserting a rule,
+`grep` it and quote it. If the quote does not exist, say "inference" in the
+sentence.
+
+Errors 1 and 2 are the cheaper lesson: **a path or a count in prose is a claim,
+and claims get checked.** Both were verified in under a minute with `ls` and
+`find`, after being wrong in a committed document for two commits.
+
+#### Standing rule this adds
+
+> **Anything in a handoff that names a file, a directory, a count, a rule id or
+> a symbol is checkable. Check it before writing it, and re-check it when you
+> inherit it.** The `[EFF-18]` and `L3011` findings both came from re-checking
+> an inherited claim rather than from new work.
+
+---
+
+## The task list — where to begin
+
+`RefCell[T]` remains the next milestone (§0.14). These are ordered so that the
+cheap verification that de-risks it comes first; **1 and 2 together are under a
+day and 2 is what protects everything after it.**
+
+**Ask before spawning subagents or a workflow, and state the worst-case agent
+count (§0.11). Report after each task and wait for the green signal before
+starting the next.**
+
+### 1. Close `L3011`, or file it properly — half a day
+
+`[CELL-7]`'s lint is registered and emitted by nothing. That is deviation D4's
+shape (`E9012`, same), and D4 is already open. Decide deliberately: either
+`RefCell` emits it as part of task 3, or it joins D4 in `DEVIATIONS.md` with a
+reason. **Do not leave a third registered-and-unemitted code undocumented** —
+that is how a registry stops meaning anything. This is listed first because it
+is small and because §0.18 shows it was about to be skipped as blocked.
+
+### 2. The D-035 sweep — one to two days, the best workflow candidate
+
+D-035 existed because `tests/conformance/OWN-5/` covered one clause of a
+two-clause rule and passed. **Nothing has looked for siblings.** Take the
+ownership, drop, borrow, lifetime and view rule families and, for each, read the
+rule, count its normative clauses, and check that a case exists which fails when
+that clause is violated.
+
+Start with the directories holding a **single** case, since one case can only
+test one clause: `LT-1`, `LT-1a`, `LT-3`, `BRW-3`, `BRW-4`, `BRW-6`, `DRP-2`,
+`OWN-7`, `SPN-3` — complete for these families as of `c4fa15c`. Then `OWN-1`,
+`OWN-2`, `OWN-3`, `OWN-4` (two each). Six more single-case directories exist
+outside these families (`CELL-11`, `GRM-21`, `MOD-1`, `MOD-3`, `RNG-8`,
+`TYP-5`) and are out of scope here, not overlooked.
+
+**Why before `RefCell` and not after:** `Ref`/`RefMut` are guards whose `drop`
+releases the borrow state, so `RefCell`'s correctness rests directly on the drop
+machinery D-035 was found in. Building guards on an unaudited drop path is how
+a second D-035 gets buried under a feature. **Method:** probe with a minimal
+program (§0.10); where the behaviour is invisible in output, `assert-c` or
+`assert-c-order`; break every new case red once before trusting it.
+
+### 3. `RefCell[T]` — the milestone
+
+Scope, each tied to its rule id: `[CELL-5]` the one-word borrow counter,
+`borrow`/`borrow_mut`, and the panic naming **the conflicting borrow's source
+location in debug *and* release**; `[CELL-6]` `try_borrow`/`try_borrow_mut`
+returning `Option`; `[CELL-6a]` — no profile may make them infallible, because
+that changes which `match` arm runs, which `[PRF-1]` forbids; `[CELL-7]`
+`Ref`/`RefMut` as **view types** with `[TYP-15]` applying and `drop` releasing
+the state; `[CELL-8]` `!Sync` (blocked with `Cell`'s — `CELL-SYNC-1`);
+`[CELL-9]` the check in **every** profile, and `exclusivity = "unchecked"` MUST
+NOT reach it; `[CELL-10]` shape B4 may suggest `RefCell` **only** when the
+accesses are provably not simultaneous, never first; `[CELL-11]` prelude.
+
+**Escalate, do not decide: whether `RefCell[T]` may be `Copy`** (§0.18 item 4).
+
+§0.14 has the read-first list, what carries over from `Cell`, and the
+conformance expectations. **`[CELL-7]` is why this is the real milestone** —
+guards escape, so `regions.rs`, `[TYP-15]`, borrow checking and guard lifetime
+all become load-bearing in a way `Cell` never touched.
+
+### 4. `Arena` — after `RefCell`
+
+`[ARN-*]`. **Not a third interior-mutability primitive** (§0.13): it is a region
+allocator, and what it must prove is a region rather than an alias, statically.
+Do not build it by generalising either of the other two.
+
+### Not yet, and why
+
+* **`[DIA-7..10]` + `tests/ui/` snapshots** — a Phase 2 *exit* criterion at
+  0/5, so it must happen, but after block I: three past defects were the
+  compiler rejecting the right program under the wrong *shape*, and `RefCell`
+  will add shapes. Writing the snapshots first means writing them twice.
+* **`D-030`** — small and open, but it needs a `drop` body that moves and
+  nothing in the corpus has one. Fold it into task 2, which is already reading
+  the drop rules.
+* **`CELL-DEF-1` / `CELL-SYNC-1`** — blocked on `Default` and on
+  `Send`/`Sync`/threads. Not startable.
 
 ---
 
