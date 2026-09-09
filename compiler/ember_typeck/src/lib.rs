@@ -458,17 +458,47 @@ impl<'a> Checker<'a> {
         Some(named_positions)
     }
 
-    /// `[TYP-15]` — "a view-typed value MUST NOT be stored in a place whose
-    /// region is not outlived by the view's region. Class fields, non-view
-    /// struct fields, `static`s, `Box[T]` and `Shared[T]` contents, container
-    /// elements and `owned fn` captures have no bounding region and are
-    /// therefore always forbidden."
+    /// `[TYP-15]` with `[LT-3]` — "a view-typed value MUST NOT be stored in a
+    /// place whose region is not outlived by the view's region."
     ///
-    /// The cases here are the ones decidable without regions: the place has no
-    /// region at all, so no analysis can make it work. A view escaping through
-    /// a *return* is `[LT-1]`'s job and needs the region graph.
+    /// The places named here have **no bounding region**, so the only view
+    /// they may hold is one whose region is `static` — which `[LT-3]` gives to
+    /// string literals, `static` items, and `Span`s over them. A static region
+    /// outlives everything, including the place, so the rule's own condition
+    /// is met rather than waived.
+    ///
+    /// This is the owner's resolution of ERR-044. `[TYP-15]` used to enumerate
+    /// these places as "always forbidden", which contradicted `[LT-3]`'s
+    /// statement that a `str` literal *may* be stored in a class field — and
+    /// contradicted `[TYP-15]`'s own principle, since a static region does
+    /// outlive the destination. The enumeration was the part that overreached.
+    ///
+    /// The exception is on the **view's region, not the destination type**:
+    /// `class Foo: greeting: str = "hello"` is fine and
+    /// `foo.greeting = s` for a parameter `s` is not, because `s` may carry a
+    /// caller's region that does not outlive the field.
+    ///
+    /// It does not touch `[TYP-15a]`: an owning container instantiated at a
+    /// view type — `Array[str]`, `Map[str, V]`, `Array[MutSpan[T]]` — stays
+    /// rejected whatever the region, because that rejection is at the type and
+    /// not at the region.
     fn reject_stored_view(&mut self, ty: Ty, span: Span, place: &str) {
+        self.reject_stored_view_unless(ty, span, place, false)
+    }
+
+    /// As above, with `static_region` true where the value being stored is
+    /// known to have `[LT-3]`'s `static` region.
+    fn reject_stored_view_unless(
+        &mut self,
+        ty: Ty,
+        span: Span,
+        place: &str,
+        static_region: bool,
+    ) {
         if !self.types.is_view(ty) {
+            return;
+        }
+        if static_region {
             return;
         }
         let shown = self.types.display(ty);
@@ -485,8 +515,8 @@ impl<'a> Checker<'a> {
                 "or a `Handle[T]` and name the container it indexes"
             ))
             .note(concat!(
-                "a view borrows something, and this place outlives whatever it could ",
-                "borrow (TYP-15)"
+                "this place has no bounding region, so only a view with the `static` ",
+                "region may be stored in it (TYP-15, LT-3)"
             )),
         );
     }
@@ -1281,9 +1311,18 @@ impl<'a> Checker<'a> {
                 // the value has to be known here.
                 ast::ItemKind::Static(decl) => {
                     let ty = self.resolve_type(&decl.ty);
-                    // `[TYP-15]` — a `static` has no bounding region, so a
-                    // view stored in one can outlive anything.
-                    self.reject_stored_view(ty, decl.ty.span, "a `static`");
+                    // `[TYP-15]` with `[LT-3]` — a `static` has no bounding
+                    // region, so what may be stored in one is a view whose
+                    // region is `static`. `[STA-2]` already requires the
+                    // initialiser to be a literal, so the question is decidable
+                    // here and needs no region graph.
+                    let static_region = has_static_region(&decl.value);
+                    self.reject_stored_view_unless(
+                        ty,
+                        decl.ty.span,
+                        "a `static`",
+                        static_region,
+                    );
                     let value = self.check_expr(&decl.value, ty);
                     if decl.is_mut {
                         self.error(
@@ -7526,6 +7565,29 @@ fn mode_of(mode: ast::Mode) -> Mode {
         ast::Mode::Borrow => Mode::Borrow,
         ast::Mode::Mut => Mode::Mut,
         ast::Mode::Owned => Mode::Owned,
+    }
+}
+
+/// `[LT-3]` — whether an expression's value has the `static` region.
+///
+/// "String literals, `static` items, and `Span`s over them have the `static`
+/// region, which outlives everything." Answered on the syntax rather than by
+/// analysis, and deliberately **conservative**: anything not obviously static
+/// is treated as not static, which errs towards rejecting a program rather
+/// than storing a view that outlives its source.
+///
+/// A region graph would answer this in general. It is not needed for the case
+/// the rule is about, because `[STA-2]` restricts a `static`'s initialiser to a
+/// literal, and a literal either is one of these or is not a view at all.
+fn has_static_region(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        // A string literal is the case `[LT-3]` names first.
+        ast::ExprKind::Lit(ast::Literal::Str(_)) => true,
+        // `[LEX-19]`'s adjacent-literal concatenation is still literals.
+        ast::ExprKind::Binary { lhs, rhs, .. } => {
+            has_static_region(lhs) && has_static_region(rhs)
+        }
+        _ => false,
     }
 }
 

@@ -81,7 +81,19 @@ def declared_anchors():
     return anchors
 
 
-BULLET_RULE = re.compile(r"^\s*[*-]\s+`\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]`")
+# A line that *opens* a rule. Two shapes, because the document uses both — and
+# the second must be pinned to column 0:
+#
+#     * `[SPN-1]` `Array[T]` coerces …          a bullet, at any indent
+#     `[TYP-15]` A view-typed value MUST NOT …  no bullet, column 0
+#
+# Allowing an unbulleted opening at *any* indent reads a wrapped continuation
+# line as a new rule — `[FFI-17d]`'s body wraps onto a line beginning
+# "`[FFI-39c]` releases Ember's strong reference", and the change two lines
+# below it was then blamed on `[FFI-39c]`. That is the fourth way this detector
+# has been wrong; each time it named a real rule and the wrong one, which is
+# why the gate reports rather than silently attributing.
+BULLET_RULE = re.compile(r"^(?:\s*[*-]\s+|)`\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]`")
 
 
 def anchor_of(lines, index, inserted=()):

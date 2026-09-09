@@ -94,7 +94,7 @@ ERR-008) is worth being able to read again.
 | ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
 | ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
 | ERR-043 | `[CELL-9]` with `[UNS-5]` | **open — reported to the owner** — `UnsafeCell` is named as *the* primitive a package uses for unchecked interior mutability, and no rule defines it |
-| ERR-044 | `[TYP-15]` with `[LT-3]` | **open — reported to the owner** — one says a static-region view is *always forbidden* in a class field, the other says a `str` literal *may* be stored in one |
+| ERR-044 | `[TYP-15]` with `[LT-3]` | **decided by the owner, 2026-09-09** — `[LT-3]`'s semantics govern: a view may be stored where its region outlives the destination, so a static-region view is admitted and every other stays refused. Amendment S1 |
 | ERR-045 | `[LT-1]`'s example with `[LT-1a]` and Part III §2 | **decided** — `[LT-1a]` and the grammar govern; `[LT-1]`'s trailing-suffix example does not parse |
 
 ---
@@ -1911,10 +1911,39 @@ class Label:
 
 are legal Ember, and the document currently says both yes and no.
 
-**What it needs from the owner.** One of: `[TYP-15]`'s enumeration gains "unless
-the view's region is `static`"; or `[LT-3]`'s parenthetical is struck and
-static-region views are genuinely forbidden in those places; or the two are
-merged. Also which code the rejection carries.
+**Resolved by the owner, 2026-09-09 — `[LT-3]`'s semantics govern.**
+
+> Long-lived storage is not inherently incompatible with views. A view may be
+> stored there when the view's region outlives the destination.
+
+So `[TYP-15]`'s enumeration was the half that overreached, and it now states the
+condition rather than a blanket prohibition: those places have no bounding
+region, so the only view they may hold is one whose region is `static`.
+
+The exception is on **the view's region, not the destination type**, which is
+what keeps it narrow:
+
+```ember
+class Foo:
+    greeting: str = "hello"        # admitted: "hello" is static-region
+
+fn set(mut foo: Foo, s: str):
+    foo.greeting = s               # refused: `s` may be a caller's region
+```
+
+**`[TYP-15a]` is untouched.** An owning container at a view type — `Array[str]`,
+`Map[str, V]`, `Array[MutSpan[T]]` — stays rejected whatever the region, because
+that rejection is at the *type*, and `BorrowList[T]`/`ViewList[T]` remain the
+specialised model. A conformance case holds that line.
+
+**The codes are reconciled.** `[LT-3]` named `E3060`; `[DIA-7a]` keys `E3060` to
+shape B7 (a borrowed value that does not live long enough) and `E3063` to B12 (a
+view stored in a place that outlives it). This is B12, so `[LT-3]` now says
+`E3063` — which is what the compiler already emitted.
+
+Recorded as amendment **S1**, class `OWNER-APPROVED SEMANTIC CHANGE`. That class
+is the one a hardening may not contain, so which version it lands in is the
+owner's call: it either cuts v0.8.4 or rides in Hardened_2 carrying that flag.
 
 ---
 

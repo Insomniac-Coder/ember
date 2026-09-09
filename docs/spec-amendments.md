@@ -535,6 +535,63 @@ copies or catches changes the contract without changing the header.
 
 ---
 
+## S1 — `[TYP-15]` and `[LT-3]`: an owner semantic decision
+
+    Class: OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  yes — a `static` may now hold a `str` literal
+
+**This is the class a hardening may not contain**, and it is here rather than
+hidden because the owner made the decision explicitly and asked for it to be
+recorded as one: *"Please resolve ERR-044 as an owner semantic decision, not as
+a hardening-only change."*
+
+Which version it lands in is a question for the owner, not for me. The protocol
+says the fifth class "forces a language revision", so this either cuts **v0.8.4**
+or rides in Hardened_2 flagged as it is here. The text and the compiler are the
+same either way; only the number differs.
+
+**What was wrong.** ERR-044. `[TYP-15]` stated a principle — a view may not be
+stored "in a place whose region is not outlived by the view's region" — and then
+an enumeration that said class fields, `static`s and the rest are "**always**
+forbidden". `[LT-3]` said, in as many words, that a `str` literal **may** be
+stored in a class field because its region is `static`. Two normative statements
+requiring different things, and `[TYP-15]`'s own principle siding with `[LT-3]`,
+since a static region does outlive the destination.
+
+**The decision: `[LT-3]`'s semantics govern.** Long-lived storage is not
+inherently incompatible with views; a view may be stored there when its region
+outlives the destination. The enumeration was what overreached, by assuming
+every listed place has no *possible* sufficient region — true of a field holding
+a borrowed view, false of one holding a literal.
+
+**The exception is on the view's region, not the destination type**, and the
+pair the owner gave is the test of it:
+
+    class Foo:
+        greeting: str = "hello"        admitted: "hello" is static-region
+
+    fn set(mut foo: Foo, s: str):
+        foo.greeting = s               refused: `s` may be a caller's region
+
+**Deliberately not widened.** `[TYP-15a]` is untouched: an owning container at a
+view type — `Array[str]`, `Map[str, V]`, `Array[MutSpan[T]]` — stays rejected
+whatever the region, because that rejection is at the *type* and not at the
+region, and `BorrowList[T]`/`ViewList[T]` remain the specialised model. The
+compiler's span-element and container-element checks are unchanged.
+
+**The diagnostic reconciled too.** `[LT-3]` named `E3060` for the rejection;
+`[DIA-7a]` keys `E3060` to shape B7 (a borrowed value that does not live long
+enough) and `E3063` to B12 (a view stored in a place that outlives it). B12 is
+this. `[LT-3]` now says `E3063`, which is what the compiler already emitted.
+
+**What the compiler does now.** `[STA-2]` restricts a `static`'s initialiser to a
+literal, so the region question is decidable syntactically and needs no region
+graph; `has_static_region` answers it and is deliberately conservative — anything
+not obviously static is treated as not static, which errs towards rejecting a
+program rather than storing a view that outlives its source.
+
+---
+
 ## The editorial repairs and leftover removals (E1–E4, V1–V4, K1)
 
 These were carried out in the same pass and described in the change log, and
