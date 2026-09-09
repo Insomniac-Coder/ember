@@ -61,9 +61,28 @@ fn parse_expectations(source: &str) -> Expectations {
 
     for line in source.lines() {
         let trimmed = line.trim_start();
-        let Some(rest) = trimmed.strip_prefix("#$") else {
-            collecting_stdout = false;
-            continue;
+        // An annotation may open the line, or trail the code it is about:
+        //
+        //     a.push(2)     #$ error[E3021]: `a` is borrowed here
+        //
+        // The trailing form is the one nearly every `compile-fail` case uses,
+        // because it puts the expected diagnostic on the line that provokes
+        // it. It was **not recognised** until now: only the leading form was,
+        // so every trailing `error[...]` was read as ordinary comment text and
+        // asserted nothing. The suites still passed, because a `compile-fail`
+        // test with no parsed expectations falls back to "compilation must
+        // fail" — and it did fail, for whatever reason, related or not.
+        // `#` opens a comment in Ember, so the text from `#$` onward is
+        // already inert to the compiler either way.
+        let rest = match trimmed.strip_prefix("#$") {
+            Some(rest) => rest,
+            None => match line.find("#$") {
+                Some(at) if line[..at].ends_with(char::is_whitespace) => &line[at + 2..],
+                _ => {
+                    collecting_stdout = false;
+                    continue;
+                }
+            },
         };
         let rest = rest.trim();
 
@@ -118,7 +137,7 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-                 known keys: test, exit, assert-c, error[…], warning[…],                  panics, stdout, rules, note"
+  known keys:                  test, exit, assert-c, error[…], warning[…], panics, stdout, rules, note"
             );
         }
     }
@@ -133,6 +152,40 @@ struct Run {
     stdout: String,
     stderr: String,
     exit: i32,
+}
+
+/// The compiler's own rendering of a diagnostic, with the **echoed source
+/// lines removed**.
+///
+/// This matters more than it looks. A `compile-fail` case writes its
+/// expectation on the line that provokes it:
+///
+///     p.title = 7     #$ error[E1050]: `title` is read-only outside its module
+///
+/// and the diagnostic renderer prints that source line back inside the error
+/// it produces. So `stderr.contains("E1050")` was satisfied by the test's own
+/// annotation being echoed — **every trailing expectation asserted itself**,
+/// and a case expecting a code the compiler never emits passed. Found by
+/// writing one whose expected code was wrong (`E1021` for what is `E1050`)
+/// and watching it go green.
+///
+/// Only the **numbered** lines are the echo: `18 |     match c:` is the
+/// programmer's source and may hold the annotation, while `   | ^^^^ label`
+/// beneath it carries the compiler's own primary label and must be kept — a
+/// filter that drops both throws away the words half the expectations are
+/// written against.
+fn without_source_echo(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| {
+            let t = line.trim_start();
+            let digits = t.trim_start_matches(|c: char| c.is_ascii_digit());
+            // A numbered gutter, and nothing else, is a line of source.
+            !(digits.len() < t.len() && digits.trim_start().starts_with('|'))
+        })
+        .collect::<Vec<_>>()
+        .join("
+")
 }
 
 fn ember(args: &[&str], root: &Path) -> Run {
@@ -203,16 +256,17 @@ fn check_file(path: &Path, root: &Path) {
             checked.exit, 0,
             "{relative}: expected compilation to fail, but it succeeded"
         );
+        let said = without_source_echo(&checked.stderr);
         for (code, message) in &expectations.errors {
             assert!(
-                checked.stderr.contains(code.as_str()),
+                said.contains(code.as_str()),
                 "{relative}: expected {code}
 stderr:
 {}",
                 checked.stderr
             );
             assert!(
-                checked.stderr.contains(message.as_str()),
+                said.contains(message.as_str()),
                 "{relative}: expected a message containing {message:?}
 stderr:
 {}",
@@ -225,16 +279,17 @@ stderr:
     // `[TST-1]` — warnings and lints the file names must be produced.
     if !expectations.warnings.is_empty() {
         let checked = ember(&["check", &relative], root);
+        let said = without_source_echo(&checked.stderr);
         for (code, message) in &expectations.warnings {
             assert!(
-                checked.stderr.contains(code.as_str()),
+                said.contains(code.as_str()),
                 "{relative}: expected {code}
 stderr:
 {}",
                 checked.stderr
             );
             assert!(
-                checked.stderr.contains(message.as_str()),
+                said.contains(message.as_str()),
                 "{relative}: expected a warning containing {message:?}
 stderr:
 {}",
@@ -500,3 +555,4 @@ fn the_conformance_suite_runs() {
         }
     }
 }
+

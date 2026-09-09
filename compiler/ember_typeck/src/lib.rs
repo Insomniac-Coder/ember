@@ -4521,27 +4521,9 @@ impl<'a> Checker<'a> {
                 match self.types.struct_def(id).field(name.name) {
                     Some((index, field)) => {
                         let ty = field.ty;
-                        let (vis, fname) = (field.vis, field.name);
-                        // `[MOD-2]` — "All items are private to their module
-                        // unless `pub`." `pub(package)` is visible everywhere
-                        // in this build, since a build is one package until
-                        // `[MAN-2]`'s dependency graph exists.
-                        if vis == FieldVis::Private
-                            && self.types.struct_def(id).declaring_module != self.current_module
-                        {
-                            let owner = self.types.struct_def(id).name.to_string();
-                            self.sink.emit(
-                                Diagnostic::error(
-                                    codes::E1020,
-                                    name.span,
-                                    format!("`{fname}` is private to `{owner}`'s module"),
-                                )
-                                .help(format!(
-                                    "declare it `pub {fname}: …` to read it anywhere, or                                      `pub(read) {fname}: …` to make it readable and not writable"
-                                ))
-                                .note("a field is private unless it says otherwise [MOD-2]"),
-                            );
-                        }
+                        // Resolve, then check, then build. One check on one
+                        // path — see `check_field_visible`.
+                        self.check_field_visible(id, field.vis, field.name, name.span);
                         Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                     }
                     None => {
@@ -5440,6 +5422,53 @@ impl<'a> Checker<'a> {
             TyKind::Range(id) => Some(*id),
             _ => None,
         }
+    }
+
+    /// `[MOD-2]` — **the one place a field's visibility is checked.**
+    ///
+    /// "All items are private to their module unless `pub`." Every field
+    /// access resolves the field and then comes here, in that order, so a
+    /// reachable field access that skipped the check does not exist. It was
+    /// unenforced for the whole of Phase 1, and the way that was discovered is
+    /// worth keeping in mind: a test in `tests/run-pass/` was passing *because*
+    /// of the hole, and adding the check turned it red. The fixture was the
+    /// thing that was wrong.
+    ///
+    /// `pub(package)` reads as public here: a build is one package until
+    /// `[MAN-2]`'s dependency graph exists, so there is no other package for it
+    /// to be invisible to yet. When there is, this function is where that
+    /// changes — not the call sites.
+    ///
+    /// Writing is separate and stricter: `pub(read)` permits the read this
+    /// checks and refuses the write, which is `reject_readonly_write`, and
+    /// constructing writes every field at once, which is
+    /// `check_memberwise_constructor` under `[STR-1]`.
+    fn check_field_visible(
+        &mut self,
+        id: StructId,
+        vis: FieldVis,
+        field: Symbol,
+        span: Span,
+    ) {
+        if vis != FieldVis::Private {
+            return;
+        }
+        let def = self.types.struct_def(id);
+        if def.declaring_module == self.current_module {
+            return;
+        }
+        let owner = def.name.to_string();
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E1020,
+                span,
+                format!("`{field}` is private to `{owner}`'s module"),
+            )
+            .help(format!(
+                "declare it `pub {field}: …` to read it anywhere,                  or `pub(read) {field}: …` to make it readable and not writable"
+            ))
+            .note("a field is private unless it says otherwise [MOD-2]"),
+        );
     }
 
     /// `[STR-1]` — whether the memberwise constructor may be called here.
