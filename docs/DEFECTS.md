@@ -44,7 +44,7 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 | D-008 | `ember fmt` deleted a doc comment on a method | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-009 | `ember fmt` deleted a doc comment on an enum variant | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-010 | The AST printer showed a variant as its bare name, so `[FMT-1]`'s round-trip test could not see D-009 | `[FMT-1]`, `[TST-1]` | **fixed** | `28aa05d` |
-| D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **open — no case found** | ADR-012 |
+| D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **closed — not a defect** | `[LT-2]` says the intersection is *taken*, so construction never fails, and `[LT-1]`'s elision extends that to a returned view. `E3064` reports a program that **demands** two independent regions, and no v1 source can express one: named lifetimes are v2 (`[LT-6]`), and `[TYP-15a]`'s `BorrowList`/`ViewList` are the only construct that could require it. Amendment A4 writes this into `[LT-2]`, so a v1 implementation is conforming with the code registered and never emitted; `tests/conformance/LT-2/` holds the pair. ADR-012 stands |
 
 ## 2026-09-09 — v0.8.3, the standard library and range types
 
