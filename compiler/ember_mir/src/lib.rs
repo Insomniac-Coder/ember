@@ -150,6 +150,9 @@ pub enum Const {
     Bool(bool),
     /// A string literal with static region (`[LEX-20]`).
     Str(String),
+    /// `[FN-6]` — a named function as a value: its mangled symbol, which in C
+    /// is the function's address.
+    Fn(String),
     /// The unit value.
     Void,
 }
@@ -319,6 +322,9 @@ impl AssertKind {
 pub enum FuncRef {
     /// A direct call to a body in this compilation unit.
     Direct { symbol: String },
+    /// `[CLO-3]` — a call through a value of function type. The operand holds
+    /// the callee, so the region machinery sees it as an ordinary read.
+    Indirect(Operand),
     /// A call the compiler provides itself, lowered to an `ember_rt` entry.
     Builtin { which: ember_hir::Builtin, arg_ty: Ty },
 }
@@ -396,6 +402,7 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
             Const::Float { value, ty } => format!("const {value:?}_{}", types.display(*ty)),
             Const::Bool(b) => format!("const {b}"),
             Const::Str(s) => format!("const {s:?}"),
+            Const::Fn(symbol) => format!("const fn {symbol}"),
             Const::Void => "const ()".to_string(),
         },
     }
@@ -465,6 +472,7 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
             let name = match func {
                 FuncRef::Direct { symbol } => symbol.clone(),
                 FuncRef::Builtin { which, .. } => which.name().to_string(),
+                FuncRef::Indirect(operand) => dump_operand(operand, types),
             };
             format!("{} = {name}({}) -> bb{}", dump_place(dest), inner.join(", "), next.0)
         }

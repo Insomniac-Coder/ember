@@ -102,6 +102,11 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
             ..
         } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
+        // `[CLO-3]` — a call through a function value. `[EFF-2]`'s
+        // reasoning applies to regions too: nothing is known about the
+        // callee, so the permissive reading of `[LT-1]` rule 3 is taken
+        // and the result is treated as borrowing every view argument.
+        FuncRef::Indirect(_) => Elision::Everything,
     };
     for body in bodies {
         check_body(body, types, &elision, sink);

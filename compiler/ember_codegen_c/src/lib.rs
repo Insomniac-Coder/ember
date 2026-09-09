@@ -85,6 +85,9 @@ struct Cursor {
 enum Definition {
     Struct(Vec<String>),
     Alias(String),
+    /// `typedef R (*name)(A, B);` — a function pointer, whose declarator wraps
+    /// the name rather than preceding it.
+    FnPointer { ret: String, args: String },
 }
 
 /// A C type definition: either a named Ember struct or a generated struct
@@ -156,6 +159,9 @@ impl Emitter<'_> {
                 Definition::Alias(underlying) => {
                     self.line(&format!("typedef {underlying} {name};"));
                 }
+                Definition::FnPointer { ret, args } => {
+                    self.line(&format!("typedef {ret} (*{name})({args});"));
+                }
                 Definition::Struct(members) => {
                     self.line(&format!("struct {name} {{"));
                     if members.is_empty() {
@@ -216,6 +222,16 @@ impl Emitter<'_> {
                 union.push("    } payload".to_string());
                 members.push(union.join("\n"));
                 Definition::Struct(members)
+            }
+            // `[CG-C-*]`'s "function pointer typedefs". A function-pointer
+            // *type name* in C is `R (*)(A)`, which cannot be written where a
+            // simple `T name` is wanted, so each one gets a typedef and every
+            // use names it.
+            TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
+                let TyKind::Fn { params, ret } = self.types.kind(ty) else { unreachable!() };
+                let rendered: Vec<String> = params.iter().map(|&p| self.c_type(p)).collect();
+                let args = if rendered.is_empty() { "void".to_string() } else { rendered.join(", ") };
+                Definition::FnPointer { ret: self.c_type(*ret), args }
             }
             TypeNode::Structural(ty) => Definition::Struct(match self.types.kind(ty) {
                 TyKind::Tuple(items) => items
@@ -711,6 +727,11 @@ impl Emitter<'_> {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
             FuncRef::Direct { symbol } => format!("{symbol}({})", rendered.join(", ")),
+            // `[CLO-3]` — a call through a value. In C a function value is
+            // its address, so the callee expression is called directly.
+            FuncRef::Indirect(callee) => {
+                format!("({})({})", self.operand(callee, body), rendered.join(", "))
+            }
             FuncRef::Builtin { which, arg_ty } => {
                 // `Array` and `String` share one runtime buffer; the element
                 // size is passed at each call, which is how a single
@@ -1020,6 +1041,9 @@ impl Emitter<'_> {
             Const::Str(text) => {
                 format!("{RT}str_lit({}, {})", c_string_literal(text), text.len())
             }
+            // `[FN-6]` — a function value is its C symbol, which is its
+            // address.
+            Const::Fn(symbol) => symbol.clone(),
             Const::Void => "0".to_string(),
         }
     }
@@ -1181,7 +1205,7 @@ impl Emitter<'_> {
             // Every `Array[T]` and `String` is the same buffer; the element
             // size travels with each runtime call instead of with the type.
             TyKind::Vec { .. } => format!("{RT}vec"),
-            TyKind::Fn { .. } => "void*".into(),
+            TyKind::Fn { .. } => self.structural_name(ty),
             // A generic parameter never reaches the backend: monomorphisation
             // substitutes it away, and a body still holding one was never
             // instantiated.
@@ -1234,7 +1258,9 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
     }
     let structural: Vec<Ty> = types
         .all()
-        .filter(|(_, k)| matches!(k, TyKind::Tuple(_) | TyKind::Array { .. }))
+        .filter(|(_, k)| {
+            matches!(k, TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Fn { .. })
+        })
         .map(|(ty, _)| ty)
         .collect();
     for ty in structural {
@@ -1285,6 +1311,13 @@ impl Planner<'_> {
                 let contains: Vec<Ty> = match self.types.kind(ty) {
                     TyKind::Tuple(items) => items.clone(),
                     TyKind::Array { elem, .. } => vec![*elem],
+                    // A function pointer's parameter and return types are
+                    // written out in its typedef, so they must be complete.
+                    TyKind::Fn { params, ret } => {
+                        let mut all = params.clone();
+                        all.push(*ret);
+                        all
+                    }
                     _ => Vec::new(),
                 };
                 for inner in contains {
@@ -1305,7 +1338,9 @@ impl Planner<'_> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.visit(TypeNode::Struct(*id)),
             TyKind::Enum(id) => self.visit(TypeNode::Enum(*id)),
-            TyKind::Tuple(_) | TyKind::Array { .. } => self.visit(TypeNode::Structural(ty)),
+            TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Fn { .. } => {
+                self.visit(TypeNode::Structural(ty))
+            }
             _ => {}
         }
     }
@@ -1319,6 +1354,7 @@ impl Planner<'_> {
         // plus a kind tag, not a second spelling of it.
         let kind = match self.types.kind(ty) {
             TyKind::Tuple(_) => "tup_",
+            TyKind::Fn { .. } => "fn_",
             _ => "arr_",
         };
         let base = format!("{}{kind}{stem}", ember_branding::mangle_prefix());

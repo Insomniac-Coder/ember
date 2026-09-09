@@ -595,6 +595,20 @@ impl<'a> Builder<'a> {
             // `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the
             // checked-without-panic form". One compare, a branch, and the two
             // `Option` variants.
+            // `[CLO-3]` — a call through a value of function type.
+            hir::ExprKind::CallIndirect { callee, args } => {
+                let callee_op = self.lower_operand(callee);
+                let args: Vec<Operand> =
+                    args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Indirect(callee_op),
+                    args,
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
@@ -1338,6 +1352,10 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Cast { expr: inner, to } => {
                 let operand = self.lower_operand(inner);
                 Rvalue::Cast { kind: CastKind::Numeric, operand, to: *to }
+            }
+            // `[FN-6]` — a named function as a value: its symbol.
+            hir::ExprKind::FnValue(def) => {
+                Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))
             }
             hir::ExprKind::Widen { expr: inner, to } => {
                 let operand = self.lower_operand(inner);

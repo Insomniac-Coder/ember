@@ -154,6 +154,11 @@ pub enum ExprKind {
     Field { base: Box<Expr>, index: usize },
     /// A direct call to a known function.
     Call { callee: DefId, args: Vec<Expr> },
+    /// `[FN-6]` — a named function used as a value. Its type is the
+    /// `fn(A) -> R` it coerces to.
+    FnValue(DefId),
+    /// A call through a value of function type, rather than to a name.
+    CallIndirect { callee: Box<Expr>, args: Vec<Expr> },
     /// `Vec3(1, 2, 3)` — the memberwise constructor (`[STR-1]`). Arguments are
     /// in declaration order with defaults already filled in.
     StructLit { struct_id: StructId, fields: Vec<Expr> },
@@ -599,6 +604,11 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Call { callee, args } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             format!("call#{}({})", callee.0, inner.join(", "))
+        }
+        ExprKind::FnValue(def) => format!("fn#{}", def.0),
+        ExprKind::CallIndirect { callee, args } => {
+            let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
+            format!("({})({})", dump_expr(callee, function, types), inner.join(", "))
         }
         ExprKind::StructLit { struct_id, fields } => {
             let inner: Vec<String> = fields.iter().map(|f| dump_expr(f, function, types)).collect();

@@ -79,6 +79,10 @@ pub fn check(
     // `[TYP-16]` — every instantiation reached while checking gets a real
     // body. One of those can reach another, so this drains until empty.
     functions.extend(checker.check_instantiations(modules));
+    // `[CLO-1]` — the functions capture-free closures lowered to. They have no
+    // name in source, so they are gathered as they are checked and appended
+    // here rather than found by walking the modules again.
+    functions.extend(std::mem::take(&mut checker.lambdas));
     Program { functions, main }
 }
 
@@ -187,6 +191,10 @@ struct Checker<'a> {
     named_types: HashMap<Symbol, Ty>,
     fn_ids: HashMap<Symbol, DefId>,
     signatures: Vec<Signature>,
+    /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
+    /// no name in source, so they are collected here and appended to the
+    /// program rather than found by walking the module again.
+    lambdas: Vec<Function>,
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
@@ -217,6 +225,9 @@ struct Checker<'a> {
     /// The generic parameters of the function being checked, so a method call
     /// on one can find its bounds (`[TYP-17]`).
     current_generics: Vec<GenericParam>,
+    /// `[CLO-2]` — set while a closure body is checked, so that a read of an
+    /// enclosing local is seen as a capture rather than as an ordinary read.
+    captures: Option<CaptureWatch>,
     /// What `Self` names right now: the concrete type inside a `struct`,
     /// `class`, `enum` or `extend` body, and `CommonTypes::self_ty` inside an
     /// `interface`, where the implementing type is not yet known. `None` where
@@ -279,6 +290,8 @@ impl<'a> Checker<'a> {
             current_module: 0,
             type_params: HashMap::new(),
             current_generics: Vec::new(),
+            lambdas: Vec::new(),
+            captures: None,
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
@@ -1738,6 +1751,28 @@ impl<'a> Checker<'a> {
                 let items: Vec<Ty> = items.iter().map(|t| self.resolve_type(t)).collect();
                 self.types.intern(TyKind::Tuple(items))
             }
+            // `[FN-6]` — "Functions are values of a unique zero-sized function
+            // type; they coerce to `fn(A) -> R`". The written type is the
+            // coercion target, which every named function fits and which
+            // `[CLO-3]`'s closure parameter is a generic over.
+            ast::TypeKind::Fn { abi, params, ret } => {
+                if abi.is_some() {
+                    // `extern "C" fn(…)` is `[FFI-9]`'s raw function pointer,
+                    // which arrives with the rest of the boundary in Phase 5.
+                    self.error(
+                        codes::E1010,
+                        ty.span,
+                        "an `extern` function type is not supported yet in this phase",
+                    );
+                    return self.common.error;
+                }
+                let params: Vec<Ty> = params.iter().map(|t| self.resolve_type(t)).collect();
+                let ret = ret
+                    .as_ref()
+                    .map(|t| self.resolve_type(t))
+                    .unwrap_or(self.common.void);
+                self.types.intern(TyKind::Fn { params, ret })
+            }
             ast::TypeKind::Array { elem, len } => {
                 let elem = self.resolve_type(elem);
                 match self.const_len(len) {
@@ -2973,6 +3008,15 @@ impl<'a> Checker<'a> {
 
     fn lookup(&self, name: Symbol) -> Option<LocalId> {
         self.scopes.iter().rev().find_map(|scope| scope.get(&name).copied())
+    }
+
+    /// `[CLO-2]` — whether a name a closure body could not find is one the
+    /// enclosing function declares, in which case it is a **capture** and not
+    /// a typo.
+    fn is_capture(&self, name: Symbol) -> bool {
+        self.captures
+            .as_ref()
+            .is_some_and(|watch| watch.outer.iter().any(|scope| scope.contains_key(&name)))
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Block {
@@ -4387,6 +4431,13 @@ impl<'a> Checker<'a> {
         match &expr.kind {
             ast::ExprKind::Paren(inner) => self.synth_with_expectation(inner, expected),
 
+            // `[CLO-1]` — a closure. One that captures nothing "is a plain
+            // value type", and Part IV §9's `fn(A) -> R` is exactly that, so
+            // it lowers to a synthesised function and becomes a `[FN-6]`
+            // value. A capturing one is a unique anonymous struct implementing
+            // `Callable`; it needs an environment and is the next slice.
+            ast::ExprKind::Lambda(lambda) => self.synth_lambda(lambda, expected, span),
+
             ast::ExprKind::Lit(lit) => self.synth_literal(lit, span),
 
             // `self` inside a method is the receiver parameter, which is a
@@ -4439,6 +4490,31 @@ impl<'a> Checker<'a> {
                             Expr { ty: self.common.error, kind: ExprKind::Error, span }
                         }
                     };
+                }
+                // `[FN-6]` — "Functions are values of a unique zero-sized
+                // function type; they coerce to `fn(A) -> R`". A named
+                // function in value position is that value.
+                if let Some(value) = self.function_value(name, span) {
+                    return value;
+                }
+                // `[CLO-2]` — inside a closure, a name the enclosing function
+                // declares is a capture. Saying "cannot find it" would be
+                // false and would send the reader looking for a typo.
+                if self.is_capture(name) {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E1010,
+                            span,
+                            format!("this closure captures `{name}`, which is not supported yet in this phase"),
+                        )
+                        .help("pass it as a parameter, or use a named function")
+                        .note(concat!(
+                            "a capturing closure is a unique anonymous struct implementing ",
+                            "`Callable` [CLO-1]; a capture-free one is an ordinary ",
+                            "`fn(A) -> R` value"
+                        )),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 self.error(codes::E1010, span, format!("cannot find `{name}` in this scope"));
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
@@ -4963,6 +5039,19 @@ impl<'a> Checker<'a> {
             }
             _ => (callee, Vec::new()),
         };
+        // `[CLO-3]` — "Calling: `f(args)`". A local of function type is
+        // called through its value rather than by name. Checked before the
+        // path lookup, because a local shadows an item of the same name.
+        if let ast::ExprKind::Path { segments } = &callee.kind {
+            if segments.len() == 1 {
+                if let Some(local) = self.lookup(segments[0].name) {
+                    let value = self.read_local_expecting(local, callee.span, None);
+                    if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                        return self.synth_indirect_call(value, args, span);
+                    }
+                }
+            }
+        }
         let ast::ExprKind::Path { segments } = &callee.kind else {
             self.error(codes::E1010, span, "only direct calls are supported in this phase");
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -5856,6 +5945,214 @@ impl<'a> Checker<'a> {
     }
 
     /// The compiler-known methods on `Array[T]` and `String`.
+    /// `[CLO-3]` — a call through a value of function type.
+    fn synth_indirect_call(&mut self, callee: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        let TyKind::Fn { params, ret } = self.types.kind(callee.ty).clone() else {
+            unreachable!("checked by the caller")
+        };
+        if args.len() != params.len() {
+            let shown = self.types.display(callee.ty);
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{shown}` takes {} arguments, found {}", params.len(), args.len()),
+            );
+            return Expr { ty: ret, kind: ExprKind::Error, span };
+        }
+        let mut checked = Vec::new();
+        for (arg, param) in args.iter().zip(params.iter()) {
+            if let Some(name) = arg.name {
+                // `[TYP-25]`'s named arguments match parameter *names*, and a
+                // function type has none.
+                self.error(
+                    codes::E2020,
+                    name.span,
+                    "a call through a function value takes positional arguments",
+                );
+            }
+            checked.push(self.check_expr(&arg.value, *param));
+        }
+        Expr {
+            ty: ret,
+            kind: ExprKind::CallIndirect { callee: Box::new(callee), args: checked },
+            span,
+        }
+    }
+
+    /// `[CLO-1]`, `[CLO-2]`, `[TYP-23]` rule 4 — a closure.
+    ///
+    /// A capture-free closure is "a plain value type" (`[CLO-1]`), and Part IV
+    /// §9's `fn(A) -> R` is that type, so it lowers to a synthesised function
+    /// with a name of its own. A capturing one is refused by name rather than
+    /// silently mis-compiled: the body is checked in a scope of its own, so a
+    /// captured name is simply not found, and the diagnostic recognises that
+    /// case from the enclosing scopes it kept.
+    ///
+    /// `expected` supplies the parameter types the closure omits: "Lambda
+    /// parameter types are inferred from the expected function type; a lambda
+    /// with unannotated parameters in a context without an expected type is
+    /// `E2061`".
+    fn synth_lambda(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
+        let wanted = expected.and_then(|ty| match self.types.kind(ty) {
+            TyKind::Fn { params, ret } => Some((params.clone(), *ret)),
+            _ => None,
+        });
+
+        let mut params: Vec<(Symbol, Ty, Span)> = Vec::new();
+        for (index, param) in lambda.params.iter().enumerate() {
+            let ast::ParamKind::Named { name, ty } = &param.kind else {
+                self.error(codes::E2020, param.span, "a closure has no receiver");
+                continue;
+            };
+            let declared = match &ty.kind {
+                ast::TypeKind::Infer => None,
+                _ => Some(self.resolve_type(ty)),
+            };
+            let resolved = match (declared, wanted.as_ref().and_then(|(p, _)| p.get(index))) {
+                (Some(ty), _) => ty,
+                (None, Some(&ty)) => ty,
+                (None, None) => {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2061,
+                            param.span,
+                            format!("cannot tell what `{}` holds", name.name),
+                        )
+                        .help(
+                            "annotate it, or write the closure where a `fn(…)` type is expected",
+                        )
+                        .note(
+                            "a lambda's parameter types come from the expected function type \
+                             [TYP-23]",
+                        ),
+                    );
+                    self.common.error
+                }
+            };
+            if param.mode != ast::Mode::Borrow {
+                self.error(
+                    codes::E1010,
+                    param.span,
+                    "a closure parameter mode is not supported yet in this phase",
+                );
+            }
+            params.push((name.name, resolved, param.span));
+        }
+
+        let declared_ret = lambda.ret.as_ref().map(|t| self.resolve_type(t));
+        let ret = declared_ret.or(wanted.as_ref().map(|(_, r)| *r));
+
+        // The body is checked in a context of its own: fresh locals, fresh
+        // scopes. The enclosing scopes are kept aside so that the "cannot
+        // find" diagnostic can tell a capture from a typo (`[CLO-2]`).
+        let outer_locals = std::mem::take(&mut self.locals);
+        let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let outer_ret = self.ret_ty;
+        let outer_watch = self.captures.replace(CaptureWatch { outer: outer_scopes.clone() });
+        self.ret_ty = ret.unwrap_or(self.common.void);
+
+        for (name, ty, param_span) in &params {
+            self.declare(Some(*name), *ty, *param_span);
+        }
+        let (body, body_ty) = match &lambda.body {
+            ast::LambdaBody::Expr(expr) => {
+                let value = match ret {
+                    Some(ty) if ty != self.common.void => self.check_expr(expr, ty),
+                    _ => self.synth(expr),
+                };
+                let ty = value.ty;
+                (Block { stmts: vec![Stmt::Return(Some(value))], span }, ty)
+            }
+            ast::LambdaBody::Block(block) => {
+                let checked = self.check_block(block);
+                (checked, self.ret_ty)
+            }
+        };
+        let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.scopes = outer_scopes;
+        self.captures = outer_watch;
+        self.ret_ty = outer_ret;
+
+        let ret = ret.unwrap_or(body_ty);
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature {
+            params: params.iter().map(|(n, t, s)| (*n, *t, Mode::Borrow, *s)).collect(),
+            ret,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        let symbol = format!("{}closure{}", ember_branding::mangle_prefix(), self.lambdas.len());
+        let closure_params: Vec<Param> = (0..params.len())
+            .map(|i| Param { local: LocalId(i as u32), mode: Mode::Borrow })
+            .collect();
+        self.lambdas.push(Function {
+            def,
+            name: Symbol::intern(&symbol),
+            symbol,
+            params: closure_params,
+            locals,
+            ret,
+            body,
+            span,
+            overflow: self.default_overflow,
+            borrows: None,
+        });
+        let ty = self.types.intern(TyKind::Fn {
+            params: params.iter().map(|(_, t, _)| *t).collect(),
+            ret,
+        });
+        Expr { ty, kind: ExprKind::FnValue(def), span }
+    }
+
+    /// `[FN-6]` — a named function used as a value.
+    ///
+    /// "Functions are values of a unique zero-sized function type; they coerce
+    /// to `fn(A) -> R` (the generic callable bound)". The unique zero-sized
+    /// type is not modelled: this phase gives the value the `fn(A) -> R` type
+    /// directly, which is what every use of it wants and which loses only the
+    /// ability to distinguish two functions of one signature at compile time —
+    /// something `[TYP-26]`'s no-overloading rule already makes unnecessary.
+    /// A generic function has no single signature and is not a value
+    /// (`[TYP-18]` needs the arguments to pick one), so it is not offered.
+    fn function_value(&mut self, name: Symbol, span: Span) -> Option<Expr> {
+        let qualified = self.resolve_name(name);
+        let def = *self.fn_ids.get(&qualified)?;
+        let signature = &self.signatures[def.0 as usize];
+        if !signature.generics.is_empty() {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2060,
+                    span,
+                    format!("`{name}` is generic, so it is not one function"),
+                )
+                .help(format!(
+                    "name the instantiation: `{name}[i32]` picks one, and that is a value"
+                ))
+                .note("a generic is a recipe; each instantiation is its own function [TYP-16]"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        // `[FN-1]` — a parameter's mode is part of how it is passed, and a
+        // `fn(A) -> R` type carries only the types. A function with a `mut` or
+        // `owned` parameter is therefore not a value of that type in this
+        // phase; `[CLO-3]`'s closure parameters are where the modes return.
+        if signature.params.iter().any(|(_, _, mode, _)| *mode != Mode::Borrow) {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E1010,
+                    span,
+                    format!("`{name}` has a `mut` or `owned` parameter, so it is not a value yet"),
+                )
+                .note("a `fn(A) -> R` type carries the types and not the modes [FN-1]"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let params: Vec<Ty> = signature.params.iter().map(|(_, t, _, _)| *t).collect();
+        let ret = signature.ret;
+        let ty = self.types.intern(TyKind::Fn { params, ret });
+        Some(Expr { ty, kind: ExprKind::FnValue(def), span })
+    }
+
     /// `[SPN-2]`, `[SPN-3]` — the methods on `Span[T]` and `MutSpan[T]`.
     ///
     /// Part VII §7 names the full set (`.len()`, `.iter()`, `.iter_mut()`,
@@ -6637,4 +6934,13 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
         ast::VisKind::Package => FieldVis::Package,
         ast::VisKind::Public => FieldVis::Public,
     }
+}
+
+/// `[CLO-2]` — the scopes outside the closure being checked, kept so that a
+/// name the body cannot find can be reported as a capture rather than as a
+/// typo. A closure body sees none of them: `[CLO-1]`'s capture-free case is
+/// the only one this phase compiles, so a name from outside is an error, and
+/// the only question is which error.
+struct CaptureWatch {
+    outer: Vec<HashMap<Symbol, LocalId>>,
 }
