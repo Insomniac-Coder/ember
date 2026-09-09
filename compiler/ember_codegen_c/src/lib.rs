@@ -30,6 +30,20 @@ pub struct Output {
     pub c_source: String,
 }
 
+/// `[MNG-1]` — the C symbol of a type's `drop` method.
+///
+/// Must agree with `ember_typeck::method_symbol` exactly; the two are separated
+/// by a crate boundary and nothing checks that they match, so a change to one
+/// silently stops the destructor being found by the other. The
+/// `tests/conformance/OWN-2/` cases are what would notice.
+fn drop_symbol(owner: &str) -> String {
+    let owner: String = owner
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    ember_branding::mangled(&format!("{}_drop", owner.trim_matches('_')))
+}
+
 pub fn emit(
     bodies: &[Body],
     types: &TypeTable,
@@ -278,7 +292,21 @@ impl Emitter<'_> {
                 ));
             }
             TyKind::Struct(id) => {
-                let fields = self.types.struct_def(*id).fields.clone();
+                let def = self.types.struct_def(*id);
+                // `[OWN-2]` — "its `drop` method (if any) runs, **then** its
+                // fields are dropped in reverse declaration order". Both
+                // halves, and in that order: the destructor still sees a whole
+                // value, which is the only reason it can read its own fields.
+                //
+                // The call was missing entirely. A struct whose only claim on
+                // `needs_drop` was its own `drop` method produced *no lines at
+                // all* here, so the `Drop` statement lowered to nothing and a
+                // declared destructor never ran.
+                if def.has_drop {
+                    let owner = self.types.display(ty);
+                    out.push(format!("{}(&{access});", drop_symbol(&owner)));
+                }
+                let fields = def.fields.clone();
                 for field in fields.iter().rev() {
                     if self.types.needs_drop(field.ty) {
                         self.drop_lines(&format!("{access}.{}", field.name), field.ty, out);
@@ -304,6 +332,13 @@ impl Emitter<'_> {
             // is a switch on the tag.
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(*id);
+                // `[OWN-2]` again: the enum's own `drop` runs before its
+                // payload is dropped, and a unit-only enum with a `drop` still
+                // has one to run.
+                if def.has_drop {
+                    let owner = self.types.display(ty);
+                    out.push(format!("{}(&{access});", drop_symbol(&owner)));
+                }
                 if def.is_unit_only() {
                     return;
                 }

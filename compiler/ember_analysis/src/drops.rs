@@ -82,11 +82,18 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     }
 
     // A second pass reports and rewrites, once the entry states have settled.
-    let mut reporter = Reporter { sink, errors: 0, reported: vec![false; body.locals.len()] };
+    let cyclic = blocks_in_a_cycle(body);
+    let mut reporter = Reporter {
+        sink,
+        errors: 0,
+        reported: vec![false; body.locals.len()],
+        in_loop: false,
+    };
     let mut plan: Vec<(usize, usize, Owned)> = Vec::new();
     for (index, entry) in block_entry.iter().enumerate() {
         if let Some(state) = entry.clone() {
             let mut state = state;
+            reporter.in_loop = cyclic[index];
             for (position, stmt) in body.blocks[index].stmts.iter().enumerate() {
                 if let StmtKind::Drop { place, .. } = &stmt.kind {
                     if place.projection.is_empty() {
@@ -422,6 +429,33 @@ fn read_by_operand(operand: &Operand, push: &mut impl FnMut(&Place)) {
     }
 }
 
+/// Which blocks can reach themselves.
+///
+/// `[OWN-4]` is about a loop, and a loop in MIR is a block reachable from its
+/// own successors — there is no `while` left by this point, only the graph.
+/// Computed once per body: the bodies here are small enough that a reachability
+/// walk per block is cheaper than the machinery to avoid one.
+fn blocks_in_a_cycle(body: &Body) -> Vec<bool> {
+    let count = body.blocks.len();
+    let mut cyclic = vec![false; count];
+    for start in 0..count {
+        let mut seen = vec![false; count];
+        let mut stack = successors(body, start);
+        while let Some(next) = stack.pop() {
+            if next == start {
+                cyclic[start] = true;
+                break;
+            }
+            if seen[next] {
+                continue;
+            }
+            seen[next] = true;
+            stack.extend(successors(body, next));
+        }
+    }
+    cyclic
+}
+
 fn successors(body: &Body, index: usize) -> Vec<usize> {
     match &body.blocks[index].terminator {
         Terminator::Goto(bb) => vec![bb.0 as usize],
@@ -441,6 +475,13 @@ struct Reporter<'a> {
     /// One diagnostic per local, so a moved value read in a loop is reported
     /// once rather than every iteration.
     reported: Vec<bool>,
+    /// `[OWN-4]` — whether the block being reported on can reach itself.
+    ///
+    /// This is what tells a *move in a loop* from a *use after move*, and they
+    /// are different rules with different codes and different advice. Set
+    /// before each block rather than threaded through `step`, which does not
+    /// otherwise need to know where it is.
+    in_loop: bool,
 }
 
 impl Reporter<'_> {
@@ -458,16 +499,46 @@ impl Reporter<'_> {
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
-        let message = match state {
-            Owned::Moved => format!("`{name}` has been moved out of"),
-            _ => format!("`{name}` may have been moved out of"),
-        };
-        self.sink.emit_classified(
+        // `[OWN-4]` — "A loop body that moves a value declared outside the loop
+        // is `E3041` unless the value is reassigned before the next iteration
+        // on every path." That is a different rule from `[OWN-3]`'s use after
+        // move, and `[DIA-7a]` keys it to a different shape: O3, "move in a
+        // loop", whose help is about the next iteration rather than about this
+        // use.
+        //
+        // The two are told apart by where the use is and what the analysis
+        // knows. A move and a use in one iteration leaves the local definitely
+        // `Moved`, which is O1. A move that reaches its own use round a back
+        // edge leaves it `MaybeMoved` at the loop head, because the entry state
+        // joins "not yet moved" with "moved last time" — so `MaybeMoved` inside
+        // a cycle is exactly `[OWN-4]`'s shape.
+        let in_loop = self.in_loop && state != Owned::Moved;
+        let diagnostic = if in_loop {
+            Diagnostic::error(
+                codes::E3041,
+                span,
+                format!("`{name}` is moved in a loop"),
+            )
+            .primary_label("moved here, and the loop comes back")
+            .note(concat!(
+                "the first iteration moves it and the second finds it gone; a value ",
+                "moved in a loop must be put back before the next iteration [OWN-4]"
+            ))
+            .help(concat!(
+                "reassign it before the end of the loop body on every path, or borrow ",
+                "it instead of moving it, or move a clone"
+            ))
+        } else {
+            let message = match state {
+                Owned::Moved => format!("`{name}` has been moved out of"),
+                _ => format!("`{name}` may have been moved out of"),
+            };
             Diagnostic::error(codes::E3040, span, message)
                 .primary_label("used here after the move")
                 .note("a move gives the value away; the old owner cannot use it again")
-                .help("clone the value, or borrow it instead of moving it"),
-        );
+                .help("clone the value, or borrow it instead of moving it")
+        };
+        self.sink.emit_classified(diagnostic);
     }
 
     /// `[BRW-7]` — "no borrow of a moved or uninitialised place. `E3050`."
