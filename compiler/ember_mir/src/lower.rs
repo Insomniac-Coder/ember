@@ -152,6 +152,9 @@ struct Builder<'a> {
     /// `[OWN-2]` — the locals the scopes currently open will drop, in
     /// declaration order. They drop in reverse.
     owned: Vec<LocalId>,
+    /// `[DRP-3]` — the temporaries the statement being lowered has made, and
+    /// which end with it. Named locals go in `owned` and end with their block.
+    statement_temps: Vec<LocalId>,
     arg_count: usize,
     /// [TYP-8] -- this function's policy, from its attribute or the profile.
     overflow: OverflowPolicy,
@@ -224,6 +227,7 @@ impl<'a> Builder<'a> {
             loops: Vec::new(),
             defers: Vec::new(),
             owned: Vec::new(),
+            statement_temps: Vec::new(),
             arg_count,
             overflow: function.overflow,
             bool_ty: common.bool_,
@@ -279,7 +283,35 @@ impl<'a> Builder<'a> {
     fn temp(&mut self, ty: Ty, span: ember_span::Span) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
         self.locals.push(LocalDecl { ty, kind: LocalKind::Temp, name: None, span });
+        // `[DRP-3]` — "Temporaries drop at the end of the enclosing statement."
+        // A temporary that owns something and is never registered is a leak
+        // with no name to report it against: `R(1)` as a statement ran no
+        // destructor at all, and a temporary holding an `Array[T]` leaked its
+        // buffer. Registered here rather than at each construction site,
+        // because every temporary comes through this one function and a site
+        // that forgot would be invisible.
+        if self.types.needs_drop(ty) {
+            self.statement_temps.push(id);
+        }
         id
+    }
+
+    /// `[DRP-3]` — drop the temporaries this statement made, last first.
+    ///
+    /// Separate from `emit_drops_from`, which is `[OWN-2]`'s *scope* end. The
+    /// two differ in when, not in what: a named local lives to the end of its
+    /// block, a temporary to the end of its statement. Running them through one
+    /// list would give a temporary the wrong lifetime in either direction.
+    fn emit_statement_temps(&mut self, mark: usize) {
+        if self.statement_temps.len() <= mark {
+            return;
+        }
+        let pending: Vec<LocalId> =
+            self.statement_temps[mark..].iter().rev().copied().collect();
+        for local in pending {
+            self.push(StmtKind::Drop { place: Place::local(local), flag: None });
+        }
+        self.statement_temps.truncate(mark);
     }
 
     fn build(&mut self) {
@@ -342,6 +374,13 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_stmt(&mut self, stmt: &'a hir::Stmt) {
+        let temps = self.statement_temps.len();
+        self.lower_stmt_inner(stmt);
+        // `[EXP-4]`, `[DRP-3]` — the statement is over, so its temporaries are.
+        self.emit_statement_temps(temps);
+    }
+
+    fn lower_stmt_inner(&mut self, stmt: &'a hir::Stmt) {
         match stmt {
             hir::Stmt::Let { local, init } => {
                 let mir_local = self.local_map[local.0 as usize];

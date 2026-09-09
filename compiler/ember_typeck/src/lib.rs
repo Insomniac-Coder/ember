@@ -6317,6 +6317,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
             return self.synth_bound_method(index, param, receiver, name, args, span);
         }
+        // `[DRP-1]` — "`fn drop(mut self)` is invoked exactly once per value at
+        // the end of its life. It may not be called explicitly (`E3070`)."
+        //
+        // "Exactly once" is the whole of it. An explicit call does not replace
+        // the one at the end of the life, it *adds* to it — the value is still
+        // live afterwards and is still dropped at scope end — so the
+        // destructor runs twice and anything it frees is freed twice. For
+        // `struct R: v: Array[i32]` that is a double free of the buffer, and
+        // the second run reads it after freeing, with no `unsafe` anywhere in
+        // the program.
+        if name.name.is("drop") && self.methods.contains_key(&(receiver.ty, name.name)) {
+            let shown = self.types.display(receiver.ty);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3070,
+                    name.span,
+                    format!("`{shown}`'s `drop` may not be called explicitly"),
+                )
+                .primary_label("this would run the destructor a second time")
+                .help("`mem.drop(owned x)` ends the value's life early; the destructor then runs once, here")
+                .note(concat!(
+                    "`drop` is invoked exactly once per value, at the end of its life ",
+                    "[DRP-1]"
+                )),
+            );
+            return Expr { ty: self.common.void, kind: ExprKind::Error, span };
+        }
         let Some(entry) = self.methods.get(&(receiver.ty, name.name)) else {
             let shown = self.types.display(receiver.ty);
             self.error(
