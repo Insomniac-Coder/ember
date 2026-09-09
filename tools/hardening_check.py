@@ -48,9 +48,12 @@ RULE_ID = re.compile(r"`\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]`")
 PRODUCTION = re.compile(r"^([a-z_]+)\s*:=")
 HEADING = re.compile(r"^#{1,3}\s+(.*)$")
 
-# Front matter the hardening adds wholesale rather than editing.
+# Front matter the hardening adds wholesale rather than editing. Change-log
+# headings are matched generically (any heading containing "Hardened" — see
+# below), never by literal version string: coupling this gate to a version
+# meant it silently stopped checking the current section the moment the
+# version moved (the `rule_index.py` failure COLD-START §3 records).
 NEW_SECTIONS = (
-    "Change log — 0.8.4_Hardened_1",
     "**Versioning:**",
     "**Compatibility:**",
     "**Version:**",

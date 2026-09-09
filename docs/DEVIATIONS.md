@@ -105,19 +105,6 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | ERR-041, ADR-017 |
 | **Target** | owner decision |
 
-## D6 — `L3011` is registered and never emitted
-
-| | |
-|---|---|
-| **Rule** | `[CELL-7]`: the lint `L3011 RefCell guard held across a call` fires when a guard is live across a function call that could re-enter the same cell |
-| **Current behaviour** | registered (`compiler/ember_diag/src/codes.rs`), unemitted — no `codes::L3011` reference anywhere in the compiler; the only other mention of the number is the shape-catalogue mapping (`shapes.rs`) |
-| **Soundness impact** | none — a lint never rejects a program |
-| **Observable today** | no |
-| **Reason** | there is nothing that could trigger it yet: `Ref`/`RefMut` guards do not exist (`RefCell` is task 3 of the handoff list), so no pass tracks guard liveness. Emitting it now would be scaffolding with no consumer (the D1 shape); approximating it on a proxy condition would report violations of a rule no program can yet violate |
-| **Fix plan** | task 3 emits it from the guard-liveness tracking when `Ref`/`RefMut` land; the entry then moves to Closed. Deliberately not waiting on `LNT-CFG-1`: `[CELL-7]` says the lint fires, unlike `[LT-1b]`'s opt-in `L3014` |
-| **Owner** | — |
-| **Target** | Phase 2, block I (with `RefCell`) |
-
 ---
 
 ## Closed
@@ -131,3 +118,4 @@ one might last.
 | **ADR-012** | `[LT-2]` | superseded. `E3064` was reachable all along and the programs it is for were being reported as shape B3; the classifier was wrong, not the narrowing |
 | **ERR-026** | `[GRM-23]` | the compiler emits `E0104` as the rule says, and `E0102` stays with ordinary chained comparison |
 | **ERR-039** | `[MAN-3]` | the compiler registers `E9010` as the rule says |
+| **D6** | `[CELL-7]` (`L3011`) | **withdrawn, not fixed.** No deviation ever existed: the lint's machinery is unbuilt, and "registered but unemitted" is the norm for unbuilt phases (140 of 207 registered codes, 20 of 22 lints — only `L1001`/`L1002` are emitted), not a deviation, which by this file's own rule excludes pure gaps. `L3011` stays tracked by task-3 scope, the registry, and the rule-index baselines; cf. D-040, the reachable-trigger case, filed as a defect |

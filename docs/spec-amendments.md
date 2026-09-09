@@ -721,6 +721,13 @@ and `@nosync` remain independent, which is what the rule is for. The front
 matter's "Deliberately not done" paragraph now records the prior disagreement
 in the past tense rather than asserting a live contradiction.
 
+**Version standing.** The working source header reads *0.8.4_Hardened_1 **+ E5,
+pending a version decision*** rather than claiming to be the frozen cut,
+following 207c69f (which did the same for S1): a header claiming to be an
+artifact the file no longer matches is a defect in its own right. E5 itself
+forces nothing — no meaning changed — so whether it folds into the next
+hardening pass or cuts **Hardened_2** is the owner's call.
+
 ---
 
 ## Not amended, and why

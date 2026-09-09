@@ -29,7 +29,7 @@ plan (its own "Start here" is marked superseded — ignore it) and
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
 60 conformance rule directories, 150 cases. 54 defects recorded, **3 open**
-(D-030, D-038, D-040). 6 deviations. 2 errata awaiting the owner. Task 2
+(D-030, D-038, D-040). 5 deviations. 2 errata awaiting the owner. Task 2
 details are in `HANDOFF.md`. Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
 reason in the commit message.

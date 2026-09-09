@@ -14,9 +14,9 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `5628a73` — task 1 (file `L3011` as D6). Below it: `9468602` (COLD-START twins), `a38aa59` (§0.18 + task list), `c4fa15c` (§0.16), `a2c0032` (snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
-| Last commit touching compiler sources | `365122d` — until this task lands (fixes in `ember_mir`, `ember_typeck`, `ember_codegen_c`, `ember_analysis` committed herein) |
-| Working tree | task 2 (sweep: 3 compiler fixes, 13 cases, 5 ledger rows); committed herein, clean after push |
+| HEAD | `5b6f307` — task 2 (sweep: 3 compiler fixes, 13 cases, D-036–D-040). Below it: `5628a73` (task 1, D6), `9468602`, `a38aa59`, `c4fa15c`, `a2c0032`, `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| Last commit touching compiler sources | `5b6f307` (task 2 fixes in five crates) |
+| Working tree | this prologue (D6 withdrawal, header honesty, gate de-hardcode); committed herein, clean after push |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
 | `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
@@ -498,7 +498,8 @@ splitting it across agents would have cost more than it saved.
 | **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
 | **D-040** | a method call defeating disjoint-field access reports `E3022`, where `[DIA-7a]` keys shape B8 to `E3025` — registered, shape-mapped, emitted by nothing | `[BRW-4]`, `[DIA-7a]` | **open.** Needs call provenance threaded to the reporter. Found by task 2 |
 
-**Open deviations — six, in `docs/DEVIATIONS.md`.**
+**Open deviations — five, in `docs/DEVIATIONS.md`.** (D6 was withdrawn to Closed:
+unbuilt machinery is a gap, not a deviation — see below.)
 
 | # | What | Status |
 |---|---|---|
@@ -507,7 +508,6 @@ splitting it across agents would have cost more than it saved.
 | **D3** | `extern class` parses and is then refused by name (the C++ importer is Phase 7) | open. ERR-037 |
 | **D4** | `E9012` is registered and never emitted | open |
 | **D5** | a `mut` parameter whose type is itself a borrow — `[FN-1]`'s literal reading versus Part VII §7's own worked example | **unratified; awaiting an owner decision.** Complying with the letter makes the document's own example uncompilable, so neither side moves. ERR-041, ADR-017 |
-| **D6** | `L3011` is registered and never emitted; no guard exists yet to trigger it | **open.** Filed by task 1 of the handoff list; closed when `RefCell` (task 3) emits it from guard-liveness tracking. `[CELL-7]` |
 
 **`[CLO-3]` / ADR-018 is CLOSED, not open.** The owner ruled that the rule
 stands and the compiler catches up — *"Do not change the Ember spec to
@@ -783,9 +783,10 @@ ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
 restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D-038**
 (implicit `String`→`str` coercion rejected); **D-040** (method conflicts lack
-B8/`E3025`); **D1–D6**
-(D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D6 `L3011`
-unemitted until `RefCell`; D1, D3, D4 as ledgered); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
+B8/`E3025`); **D1–D5**
+(D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D1, D3, D4 as
+ledgered; D6 withdrawn to Closed — unbuilt machinery is a gap, not a
+deviation); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
 `CELL-SYNC-1`, `SPN-API-1`; Phase 2 coverage gaps per COLD-START §4 (13 new
 conformance cases added by task 2 — fix-linked ones revert-verified, all
 probe-verified). Not reopened or
@@ -828,8 +829,12 @@ meaning, moves no implementation, and therefore forces neither a language bump
 nor a new frozen cut. It folds into the next Hardened cut whenever one is
 taken. Until then the working source **intentionally** runs exactly one repair
 ahead of the frozen snapshot — the E5 enumeration entry plus the front-matter
-tense note — and the `**Version:** 0.8.4_Hardened_1` header is deliberately
-unchanged so the delta stays reviewable. This is documented here rather than
+tense note — and the header now states `0.8.4_Hardened_1 **+ E5, pending a
+version decision**` (following 207c69f: a header claiming to be an artifact the
+file no longer matches is a defect in its own right) rather than minting a new
+number, which is the owner's call. Whether E5 folds into the next hardening
+pass or cuts **Hardened_2** awaits an owner decision — raised here explicitly.
+This is documented here rather than
 hidden: the hierarchy has not changed, the snapshot has not been redefined,
 and no future agent should "fix" the discrepancy by editing the frozen file,
 regenerating it silently, or declaring the files interchangeable.
@@ -906,6 +911,15 @@ exists to observe, so emission now would be D1-shaped scaffolding. `D6` records
 the rule verbatim, the reason, and the closure condition: task 3 emits it from
 guard-liveness tracking when `Ref`/`RefMut` land. No spec file touched; no
 semantics decided.
+
+**Superseded — D6 withdrawn to Closed, not deleted.** "Registered but
+unemitted" turns out to be the norm for unbuilt phases (140 of 207 registered
+codes, 20 of 22 lints — only `L1001`/`L1002` are emitted — counted with the
+project's own `codes::` methodology), so the "third such code" premise was
+false, and a rule with nothing built against it is a *gap*, which
+`DEVIATIONS.md` excludes by its own header. D-040 (reachable trigger, wrong
+code) stays filed as a defect; D6 (unreachable trigger, nothing built) lives
+in task-3 scope, the registry, and the rule-index baselines instead.
 
 ### 2. The D-035 sweep — one to two days, the best workflow candidate
 
