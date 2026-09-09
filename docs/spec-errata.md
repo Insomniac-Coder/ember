@@ -84,10 +84,10 @@ ERR-008) is worth being able to read again.
 | ERR-031 | `[TST-11]` | **decided** — a merge artefact; the obligations read as the surrounding clauses state them |
 | ERR-032 | `[TST-7]` with XVI.4 and XVI.7a's fenced blocks | **decided** — the two overlay blocks are fenced `ember,ignore`, as the rule says they are |
 | ERR-033 | `[LEX-15a]`, `[GRM-20]`, `[GRM-8d]`, `[FFI-34a]` | **decided** — each states its rule twice; the second copy is redundant, not a second rule |
-| ERR-034 | `[FFI-17d]` citing `[FFI-17b]` | **open — reported to the owner** — `@ffi(no_virtual_dtor)` is named but defined by no rule |
+| ERR-034 | `[FFI-17d]` citing `[FFI-17b]` | **closed** — amendment A7 defines `@ffi(no_virtual_dtor)` in `[FFI-17d]` itself, since the rule it cited defines it nowhere |
 | ERR-035 | Section placement in Parts XV, XVI, XX, XXI | **decided** — recorded, not moved; the split follows the source |
-| ERR-036 | Part III §2 `fn_header` with XVI.10, `[FFI-26]`, `[FFI-31b]` | **open — reported to the owner** — no production admits `pub extern "C" fn` |
-| ERR-037 | Part III §2 with `[FFI-39]` | **open — reported to the owner** — no production admits `extern class` |
+| ERR-036 | Part III §2 `fn_header` with XVI.10, `[FFI-26]`, `[FFI-31b]` | **closed** — amendment A8 adds `["extern" string_lit]` to `fn_header`; the compiler parses it and emits an unmangled symbol |
+| ERR-037 | Part III §2 with `[FFI-39]` | **closed** — amendment A9 adds `extern_class`; it parses and is then refused by name, because the C++ importer is Phase 7 (deviation D3) |
 | ERR-038 | `E2213` in IV.2a and `[GRM-8d]` | **decided** — one title covers both conditions; `[RNG-1]` is the defining rule |
 | ERR-039 | `E9010` in `[TYP-9c]` and `[MAN-3]` | **decided** — `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012` |
 | ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |

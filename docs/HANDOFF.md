@@ -1,18 +1,24 @@
 # Ember — handoff
 
-## READ THIS FIRST — v0.8.3 is the law (2026-09-09)
+## READ `docs/COLD-START.md` FIRST
 
-`docs/spec-source/ember-spec.md` **is v0.8.3**, installed as the normative
-document and split into `docs/spec/`. The owner's untouched copy is
-`docs/spec-source/as-received/Ember_v0.8.3_spec.md`; the two differ only by the
-errata applied under ERR-025..ERR-040, each of which asserts its replacement
-matched exactly once.
+It carries the current state, the rules that govern edits to the specification,
+the next task, and the traps. **This file is the phase plan and is partly
+historical** — several of its sections describe work that has since landed, and
+its own "Start here" is marked superseded. Trust `COLD-START.md` where the two
+disagree.
 
-**Read `docs/SESSION-2026-09-09.md` first**, then `docs/MIGRATION-0.8.3.md`.
-The first is the cold-start record — state of the tree, every open problem
-in the order to pick it up, and the traps that cost time. The second is the
-analysis that decided the work: what changed, what the compiler already had,
-and the ordered route through the rest. This section is the short form.
+`docs/spec-source/ember-spec.md` is **v0.8.4_Hardened_1**, split into
+`docs/spec/`. The owner's file is `as-received/Ember_v0.8.3_spec.md` and is
+**never edited**; every difference between the two is declared in
+`docs/spec-amendments.md` and `tools/hardening_check.py` fails CI otherwise.
+
+An earlier model — applying errata as edits to the source — was **reverted on
+the owner's instruction**. The specification is the contract and is never
+altered to make the compiler agree with it. Where the document contradicts
+itself, neither side moves until the owner rules. `COLD-START.md` §2 has the
+whole of it, and it is worth reading before touching anything under
+`docs/spec-source/`.
 
 ### What arrived
 
@@ -175,7 +181,7 @@ The procedure that worked for v0.5, in order:
 ## Start here — SUPERSEDED
 
 > **This section is history, kept for the record. Read
-> `docs/SESSION-2026-09-09.md` instead.** Everything below that it calls "not
+> `docs/COLD-START.md` instead.** Everything below that it calls "not
 > started" is built: the NLL borrow checker (block E) with real region
 > variables, and closures including capturing ones under `[CLO-3]`. Leaving a
 > stale "start here" in place is worse than having none, because a cold start
