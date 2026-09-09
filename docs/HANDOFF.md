@@ -1,5 +1,117 @@
 # Ember — handoff
 
+## READ THIS FIRST — a new v0.6 specification is arriving (2026-09-09)
+
+**The owner is supplying a substantially expanded v0.6 specification that supersedes
+every v0.6 document in this repository.** When it arrives, apply it with the
+procedure in "Applying a new specification version" below — copy to
+`docs/spec-source/as-received/` untouched, split to a scratch directory, **diff every
+part against the committed one and read the whole diff before changing anything**,
+then regenerate. That order exists because `[MOD-6]` and `[CLO-2]` lost text in v0.5
+that survived in no copy of the new document and was recoverable only from the
+committed split.
+
+### The three v0.6 documents that exist now, and what each one is
+
+| Where | What | Status |
+|---|---|---|
+| `docs/spec-source/Ember_v0.6_spec.md` | **the full v0.6 spec I generated**: v0.5 with eleven Aegis features substituted into the Parts they belong to. 3,725 lines | superseded by the incoming document |
+| `C:\Users\ism19\Downloads\Ember_v0.6_Specification.md` | **the owner's revision of that file**, 3,782 lines. Fixes eight of the ten flaws found in mine | superseded by the incoming document, but see the two open defects below |
+| `docs/RFC-v0.6.md` | the rationale: why each feature was taken, the three decisions, the amendment table | keep; it explains the *why* the spec does not |
+
+**Nothing v0.6 is normative.** `docs/spec-source/ember-spec.md` is still v0.5 and
+`docs/spec/` is still generated from it. `split_spec.py --check` passes against v0.5.
+
+### Where v0.6 came from
+
+The owner supplied two source documents: a v0.6 RFC of his own, and a friend's
+**Aegis** safety-critical language design specification
+(`C:\Users\ism19\Downloads\Aegis_Safety_Critical_Language_Design_Spec_v0.1.docx`).
+The task was to decide what Ember should take from Aegis.
+
+**The finding that reordered the work: roughly a third of the owner's RFC
+re-specified things v0.5 already had, in Aegis's vocabulary.** Part XVI §7–§11
+already specifies the C++ importer, the overlay contract vocabulary, the generated
+`extern "C"` thunks, the exception-catching wrapper, the standard-library mapping,
+and `ember bind --report`'s adoption gate — with libclang in MSVC-compatibility mode
+named, which the RFC left blank. Had it landed as written, `[FFI-17]` and the new
+text would both have been normative and disagreeing: the shape that put six defects
+into v0.5.
+
+**What Aegis genuinely has that Ember did not**, and what was taken:
+
+1. nominal range/domain types
+2. contracts (`@requires`, `@ensures`, `@invariant`, `@decreases`)
+3. an external solver discharging obligations, aimed at bounds checks
+4. a proof manifest
+5. a trusted-base report where **every foreign claim is graded** asserted /
+   checked / instrumented / proven — Ember had only known-vs-unknown, so a promise
+   typed into an overlay and a fact derived from the header were indistinguishable
+6. a standard library that can be **built without its allocating half**, plus
+   fixed-capacity containers
+7. `Io` and `Lock` as effects distinct from `Block` and `Sync`
+8. foreign references and pointers importing **unsafe** until a lifetime is written
+9. ownership transfer across the C++ boundary as an explicit `adopt` at the call site
+10. declared foreign effects **checked by instrumentation** rather than believed
+11. foreign reachability reporting (`ember calls --foreign`)
+
+### Three decisions the v0.6 draft takes, and why they matter to the new document
+
+They are the load-bearing part; check the incoming spec answers them the same way or
+deliberately differently.
+
+1. **Contracts are attributes, not clauses.** `requires`, `ensures`, `invariant`
+   and `decreases` are ordinary identifiers in v0.5 and appear in neither list in
+   `[LEX-15]`. Clause syntax breaks any program using one as a name.
+2. **A range type is declared with `in`** (`type Roughness = f32 in 0.0 ..= 1.0`),
+   not a new `range` keyword, because `range` is a plausible variable name. `[RNG-1]`
+   states the nominal-vs-transparent split so `type` stays readable.
+3. **Contract arithmetic is always checked, in every profile.** Otherwise
+   `@ensures(result > x)` is true under `debug`'s panicking arithmetic and false
+   under `release`'s wrapping, and `[PRF-1]` — one source, one verdict — is false.
+
+### Ten flaws were found in my v0.6 spec; eight were real
+
+Recorded because the same classes will apply to the incoming document.
+
+**Eight real, and all eight are fixed in the owner's revision:** the effect table
+still listed six effects while the new rule added two; the contracts rule literally
+contained the false sentence "so `[PRF-1]` is not weakened"; a second owned-wrapper
+type (`Foreign[T]`) was invented beside the existing `ForeignBox[T]`; the
+verification switch's middle setting was never defined; the compatibility claim was
+false; a missing-name error carried a build-system code; contracts were specified for
+virtual overrides and nothing else; instrumented evidence had no storage and no
+expiry.
+
+**Two were wrong, and both were my error, not the document's** — the lesson being
+that a claimed contradiction must be checked before it is recorded, which is what
+ERR-014, ERR-019 and ERR-022 already cost once:
+
+- I claimed `roughness + metallic` compiles. I could not show it. The rule says a
+  range type converts to its representation implicitly but never says *where*, and
+  the type checker only converts where an expected type exists — an operand has
+  none. The real flaw was the missing "where", not the behaviour I described.
+- I claimed fixed-capacity containers need a feature Ember lacks. The grammar has
+  it: `generic_arg := ... | expression (* const generic argument *)`, and fixed
+  arrays already use it. The gap is in the compiler, not the design.
+
+### Two defects in the owner's revision, both introduced by the fixes
+
+**Carry these forward and re-check them against the incoming document.**
+
+- **`E1020` is taken.** `[BLD-11]` now reports a reference to a type from an
+  omitted library layer as `E1020`. `[GRM-4]` already uses `E1020` for redeclaring
+  a name in the same block. Two errors, one number — the same class as the defect it
+  was fixing.
+- **`[CG-1]`..`[CG-4]` do not exist.** `[STD-7a]` says those four rules govern
+  const-generic parsing, constant evaluation, monomorphisation and identity. No such
+  rules are defined anywhere in the document.
+
+Everything else in the revision checks out: 485 rule definitions with no duplicate
+id, and `E2214` and `E4054` are unused elsewhere.
+
+---
+
 ## Read this before anything else: v0.5 has landed and is applied
 
 **The owner supplied the v0.5 specification on 2026-09-08.** It is the whole
