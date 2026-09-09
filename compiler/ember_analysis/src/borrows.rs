@@ -33,7 +33,8 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    BasicBlockId, Body, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
+    BasicBlockId, Body, Builtin, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue,
+    StmtKind,
     Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
@@ -87,6 +88,19 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         }
         // A builtin is `println`, `format` or an arithmetic helper: none of
         // them hands back a view of an argument.
+        // `[SPN-1]` — a view built from a container points **into** it, so
+        // the container stays borrowed for as long as the caller holds the
+        // view. Without this the borrow checker sees no loan and
+        // `v: Span[i32] = a` followed by `a.push(…)` compiles: the push
+        // reallocates and `v` is dangling, which is the exact thing
+        // `[UNS-4]` and `[PHIL-10]` say Safe Ember cannot do.
+        FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. } => Elision::Named(vec![0]),
+        // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
+        // view, so the view stays borrowed too.
+        FuncRef::Builtin {
+            which: Builtin::SpanGet | Builtin::SpanGetUnchecked,
+            ..
+        } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
     };
     for body in bodies {

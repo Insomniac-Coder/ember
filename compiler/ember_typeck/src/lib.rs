@@ -4191,11 +4191,26 @@ impl<'a> Checker<'a> {
             };
             if source == Some(want) {
                 let span = expr.span;
+                // The view is built **by borrowing** the container, and the
+                // borrow is written out rather than implied: `Rvalue::Ref` is
+                // what creates a loan, and the call's elision carries that
+                // loan's region to the view. Without it the borrow checker
+                // sees nothing, and `v: Span[i32] = a` followed by `a.push(…)`
+                // compiles — the push reallocates and `v` dangles, which is
+                // exactly what `[UNS-4]` and `[PHIL-10]` forbid.
+                let container = expr.ty;
+                let reference =
+                    self.types.intern(TyKind::Ref { mutable, inner: container });
+                let borrowed = Expr {
+                    ty: reference,
+                    kind: ExprKind::Ref { place: Box::new(expr), mutable },
+                    span,
+                };
                 return Expr {
                     ty: expected,
                     kind: ExprKind::Builtin {
                         which: Builtin::SpanFrom { mutable },
-                        args: vec![expr],
+                        args: vec![borrowed],
                     },
                     span,
                 };
@@ -5426,8 +5441,14 @@ impl<'a> Checker<'a> {
     /// `[SPN-1]`'s coercion may have wrapped it in.
     fn viewed_place(&self, expr: &Expr) -> bool {
         match &expr.kind {
+            // `[SPN-1]`'s coercion wraps the container in the borrow it
+            // takes of it, so the place is two levels down.
             ExprKind::Builtin { which: Builtin::SpanFrom { .. }, args } => {
-                args.first().is_some_and(|a| is_place(&a.kind))
+                match args.first().map(|a| &a.kind) {
+                    Some(ExprKind::Ref { place, .. }) => is_place(&place.kind),
+                    Some(other) => is_place(other),
+                    None => false,
+                }
             }
             other => is_place(other),
         }

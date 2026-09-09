@@ -382,6 +382,15 @@ impl Emitter<'_> {
         }
     }
 
+    /// What a view was built from, through the borrow `[SPN-1]`'s coercion
+    /// takes of it.
+    fn span_source(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.span_source(*inner),
+            _ => ty,
+        }
+    }
+
     /// The element type of a `Span[T]`/`MutSpan[T]`, through any references
     /// the receiver arrived behind.
     fn span_element(&self, ty: Ty) -> Ty {
@@ -813,14 +822,15 @@ impl Emitter<'_> {
                         } else {
                             format!("{RT}span")
                         };
-                        return match self.types.kind(*arg_ty) {
+                        // The argument is a borrow of the container, so it
+                        // arrives as a pointer.
+                        let container = self.span_source(*arg_ty);
+                        let it = format!("(*{})", rendered[0]);
+                        return match self.types.kind(container) {
                             TyKind::Array { len, .. } => {
-                                format!("(({view}){{ ({})._0, {len} }})", rendered[0])
+                                format!("(({view}){{ {it}._0, {len} }})")
                             }
-                            _ => format!(
-                                "(({view}){{ ({}).ptr, ({}).len }})",
-                                rendered[0], rendered[0]
-                            ),
+                            _ => format!("(({view}){{ {it}.ptr, {it}.len }})"),
                         };
                     }
                     // `[SPN-2]`'s `get` returns an `Option`, which is a branch
