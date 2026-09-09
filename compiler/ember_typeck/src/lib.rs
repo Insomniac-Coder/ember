@@ -118,6 +118,27 @@ struct GenericParam {
     /// `[TYP-17]` — only what these interfaces provide is permitted inside the
     /// body. There is no duck typing.
     bounds: Vec<Symbol>,
+    /// `[CLO-3]` — the bound a parameter written `f: fn(A) -> R` carries.
+    ///
+    /// `Callable[Args, R]` is a *generic* interface and `InterfaceDef` has no
+    /// generics in this phase, so the bound travels here rather than as a name
+    /// in `bounds`. The check it performs is the same one `[TYP-17]` performs
+    /// for any other bound — only what the bound provides is permitted — which
+    /// is why it sits beside them.
+    callable: Option<CallableBound>,
+}
+
+/// `[CLO-3]`, `[CLO-6]` — the signature a `fn(A) -> R` parameter may be called
+/// with, and whether one call consumes it.
+#[derive(Clone, Debug)]
+struct CallableBound {
+    params: Vec<Ty>,
+    ret: Ty,
+    /// `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
+    /// bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are
+    /// bounded by `Callable`." Calling a `CallableOnce` consumes it, so a
+    /// second call is `E3040` under `[OWN-3]` with no analysis of its own.
+    once: bool,
 }
 
 /// `[TYP-16]` — a struct declared with type parameters. Its fields are
@@ -238,6 +259,10 @@ struct Checker<'a> {
     /// The generic parameters of the function being checked, so a method call
     /// on one can find its bounds (`[TYP-17]`).
     current_generics: Vec<GenericParam>,
+    /// `[CLO-1]` — the function that runs each capturing closure, keyed by the
+    /// anonymous struct that is its environment. A value of that struct type is
+    /// callable, and this is what it calls.
+    closure_calls: HashMap<StructId, DefId>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -303,6 +328,7 @@ impl<'a> Checker<'a> {
             current_module: 0,
             type_params: HashMap::new(),
             current_generics: Vec::new(),
+            closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             captures: None,
             self_ty: None,
@@ -750,9 +776,75 @@ impl<'a> Checker<'a> {
                 .filter_map(interface_name)
                 .map(|name| self.resolve_name(name))
                 .collect();
-            declared.push(GenericParam { name: param.name.name, bounds });
+            declared.push(GenericParam { name: param.name.name, bounds, callable: None });
         }
         declared
+    }
+
+    /// `[CLO-3]` — "A parameter declared `f: fn(A) -> R` is a generic over
+    /// `Callable` (static dispatch, monomorphised)."
+    ///
+    /// So a `fn(...)` type in **parameter position** is not a type at all: it
+    /// is a bound on a type parameter the function did not write. This turns
+    /// it into one, appending an implicit generic and giving the parameter
+    /// that generic's opaque type.
+    ///
+    /// Parameter position only. `[FN-6]` keeps `fn(A) -> R` an ordinary type
+    /// everywhere else — "functions are values of a unique zero-sized function
+    /// type; they coerce to `fn(A) -> R`" — so a local, a field or a return
+    /// type written that way is a capture-free callable, which is a function
+    /// pointer and stays one. The two readings are what let
+    /// `step: fn(i32) -> i32 = fn(x) => x * 3` and `apply(fn(x) => x * n, 2)`
+    /// both work while meaning different things.
+    ///
+    /// Realising the parameter as a function pointer instead — which is what
+    /// this compiler did until now — erases the environment, so every lambda
+    /// that captures anything is rejected. That is ADR-018, and this is what
+    /// closes it.
+    fn callable_param_ty(
+        &mut self,
+        ty: &ast::TypeExpr,
+        mode: ast::Mode,
+        generics: &mut Vec<GenericParam>,
+    ) -> Ty {
+        let resolved = self.resolve_type(ty);
+        let TyKind::Fn { params, ret } = self.types.kind(resolved) else { return resolved };
+        let bound = CallableBound {
+            params: params.clone(),
+            ret: *ret,
+            // `[CLO-6]` — the mode already selects the bound.
+            once: mode == ast::Mode::Owned,
+        };
+        // `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
+        // bounded by `CallableOnce`… Calling a value bounded by `CallableOnce`
+        // consumes it; a second call is `E3040` under `[OWN-3]`."
+        //
+        // That consumption is a property of the **bound**, not of the closure's
+        // type: the same closure is called repeatedly through a `Callable`
+        // parameter and once through a `CallableOnce` one, so it cannot be
+        // expressed by making the environment move-only. Until the call itself
+        // can consume its callee, `owned` is refused rather than treated as
+        // `Callable` — which would silently permit the second call the rule
+        // exists to forbid.
+        if bound.once {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E1010,
+                    ty.span,
+                    "an `owned` callable parameter is not supported yet in this phase",
+                )
+                .help("write `f: fn(…) -> …`, which is bounded by `Callable` and may be called more than once")
+                .note(concat!(
+                    "`owned f` is bounded by `CallableOnce`, and one call must consume it ",
+                    "[CLO-6]"
+                )),
+            );
+        }
+        let index = generics.len() as u32;
+        let name = Symbol::intern(&format!("Callable{index}"));
+        let param_ty = self.types.intern(TyKind::Param { index, name });
+        generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound) });
+        param_ty
     }
 
     /// The qualified form of a name declared in the module being walked.
@@ -1199,13 +1291,14 @@ impl<'a> Checker<'a> {
                     }
                     // `[TYP-16]` — the parameters are in scope for the
                     // signature as well as for the body.
-                    let generics = self.declare_generics(&decl.generics);
+                    let mut generics = self.declare_generics(&decl.generics);
                     let params: Vec<(Symbol, Ty, Mode, Span)> = decl
                         .params
                         .iter()
                         .filter_map(|p| match &p.kind {
                             ast::ParamKind::Named { name, ty } => {
-                                Some((name.name, self.resolve_type(ty), mode_of(p.mode), p.span))
+                                let ty = self.callable_param_ty(ty, p.mode, &mut generics);
+                                Some((name.name, ty, mode_of(p.mode), p.span))
                             }
                             // A receiver outside a type body is meaningless;
                             // Phase 0 has no methods, so skip it.
@@ -3026,10 +3119,38 @@ impl<'a> Checker<'a> {
     /// `[CLO-2]` — whether a name a closure body could not find is one the
     /// enclosing function declares, in which case it is a **capture** and not
     /// a typo.
-    fn is_capture(&self, name: Symbol) -> bool {
-        self.captures
-            .as_ref()
-            .is_some_and(|watch| watch.outer.iter().any(|scope| scope.contains_key(&name)))
+    /// `[CLO-2]` — resolve a name the closure body did not declare and the
+    /// enclosing function did.
+    ///
+    /// On the discovery pass this records the capture and hands back a
+    /// placeholder of the right type, so the rest of the body checks as if the
+    /// name were an ordinary local. On the real pass the environment exists and
+    /// the name reads through it: the field holds a shared borrow, so reading
+    /// it is a deref, and the borrow is what `[CLO-4]` checks when it asks
+    /// whether the closure outlives what it captured.
+    fn resolve_capture(&mut self, name: Symbol, span: Span) -> Option<Expr> {
+        let watch = self.captures.as_mut()?;
+        let ty = *watch.outer.get(&name)?;
+        match watch.env {
+            None => {
+                if !watch.found.iter().any(|(n, _)| *n == name) {
+                    watch.found.push((name, ty));
+                }
+                Some(Expr { ty, kind: ExprKind::Error, span })
+            }
+            Some((env_local, struct_id)) => {
+                let index = watch.found.iter().position(|(n, _)| *n == name)?;
+                let env_ty = self.types.intern(TyKind::Struct(struct_id));
+                let field_ty = self.types.struct_def(struct_id).fields[index].ty;
+                let base = Expr { ty: env_ty, kind: ExprKind::Local(env_local), span };
+                let field = Expr {
+                    ty: field_ty,
+                    kind: ExprKind::Field { base: Box::new(base), index },
+                    span,
+                };
+                Some(self.read_through(field))
+            }
+        }
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Block {
@@ -4491,21 +4612,8 @@ impl<'a> Checker<'a> {
                 // `[CLO-2]` — inside a closure, a name the enclosing function
                 // declares is a capture. Saying "cannot find it" would be
                 // false and would send the reader looking for a typo.
-                if self.is_capture(name) {
-                    self.sink.emit(
-                        Diagnostic::error(
-                            codes::E1010,
-                            span,
-                            format!("this closure captures `{name}`, which is not supported yet in this phase"),
-                        )
-                        .help("pass it as a parameter, or use a named function")
-                        .note(concat!(
-                            "a capturing closure is a unique anonymous struct implementing ",
-                            "`Callable` [CLO-1]; a capture-free one is an ordinary ",
-                            "`fn(A) -> R` value"
-                        )),
-                    );
-                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                if let Some(captured) = self.resolve_capture(name, span) {
+                    return captured;
                 }
                 self.error(codes::E1010, span, format!("cannot find `{name}` in this scope"));
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
@@ -5022,6 +5130,28 @@ impl<'a> Checker<'a> {
                     if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
                         return self.synth_indirect_call(value, args, span);
                     }
+                    // `[CLO-3]` — inside a generic body a `fn(A) -> R`
+                    // parameter is opaque, and what makes it callable is its
+                    // bound rather than its type. `[TYP-17]` is the same rule
+                    // as for any other bound: only what the bound provides is
+                    // permitted, and calling it is what `Callable` provides.
+                    if let Some(fn_ty) = self.callable_bound_of(value.ty) {
+                        let callee = Expr { ty: fn_ty, ..value };
+                        return self.synth_indirect_call(callee, args, span);
+                    }
+                    // `[CLO-1]` — a capturing closure is an anonymous struct,
+                    // and calling one is a **direct** call to its body with the
+                    // environment passed first. This is the instantiated form
+                    // of the branch above: once the generic parameter is bound
+                    // to a concrete closure type there is nothing opaque left
+                    // and nothing indirect about the call, which is the
+                    // "static dispatch, monomorphised" `[CLO-3]` asks for and
+                    // what lets `[COST-3]` report a direct call.
+                    if let TyKind::Struct(id) = *self.types.kind(value.ty) {
+                        if self.closure_calls.contains_key(&id) {
+                            return self.synth_closure_call(value, id, args, span);
+                        }
+                    }
                 }
             }
         }
@@ -5205,7 +5335,18 @@ impl<'a> Checker<'a> {
         }
         let mut checked_args: Vec<Expr> = Vec::new();
         for (arg, &(param_ty, _)) in args.iter().zip(declared.iter()) {
-            let value = self.synth_committed(&arg.value);
+            // `[TYP-23]` rule 4 — "Lambda parameter types are inferred from the
+            // expected function type". For a `fn(A) -> R` parameter the
+            // expected type is now an opaque `Param`, which tells a lambda
+            // nothing, so the *bound's* signature is handed over instead. It is
+            // a hint and not a requirement: the argument may be a lambda whose
+            // own type is its environment, and it is `unify` below that decides
+            // whether what came back fits.
+            let hint = self.callable_hint(param_ty, &generics);
+            let value = match hint {
+                Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
+                None => self.synth_committed(&arg.value),
+            };
             if !self.types.unify(param_ty, value.ty, &mut solved) {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
@@ -5259,14 +5400,89 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
             .collect();
-        let checked = args
-            .iter()
-            .zip(concrete.iter())
-            .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
-            .collect();
+        // `hir::Expr` is not `Clone` — a checked argument is moved out of here
+        // rather than copied.
+        let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
+        let mut checked = Vec::new();
+        for (index, (arg, &(param_ty, mode))) in args.iter().zip(concrete.iter()).enumerate() {
+            // A lambda is **not** re-checked. Checking it again would build a
+            // second closure — a second environment struct, a second body, a
+            // second `DefId` — and the instance was already created against the
+            // first one, so the argument would then not have the type the
+            // instance takes (`expected closure0_env, found closure1_env`). The
+            // re-check exists so an untyped literal can adopt the substituted
+            // parameter type; a closure has nothing to adopt.
+            let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
+            match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
+                Some(value) => checked.push(value),
+                None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
+            }
+        }
         let ret = self.substitute_ty(ret, &substitution);
-        let _ = checked_args;
         Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
+    }
+
+    /// `[CLO-1]`, `[CLO-6]` — call a closure through its environment.
+    ///
+    /// The environment is the first argument, which is `call(self, args)` in
+    /// `[CLO-6]`'s shape with `self` written out. Every other argument is
+    /// checked against the closure's own parameter types, which are concrete by
+    /// the time anything gets here.
+    fn synth_closure_call(
+        &mut self,
+        env: Expr,
+        id: StructId,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let def = self.closure_calls[&id];
+        let signature: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        let ret = self.signatures[def.0 as usize].ret;
+        let arity = signature.len().saturating_sub(1);
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("this closure takes {arity} arguments, found {}", args.len()),
+            );
+            return Expr { ty: ret, kind: ExprKind::Error, span };
+        }
+        let mut call_args = vec![env];
+        for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
+            call_args.push(self.check_argument(&arg.value, param_ty, mode));
+        }
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: call_args }, span }
+    }
+
+    /// The signature an opaque generic parameter may be called with, read from
+    /// the generics of the body being checked. `None` for a parameter that
+    /// carries no `[CLO-3]` bound, which is then not callable at all.
+    fn callable_bound_of(&mut self, ty: Ty) -> Option<Ty> {
+        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
+        let bound = self.current_generics.get(index as usize)?.callable.clone()?;
+        Some(self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret }))
+    }
+
+    /// The signature a `fn(A) -> R` parameter may be called with, when that
+    /// parameter is one of `generics` and carries `[CLO-3]`'s bound.
+    fn callable_hint(&mut self, param_ty: Ty, generics: &[GenericParam]) -> Option<Ty> {
+        let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return None };
+        let bound = generics.get(index as usize)?.callable.clone()?;
+        Some(self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret }))
+    }
+
+    /// Synthesise an expression that may want to know what is expected of it.
+    ///
+    /// This is not `check_expr`: the hint shapes the expression without
+    /// constraining the result, which is what a lambda needs. A lambda takes
+    /// its parameter types from the hint and then reports **its own** type,
+    /// which for a capturing one is its environment and not the hint at all.
+    fn synth_with_hint(&mut self, expr: &ast::Expr, hint: Ty) -> Expr {
+        match &expr.kind {
+            ast::ExprKind::Lambda(lambda) => self.synth_lambda(lambda, Some(hint), expr.span),
+            _ => self.synth_committed(expr),
+        }
     }
 
     /// `[IFC-4]` — replace every associated type in `ty` with what `owner`
@@ -6119,25 +6335,153 @@ impl<'a> Checker<'a> {
         let declared_ret = lambda.ret.as_ref().map(|t| self.resolve_type(t));
         let ret = declared_ret.or(wanted.as_ref().map(|(_, r)| *r));
 
-        // The body is checked in a context of its own: fresh locals, fresh
-        // scopes. The enclosing scopes are kept aside so that the "cannot
-        // find" diagnostic can tell a capture from a typo (`[CLO-2]`).
+        // `[CLO-1]`, `[CLO-2]` — two passes over the body.
+        //
+        // The first is a **probe**: the body is checked with an environment
+        // that does not exist yet, and every name it reaches for that the
+        // enclosing function declares is recorded rather than reported. Its
+        // diagnostics are discarded, because it is a question and not a
+        // compilation — leaving them in would double every error in the body.
+        //
+        // `[CLO-2]` decides what a capture is: "read-only use => shared
+        // borrow". So the environment's fields are `ref T` and the closure
+        // holds borrows of the enclosing locals rather than copies of them.
+        // That is also what makes `[CLO-4]` — "a closure outlives what it
+        // captures" — an ordinary borrow question rather than a special case:
+        // the environment is built by `Rvalue::Ref` like every other borrow,
+        // and the checker already knows what to do with one.
+        let outer: HashMap<Symbol, Ty> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
+            .collect();
+
+        let saved = self.sink.take();
+        let probe = CaptureWatch { outer: outer.clone(), found: Vec::new(), env: None };
+        let (_, _, _, probe) = self.check_lambda_body(lambda, &params, ret, probe, None);
+        let _discarded = self.sink.take();
+        for diagnostic in saved {
+            self.sink.emit(diagnostic);
+        }
+        let captured = probe.found;
+
+        // A capture-free closure is "a plain value type" (`[CLO-1]`), and Part
+        // IV §9's `fn(A) -> R` is that type, so it stays a function pointer and
+        // goes everywhere one can — a `fn` local, a field, and the
+        // `extern "C" fn` parameter that `[CLO-3]` says accepts "only
+        // capture-free closures and named functions".
+        if captured.is_empty() {
+            let watch = CaptureWatch { outer, found: Vec::new(), env: None };
+            let (body, body_ty, locals, _) =
+                self.check_lambda_body(lambda, &params, ret, watch, None);
+            let ret = ret.unwrap_or(body_ty);
+            let def = self.push_closure(&params, ret, locals, body, None, span);
+            let ty = self.types.intern(TyKind::Fn {
+                params: params.iter().map(|(_, t, _)| *t).collect(),
+                ret,
+            });
+            return Expr { ty, kind: ExprKind::FnValue(def), span };
+        }
+
+        // Otherwise it is "a unique anonymous struct implementing `Callable`"
+        // (`[CLO-1]`), and this builds that struct: one field per capture, in
+        // the order the body first mentioned them.
+        let fields: Vec<FieldDef> = captured
+            .iter()
+            .map(|(name, ty)| FieldDef {
+                name: *name,
+                ty: self.types.intern(TyKind::Ref { mutable: false, inner: *ty }),
+                span,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            })
+            .collect();
+        let env_name = Symbol::intern(&format!("closure{}_env", self.lambdas.len()));
+        let struct_id = self.types.add_struct(StructDef {
+            name: env_name,
+            fields,
+            span,
+            derives_copy: true,
+            has_drop: false,
+            origin: None,
+            declaring_module: self.current_module,
+        });
+        let env_ty = self.types.intern(TyKind::Struct(struct_id));
+
+        let watch = CaptureWatch {
+            outer,
+            found: captured.clone(),
+            env: Some((LocalId(0), struct_id)),
+        };
+        let (body, body_ty, locals, _) = self.check_lambda_body(
+            lambda,
+            &params,
+            ret,
+            watch,
+            Some((Symbol::intern("env"), env_ty, span)),
+        );
+        let ret = ret.unwrap_or(body_ty);
+        let def = self.push_closure(
+            &params,
+            ret,
+            locals,
+            body,
+            Some((Symbol::intern("env"), env_ty)),
+            span,
+        );
+        self.closure_calls.insert(struct_id, def);
+
+        // The closure *value* is its environment: a shared borrow of each
+        // captured local, in field order.
+        let mut values = Vec::new();
+        for (name, ty) in &captured {
+            let Some(local) = self.lookup(*name) else { continue };
+            let place = Expr { ty: *ty, kind: ExprKind::Local(local), span };
+            let reference = self.types.intern(TyKind::Ref { mutable: false, inner: *ty });
+            values.push(Expr {
+                ty: reference,
+                kind: ExprKind::Ref { place: Box::new(place), mutable: false },
+                span,
+            });
+        }
+        Expr { ty: env_ty, kind: ExprKind::StructLit { struct_id, fields: values }, span }
+    }
+
+    /// The body of a lambda, checked in a context of its own: fresh locals,
+    /// fresh scopes, and the enclosing ones kept aside so `[CLO-2]` can tell a
+    /// capture from a typo. Run twice per closure — once to discover the
+    /// captures, once with the environment they live in.
+    fn check_lambda_body(
+        &mut self,
+        lambda: &ast::Lambda,
+        params: &[(Symbol, Ty, Span)],
+        ret: Option<Ty>,
+        watch: CaptureWatch,
+        env: Option<(Symbol, Ty, Span)>,
+    ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_ret = self.ret_ty;
-        let outer_watch = self.captures.replace(CaptureWatch { outer: outer_scopes.clone() });
+        let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
 
-        for (name, ty, param_span) in &params {
+        // The environment is parameter zero, so the emitted function has
+        // `[CLO-6]`'s `call(self, args)` shape.
+        if let Some((name, ty, env_span)) = env {
+            self.declare(Some(name), ty, env_span);
+        }
+        for (name, ty, param_span) in params {
             self.declare(Some(*name), *ty, *param_span);
         }
+
         let (body, body_ty) = match &lambda.body {
             ast::LambdaBody::Expr(expr) => {
-                // `[LEX-6a]`'s bracketed form is `fn(x): <small_stmt>`, and
-                // the statement is very often `return e`. `[GRM-16]` makes
-                // that an expression, so it arrives here as one; `fn(x): e`
-                // and `fn(x) => e` mean the same thing and produce the same
-                // body.
+                // `[LEX-6a]`'s bracketed form is `fn(x): <small_stmt>`, and the
+                // statement is very often `return e`. `[GRM-16]` makes that an
+                // expression, so it arrives here as one; `fn(x): e` and
+                // `fn(x) => e` mean the same thing and produce the same body.
                 let expr = match &expr.kind {
                     ast::ExprKind::Jump(ast::Jump::Return(Some(inner))) => inner.as_ref(),
                     _ => expr.as_ref(),
@@ -6147,35 +6491,55 @@ impl<'a> Checker<'a> {
                     _ => self.synth(expr),
                 };
                 let ty = value.ty;
-                (Block { stmts: vec![Stmt::Return(Some(value))], span }, ty)
+                (Block { stmts: vec![Stmt::Return(Some(value))], span: expr.span }, ty)
             }
             ast::LambdaBody::Block(block) => {
                 let checked = self.check_block(block);
                 (checked, self.ret_ty)
             }
         };
+
         let locals = std::mem::replace(&mut self.locals, outer_locals);
         self.scopes = outer_scopes;
-        self.captures = outer_watch;
         self.ret_ty = outer_ret;
+        let watch = std::mem::replace(&mut self.captures, outer_watch)
+            .expect("the watch was installed above");
+        (body, body_ty, locals, watch)
+    }
 
-        let ret = ret.unwrap_or(body_ty);
+    /// Record a checked closure body as a function of its own, and return the
+    /// `DefId` that names it. The environment, when there is one, is its first
+    /// parameter.
+    fn push_closure(
+        &mut self,
+        params: &[(Symbol, Ty, Span)],
+        ret: Ty,
+        locals: Vec<LocalDecl>,
+        body: Block,
+        env: Option<(Symbol, Ty)>,
+        span: Span,
+    ) -> DefId {
         let def = DefId(self.signatures.len() as u32);
+        let mut signature_params: Vec<(Symbol, Ty, Mode, Span)> = Vec::new();
+        if let Some((name, ty)) = env {
+            signature_params.push((name, ty, Mode::Borrow, span));
+        }
+        signature_params.extend(params.iter().map(|(n, t, s)| (*n, *t, Mode::Borrow, *s)));
+        let arity = signature_params.len();
         self.signatures.push(Signature {
-            params: params.iter().map(|(n, t, s)| (*n, *t, Mode::Borrow, *s)).collect(),
+            params: signature_params,
             ret,
             borrows: None,
             generics: Vec::new(),
         });
         let symbol = format!("{}closure{}", ember_branding::mangle_prefix(), self.lambdas.len());
-        let closure_params: Vec<Param> = (0..params.len())
-            .map(|i| Param { local: LocalId(i as u32), mode: Mode::Borrow })
-            .collect();
         self.lambdas.push(Function {
             def,
             name: Symbol::intern(&symbol),
             symbol,
-            params: closure_params,
+            params: (0..arity)
+                .map(|i| Param { local: LocalId(i as u32), mode: Mode::Borrow })
+                .collect(),
             locals,
             ret,
             body,
@@ -6183,11 +6547,7 @@ impl<'a> Checker<'a> {
             overflow: self.default_overflow,
             borrows: None,
         });
-        let ty = self.types.intern(TyKind::Fn {
-            params: params.iter().map(|(_, t, _)| *t).collect(),
-            ret,
-        });
-        Expr { ty, kind: ExprKind::FnValue(def), span }
+        def
     }
 
     /// `[FN-6]` — a named function used as a value.
@@ -7099,5 +7459,14 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
 /// the only one this phase compiles, so a name from outside is an error, and
 /// the only question is which error.
 struct CaptureWatch {
-    outer: Vec<HashMap<Symbol, LocalId>>,
+    /// Every name the enclosing function has in scope, with its type. Types
+    /// and not `LocalId`s, because the enclosing locals are swapped out while
+    /// the closure body is checked and an id into them would dangle.
+    outer: HashMap<Symbol, Ty>,
+    /// Pass one: the captures discovered, in the order first mentioned. That
+    /// order is the environment's field order.
+    found: Vec<(Symbol, Ty)>,
+    /// Pass two: the environment parameter and its type, once built. `None`
+    /// during discovery, when a captured name resolves to a placeholder.
+    env: Option<(LocalId, StructId)>,
 }

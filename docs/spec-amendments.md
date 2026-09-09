@@ -3,6 +3,33 @@
 Every difference between `docs/spec-source/as-received/Ember_v0.8.3_spec.md`
 and `docs/spec-source/ember-spec.md`, with the reason for it.
 
+## The hardening protocol (owner, 2026-09-09)
+
+The normative document carries a **hardening number** after its version:
+`v0.8.3_Hardened_1`, `v0.8.3_Hardened_2`, and so on. The language version does
+not move — a hardening adds no feature and changes no rule's meaning. It records
+implementation detail that v0.8.3 left out.
+
+**When to cut one.** Whenever building the compiler turns up a detail whose
+absence made the work harder or produced a defect — found in discussion with the
+owner, or by research of my own — that detail is written into the document and
+the hardening number goes up by one. The trigger is discovering the gap, not
+finishing a feature.
+
+**What may go in.** Only what is needed to *implement v0.8.3's own goals*: a
+rule's mechanism, an invariant an implementer must hold, a name a rule uses and
+never declares, a production for syntax the document already writes. A hardening
+never adds a feature, never relaxes a rule to match a compiler, and never
+replaces owner text — it appends to it, and each addition is marked in place.
+
+**What may not.** A genuine contradiction, or text missing from the document
+altogether (`[RNG-8]`), is not hardened — it is recorded here and taken to the
+owner. Guessing wording and presenting it as the document's own is the specific
+failure this whole file exists to prevent.
+
+Each hardening gets a section below listing what it added and, for each, the
+defect or difficulty that justified it.
+
 **These are the only permitted edits to the document.** The standing rule is
 that the specification is the contract and is never altered to make the
 compiler agree with it; where the two disagree, the compiler is what changes.

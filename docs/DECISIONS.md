@@ -471,7 +471,21 @@ exactly the code `[SPN-*]` exists to make fast.
 
 ---
 
-## ADR-018 — `fn(A) -> R` is a function pointer in this phase, not a generic
+## ADR-018 — `fn(A) -> R` is a function pointer in this phase, not a generic — **SUPERSEDED, closed 2026-09-09**
+
+> **Closed.** The owner ruled that the rule stands and the compiler catches up:
+> *"Do not change the Ember spec to accommodate the current compiler
+> implementation."* `fn(A) -> R` in parameter position is now an implicit
+> generic bounded by `Callable`, monomorphised per argument type; a capturing
+> lambda is an anonymous struct whose fields are its `[CLO-2]` captures, and
+> calling one is a direct call with the environment first. `[FN-6]` keeps
+> `fn(A) -> R` an ordinary function-pointer type everywhere *except* parameter
+> position, which is what lets a `fn`-typed local and a capturing argument
+> coexist. `[CLO-6]`'s `owned f` is refused rather than mis-compiled: the
+> consumption is a property of the bound, not of the closure's type, and until
+> a call can consume its callee, treating `CallableOnce` as `Callable` would
+> permit the second call the rule forbids. The clarification that was missing
+> is amendment A5 in `docs/spec-amendments.md`.
 
 **Spec rule:** `[CLO-1]`, `[CLO-3]`, `[COST-3]`, `[FN-6]`.
 **Status:** taken 2026-09-09. **This is the deviation that capturing closures
