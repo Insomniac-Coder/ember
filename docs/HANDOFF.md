@@ -1,12 +1,678 @@
 # Ember — handoff
 
+## 0. Current state — the authoritative snapshot (2026-09-09)
+
+**Written as a migration hand-off. Everything in this section was verified
+against the repository at the time of writing, not copied from a previous
+note.** Sections 1 onward are the phase plan and are partly historical; where
+they disagree with this section or with `docs/COLD-START.md`, this section and
+COLD-START govern.
+
+### 0.1 Git and build state — verified
+
+| | |
+|---|---|
+| Remote | `https://github.com/Insomniac-Coder/ember.git` |
+| Branch | `main` |
+| HEAD | `365122dda12ea1d453677ab178b7ee5ab01a242f` (`365122d`) |
+| Working tree | **clean** — `git status --porcelain` empty |
+| Against `origin/main` | **0 ahead, 0 behind** — everything committed is pushed |
+| `cargo build` | **0 warnings** |
+| `cargo test --workspace` | **178 tests, all passing**, 0 failures |
+| Gates | **all green** (six, run individually below) |
+
+**The two commits this hand-off is about:**
+
+| Commit | Date | What |
+|---|---|---|
+| `8459a1f` | 2026-09-09 | **D-035** — overwriting a place ran no destructor at all. 6 files: `ember_mir/src/lower.rs`, `DECISIONS.md`, `DEFECTS.md`, `HANDOFF.md`, two `tests/conformance/OWN-5/` cases |
+| `365122d` | 2026-09-09 | **`Cell[T]`** — 18 files, 894 insertions: `ember_typeck`, `ember_mir`, `ember_hir`, `ember_codegen_c`, the test harness, 9 new conformance cases, `BACKLOG.md`, `COLD-START.md`, `HANDOFF.md` |
+
+Preceding commits, for orientation: `aa2e1d4` (the cold-start file), `6a33bb0`
+and `8101389` (cutting 0.8.4_Hardened_1), `207c69f`, `25335ec` (S1).
+
+**The gates, with the invocation each needs.** `.github/workflows/ci.yml` is the
+authority; five of the six are wired into CI.
+
+    python tools/hardening_check.py                                          OK   (CI)
+    python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec   OK   (CI)
+    python tools/rule_index.py                                               OK   (CI)
+    python tools/check_branding.py                                           OK   (CI)
+    python tools/spec_check.py                                               OK   (CI)
+    python tools/error_pages.py                                              OK   (NOT in CI)
+
+Two things about that list are worth carrying: `split_spec.py --check` throws
+`IndexError` if you call it without both path arguments — it is not failing, you
+called it wrong — and **`error_pages.py` is green but is not wired into CI**, so
+it only runs when somebody runs it. COLD-START says "6 gates"; five of them are
+enforced.
+
+### 0.2 What `Cell[T]` is, and exactly what is built
+
+`Cell[T]` is a **transparent one-field compiler-known type** — a `StructDef`
+interned once per `T` by `cell_of` in `compiler/ember_typeck/src/lib.rs`, with
+`cells: HashMap<StructId, Ty>` on the `Checker` telling method dispatch that
+this struct's `set` is a builtin rather than a missing method. **ADR-019** is
+why it is compiler-known and not written in Ember on `UnsafeCell`.
+
+**Implemented:**
+
+| Member / rule | Notes |
+|---|---|
+| `Cell(owned v)` | a plain struct literal, not a builtin |
+| `set(self, owned v: T)` | `Builtin::CellSet`, lowered by `lower_cell_store` |
+| `replace(self, owned v: T) -> T` | same lowering, old value handed back instead of dropped |
+| `into_inner(owned self) -> T` | `lower_cell_into_inner` |
+| `get(self) -> T` **where `T: Copy`** | an `ExprKind::Field` read — no builtin |
+| `update(self, f)` — **the `T: Copy` arm** | `Builtin::CellUpdate`, `set(f(get()))` |
+| **`[CELL-1]` store-before-drop** | see §0.4; this is the load-bearing one |
+| `[CELL-2]` | no reference escapes; no runtime check; no overhead over a plain field |
+| `[CELL-4]` | `Copy` iff `T: Copy`, move-only otherwise, `Drop` iff `T` is |
+| `[CELL-11]` | in the prelude — the name resolves with no import |
+
+11 conformance cases across `tests/conformance/CELL-1`, `CELL-2`, `CELL-4`,
+`CELL-11`.
+
+**`[CELL-4]` needed no code at all**, and this is worth reusing rather than
+rediscovering: `is_copy` on a struct is already `derives_copy && !has_drop &&
+every field Copy`, and `needs_drop` is already `has_drop || any field needs it`.
+Set `derives_copy` and leave `has_drop` clear and both questions reduce to the
+same question about `T`. That is also why a struct was chosen over a new
+`TyKind` — `Span` needed twenty sites; this needed almost none — and it is what
+makes `[CELL-2]`'s "no overhead relative to a plain field" true by construction
+rather than by promise.
+
+**Not implemented — these are dependency gaps, not defects.** Nothing here is a
+compiler bug and nothing here weakened a rule:
+
+| Item | Why it is not built | Tracking id |
+|---|---|---|
+| `take(self) -> T where T: Default` | **there is no `Default` interface anywhere in the compiler.** The member is refused by name with a diagnostic that says so, rather than reading as a typo | **`CELL-DEF-1`** (`docs/BACKLOG.md`) |
+| `update`'s `T: Default` arm | same missing interface; the `T: Copy` arm is built | **`CELL-DEF-1`** |
+| `[CELL-3]` `Cell[T]` is `!Sync` | **no `Send`, no `Sync`, no threads exist.** There is nothing for the marker to mean and nothing that could violate it — unenforceable, not unenforced | **`CELL-SYNC-1`** (`docs/BACKLOG.md`) |
+
+`tests/conformance/CELL-1/reject_take_needs_default.em` pins the `take` message,
+so the gap cannot silently become "no such method". **The rules were not
+softened to fit the compiler** — what is missing is the interface, not the
+requirement.
+
+**`into_inner` needed one trick worth remembering.** It takes `owned self`, so
+the payload leaves and the cell must not be dropped behind it — the payload was
+the only thing it owned. A move out of a *field* is a partial move and
+`[OWN-3]`'s analysis does not track one, so the receiver would still have looked
+live and been dropped at scope end, freeing the value the caller now holds.
+Moving the **whole cell** into a slot first is what marks the receiver moved,
+and the slot is `temp_unowned` so nothing drops it either. Verified: exactly one
+`ember_vec_free` in the emitted program.
+
+**`[CELL-2]` rests on ordinary `[MOD-2]` privacy**, not on a clever name. The
+payload field is private and its `declaring_module` is `usize::MAX`, which no
+real module can be, so `check_field_visible` refuses it everywhere — read,
+write and `ref` all `E1020`.
+
+### 0.3 D-035 — a real compiler defect, found and fixed
+
+**`[OWN-2]` requires a value to be destroyed on three occasions:**
+
+1. **scope end** — built long ago (`emit_drops_from`)
+2. **overwrite** — **was never built**
+3. **temporary destruction at statement end** — built by D-031
+   (`emit_statement_temps`)
+
+The compiler handled the first and the third and silently failed the second.
+
+**Minimal reproducer:**
+
+    r = R(1)
+    r = R(2)
+
+`R(1)`'s destructor **did not run at all**. Where `R` declares `fn drop`, the
+effect was simply a missing line of output; the same hole in the container path
+was a leak — overwriting a live `Array[i32]` emitted **one** `ember_vec_free`
+for **two** allocated buffers, and the program's output was identical either
+way, so nothing anywhere reported it.
+
+**D-035 was a compiler defect. The specification was already correct.**
+`[OWN-5]` states the requirement and its ordering in one sentence and admits no
+other reading. The compiler was fixed; **the specification was not weakened, and
+there is no errata entry**, because an implementation gap is not a specification
+defect.
+
+**The fix** is `lower_assign` in `compiler/ember_mir/src/lower.rs`: the new value
+is evaluated into a temporary, the old value is dropped, then the store happens
+— `[OWN-5]`'s order exactly. Which of those inserted drops actually survives is
+deliberately **not** decided there: `[OWN-3]`'s existing elaboration deletes the
+drop where the local is `Moved` (which is what makes a first initialisation
+free, since a local is `Moved` immediately after `StorageLive`) and attaches a
+drop flag where it is `Maybe`. **ADR-020** records why the temporary is
+unavoidable — a value arriving from a call is written by a terminator, so there
+is no point between "evaluated" and "stored" to push a drop into — and why
+lowering must not try to decide liveness for itself.
+
+#### The testing lesson, which matters more than the fix
+
+**`tests/conformance/OWN-5/` existed and passed for as long as the rule went
+unimplemented.** Its single case tested only the sentence's *parenthetical* —
+that the new value is evaluated before the store — and it was written as:
+
+    x = grow(x)
+
+which **moves `x` into the call**. Nothing was live at the store, so the main
+clause could not fire and the missing destruction was unobservable.
+
+> **A conformance directory named after a rule does not prove that the rule is
+> actually covered.** Read the rule, count its clauses, and check that each one
+> has a case that can fail. A green directory is evidence about the cases in it,
+> not about the rule on the label.
+
+Two cases were added and **both were verified to go red** by reverting
+`lower_assign` to `lower_into` and watching them fail.
+
+### 0.4 The ordering distinction — do not generalise this
+
+**`[OWN-5]` and `[CELL-1]` require opposite orders, on purpose.**
+
+| Operation | Order | Rule |
+|---|---|---|
+| ordinary assignment | evaluate new → **drop old** → **store new** | `[OWN-5]` |
+| `Cell.set` / `Cell.replace` | evaluate new → **store new** → **drop old** | `[CELL-1]` |
+
+`[CELL-1]` gives its own reason: *"A drop can run arbitrary user code that
+re-enters the same `Cell` … a drop-then-store implementation would leave the
+`Cell` observably uninitialised across that window, which is a read of
+uninitialised memory."* Dropping the old value can re-enter the cell, so the
+cell must already hold the new value when that happens.
+
+**This is why `Cell.set` is specially lowered** — `lower_cell_store`, not an
+assignment. If `set` were lowered as an assignment it would inherit `[OWN-5]`'s
+order and violate `[CELL-1]`.
+
+> **ADR-020's closing paragraph says explicitly that these two rules must not be
+> generalised to each other.** Do not "simplify" them into one universal
+> assignment rule, and do not read `Cell`'s exception as licence to vary
+> `[OWN-5]`'s order anywhere else. They are two rules about two operations, and
+> each states its own reason.
+
+`replace` is the easy case of the same shape: the old value is handed back
+rather than dropped, so the cell is never torn at all.
+
+### 0.5 The C code-generation lesson — `$value`
+
+`Cell`'s private payload field was first named **`$value`**, chosen because the
+Ember lexer cannot produce `$` in an identifier, so no program could spell it.
+
+**That was wrong.** The backend writes field names into the emitted C
+**verbatim**, and `$` in a C identifier is a **compiler extension**, which
+`[CG-C-1]` forbids depending on: *"…and not depend on compiler extensions except
+through `ember_rt.h` macros that have portable fallbacks."*
+
+It compiled **clean under `-Wall -Wextra`**. Only `-pedantic`, run by hand,
+reported it (`-Wdollar-in-identifier-extension`). The field was renamed to an
+ordinary identifier and privacy carries the whole burden.
+
+> **A compiler-private name must still obey the target language's portability
+> rules.** Unreachability comes from compiler-generated structure and the
+> language's own privacy mechanism — not from spelling the name in syntax the
+> target rejects. **Read the emitted C after anything that puts a new identifier
+> into it**, and remember the project's warning contract (`-Wall -Wextra`, MSVC
+> `/W3`) is a floor that will not catch this class.
+
+### 0.6 `assert-c-order` in the conformance harness
+
+`compiler/ember_driver/tests/milestones.rs` now understands:
+
+    #$ assert-c-order: "a" then "b"
+
+Both needles must appear in the emitted C, and the first before the second.
+
+**Why it was needed.** `assert-c`'s needle is one line of literal text, so it can
+say *what* the backend emitted but not *in what order* — and `[OWN-5]` and
+`[CELL-1]` are **entirely about order**. Neither ordering is observable from a
+program's output: seeing the difference requires a destructor that re-enters the
+value being replaced, and no safe Ember program can build that back-pointer
+today: `[STA-1]` requires a `static` initialiser to be **comptime-evaluable**,
+and the compiler currently narrows that to a literal, so a `static` holding a
+cell is refused with `E2130` — the one route by which a destructor could reach
+the cell it is being replaced in. Without this, both rules could only ever be checked by reading the C
+by hand, once, and would silently stop holding the next time either lowering
+path was touched.
+
+**This was deliberately built in the harness rather than contriving an unsafe
+recursive scenario just to observe destructor ordering.** Both shapes were
+priced: the unsafe route needs recursive types through a raw pointer or the
+address of a private field, is brittle, and buys one test; the harness change is
+about twenty lines, changes no existing behaviour, and makes a whole class of
+ordering invariants testable.
+
+**Verified the only way that counts:** the store and the drop in
+`lower_cell_store` were swapped on purpose and the case went red with the right
+message. Then restored.
+
+**Two traps when writing one.** Anchor needles on text that survives MIR local
+renumbering — `.value = ` and `em_Bag_drop(&`, not `_1.value = _4` and
+`em_Bag_drop(&_5)`. And the `&` is load-bearing: a bare function name matches
+its own **prototype** at the top of the emitted file, which precedes everything
+and would make the assertion vacuously true.
+
+### 0.7 Specification authority — the rules that govern everything here
+
+**The current authoritative specification is `Ember_v0.8.4_Hardened_1`.**
+
+    docs/spec-source/as-received/Ember_v0.8.3_spec.md   the owner's file, NEVER edited
+    docs/spec-source/ember-spec.md                      the normative copy, carries declared amendments
+    docs/spec-source/Ember_v0.8.4_Hardened_1.md         the frozen snapshot; the next hardening diffs against THIS
+    docs/spec/                                          generated; split_spec.py --check fails CI on a hand edit
+
+* **0.8.3 remains an accepted language version** — a file declaring
+  `#! language "0.8.3"` compiles unchanged.
+* **0.8.4 is the current language revision.**
+* **0.8.4 is additive over 0.8.3** — no program valid under 0.8.3 became
+  invalid. `LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts
+  both.
+* **The current hardened specification is the normative source.**
+* **Implementation difficulty does not justify changing language semantics.**
+* **Compiler behaviour must conform to the specification, never the reverse.**
+
+**Two numbers version the document and they move independently.** The *language
+version* moves when the set of accepted programs changes, and resets the
+hardening number to 1. The *hardening number* moves when the document gains
+implementation detail and **no rule changes meaning**. Every edit to
+`ember-spec.md` declares one of five classes, and only four are permitted in a
+hardening:
+
+    SEMANTICALLY NEUTRAL CLARIFICATION   permitted
+    IMPLEMENTATION INVARIANT             permitted
+    SOURCE RECOVERY                      permitted
+    EDITORIAL REPAIR                     permitted
+    OWNER-APPROVED SEMANTIC CHANGE       forces a language version bump
+
+The line: **the moment an edit answers *what Ember means* rather than *how to
+implement what Ember already means*, it stops being a hardening.**
+`tools/hardening_check.py` enforces *declaration*, not correctness — it is a
+floor, and it would not have caught either of the two amendments that were
+withdrawn.
+
+#### The five kinds of finding, and who moves for each
+
+Keeping these apart is the single most important discipline in this project.
+Getting it wrong in either direction is how an implementation workaround
+quietly becomes the language.
+
+| Kind | Evidence | Where it goes | Who moves |
+|---|---|---|---|
+| **Language-design decision** | the owner decided what Ember means | `DECISIONS.md` (ADR) + `spec-amendments.md`; forces a language version bump | the document, by the owner |
+| **Specification ambiguity / contradiction** | two normative statements require different things, neither marked as governing | `spec-errata.md` | **nobody, until the owner rules** |
+| **Compiler defect** | the rule is clear, the compiler violates it | `DEFECTS.md` | **the compiler** |
+| **Test defect** | the rule is right, the compiler may be right, the case does not exercise the rule | a new conformance case | nobody — but see D-035 |
+| **Implementation limitation** | the rule is clear, the compiler knowingly cannot meet it yet | `DEVIATIONS.md` or `BACKLOG.md`'s compiler-debt table | the compiler, later |
+
+D-035 was the third kind and revealed the fourth. The `Cell` gaps
+(`CELL-DEF-1`, `CELL-SYNC-1`) are the fifth. **None of them is the second, and
+none was treated as one.**
+
+### 0.8 Specification-change philosophy — a standing project rule
+
+> **Do not modify the specification merely because the compiler cannot currently
+> implement a rule.**
+
+When the compiler and the document disagree, in this order:
+
+1. **Reproduce it with a minimal executable program.** Not "does the suite
+   pass" — write the three-line program the rule describes and check the number.
+2. **Identify the exact normative rule**, and quote it.
+3. **Determine whether the compiler is wrong.** If the rule is clear, it is.
+4. **Check whether the test genuinely exercises the rule.** A passing directory
+   named for the rule is not evidence — D-035 is the worked example.
+5. **Only treat it as a specification problem if there is an actual semantic
+   ambiguity or contradiction** — and before concluding that, check for a
+   *sequencing* reading (two stages of one process), a *scoping* reading (a rule
+   under a heading that narrows it), and a *generation* reading (an output may
+   contain what no source may contain). Three claimed contradictions were
+   dissolved by exactly these three readings.
+6. **Obtain an explicit owner decision before changing language semantics.**
+
+**Do not silently weaken safety, ownership, lifetime, region, interop, reload or
+effect-system guarantees.** A requirement the compiler cannot meet yet goes in
+`BACKLOG.md`'s compiler-debt table with an id. **Never soften the rule.**
+
+**The failure mode this exists to prevent**, learned expensively: both withdrawn
+amendments had one shape — the analysis was right, and **the answer went into
+the normative text instead of the ledger**. One of them had "not yet ruled on by
+the owner" written directly above it in the ledger. *The document carries the
+sentence, not the caveat.*
+
+### 0.9 Why 0.8.4 exists — ERR-044 and amendment S1. Do not regress this.
+
+**The owner's semantic decision, taken 2026-09-09:** `[TYP-15]` is
+**region-based**.
+
+`[TYP-15]` stated a principle — a view may not be stored "in a place whose
+region is not outlived by the view's region" — and then an enumeration saying
+class fields, `static`s, `Box`/`Shared` contents, container elements and `owned
+fn` captures are "**always** forbidden". `[LT-3]` said in as many words that a
+`str` literal **may** be stored in a class field, because its region is
+`static`. `[TYP-15]`'s own principle sides with `[LT-3]`.
+
+**Decision: `[LT-3]`'s semantics govern.** A view may be stored in long-lived or
+unbounded storage **when its region outlives the destination**. The enumeration
+was what overreached, by assuming every listed place has no *possible*
+sufficient region.
+
+Therefore:
+
+* **static-region views may be stored in long-lived storage** —
+  `class Foo: greeting: str = "hello"` is admitted;
+* **non-static views may not** — `foo.greeting = s` inside
+  `fn set(mut foo: Foo, s: str)` stays refused, because `s` may be a caller's
+  region;
+* **`[TYP-15a]` still restricts arbitrary owning containers of views** —
+  `Array[str]`, `Map[str, V]`, `Array[MutSpan[T]]` remain rejected whatever the
+  region, because that rejection is at the *type* and not at the region.
+  `BorrowList[T]` / `ViewList[T]` remain the specialised model.
+
+**Do not regress the implementation to the old blanket prohibition.**
+`tests/conformance/LT-3/` holds `accept_a_static_region_view_in_a_static.em` and
+`reject_a_non_static_view_in_a_static.em`, which are exactly this pair.
+
+The owner asked for this to be recorded as a semantic decision rather than a
+hardening — *"Please resolve ERR-044 as an owner semantic decision, not as a
+hardening-only change"* — and that is what made the language version 0.8.4.
+Amendment **S1**, class `OWNER-APPROVED SEMANTIC CHANGE`, is the only semantic
+change in the file; everything else is Hardened_1 on top of it. The reason to
+take that route was never the size of the change but the boundary it protects:
+**hardening must never quietly become language evolution.**
+
+**Keep these two codes distinct** — they are different questions and the
+diagnostics say so:
+
+| Code | Rule | Means |
+|---|---|---|
+| **`E3060`** | `[LT-3]` | *borrowed value does not live long enough* — an ordinary borrow outliving its source |
+| **`E3063`** | `[TYP-15]` | *stored view may not outlive its source* — a view stored in a place that outlives it |
+
+(Nearby, so as not to confuse them: `E3062` is a returned reference not deriving
+from a parameter, `E3064` is two independent regions in one view struct.)
+
+### 0.10 Compiler-development philosophy
+
+**The compiler implements the language's semantic model. It does not merely
+satisfy the current tests.**
+
+Prefer, in every case:
+
+* proper compiler mechanisms over test-specific hacks;
+* explicit semantic phases;
+* strong internal representations;
+* explicit ownership / lifetime / region information carried in the IR rather
+  than recomputed by guess;
+* clear verifier and checker boundaries;
+* deterministic lowering;
+* proper diagnostics — the right code, the right shape, and a `help` that
+  names a concrete API;
+* conformance tests tied to normative rule ids;
+* adversarial tests — the program that should fail, not only the one that
+  should pass;
+* generated-C inspection where the behaviour is not observable from output.
+
+> **A passing test suite is necessary but not sufficient evidence that a
+> semantic rule is correctly implemented.** D-035 is the proof: 178 tests green,
+> a conformance directory named for the rule, and the rule entirely
+> unimplemented.
+
+**When implementation exposes a genuine language-design question, stop and
+escalate rather than guessing.** Guessing is how an implementation workaround
+becomes the language, and this project has already had to unwind that once.
+
+Three concrete habits that keep paying:
+
+* **Probe every normative rule with a minimal executable program before
+  changing any implementation code.** D-035 was found this way in the first ten
+  minutes of a task about something else.
+* **After adding a test, break it once on purpose and watch it go red.** A
+  `compile-fail` case can satisfy itself; a directory of `run-pass` cases passes
+  on an empty directory. Both have happened here.
+* **Any new value-producing or place-writing form must be walked through every
+  analysis by hand** — `drops.rs`, `borrows.rs`, `regions.rs`, `verify.rs`. It
+  fails closed, and failing closed means rejecting a correct program. Several
+  defects were found by asking, not by a test failing.
+
+### 0.11 Using agents and agentic workflows — approved
+
+**The owner has explicitly approved the use of subagents *and* multi-agent
+workflows during development on this project** (2026-09-09). Both are available
+to the next agent: individual subagents for parallel exploration, and full
+orchestrated workflows (fan-out, pipeline, judge panels, adversarial verify)
+where the task is large enough to earn one. Use them when they help.
+
+Two standing constraints still apply, and they are the owner's, not defaults:
+
+* **Ask before spawning subagents or a workflow, every time, and state the
+  worst-case agent count in the question.** Approving a *shape* is not approving
+  a *size*. This is a standing rule and the approval above does not lift it —
+  what it lifts is any doubt about whether workflows are welcome at all.
+* **Report after each task and wait for the green signal** before starting the
+  next one.
+
+**Where a workflow genuinely earns its cost on this codebase:**
+
+* Sweeping the whole conformance corpus for rules whose directory does not cover
+  every clause — the **D-035 shape**, and the highest-value sweep available
+  right now, because that defect proves the shape exists and nothing has looked
+  for others.
+* Auditing a new IR form or value-producing expression against all four
+  analyses at once (`drops.rs`, `borrows.rs`, `regions.rs`, `verify.rs`) —
+  these fail closed, and several past defects were found by asking rather than
+  by a test failing.
+* Adversarially verifying a claimed defect before it reaches `DEFECTS.md`.
+  Three claimed specification contradictions turned out to be misreadings, each
+  dissolved by a sequencing, scoping or generation reading; a refuter pass is
+  exactly the right instrument for that.
+* Reading a large normative Part against the implementation, clause by clause,
+  before building — `RefCell` spans `[CELL-5]`..`[CELL-10]`, `[CELL-6a]`,
+  `[TYP-15]`, `[PRF-1]` and the region machinery.
+
+**Where it does not:** a single coherent edit across several crates, which is
+most implementation work here. `Cell[T]` touched five crates and was one change;
+splitting it across agents would have cost more than it saved.
+
+### 0.12 Open issues carried forward — verified against the repository
+
+**Open defect — one.**
+
+| # | What | Rule | Status |
+|---|---|---|---|
+| **D-030** | a `drop` body may move a field out of `mut self`, which the rule forbids; the field is then dropped again after `drop` returns | `[DRP-5]`, `[EXP-6]` | **open.** Filed rather than fixed: reaching it needs a `drop` body that moves, and nothing in the corpus does |
+
+**Open deviations — five, in `docs/DEVIATIONS.md`.**
+
+| # | What | Status |
+|---|---|---|
+| **D1** | `[RNG-5a1]`'s generated operator impls are a type-checker rule instead; no impls exist | open; not observable until operator interfaces exist. ADR-016 |
+| **D2** | **`[CLO-6]`'s `owned f: fn(A) -> R` is refused, not implemented** | **open.** This is the live residual of the closure work — see the note below |
+| **D3** | `extern class` parses and is then refused by name (the C++ importer is Phase 7) | open. ERR-037 |
+| **D4** | `E9012` is registered and never emitted | open |
+| **D5** | a `mut` parameter whose type is itself a borrow — `[FN-1]`'s literal reading versus Part VII §7's own worked example | **unratified; awaiting an owner decision.** Complying with the letter makes the document's own example uncompilable, so neither side moves. ERR-041, ADR-017 |
+
+**`[CLO-3]` / ADR-018 is CLOSED, not open.** The owner ruled that the rule
+stands and the compiler catches up — *"Do not change the Ember spec to
+accommodate the current compiler implementation."* `fn(A) -> R` in parameter
+position is now an implicit generic bounded by `Callable`, monomorphised per
+argument type; a capturing lambda is an anonymous struct of its `[CLO-2]`
+captures. `tests/conformance/CLO-1/accept_a_capturing_closure.em` passes. **What
+remains open is `[CLO-6]`'s `owned f`, which is deviation D2**, refused by name
+rather than mis-compiled: consumption is a property of the bound, not of the
+closure's type, and until a call can consume its callee, treating `CallableOnce`
+as `Callable` would permit the second call the rule forbids.
+
+**Open errata — awaiting the owner.**
+
+| # | What | Status |
+|---|---|---|
+| **ERR-042** | nine rule ids are cited and defined by no rule — `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, and the whole `[IDE-1]`/`[IDE-2]`/`[IDE-5]`/`[IDE-7]`/`[IDE-10]` family. Part XX cites five IDE rules on one line and defines none | **open — reported to the owner.** Rule-id bookkeeping |
+| **ERR-043** | `UnsafeCell` is named once in 5,526 lines, as *the* primitive a package uses for unchecked interior mutability, and no rule defines it | **open — reported to the owner.** See §0.13 |
+| **ERR-029, the `[RNG-8]` part** | `[RNG-8]`'s text opens mid-sentence on an ellipsis and the missing opening survives in no copy of the document, so it cannot be restored, only guessed | **open.** The other nine items in ERR-029 are decided |
+
+**Compiler debt — `docs/BACKLOG.md`.** `RT-GEN-1` (generate `ember_rt.h`/`.c`
+from the symbol prefix), `LNT-CFG-1` (`[MAN-3]`'s `[lints]` configuration —
+`[LT-1b]`'s `L3014` is an opt-in lint with nowhere to opt in), `TST-6-1`
+(Appendix A's fixture as `compile-pass`), and the two new ones,
+**`CELL-DEF-1`** and **`CELL-SYNC-1`**. `LT-REG-1` is struck through — done.
+
+**Phase 2 coverage still outstanding**, from `COLD-START.md` §4: `OWN` 6/8,
+`BRW` 7/9, `LT` 5/10, `DRP` 3/6, `CELL` 4/12, and **`[DIA-7..10]` with
+`tests/ui/` snapshots at 0/5 — which is a Phase 2 *exit* criterion**
+(COLD-START §6).
+
+#### Bookkeeping inconsistencies found while writing this hand-off
+
+These are **documentation** discrepancies, not compiler or specification
+defects. **Nothing was changed in the specification to resolve them** — they are
+recorded here for the owner.
+
+1. **`[EFF-18]` versus Part X §1 on `Nondet`.** `spec-errata.md`'s summary row
+   marks **ERR-028 "decided"** and its body says the enumeration "gains
+   `Nondet`" — but `docs/spec/part-10-*.md` line 57 still reads
+   `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`,
+   **without `Nondet`**, and `spec-amendments.md` records no amendment applying
+   it. `COLD-START.md` §7 still lists it as open. So either the amendment was
+   never applied or the entry's "Applied to" is aspirational. **Left untouched:
+   this is two normative statements disagreeing, which is the kind where neither
+   side moves until the owner rules.**
+2. **ERR-044's body header is stale.** Its summary row says *"decided by the
+   owner, 2026-09-09 … Amendment S1"* and amendment S1 exists and is applied,
+   but the section body still opens *"Status: open. Reported to the owner.
+   Neither side has been moved."* The decision is real — §0.9 is what governs;
+   the body header was not updated.
+3. **ERR-041 reads as open in `COLD-START.md` §7** but its errata row is
+   **decided** (ADR-017). Both are true in different senses: the errata question
+   is decided, and it holds **deviation D5** open pending an owner ruling. The
+   live item is D5.
+4. **`error_pages.py` is described as one of six gates but is not in CI.** It is
+   green; it only runs when somebody runs it.
+
+### 0.13 Interior mutability — keep the three apart
+
+* **`Cell[T]`** — interior mutability. Replaces the **whole value**, hands out
+  **no reference**. Nothing has to be proved and there is **no runtime state**.
+  Built.
+* **`RefCell[T]`** — interior mutability. Mutates **through a reference**, so
+  `[BRW-1]`'s question is asked **at run time** against a borrow counter
+  (`[CELL-5]`..`[CELL-8]`). Not built.
+* **`Arena`** — **a region allocator, not an interior-mutability primitive.**
+  Its mutation happens to reach through a shared borrow, but what it must prove
+  is a **region** rather than an alias, which `[ARN-1]` does **statically**. Not
+  built.
+
+Amendment **A13** records that the three share **the implementation concern and
+not the concept**. `[CELL-2]` says an implementation *may* share machinery
+between them and nothing requires it to. **Do not build `RefCell` by
+generalising `Cell`**, and do not describe `Arena` as a third interior-mutability
+primitive.
+
+What is common to all three: *"interior mutability never means the borrow
+checker stops caring: the obligation moves — to a replacement that cannot alias,
+to a counter, or to a region — and an implementation that satisfies any of the
+three by exempting a type from `[BRW-1]` has not implemented it."* `Cell` is
+sound here for exactly that reason: nothing escapes, so the write is not an
+aliasing question at all, and the borrow checker was **not weakened**.
+
+**`UnsafeCell` remains an unresolved owner-level question (ERR-043).** ADR-019
+chose compiler-known types over building on it *because it is not available* —
+it is named once and defined nowhere, and inventing the semantics of the one
+construct that suspends `[BRW-1]` is the owner's call. ADR-019 carries an
+explicit warning worth repeating: **the existence of `Builtin::CellSet` is not
+evidence about what the language permits an arbitrary package to implement.**
+Do not reach ERR-043, observe that the compiler already mutates through a shared
+borrow for `Cell`, and conclude that the language therefore permits it. That is
+the compiler-justifies-specification move by a longer road. **Do not invent
+semantics for unresolved owner-level questions.**
+
+### 0.14 The next task
+
+**`RefCell[T]`, then `Arena`.** Block I's remaining two.
+
+**Do not begin implementing them as part of reading this hand-off.** Report and
+wait for the green signal, per the owner's standing rule.
+
+**Why `RefCell` is the next significant milestone, and harder than `Cell` was.**
+`Cell` was contained because nothing escaped it. `RefCell` is the opposite:
+`[CELL-5]`'s `borrow` and `borrow_mut` hand out `Ref[T]` and `RefMut[T]`, and
+`[CELL-7]` makes those **genuine view types** whose region borrows the cell and
+whose `drop` releases the borrow state. So **`regions.rs`, `[TYP-15]`, borrow
+checking, guard lifetime and escape behaviour all become load-bearing**, none of
+which `Cell` touched. Add to that: `[CELL-9]` puts the borrow check in **every**
+profile and forbids `exclusivity = "unchecked"` from reaching it; `[CELL-6a]`
+forbids any profile making `try_borrow` infallible, because that would change
+which branch of a `match` runs, which `[PRF-1]` forbids; `[CELL-5]`'s panic
+message must name **the conflicting borrow's source location**, recorded in
+debug *and* release; and `[CELL-7]`'s `L3011` lint needs `LNT-CFG-1` first, or
+there is nowhere to opt in. `[CELL-10]` constrains the *diagnostics*: shape B4
+may suggest `RefCell` **only** when the conflicting accesses are provably not
+simultaneous, and never as a first suggestion.
+
+**What carries over from `Cell`:** the transparent-struct shape and the
+`cells`-style side table; privacy as the mechanism for an unreachable field; and
+`assert-c-order` for any rule that is about order. **What does not:** `RefCell`
+is **never `Copy`** — copying the counter would fork the borrow state — so the
+`[CELL-4]` derivation that came free for `Cell` must be deliberately overridden.
+
+**Read before starting, in this order:**
+
+1. `docs/spec-source/Ember_v0.8.4_Hardened_1.md` — the authoritative
+   specification (Part IX §7 for `[CELL-*]`, Part IX §2 for `[ARN-*]`)
+2. `docs/HANDOFF.md` — this file, §0 first, then the Block I section
+3. `docs/COLD-START.md` — §2's rules and §5's design notes
+4. `docs/DECISIONS.md` — ADR-019 and ADR-020 especially
+5. `docs/DEFECTS.md` — D-035 and D-030
+6. `docs/BACKLOG.md` — the compiler-debt table
+
+**Then inspect the existing infrastructure before writing anything:**
+
+    compiler/ember_analysis/src/regions.rs   region variables, the constraint graph
+    compiler/ember_analysis/src/borrows.rs   NLL, loans, elision, the [DIA-7] shapes
+    compiler/ember_analysis/src/drops.rs     moves, drop flags, [OWN-4]'s loop shape
+    compiler/ember_typeck/src/lib.rs         cell_of, cells, synth_cell_method — the compiler-known-type pattern
+    compiler/ember_mir/src/lower.rs          lower_assign, lower_cell_store, lower_cell_into_inner, temp_unowned
+
+### 0.15 The principles, in one place
+
+Carried forward deliberately, because the reasoning matters more than the
+inventory:
+
+> **The specification is the contract.** It is never edited to make the compiler
+> agree with it. Where the two disagree and the rule is sound, the compiler
+> moves.
+>
+> **A compiler bug is not a reason to weaken the language.** An implementation
+> gap goes in the backlog with an id, and the rule stays as written.
+>
+> **Where the document contradicts itself, neither side moves** until the owner
+> rules. Do not pick the reading that matches what is already built.
+>
+> **A test named after a rule is not necessarily coverage of that rule.** Read
+> the rule, count its clauses, and check each one has a case that can fail.
+>
+> **Minimal adversarial programs are the preferred instrument** for validating
+> a semantic invariant — not "does the suite pass".
+>
+> **When the semantics are clear, fix the compiler. When the semantics are
+> genuinely ambiguous, stop and ask.**
+
+---
+
 ## READ `docs/COLD-START.md` FIRST
+
+> **Everything from here down is the phase plan and the historical record.**
+> §0 above is the current snapshot and governs wherever the two differ. This
+> part is kept because the reasoning behind a decision is worth more than the
+> decision, and several sections below are the only place a particular trap or
+> design argument is written down.
 
 It carries the current state, the rules that govern edits to the specification,
 the next task, and the traps. **This file is the phase plan and is partly
 historical** — several of its sections describe work that has since landed, and
-its own "Start here" is marked superseded. Trust `COLD-START.md` where the two
-disagree.
+its own "Start here" is marked superseded. Trust `COLD-START.md` and §0 where
+they disagree.
 
 `docs/spec-source/ember-spec.md` is **v0.8.4_Hardened_1**, split into
 `docs/spec/`. The owner's file is `as-received/Ember_v0.8.3_spec.md` and is
@@ -1145,7 +1811,9 @@ the backend emitted but not in what order — and both `[CELL-1]` and `[OWN-5]`
 are entirely about order, invisible in output, because seeing the difference
 needs a destructor that re-enters the value being replaced and no safe Ember
 program can build that back-pointer (a `static` holding a cell is refused:
-`[STA-*]` wants a literal initialiser). `#$ assert-c-order: "a" then "b"` asserts
+`[STA-1]` requires a comptime-evaluable initialiser and the compiler narrows
+that to a literal, so `static COUNTER: Cell[i32] = Cell(0)` is `E2130`).
+`#$ assert-c-order: "a" then "b"` asserts
 both are present and in that order. Verified by flipping the store and the drop
 in `lower_cell_store` and watching the case go red with the right message.
 
