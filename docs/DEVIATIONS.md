@@ -105,6 +105,19 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | ERR-041, ADR-017 |
 | **Target** | owner decision |
 
+## D6 — `L3011` is registered and never emitted
+
+| | |
+|---|---|
+| **Rule** | `[CELL-7]`: the lint `L3011 RefCell guard held across a call` fires when a guard is live across a function call that could re-enter the same cell |
+| **Current behaviour** | registered (`compiler/ember_diag/src/codes.rs`), unemitted — no `codes::L3011` reference anywhere in the compiler; the only other mention of the number is the shape-catalogue mapping (`shapes.rs`) |
+| **Soundness impact** | none — a lint never rejects a program |
+| **Observable today** | no |
+| **Reason** | there is nothing that could trigger it yet: `Ref`/`RefMut` guards do not exist (`RefCell` is task 3 of the handoff list), so no pass tracks guard liveness. Emitting it now would be scaffolding with no consumer (the D1 shape); approximating it on a proxy condition would report violations of a rule no program can yet violate |
+| **Fix plan** | task 3 emits it from the guard-liveness tracking when `Ref`/`RefMut` land; the entry then moves to Closed. Deliberately not waiting on `LNT-CFG-1`: `[CELL-7]` says the lint fires, unlike `[LT-1b]`'s opt-in `L3014` |
+| **Owner** | — |
+| **Target** | Phase 2, block I (with `RefCell`) |
+
 ---
 
 ## Closed

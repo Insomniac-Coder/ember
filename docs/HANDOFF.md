@@ -14,9 +14,9 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `a38aa59` — the §0.18 correction. Below it: `c4fa15c` (§0.16 consistency pass), `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| HEAD | `9468602` — the COLD-START twin correction. Below it: `a38aa59` (§0.18 correction + task list), `c4fa15c` (§0.16 consistency pass), `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
 | Last commit touching compiler sources | `365122d`. Everything above it is doc/CI-only |
-| Working tree | this correction (COLD-START twins of §0.18 errors 3–4, §0.1 refresh); committed herein, clean after push |
+| Working tree | this task (file `L3011` as D6 + tracking); committed herein, clean after push |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
 | `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
@@ -496,7 +496,7 @@ splitting it across agents would have cost more than it saved.
 |---|---|---|---|
 | **D-030** | a `drop` body may move a field out of `mut self`, which the rule forbids; the field is then dropped again after `drop` returns | `[DRP-5]`, `[EXP-6]` | **open.** Filed rather than fixed: reaching it needs a `drop` body that moves, and nothing in the corpus does |
 
-**Open deviations — five, in `docs/DEVIATIONS.md`.**
+**Open deviations — six, in `docs/DEVIATIONS.md`.**
 
 | # | What | Status |
 |---|---|---|
@@ -505,6 +505,7 @@ splitting it across agents would have cost more than it saved.
 | **D3** | `extern class` parses and is then refused by name (the C++ importer is Phase 7) | open. ERR-037 |
 | **D4** | `E9012` is registered and never emitted | open |
 | **D5** | a `mut` parameter whose type is itself a borrow — `[FN-1]`'s literal reading versus Part VII §7's own worked example | **unratified; awaiting an owner decision.** Complying with the letter makes the document's own example uncompilable, so neither side moves. ERR-041, ADR-017 |
+| **D6** | `L3011` is registered and never emitted; no guard exists yet to trigger it | **open.** Filed by task 1 of the handoff list; closed when `RefCell` (task 3) emits it from guard-liveness tracking. `[CELL-7]` |
 
 **`[CLO-3]` / ADR-018 is CLOSED, not open.** The owner ruled that the rule
 stands and the compiler catches up — *"Do not change the Ember spec to
@@ -778,9 +779,9 @@ was already green; the one `non_snake_case` test-target warning
 Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
 ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
-restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D1–D5**
-(D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D1, D3, D4 as
-ledgered); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
+restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D1–D6**
+(D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D6 `L3011`
+unemitted until `RefCell`; D1, D3, D4 as ledgered); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
 `CELL-SYNC-1`; Phase 2 coverage gaps per COLD-START §4. Not reopened or
 renumbered here: D-018 and D-025 are **fixed** (see `DEFECTS.md`), `[CLO-3]` /
 ADR-018 is **closed** with D2 as the live residual, and **no `[FFI-17]` open
@@ -891,6 +892,14 @@ shape (`E9012`, same), and D4 is already open. Decide deliberately: either
 reason. **Do not leave a third registered-and-unemitted code undocumented** —
 that is how a registry stops meaning anything. This is listed first because it
 is small and because §0.18 shows it was about to be skipped as blocked.
+
+**Done — filed as D6.** `codes::L3011` is referenced nowhere in the compiler
+(checked twice: once by enumeration, once by targeted grep — the only other
+mention of the number is the `shapes.rs` catalogue mapping), and no guard
+exists to observe, so emission now would be D1-shaped scaffolding. `D6` records
+the rule verbatim, the reason, and the closure condition: task 3 emits it from
+guard-liveness tracking when `Ref`/`RefMut` land. No spec file touched; no
+semantics decided.
 
 ### 2. The D-035 sweep — one to two days, the best workflow candidate
 
