@@ -163,9 +163,11 @@ concern and **not** the concept — do not build `RefCell` by generalising
 * The **transparent-struct shape**. `cell_of` interns a `StructDef` per `T` and
   records it in `cells` on the `Checker`; `RefCell` wants the same, with a
   second field for `[CELL-5]`'s one-word borrow counter. `[CELL-4]`'s `Copy`
-  and `Drop` questions answered themselves off the field, and will again —
-  except that `RefCell` is **never** `Copy`, because copying the counter would
-  fork the borrow state.
+  and `Drop` questions answered themselves off the field for `Cell`, and the
+  same machinery will answer them for `RefCell` — but whether `RefCell[T]` may
+  be `Copy` is an **open question to escalate, not a settled rule**: copying
+  the counter would fork the borrow state (sound inference), and Part IX
+  states `[CELL-4]` for `Cell` only. See `HANDOFF.md` §0.14.
 * **Privacy is the mechanism**, not an unspellable name. `declaring_module:
   usize::MAX` plus a private field refuses read, write and `ref` everywhere with
   `E1020`. A `$`-prefixed name breaks `[CG-C-1]` — the backend writes field
@@ -184,8 +186,9 @@ types** whose region borrows the cell and whose `drop` releases the borrow
 state. So unlike `Cell`, something *does* escape, `[TYP-15]` applies to it, and
 the region work in `regions.rs` is load-bearing. `[CELL-9]` puts the check in
 **every** profile and `[CELL-6a]` forbids any profile making `try_borrow`
-infallible. `[CELL-7]`'s `L3011` needs `LNT-CFG-1` first, or there is nowhere to
-opt in.
+infallible. `[CELL-7]`'s `L3011` (`RefCell` guard held across a call) fires per
+the rule — registered, emitted by nothing, and part of this task's work, not
+blocked and not opt-in (`LNT-CFG-1` is about `[LT-1b]`'s `L3014`).
 
 ## 6. After that: `[DIA-7..10]` and `tests/ui/`
 

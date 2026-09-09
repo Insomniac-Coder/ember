@@ -14,9 +14,9 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `c4fa15c` — the §0.16 consistency pass. Below it: `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
-| Last commit touching compiler sources | `365122d`. `a2c0032`, `c4fa15c` and the §0.18 correction are doc/CI-only |
-| Working tree | **clean** |
+| HEAD | `a38aa59` — the §0.18 correction. Below it: `c4fa15c` (§0.16 consistency pass), `a2c0032` (this snapshot), `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| Last commit touching compiler sources | `365122d`. Everything above it is doc/CI-only |
+| Working tree | this correction (COLD-START twins of §0.18 errors 3–4, §0.1 refresh); committed herein, clean after push |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
 | `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
