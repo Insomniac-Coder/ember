@@ -89,7 +89,11 @@ The document is **v0.8.4_Hardened_1**. Two numbers move independently:
 `LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts `"0.8.3"` and
 `"0.8.4"`; 0.8.4 is additive, so no 0.8.3 program became invalid.
 `docs/spec-source/Ember_v0.8.4_Hardened_1.md` is the frozen snapshot — the next
-hardening diffs against **that**, not against as-received.
+hardening diffs against **that**, not against as-received. The working source
+`docs/spec-source/ember-spec.md` currently runs one declared editorial repair
+(E5, `[EFF-18]` gains `Nondet`) ahead of the frozen snapshot; for
+implementation the working source governs — see `docs/HANDOFF.md` §0.17, which
+is the authoritative statement of which artifact is normative for what.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -197,15 +201,15 @@ snapshot per shape is what stops the next one.
 
 ## 7. Open, and the owner's to answer
 
-* **ERR-041** — `[FN-1]` says a `mut` argument "MUST be a mutable place"; Part
-  VII §7 passes `buf.as_mut_span()`, a call result. Holds **D5** open: the
-  compiler passes a `MutSpan` by value and says so in `mut_param_ty`'s comment.
+* **D5** — `[FN-1]` says a `mut` argument "MUST be a mutable place"; Part
+  VII §7 passes `buf.as_mut_span()`, a call result. **ERR-041 is decided**
+  (Part VII §7's example governs; ADR-017 records the reading). What holds
+  open is **D5**: the compiler passes a `MutSpan` by value and says so in
+  `mut_param_ty`'s comment, unratified and awaiting an owner decision.
   Complying with the letter makes the document's own example uncompilable.
 * **ERR-043** — `UnsafeCell` appears once in 5,526 lines and no rule defines it.
   Blocks a *third-party* package writing its own interior-mutability primitive;
   blocks nothing in `std` (ADR-019 takes the other route).
-* **`[EFF-18]`** states the effect set without `Nondet`; §X.1, which defines the
-  set, includes it. Two normative statements disagreeing.
 * **ERR-042** — nine rule ids cited and defined nowhere, the whole `IDE-*` family
   among them. Part XX cites five IDE rules on one line and defines none.
 * **D-030** — a `drop` body may move a field out of `mut self`, which `[DRP-5]`

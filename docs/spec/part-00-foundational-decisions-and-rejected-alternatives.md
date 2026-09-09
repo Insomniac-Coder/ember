@@ -130,10 +130,9 @@ result — so read literally the document's own example is `E2140`, and `split_a
 be called on its own result either. A reading that resolves it was drafted, and putting
 it into the rule would have been this hardening answering *what Ember means* rather than
 how to implement what it already means. The rule stands as written; the question is
-ERR-041 and belongs to the owner. `[EFF-18]` states the effect set
-without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
-table row defining the effect. Two normative statements disagree and neither is
-marked non-normative, so it is an owner decision rather than a hardening.
+ERR-041 and belongs to the owner. `[EFF-18]` stated the effect set
+without `Nondet` at Hardened_1 time, while §X.1 — the section that defines the set — already included it, with a
+table row defining the effect. That disagreement was recorded as an owner decision (ERR-028: X.1 governs) rather than a hardening, and the enumeration has since been brought in line with X.1; see `docs/spec-amendments.md`.
 `[FFI-17]`'s numbered list contradicts XVI.7a's tables on `std::function` and
 `std::optional<T>`; the list is already `NON-NORMATIVE` under `[CAT-1]` and the
 document asks a future revision to delete the drifted claims — a deletion from owner

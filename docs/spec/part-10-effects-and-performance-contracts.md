@@ -54,9 +54,9 @@ The compiler infers, for every function, an **effect set** ⊆ `{Alloc, Sync, Lo
   `Sync + Lock`; a blocking file read carries `Io + Block`; and a non-blocking I/O
   operation carries `Io` without `Block`. `@noio`, `@nolock`, `@noblock` and
   `@nosync` therefore remain independent contracts. The full set is
-  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`. `[EFF-18]`
+  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, Nondet, RuntimeCheck(k)}`. `[EFF-18]`
   does not remove an effect previously attached to any operation; it refines the
-  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)*
+  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)* *(ERR-028 applied 2026-09-09; see `docs/spec-amendments.md`)*
 * `[EFF-19]` `@realtime` on a function expands to a configured contract set,
   by default `@noalloc @nolock @noblock @nopanic(explicit)`. It is a **marker
   for that set and not a timing guarantee**: the compiler MUST NOT state or

@@ -1856,7 +1856,7 @@ is discharged around it. It is a small rule and it cannot be guessed.
 
 ## ERR-044 — `[TYP-15]` and `[LT-3]` disagree about where a static-region view may be stored
 
-**Status: open. Reported to the owner.** Neither side has been moved.
+**Status: decided by the owner, 2026-09-09. Amendment S1 accepted; `[LT-3]`'s semantics govern — see the resolution at the end of this entry. The current rules are `[TYP-15]` / `[LT-3]` as written in Ember 0.8.4.**
 
 **Where.** `[TYP-15]` states a principle and then an enumeration:
 

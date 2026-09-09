@@ -14,10 +14,11 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `365122dda12ea1d453677ab178b7ee5ab01a242f` (`365122d`) |
-| Working tree | **clean** — `git status --porcelain` empty |
-| Against `origin/main` | **0 ahead, 0 behind** — everything committed is pushed |
-| `cargo build` | **0 warnings** |
+| HEAD (last code commit) | `a2c0032` — handoff snapshot; `365122d` (`Cell[T]`) and `8459a1f` (D-035) below it |
+| This handoff | doc/CI-only delta on top of `a2c0032` (§0.16, §0.17); no compiler sources touched |
+| Working tree | 8 doc/CI files (§0.16); committed herein, clean after push |
+| Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
+| `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
 | Gates | **all green** (six, run individually below) |
 
@@ -32,20 +33,20 @@ Preceding commits, for orientation: `aa2e1d4` (the cold-start file), `6a33bb0`
 and `8101389` (cutting 0.8.4_Hardened_1), `207c69f`, `25335ec` (S1).
 
 **The gates, with the invocation each needs.** `.github/workflows/ci.yml` is the
-authority; five of the six are wired into CI.
+authority; six of the six are wired into CI.
 
     python tools/hardening_check.py                                          OK   (CI)
     python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec   OK   (CI)
     python tools/rule_index.py                                               OK   (CI)
     python tools/check_branding.py                                           OK   (CI)
     python tools/spec_check.py                                               OK   (CI)
-    python tools/error_pages.py                                              OK   (NOT in CI)
+    python tools/error_pages.py                                              OK   (CI)
 
 Two things about that list are worth carrying: `split_spec.py --check` throws
 `IndexError` if you call it without both path arguments — it is not failing, you
-called it wrong — and **`error_pages.py` is green but is not wired into CI**, so
-it only runs when somebody runs it. COLD-START says "6 gates"; five of them are
-enforced.
+called it wrong — and **`error_pages.py` was green but not wired into CI until
+the consistency pass (§0.16) added it**, so it previously ran only when somebody
+ran it. COLD-START says "6 gates"; six of them are now enforced.
 
 ### 0.2 What `Cell[T]` is, and exactly what is built
 
@@ -436,6 +437,14 @@ Three concrete habits that keep paying:
   fails closed, and failing closed means rejecting a correct program. Several
   defects were found by asking, not by a test failing.
 
+**Stop and escalate** on a genuine specification contradiction, two plausible
+semantic interpretations, an owner-level tradeoff, a missing language rule, a
+proposed safety relaxation, or any change to ownership / lifetime / region /
+interop / reload / effect-system semantics. Bring: (1) the conflicting rules
+quoted, (2) a minimal reproducer, (3) current compiler behaviour, (4) the
+possible interpretations, (5) the consequences of each, (6) a recommended
+resolution. Do not silently choose.
+
 ### 0.11 Using agents and agentic workflows — approved
 
 **The owner has explicitly approved the use of subagents *and* multi-agent
@@ -526,8 +535,8 @@ from the symbol prefix), `LNT-CFG-1` (`[MAN-3]`'s `[lints]` configuration —
 #### Bookkeeping inconsistencies found while writing this hand-off
 
 These are **documentation** discrepancies, not compiler or specification
-defects. **Nothing was changed in the specification to resolve them** — they are
-recorded here for the owner.
+defects. **Update (consistency pass, §0.16): all four are now resolved. The
+descriptions below are preserved as found; each carries its resolution.**
 
 1. **`[EFF-18]` versus Part X §1 on `Nondet`.** `spec-errata.md`'s summary row
    marks **ERR-028 "decided"** and its body says the enumeration "gains
@@ -535,20 +544,27 @@ recorded here for the owner.
    `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`,
    **without `Nondet`**, and `spec-amendments.md` records no amendment applying
    it. `COLD-START.md` §7 still lists it as open. So either the amendment was
-   never applied or the entry's "Applied to" is aspirational. **Left untouched:
-   this is two normative statements disagreeing, which is the kind where neither
-   side moves until the owner rules.**
+   never applied or the entry's "Applied to" is aspirational. **Left untouched at
+   the time: this is two normative statements disagreeing, which is the kind where neither
+   side moves until the owner rules. Resolved in §0.16: ERR-028 confirmed as the
+   decision (X.1 governs, no supersession found, no genuine semantic conflict —
+   a stale omission); `[EFF-18]` now includes `Nondet` (E5, editorial repair);
+   COLD-START §7 no longer lists it.**
 2. **ERR-044's body header is stale.** Its summary row says *"decided by the
    owner, 2026-09-09 … Amendment S1"* and amendment S1 exists and is applied,
    but the section body still opens *"Status: open. Reported to the owner.
    Neither side has been moved."* The decision is real — §0.9 is what governs;
-   the body header was not updated.
+   the body header was not updated. **Resolved in §0.16: header now reads
+   decided / S1 accepted / current `[TYP-15]`-`[LT-3]` rules in 0.8.4.**
 3. **ERR-041 reads as open in `COLD-START.md` §7** but its errata row is
    **decided** (ADR-017). Both are true in different senses: the errata question
    is decided, and it holds **deviation D5** open pending an owner ruling. The
-   live item is D5.
+   live item is D5. **Resolved in §0.16: COLD-START §7 now titles the bullet D5
+   (open deviation) with ERR-041 noted as decided via ADR-017.**
 4. **`error_pages.py` is described as one of six gates but is not in CI.** It is
-   green; it only runs when somebody runs it.
+   green; it only runs when somebody runs it. **Resolved in §0.16: wired into
+   `.github/workflows/ci.yml` as "error pages compile as documented"; docs and
+   CI now agree on six enforced gates.**
 
 ### 0.13 Interior mutability — keep the three apart
 
@@ -618,8 +634,11 @@ is **never `Copy`** — copying the counter would fork the borrow state — so t
 
 **Read before starting, in this order:**
 
-1. `docs/spec-source/Ember_v0.8.4_Hardened_1.md` — the authoritative
-   specification (Part IX §7 for `[CELL-*]`, Part IX §2 for `[ARN-*]`)
+1. `docs/spec-source/Ember_v0.8.4_Hardened_1.md` — the frozen language
+   revision (Part IX §7 for `[CELL-*]`, Part IX §2 for `[ARN-*]`). For
+   implementation, `docs/spec-source/ember-spec.md` governs on any difference
+   — the two currently differ only by E5 (Part X, unrelated to `RefCell`); see
+   §0.17 and do not treat the files as interchangeable.
 2. `docs/HANDOFF.md` — this file, §0 first, then the Block I section
 3. `docs/COLD-START.md` — §2's rules and §5's design notes
 4. `docs/DECISIONS.md` — ADR-019 and ADR-020 especially
@@ -633,6 +652,16 @@ is **never `Copy`** — copying the counter would fork the borrow state — so t
     compiler/ember_analysis/src/drops.rs     moves, drop flags, [OWN-4]'s loop shape
     compiler/ember_typeck/src/lib.rs         cell_of, cells, synth_cell_method — the compiler-known-type pattern
     compiler/ember_mir/src/lower.rs          lower_assign, lower_cell_store, lower_cell_into_inner, temp_unowned
+
+**`RefCell` conformance must actually exercise the rules** (§0.3's lesson
+applies in full). At least, each tied to its rule id: multiple `Ref`s;
+`Ref` + `RefMut` refused; multiple `RefMut`s refused; runtime contention
+panics with the conflicting borrow's source location (debug *and* release);
+guard `drop` releasing borrow state; early return through a live guard;
+nested borrows and nested scopes; returned `Ref` / `RefMut`; stored views and
+region boundaries; non-escaping vs escaping views; static-region views
+admitted where `[TYP-15]` allows; invalid long-lived storage refused with
+`E3063`. Break every new case red once before trusting it.
 
 ### 0.15 The principles, in one place
 
@@ -657,6 +686,134 @@ inventory:
 >
 > **When the semantics are clear, fix the compiler. When the semantics are
 > genuinely ambiguous, stop and ask.**
+>
+> **Do not let an editable or generated specification silently diverge from the
+> frozen normative artifact.** If the working source runs ahead of the frozen
+> cut, document exactly which artifact is authoritative, why they differ, and
+> what the next agent must treat as truth — see §0.17.
+
+### 0.16 Consistency pass — the four §0.12 items, resolved (no semantics weakened)
+
+On top of `a2c0032`, committed herein as a doc/CI-only delta. No language rule changed
+meaning; no compiler code moved; `RefCell[T]` not started. Hierarchy applied:
+accepted owner decisions, then normative 0.8.4 spec, then amendments/ADRs, then
+implementation, then tests/docs. Where docs conflicted with a settled decision,
+the docs were synchronised.
+
+1. **`[EFF-18]` / ERR-028 / `Nondet` — the only semantic reconciliation.**
+   Sweep: `[EFF-18]`'s bullet listed nine effects without
+   `Nondet`; Part X §1's opening plus its table already define
+   ten with `Nondet` and cite `[DET-2]`; `[DET-1]`–`[DET-9]` and
+   `@deterministic` all assume `Nondet`; ERR-028 records decided (ten members,
+   X.1 governs, `[EFF-18]`'s own "does not remove an effect" sentence says it
+   is not exclusive); front matter, `spec-amendments.md` (no applying
+   amendment), change history (0.6.3 added `Nondet` to X.1 without revisiting
+   `[EFF-18]`), and `git log` show no supersession. No genuine conflict — a
+   stale omission, not two rules requiring different behaviour — so per the
+   brief it was applied rather than escalated. Changed:
+   `docs/spec-source/ember-spec.md` `[EFF-18]` full set now includes `Nondet`
+   with marker `*(ERR-028 applied 2026-09-09; see docs/spec-amendments.md)*`;
+   front matter "Deliberately not done" paragraph now records the prior
+   disagreement in the past tense; `docs/spec-amendments.md` gains **E5**
+   (`[EFF-18]`, class EDITORIAL REPAIR, no implementation change, authorised by
+   ERR-028); `docs/spec/` regenerated via `split_spec.py` (no hand edit);
+   COLD-START §7 `[EFF-18]` bullet removed. Dependent tables checked:
+   X.1.1's four `RuntimeCheck` kinds are a different enumeration (correct as
+   is); `[SIMD-5]`'s effect subset is intentional, untouched; the Part XXIII
+   glossary's short `Effect` row (`Alloc, Sync, Panic, Unsafe, FFI, Block`)
+   predates `Lock`/`Io`/`Nondet`/`RuntimeCheck` and is informative rather than
+   normative — left as is and noted here rather than widened silently.
+   Working copy `ember-spec.md` now runs one editorial repair ahead of the
+   frozen `Ember_v0.8.4_Hardened_1.md` snapshot (which is left untouched for
+   diffing); the Version header is unchanged.
+2. **ERR-044 — header corrected, decision not reopened.**
+   `docs/spec-errata.md` ERR-044 body header read "Status: open … Neither side
+   has been moved" while its summary row, §0.9, amendment S1, and the entry's
+   own resolution footer all record decided. Changed only the header to:
+   decided by the owner 2026-09-09, S1 accepted, `[LT-3]` governs, current
+   rules are `[TYP-15]`/`[LT-3]` in 0.8.4. No rule text touched.
+3. **ERR-041 vs D5 — tracking distinguished.**
+   Errata ERR-041 already decided (ADR-017); `DEVIATIONS.md` D5 already
+   unratified/awaiting owner. Only `COLD-START.md` §7 titled the open bullet
+   ERR-041. Changed §7 to title it **D5** (open deviation) with ERR-041 noted
+   decided via ADR-017; removed the resolved `[EFF-18]` bullet in the same
+   edit. No semantics touched.
+4. **`error_pages.py` — promoted to a real CI gate.**
+   Intended contract was already "gate": COLD-START §1 lists it among "6 gates
+   green", it enforces normative `[DOC-1]`/`[DIA-6]`/`[PHIL-8a]`, and the only
+   contrary evidence was its absence from `ci.yml`. Per the brief's preference,
+   added `.github/workflows/ci.yml` step "error pages compile as documented"
+   (`python tools/error_pages.py`) after the spec gate build, before the
+   Appendix A check. Docs and CI now agree: six enforced gates. YAML validated;
+   step order verified.
+
+Validation: `hardening_check.py` (29 diffs, all declared), `split_spec.py
+--check` (matches), `rule_index.py` (no new problems), `check_branding.py`
+(no new names), `spec_check.py` (no new failures), `error_pages.py` (8 pages,
+every fail/fix as documented), `spec_check.py --emit-appendix` (no drift),
+`cargo test --workspace --locked` (**178 passed, 0 failed**). `cargo build`
+was already green; the one `non_snake_case` test-target warning
+(`from_is_contextual…From…`) is pre-existing.
+
+Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
+ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
+unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
+restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D1–D5**
+(D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D1, D3, D4 as
+ledgered); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
+`CELL-SYNC-1`; Phase 2 coverage gaps per COLD-START §4. Not reopened or
+renumbered here: D-018 and D-025 are **fixed** (see `DEFECTS.md`), `[CLO-3]` /
+ADR-018 is **closed** with D2 as the live residual, and **no `[FFI-17]` open
+issue exists in any ledger** — `DEFECTS.md`, `DEVIATIONS.md` and
+`spec-errata.md` record none, so none is created here. (The `[FFI-17]`
+numbered list's past collisions with its tables were settled by the owner's own
+`NON-NORMATIVE` demotion under `[CAT-1]` — rules/tables govern — with only a
+future owner revision's deletion outstanding per `spec-amendments.md` "Not
+amended, and why". That is settled text, not an issue.) Next task remains
+`RefCell[T]`, then `Arena` (§0.14); not started here.
+
+### 0.17 Specification authority: frozen vs editable vs generated
+
+**Language revision: 0.8.4. Hardened artifact: `Ember_v0.8.4_Hardened_1`.**
+0.8.3 is the previous accepted version and stays accepted for compatibility
+(`#! language "0.8.3"` compiles unchanged). 0.8.4 is current and additive over
+0.8.3. S1 / ERR-044 is the sole semantic reason 0.8.4 exists. Hardening must
+never become an excuse to redesign the language.
+
+| Artifact | Role | Editable? |
+|---|---|---|
+| `docs/spec-source/as-received/Ember_v0.8.3_spec.md` | the owner's file (md5 `2bdffee6510b8668cf828185266efedb`) | **NEVER** |
+| `docs/spec-source/ember-spec.md` | **working normative source — authoritative for implementation** | yes, by declared amendment only (one of the four hardening classes; `hardening_check.py` fails CI otherwise) |
+| `docs/spec/` | generated split of `ember-spec.md` | **NEVER by hand** (`split_spec.py --check` fails CI) |
+| `docs/spec-source/Ember_v0.8.4_Hardened_1.md` | frozen cut snapshot; the next hardening diffs against it | **NEVER** |
+| `docs/spec-amendments.md` | ledger declaring every source-vs-owner difference | yes — it is the permission, not a description |
+
+This assignment is verified, not assumed: `hardening_check.py` sets
+`HARDENED = ember-spec.md`; `split_spec.py`'s own docstring calls
+`ember-spec.md` "the normative document"; `spec_check.py` (`SPEC`) and
+`rule_index.py` (`SPEC`) both read it. **No gate reads the frozen file.**
+That is why the working source — not the frozen cut — is what the next agent
+implements against.
+
+**E5's standing.** E5 (`[EFF-18]` gains `Nondet`, §0.16) is an EDITORIAL
+REPAIR authorised by the already-decided ERR-028: it changes no rule's
+meaning, moves no implementation, and therefore forces neither a language bump
+nor a new frozen cut. It folds into the next Hardened cut whenever one is
+taken. Until then the working source **intentionally** runs exactly one repair
+ahead of the frozen snapshot — the E5 enumeration entry plus the front-matter
+tense note — and the `**Version:** 0.8.4_Hardened_1` header is deliberately
+unchanged so the delta stays reviewable. This is documented here rather than
+hidden: the hierarchy has not changed, the snapshot has not been redefined,
+and no future agent should "fix" the discrepancy by editing the frozen file,
+regenerating it silently, or declaring the files interchangeable.
+
+**Rule: the frozen file, the working source, and the generated split are not
+interchangeable.** For code, `ember-spec.md` (+ `docs/spec/`) governs; for
+provenance (what Hardened_1 contained), the frozen file governs. On any
+difference between them, the working source wins for implementation *if and
+only if* the difference is a declared amendment — `hardening_check.py`
+enforces exactly this. Anything else is a defect in the handoff, not a licence
+to pick a reading.
 
 ---
 
@@ -759,8 +916,9 @@ anything:
 
 `docs/MIGRATION-0.8.3.md` §4 is the full route. The head of it:
 
-1. `[RNG-4]`'s range tracking (D-018, open: precision, not soundness — half of
-   it waits for a generic `min`/`max` over a numeric bound).
+1. `[RNG-4]`'s range tracking (D-018 — **fixed** per `DEFECTS.md`; what remains
+   is precision later-work, not an open defect — half of it waits for a generic
+   `min`/`max` over a numeric bound).
 2. Closures (`[CLO-*]`), `Span`/`MutSpan` (`[SPN-*]`), `Cell`/`RefCell`
    (`[CELL-*]`), `Arena` (`[ARN-*]`), `assert_disjoint` (`[DSJ-*]`) — the rest
    of Phase 2's list.

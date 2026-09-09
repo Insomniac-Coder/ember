@@ -93,6 +93,12 @@ jobs:
       - name: specification code blocks parse
         run: python tools/spec_check.py
 
+      # `[DOC-1]`, `[DIA-6]`, `[PHIL-8a]` — every `docs/errors/EXXXX.md` page's
+      # failing example fails with its code and its fix compiles, against a
+      # ratcheted baseline of emitted codes without a page.
+      - name: error pages compile as documented
+        run: python tools/error_pages.py
+
       # `[TST-6]` — Appendix A is generated from its fixture, so the quick
       # reference cannot drift away from something that parses.
       - name: Appendix A matches its fixture

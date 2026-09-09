@@ -689,6 +689,38 @@ claiming two statuses for one word. `[LEX-15b]` already makes it a v1 keyword
 and says its count "supersedes" `[LEX-15]`'s, so the rule was the half that
 governed and the table is brought to match. The tables carry a note saying so.
 
+### E5 — `[EFF-18]`: the effect set gains `Nondet` (ERR-028 applied)
+
+    Class: EDITORIAL REPAIR
+    Implementation change:  none — no rule changes meaning and the compiler does not move
+
+**Authorised by** ERR-028 in `docs/spec-errata.md` (decided: the effect set has
+ten members; X.1 governs; `[DET-2]` enumerates `Nondet`'s sources
+exhaustively). At Hardened_1 time this disagreement was deliberately left as an
+owner decision rather than a hardening (see the front matter's "Deliberately
+not done" paragraph as written then); the decision it waited on is the one
+ERR-028 already records, and no superseding ruling has since removed `Nondet`
+from X.1, from the X.1 table, or from `[DET-*]`.
+
+**Why this is repair and not a semantic change.** Part X §1 already defines
+the set with `Nondet` and carries a table row defining the effect; `[DET-1]`
+contracts over it, `[DET-2]` introduces it "by, and only by" its sources, and
+`@deterministic` is meaningless without it. `[EFF-18]` was written for 0.6
+(`Io`, `Lock`); `Nondet` arrived in 0.6.3 with `[DET-1]`/`[DET-2]`, which added
+it to X.1 without revisiting `[EFF-18]`'s parenthetical list. `[EFF-18]`'s own
+sentence — it "does not remove an effect previously attached to any operation;
+it refines the effect model" — says it is not an exclusive list. Adding the
+missing member brings a stale enumeration in line with the section that defines
+the set; it admits no new program, forbids no old one, and changes no effect
+any operation carries.
+
+**What was done.** `[EFF-18]`'s full set reads
+`{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, Nondet, RuntimeCheck(k)}`,
+matching X.1. Nothing else in the rule moves: `@noio`, `@nolock`, `@noblock`
+and `@nosync` remain independent, which is what the rule is for. The front
+matter's "Deliberately not done" paragraph now records the prior disagreement
+in the past tense rather than asserting a live contradiction.
+
 ---
 
 ## Not amended, and why

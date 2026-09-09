@@ -161,10 +161,9 @@ result — so read literally the document's own example is `E2140`, and `split_a
 be called on its own result either. A reading that resolves it was drafted, and putting
 it into the rule would have been this hardening answering *what Ember means* rather than
 how to implement what it already means. The rule stands as written; the question is
-ERR-041 and belongs to the owner. `[EFF-18]` states the effect set
-without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
-table row defining the effect. Two normative statements disagree and neither is
-marked non-normative, so it is an owner decision rather than a hardening.
+ERR-041 and belongs to the owner. `[EFF-18]` stated the effect set
+without `Nondet` at Hardened_1 time, while §X.1 — the section that defines the set — already included it, with a
+table row defining the effect. That disagreement was recorded as an owner decision (ERR-028: X.1 governs) rather than a hardening, and the enumeration has since been brought in line with X.1; see `docs/spec-amendments.md`.
 `[FFI-17]`'s numbered list contradicts XVI.7a's tables on `std::function` and
 `std::optional<T>`; the list is already `NON-NORMATIVE` under `[CAT-1]` and the
 document asks a future revision to delete the drifted claims — a deletion from owner
@@ -2100,9 +2099,9 @@ The compiler infers, for every function, an **effect set** ⊆ `{Alloc, Sync, Lo
   `Sync + Lock`; a blocking file read carries `Io + Block`; and a non-blocking I/O
   operation carries `Io` without `Block`. `@noio`, `@nolock`, `@noblock` and
   `@nosync` therefore remain independent contracts. The full set is
-  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`. `[EFF-18]`
+  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, Nondet, RuntimeCheck(k)}`. `[EFF-18]`
   does not remove an effect previously attached to any operation; it refines the
-  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)*
+  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)* *(ERR-028 applied 2026-09-09; see `docs/spec-amendments.md`)*
 * `[EFF-19]` `@realtime` on a function expands to a configured contract set,
   by default `@noalloc @nolock @noblock @nopanic(explicit)`. It is a **marker
   for that set and not a timing guarantee**: the compiler MUST NOT state or
