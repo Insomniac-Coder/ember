@@ -121,6 +121,11 @@ pub enum ItemKind {
     Static(StaticDecl),
     TypeAlias(TypeAlias),
     ExternBlock(ExternBlock),
+    /// `[FFI-39]` — `extern class Path:`, a **declared** foreign base: sized,
+    /// of known layout, and implicitly `open` so `[CLS-4]` admits it as a base
+    /// — as against an `extern` block's opaque, unsized `type`, which may not
+    /// be inherited.
+    ExternClass(ExternClass),
     Comptime(Block),
 }
 
@@ -154,9 +159,25 @@ pub struct ImportItem {
 }
 
 #[derive(Debug)]
+pub struct ExternClass {
+    pub name: Ident,
+    /// The foreign path as written: `cpp.RageV.Layer`.
+    pub path: Vec<Ident>,
+    pub members: Vec<Member>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
 pub struct FnDecl {
     pub name: Ident,
     pub is_unsafe: bool,
+    /// `extern "C" fn f(...)` at item level — the ABI its definition uses, and
+    /// what `@export` (XVI.10) attaches to. `None` for an ordinary function.
+    ///
+    /// Distinct from `ExternBlock`, which *declares* foreign functions: this
+    /// **defines** one with a foreign calling convention and an unmangled
+    /// symbol, which is the shape a host embeds against.
+    pub abi: Option<String>,
     /// `[GRM-21]` — `gen_fn := "gen" fn_decl`. A `gen fn` is a coroutine
     /// (`[CORO-1]`): calling it executes no part of the body and returns a
     /// `Coroutine[R]` holding the suspended frame. `gen` is contextual

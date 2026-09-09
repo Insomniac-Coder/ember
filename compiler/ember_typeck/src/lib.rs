@@ -893,6 +893,35 @@ impl<'a> Checker<'a> {
     fn declare_names(&mut self, module: &ast::Module) {
         let index = self.current_module;
         for item in &module.items {
+            // `[FFI-39]` parses (errata ERR-037 added the production) and
+            // nothing past the parser understands it: Part XVI's C++ boundary
+            // is Phase 7. Refusing it by name is the point — a declaration that
+            // parses, is stored, and is then ignored by every later stage is
+            // the shape three defects in this compiler have already taken, and
+            // `extern class` would be the worst of them, since a base class
+            // silently doing nothing produces a program that links and is
+            // wrong.
+            if let ast::ItemKind::ExternClass(decl) = &item.kind {
+                let path = decl
+                    .path
+                    .iter()
+                    .map(|s| s.name.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E1010,
+                        decl.span,
+                        format!("`extern class {path}` is not supported yet in this phase"),
+                    )
+                    .help("declare an opaque `type` in an `extern` block if you only need a handle")
+                    .note(concat!(
+                        "a declared foreign base needs the C++ importer and a trampoline, ",
+                        "which are Phase 7 [FFI-39]"
+                    )),
+                );
+                continue;
+            }
             let Some(name) = item_name(item) else { continue };
             let qualified = self.qualified(name);
             self.visible[index].insert(name, qualified);
@@ -2745,10 +2774,18 @@ impl<'a> Checker<'a> {
                 main = Some(def);
             }
             let overflow = self.overflow_policy(&item.attrs, item.span);
+            // `extern "C" fn` DEFINES a function a host links against, so its
+            // symbol is the name as written — `[MNG-1]`'s module-qualified
+            // mangling would make it unfindable, which defeats the point.
+            let symbol = match &decl.abi {
+                Some(_) => decl.name.name.to_string(),
+                None => mangle(name, is_main),
+            };
+            self.check_foreign_signature(decl, def);
             functions.push(Function {
                 def,
                 name,
-                symbol: mangle(name, is_main),
+                symbol,
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -2862,6 +2899,76 @@ impl<'a> Checker<'a> {
     }
 
     /// One function body, checked into a `Function` with a given `DefId`.
+    /// `[FFI-5]`, `[RNG-10b]` — what an `extern "C" fn` definition may
+    /// mention in its signature.
+    ///
+    /// A foreign ABI means the type has to have a representation the other side
+    /// agrees on, so every parameter and the return type must be FFI-safe.
+    /// A range type is called out separately because it *is* representable —
+    /// it erases to its representation — and is still refused: `[RNG-10b]` says
+    /// a value arriving from foreign code "enters at the representation type
+    /// and becomes a range value only through `[RNG-3]`", so admitting one here
+    /// would let a foreign caller manufacture a range value that never passed a
+    /// check, and `[RNG-9]` makes that undefined behaviour rather than a wrong
+    /// number.
+    fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId) {
+        if decl.abi.is_none() {
+            return;
+        }
+        if decl.dispatch != ast::Dispatch::Static {
+            self.error(
+                codes::E0104,
+                decl.name.span,
+                "`virtual` and `override` are not admitted on an `extern` function",
+            );
+        }
+        let signature: Vec<(Symbol, Ty, Span)> = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .map(|(n, t, _, s)| (*n, *t, *s))
+            .collect();
+        let ret = self.signatures[def.0 as usize].ret;
+let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
+            if matches!(this.types.kind(ty), TyKind::Range(_)) {
+                let shown = this.types.display(ty);
+                this.sink.emit(
+                    Diagnostic::error(
+                        codes::E5054,
+                        span,
+                        format!("`{shown}` is a range type, so it may not cross a foreign boundary"),
+                    )
+                    .primary_label(what.clone())
+                    .help(format!(
+                        "declare the representation and construct with `{shown}.checked(...)` in an Ember-side wrapper"
+                    ))
+                    .note(concat!(
+                        "a value from foreign code enters at the representation type and becomes ",
+                        "a range value only through a checked construction [RNG-10b]"
+                    )),
+                );
+                return;
+            }
+            if !this.types.is_ffi_safe(ty) {
+                let shown = this.types.display(ty);
+                this.sink.emit(
+                    Diagnostic::error(
+                        codes::E5050,
+                        span,
+                        format!("`{shown}` has no foreign representation"),
+                    )
+                    .primary_label(what)
+                    .note("every type in an `extern` signature must be FFI-safe [FFI-5]"),
+                );
+            }
+        };
+        for (name, ty, span) in signature {
+            check(self, ty, span, format!("`{name}` is this parameter"));
+        }
+        if ret != self.common.void {
+            check(self, ret, decl.name.span, "this is the return type".to_string());
+        }
+    }
+
     fn check_one_function(
         &mut self,
         decl: &ast::FnDecl,
@@ -7285,6 +7392,7 @@ fn item_name(item: &ast::Item) -> Option<Symbol> {
         ast::ItemKind::TypeAlias(d) => d.name.name,
         ast::ItemKind::Extend(_)
         | ast::ItemKind::ExternBlock(_)
+        | ast::ItemKind::ExternClass(_)
         | ast::ItemKind::Comptime(_) => return None,
     })
 }

@@ -215,12 +215,33 @@ impl Parser<'_> {
     }
 
     fn parse_item_kind(&mut self) -> Option<ItemKind> {
-        // `unsafe extern "C":` and `unsafe fn`.
+        // Three item forms open with `extern`, and the token after the ABI
+        // string is what tells them apart:
+        //
+        //     extern "C":              a block, DECLARING foreign functions
+        //     extern "C" fn f(...):    a definition with a foreign ABI (XVI.10)
+        //     extern class Path:       a declared foreign base ([FFI-39])
+        //
+        // Only the first existed. The second is what `@export` attaches to and
+        // is the shape a host embeds against; the third carries the whole of
+        // `[FFI-39]`'s bounded inheritance model. Neither had a production —
+        // errata ERR-036 and ERR-037 — so neither parsed, though the document
+        // writes both.
+        if self.at_kw(Kw::Extern) && self.at_kw_at(1, Kw::Class) {
+            return Some(ItemKind::ExternClass(self.parse_extern_class()));
+        }
+        // `unsafe extern "C":` and `unsafe extern "C" fn`.
         if self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Extern) {
+            if self.at_kw_at(3, Kw::Fn) {
+                return Some(ItemKind::Fn(self.parse_fn()));
+            }
             self.bump();
             return Some(ItemKind::ExternBlock(self.parse_extern_block(true)));
         }
         if self.at_kw(Kw::Extern) {
+            if self.at_kw_at(2, Kw::Fn) {
+                return Some(ItemKind::Fn(self.parse_fn()));
+            }
             return Some(ItemKind::ExternBlock(self.parse_extern_block(false)));
         }
 
@@ -371,6 +392,44 @@ impl Parser<'_> {
         Some(expr)
     }
 
+    /// `[FFI-39]` — `extern class cpp.RageV.Layer:`.
+    ///
+    /// The body is an ordinary `type_body`, so members parse exactly as a
+    /// class's do. Nothing past the parser understands one yet: Part XVI's C++
+    /// boundary is Phase 7, and the type checker refuses it by name rather than
+    /// accepting it into a stage that would ignore it.
+    fn parse_extern_class(&mut self) -> ExternClass {
+        let start = self.span();
+        self.expect_kw(Kw::Extern);
+        self.expect_kw(Kw::Class);
+        let mut path = vec![self.expect_ident()];
+        while self.eat_punct(Punct::Dot) {
+            path.push(self.expect_ident());
+        }
+        let name = *path.last().expect("at least one segment");
+        self.expect_punct(Punct::Colon);
+        let members = self.parse_type_body();
+        ExternClass { name, path, members, span: start.to(self.prev_span()) }
+    }
+
+    /// The ABI string after `extern`. `[FFI-1]` admits `"C"` and `"C++"`.
+    fn expect_abi_string(&mut self) -> String {
+        match self.peek().clone() {
+            TokenKind::Lit(Lit::Str(value)) => {
+                self.bump();
+                value
+            }
+            _ => {
+                self.report_code(
+                    codes::E0100,
+                    self.span(),
+                    "expected an ABI string, as `extern \"C\" fn`",
+                );
+                String::from("C")
+            }
+        }
+    }
+
     fn parse_extern_block(&mut self, is_unsafe: bool) -> ExternBlock {
         self.expect_kw(Kw::Extern);
         let abi = match self.peek().clone() {
@@ -424,6 +483,14 @@ impl Parser<'_> {
             self.bump();
         }
         let is_unsafe = self.eat_kw(Kw::Unsafe);
+        // `["extern" string_lit]` — the ABI a definition uses. It sits after
+        // `unsafe`, matching `unsafe extern "C":` for the block form.
+        let abi = if self.at_kw(Kw::Extern) {
+            self.bump();
+            Some(self.expect_abi_string())
+        } else {
+            None
+        };
         let dispatch = if self.eat_kw(Kw::Virtual) {
             Dispatch::Virtual
         } else if self.eat_kw(Kw::Override) {
@@ -454,7 +521,7 @@ impl Parser<'_> {
             self.expect_newline();
         }
 
-        FnDecl { name, is_unsafe, is_gen, dispatch, generics, params, ret, where_clause, body }
+        FnDecl { name, is_unsafe, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
     }
 
     fn parse_param(&mut self) -> Param {

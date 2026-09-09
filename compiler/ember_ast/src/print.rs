@@ -161,6 +161,14 @@ impl Printer {
                     p.item(i);
                 }
             }),
+            ItemKind::ExternClass(c) => {
+                let path = c.path.iter().map(|s| s.name.to_string()).collect::<Vec<_>>();
+                self.nest(&format!("ExternClass {}", path.join(".")), |p| {
+                    for m in &c.members {
+                        p.member(m);
+                    }
+                })
+            }
             ItemKind::Comptime(b) => self.nest("Comptime", |p| p.block(b)),
         }
     }
