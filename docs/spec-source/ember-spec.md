@@ -1,7 +1,8 @@
 # Ember Programming Language — Design & Implementation Specification
 
-**Version:** 0.8.3_Hardened_1 **+ S1, pending a version decision** (supersedes 0.8.2c; see the change log at the end of Part 0)
-**Pending:** this file carries one **owner-approved semantic change** — S1, the resolution of ERR-044 — which a hardening may not contain, because it changes the set of accepted programs rather than only the document's completeness. It is additive: no program valid under 0.8.3 becomes invalid. The version is therefore **not yet settled**; it will either cut **v0.8.4**, which keeps 0.8.3 exactly as specified and leaves hardening a pure clarification mechanism, or land in **Hardened_2** with that boundary explicitly relaxed. Until then this file is "0.8.3_Hardened_1 plus S1" and says so rather than claiming to be either.
+**Version:** 0.8.4_Hardened_1 (supersedes 0.8.3; see the change log at the end of Part 0)
+**Versioning:** two numbers move independently. The **language version** moves when the set of accepted programs changes — 0.8.4 exists because of one such change, S1, the owner's resolution of ERR-044, which admits a static-region view into storage that has no bounding region. The **hardening number** moves when the document gains implementation detail and no rule changes meaning; it resets to 1 with each language version. A hardening may never carry a semantic change: that is what forces the language number instead, and is why this file is 0.8.4_Hardened_1 rather than 0.8.3_Hardened_2.
+**Compatibility:** 0.8.4 is additive over 0.8.3. No program valid under 0.8.3 becomes invalid, and a source file may still declare `#! language "0.8.3"`.
 **Hardening:** A hardening adds implementation detail that the revision left out, and changes no rule's meaning and no language version. Source files still declare `#! language "0.8.3"`, because the language did not move — only the document's completeness did. What Hardened_1 contains is the last change-log section; every edit is marked in place and recorded with its justification in `docs/spec-amendments.md`. The owner's file is preserved untouched at `docs/spec-source/as-received/`.
 **Lineage:** authored from **0.8.2c**, which was authored from 0.8.2b, which was authored from 0.8.1, which was authored from 0.8, which was authored from 0.7.2, which was authored from 0.7.1, which was authored from 0.6.3 taking the design — not the text — of the 0.7 draft for hot reload, the compile-time budget and the C++ boundary. The 0.7 draft was itself authored from 0.3 and silently reverted 239 rules settled in 0.4 through 0.6.2; every one of those is retained here. **A revision of this document MUST be authored from the immediately preceding revision.**
 **Authority:** This document is the sole normative source for Ember. It supersedes all earlier drafts, which are not required to implement anything described here.
@@ -58,10 +59,21 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
-## Change log — 0.8.3_Hardened_1
+## Change log — 0.8.4_Hardened_1
 
-A hardening, not a revision. **No rule changed meaning, no feature was added, and
-the language version did not move.** Every entry closes a gap found while building
+**0.8.4 is one semantic change; Hardened_1 is everything else.**
+
+The semantic change is **S1**, the owner's resolution of ERR-044: `[TYP-15]`
+forbade a view in any storage with no bounding region, `[LT-3]` said a `str`
+literal may be stored in a class field because its region is `static`, and
+`[TYP-15]`'s own principle — a view may be stored where its region outlives the
+destination — sided with `[LT-3]`. The enumeration was what overreached. It is
+additive: no 0.8.3 program becomes invalid, and `[TYP-15a]`'s prohibition on
+owning containers at view types is untouched. That change, and only that change,
+is why the language number moved.
+
+Everything below is the hardening, and of it: **no rule changed meaning, no
+feature was added.** Every entry closes a gap found while building
 the compiler against 0.8.3 — a mechanism a rule states without saying how, a name a
 rule uses and never declares, a production for syntax the document already writes,
 or an editorial instruction pasted in instead of carried out.

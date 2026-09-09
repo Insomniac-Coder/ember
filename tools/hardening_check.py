@@ -49,7 +49,12 @@ PRODUCTION = re.compile(r"^([a-z_]+)\s*:=")
 HEADING = re.compile(r"^#{1,3}\s+(.*)$")
 
 # Front matter the hardening adds wholesale rather than editing.
-NEW_SECTIONS = ("Change log — 0.8.3_Hardened_1", "**Hardening:**", "**Version:**")
+NEW_SECTIONS = (
+    "Change log — 0.8.4_Hardened_1",
+    "**Versioning:**",
+    "**Compatibility:**",
+    "**Version:**",
+)
 
 # The markers the hardening writes into the text. A line that differs only by
 # one of these is an annotation, not a change to what the rule says — but it is

@@ -5,10 +5,18 @@ and `docs/spec-source/ember-spec.md`, with the reason for it.
 
 ## The hardening protocol (owner, 2026-09-09)
 
-The normative document carries a **hardening number** after its version:
-`v0.8.3_Hardened_1`, `v0.8.3_Hardened_2`, and so on. The language version does
-not move — a hardening adds no feature and changes no rule's meaning. It records
-implementation detail that v0.8.3 left out.
+The normative document carries **two numbers that move independently**:
+`v0.8.4_Hardened_1`, and so on.
+
+* The **language version** moves when the set of accepted programs changes.
+  When it moves, the hardening number **resets to 1**.
+* The **hardening number** moves when the document gains implementation detail
+  and no rule changes meaning.
+
+A hardening may never carry a semantic change; that is precisely what forces the
+language number instead. The current file is `0.8.4_Hardened_1` and not
+`0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts, so
+0.8.3 could not absorb it and the hardening count started again.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -545,25 +553,19 @@ hidden because the owner made the decision explicitly and asked for it to be
 recorded as one: *"Please resolve ERR-044 as an owner semantic decision, not as
 a hardening-only change."*
 
-**The version is not settled, and the file says so.** The protocol says the
-fifth class "forces a language revision", so this cannot ride quietly in a
-hardening. Until the checkpoint the document's header reads
-*0.8.3_Hardened_1 **+ S1, pending a version decision***, which is neither claim
-made prematurely.
+**Settled: this is what made the language version 0.8.4.** The protocol says
+the fifth class "forces a language revision", and the owner took that route
+rather than relaxing the boundary — so S1 is 0.8.4's one semantic change and
+everything else in the file is Hardened_1 on top of it.
 
-The owner's reading, recorded so the checkpoint does not re-litigate it:
-
-* **Option A — v0.8.4.** The cleanest semantic-versioning story. 0.8.3 stays
-  exactly the language previously specified, and 0.8.4 formally admits
-  static-region views in unbounded storage. *The owner's preference.*
-* **Option B — Hardened_2.** No version bump, but the document must then say in
-  terms that Hardened_2 contains an owner-approved semantic change and is no
-  longer pure hardening.
-
-The reason A is the better default is not the size of the change — it is tiny
+The reason to prefer that route was never the size of the change — it is tiny
 and additive, and no 0.8.3 program becomes invalid — but the boundary it
-protects: **hardening must never quietly become language evolution.** The text
-and the compiler are identical under either option; only the number differs.
+protects: **hardening must never quietly become language evolution.** The
+alternative was Hardened_2 with the document admitting it was no longer pure
+hardening, which costs the boundary to save a digit.
+
+`0.8.3` remains an accepted language version, so a file declaring
+`#! language "0.8.3"` compiles unchanged; `0.8.4` is accepted beside it.
 
 **What was wrong.** ERR-044. `[TYP-15]` stated a principle — a view may not be
 stored "in a place whose region is not outlived by the view's region" — and then

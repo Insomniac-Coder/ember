@@ -28,6 +28,11 @@ mod body;
 pub const LANGUAGE_VERSIONS: &[&str] = &[
     "0.5", "0.6", "0.6.2", "0.6.3", "0.7.1", "0.7.2", "0.8", "0.8.1", "0.8.2b", "0.8.2c",
     "0.8.3",
+    // 0.8.4 — one semantic change over 0.8.3 (S1, the resolution of ERR-044:
+    // a static-region view may be stored where a place has no bounding
+    // region). Additive, so 0.8.3 stays accepted and a file declaring it
+    // compiles unchanged.
+    "0.8.4",
 ];
 
 /// Parse one file's token stream into a [`Module`].

@@ -28,10 +28,21 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
-## Change log — 0.8.3_Hardened_1
+## Change log — 0.8.4_Hardened_1
 
-A hardening, not a revision. **No rule changed meaning, no feature was added, and
-the language version did not move.** Every entry closes a gap found while building
+**0.8.4 is one semantic change; Hardened_1 is everything else.**
+
+The semantic change is **S1**, the owner's resolution of ERR-044: `[TYP-15]`
+forbade a view in any storage with no bounding region, `[LT-3]` said a `str`
+literal may be stored in a class field because its region is `static`, and
+`[TYP-15]`'s own principle — a view may be stored where its region outlives the
+destination — sided with `[LT-3]`. The enumeration was what overreached. It is
+additive: no 0.8.3 program becomes invalid, and `[TYP-15a]`'s prohibition on
+owning containers at view types is untouched. That change, and only that change,
+is why the language number moved.
+
+Everything below is the hardening, and of it: **no rule changed meaning, no
+feature was added.** Every entry closes a gap found while building
 the compiler against 0.8.3 — a mechanism a rule states without saying how, a name a
 rule uses and never declares, a production for syntax the document already writes,
 or an editorial instruction pasted in instead of carried out.

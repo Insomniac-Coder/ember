@@ -179,10 +179,16 @@ def dangling_references(lines, defined):
     """
     out = []
     in_old_changelog = False
+    seen_a_changelog = False
     for number, line in enumerate(lines, start=1):
         stripped = line.strip()
         if stripped.startswith("## Change log"):
-            in_old_changelog = "0.8.3" not in stripped
+            # The topmost change log is the current one, whatever version it
+            # names. Matching a literal version string meant the check silently
+            # started ignoring the current section the moment the version moved,
+            # which is the failure mode a version-coupled constant always has.
+            in_old_changelog = seen_a_changelog
+            seen_a_changelog = True
             continue
         if stripped.startswith("## ") and not stripped.startswith("## Change log"):
             in_old_changelog = False
