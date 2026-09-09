@@ -628,6 +628,128 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(value) });
     }
 
+    /// A local that no scope and no statement will drop.
+    ///
+    /// `temp` registers what it makes with `[DRP-3]`, which is right for a
+    /// temporary holding a value nobody else will claim. The cell operations
+    /// need the opposite: a slot that holds a value on its way from one owner
+    /// to another, where a second drop would be a double free.
+    fn temp_unowned(&mut self, ty: Ty, span: ember_span::Span) -> LocalId {
+        let id = LocalId(self.locals.len() as u32);
+        self.locals.push(LocalDecl { ty, kind: LocalKind::Temp, name: None, span });
+        id
+    }
+
+    /// `[CELL-1]` — `c.set(v)` and `c.replace(v)`, which differ only in what
+    /// becomes of the old value: `replace` hands it back, `set` drops it.
+    ///
+    /// **"`set` and `replace` MUST store the new value before dropping the old
+    /// one."** The rule gives its own reason: a drop runs user code, that code
+    /// can reach the same cell, and a drop-then-store implementation would let
+    /// it read the cell while there is nothing in it. So the old value is moved
+    /// out to a slot first, the new one is stored, and only then does the drop
+    /// run — by which time the cell holds `v` and re-entering it is harmless.
+    ///
+    /// This is the one place in the compiler where that order is right, and it
+    /// is exactly opposite to `[OWN-5]`, which every ordinary assignment
+    /// follows. That is why `set` is not lowered as an assignment; ADR-020's
+    /// last paragraph is the note not to generalise either rule to the other.
+    ///
+    /// The new value is lowered **first**, before the old one is disturbed:
+    /// `update(f)` arrives here as `set(f(get()))`, and `f` has to see what the
+    /// cell held.
+    fn lower_cell_store(
+        &mut self,
+        old_into: Option<Place>,
+        cell: &'a hir::Expr,
+        value: &'a hir::Expr,
+    ) {
+        let inner = value.ty;
+        let new = self.lower_operand(value);
+        let field = self.lower_place(cell).field(0);
+        self.at(cell.span);
+
+        // Where the old value goes. `replace` was given a destination; `set`
+        // needs a slot only if there is something to drop, and for a `T` that
+        // owns nothing there is no slot and no drop — `[CELL-2]`'s "no overhead
+        // relative to a plain field" is the ordinary case, and this is it.
+        let old = match &old_into {
+            Some(place) => Some(place.clone()),
+            None if self.types.needs_drop(inner) => {
+                Some(Place::local(self.temp_unowned(inner, cell.span)))
+            }
+            None => None,
+        };
+        if let Some(old) = &old {
+            let taken = self.read(field.clone(), inner);
+            self.push(StmtKind::Assign { place: old.clone(), rvalue: Rvalue::Use(taken) });
+        }
+        self.push(StmtKind::Assign { place: field, rvalue: Rvalue::Use(new) });
+        // Only `set` drops. `replace`'s caller owns the old value now, so the
+        // cell is never torn there at all.
+        if old_into.is_none() {
+            if let Some(old) = old {
+                self.push(StmtKind::Drop { place: old, flag: None });
+            }
+        }
+    }
+
+    /// `[CELL-1]` — `c.into_inner()`, which takes `owned self`.
+    ///
+    /// The payload leaves and the cell must not be dropped behind it: the
+    /// payload was the only thing it owned, so dropping the cell afterwards
+    /// would free the value its caller now holds.
+    ///
+    /// Moving the *whole cell* into a slot first is what says so. A move out of
+    /// a field is a partial move and `[OWN-3]`'s analysis does not track one,
+    /// so it would leave the receiver looking live and drop it at scope end; a
+    /// whole-local move is tracked, and marks the receiver moved. The slot
+    /// itself is `temp_unowned`, so nothing drops it either — which is the
+    /// point, because its field has left.
+    fn lower_cell_into_inner(&mut self, place: Place, cell: &'a hir::Expr, inner: Ty) {
+        let carrier = self.temp_unowned(cell.ty, cell.span);
+        let whole = self.lower_place(cell);
+        self.at(cell.span);
+        let moved = self.read(whole, cell.ty);
+        self.push(StmtKind::Assign {
+            place: Place::local(carrier),
+            rvalue: Rvalue::Use(moved),
+        });
+        let payload = self.read(Place::local(carrier).field(0), inner);
+        self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(payload) });
+    }
+
+    /// `[CELL-1]` — `c.update(f)`, which is `set(f(get()))`.
+    ///
+    /// `T: Copy` here, checked in typeck, so reading the old value is a load
+    /// and leaves the cell intact: `f` runs with the cell still holding what it
+    /// held, which is what makes it safe for `f` to reach the same cell. There
+    /// is nothing to drop and no window to protect.
+    fn lower_cell_update(&mut self, cell: &'a hir::Expr, f: &'a hir::Expr) {
+        let field = self.lower_place(cell).field(0);
+        let inner = self.types.kind(f.ty);
+        let ret = match inner {
+            TyKind::Fn { ret, .. } => *ret,
+            // typeck checked the shape; a non-function here is an earlier error
+            // already reported, and lowering has nothing useful to add.
+            _ => return,
+        };
+        let callee = self.lower_operand(f);
+        self.at(cell.span);
+        let old = self.read(field.clone(), ret);
+        let result = self.temp_unowned(ret, cell.span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Indirect(callee),
+            args: vec![old],
+            dest: Place::local(result),
+            next,
+        });
+        self.current = next;
+        let produced = self.read(Place::local(result), ret);
+        self.push(StmtKind::Assign { place: field, rvalue: Rvalue::Use(produced) });
+    }
+
     // -- expressions ----------------------------------------------------------
 
     /// Lower `expr` so that its value ends up in `place`.
@@ -685,6 +807,18 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::CellSet, args } => {
+                self.lower_cell_store(None, &args[0], &args[1]);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::CellReplace, args } => {
+                self.lower_cell_store(Some(place), &args[0], &args[1]);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::CellIntoInner, args } => {
+                self.lower_cell_into_inner(place, &args[0], expr.ty);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::CellUpdate, args } => {
+                self.lower_cell_update(&args[0], &args[1]);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RangeChecked(id), args } => {
                 self.lower_range_checked(place, *id, &args[0], expr.ty, expr.span);

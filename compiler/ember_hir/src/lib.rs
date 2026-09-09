@@ -323,6 +323,31 @@ pub enum Builtin {
     /// the closed construction set. `[RNG-9]` makes an out-of-range value
     /// undefined behaviour, which is the caller's obligation.
     RangeNewUnchecked(RangeId),
+    /// `[CELL-1]` — `c.set(owned v)`. Three of `Cell`'s five members need a
+    /// carrier of their own rather than an ordinary expression, and all three
+    /// need it for the same reason: they move the payload out of the cell and
+    /// put something back, which is a sequence of statements and not a value.
+    ///
+    /// `set` in particular could not be an assignment even if it were one
+    /// statement. `[OWN-5]` makes an assignment drop the old value **before**
+    /// storing the new one, and `[CELL-1]` requires the opposite order —
+    /// "`set` and `replace` MUST store the new value before dropping the old
+    /// one", because a drop can re-enter the same cell and read it while it is
+    /// torn. Lowering these itself is what keeps the two rules apart; see
+    /// ADR-020's closing paragraph.
+    CellSet,
+    /// `[CELL-1]` — `c.replace(owned v) -> T`. As `set`, except the old value
+    /// is handed back rather than dropped, so the cell is never torn at all.
+    CellReplace,
+    /// `[CELL-1]` — `c.into_inner() -> T`, taking `owned self`. The cell is
+    /// consumed, so its payload is moved out and the cell itself must not be
+    /// dropped afterwards — the payload is the only thing it owned.
+    CellIntoInner,
+    /// `[CELL-1]` — `c.update(f)`, which is `set(f(get()))` and so needs the
+    /// receiver twice. A HIR expression cannot be duplicated, so the cell and
+    /// the function travel here as a pair and lowering, which holds a `Place`,
+    /// uses it for both the read and the store.
+    CellUpdate,
 }
 
 impl Builtin {
@@ -362,6 +387,10 @@ impl Builtin {
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",
+            Builtin::CellSet => "set",
+            Builtin::CellReplace => "replace",
+            Builtin::CellIntoInner => "into_inner",
+            Builtin::CellUpdate => "update",
         }
     }
 }

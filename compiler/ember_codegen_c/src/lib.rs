@@ -772,6 +772,24 @@ impl Emitter<'_> {
                 // size is passed at each call, which is how a single
                 // implementation serves every element type.
                 match which {
+                    // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
+                    // now. Each is a move out of a field, a store into it, and
+                    // sometimes a drop, and lowering writes exactly those, so
+                    // the backend emits a struct field access and nothing else:
+                    // "no overhead relative to a plain field" is not a target
+                    // here, it is the only code there is. Reaching this arm
+                    // would mean a lowering arm was lost, which is worth saying
+                    // loudly rather than emitting a call to a function that
+                    // does not exist.
+                    Builtin::CellSet
+                    | Builtin::CellReplace
+                    | Builtin::CellIntoInner
+                    | Builtin::CellUpdate => {
+                        unreachable!(
+                            "`{}` is lowered to field accesses in MIR and never reaches the backend",
+                            which.name()
+                        );
+                    }
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }

@@ -1088,6 +1088,78 @@ structs and enums — only functions are parameterised, so `Pair[A, B]` is not
 yet writable; generic interfaces (`Add[Rhs]`); the `Iterator` adaptor set
 (`map`, `filter`, …), which needs closures — block F.
 
+### Block I: `Cell[T]` — done 2026-09-09. `RefCell` and `Arena` are not.
+
+`Cell[T]` is **a transparent one-field struct**, interned once per `T` by
+`cell_of`, with `cells: HashMap<StructId, Ty>` on the `Checker` telling method
+dispatch that this struct's `set` is a builtin. ADR-019 is why it is
+compiler-known and not written in Ember on `UnsafeCell`: the document names
+`UnsafeCell` once and defines it nowhere, and inventing the one construct that
+suspends `[BRW-1]` is the owner's call, not the compiler's (ERR-043).
+
+**A struct rather than a `TyKind` is what makes `[CELL-4]` free.** `is_copy` on
+a struct is already `derives_copy && !has_drop && every field Copy`, and
+`needs_drop` is already `has_drop || any field needs it` — so with
+`derives_copy` set and `has_drop` clear, both questions reduce to the same
+question about `T`. "`Copy` when `T: Copy` … move-only for a non-`Copy` `T`,
+and `Drop` iff `T` is" has **no code behind it at all**, and three conformance
+cases confirm each half. It is also what `[CELL-2]`'s "no overhead relative to
+a plain field" means in practice: the emitted C is a struct field access.
+
+**What is built, and what is not.** `Cell()`, `set`, `replace`, `into_inner`,
+`get` (`T: Copy`) and `update`'s `T: Copy` arm. `take` needs a `Default`
+interface, and there is none anywhere in the compiler — `CELL-DEF-1`. `[CELL-3]`'s
+`!Sync` needs `Send`/`Sync`/threads — `CELL-SYNC-1`. Both report or are filed by
+name; neither rule is softened, and `reject_take_needs_default.em` pins the
+message so `take` never reads as a typo.
+
+**`[CELL-1]`'s ordering rule is the whole point of the type, and it is the
+opposite of `[OWN-5]`.** "`set` and `replace` MUST store the new value before
+dropping the old one", because a drop runs user code that can re-enter the same
+cell and read it while it is torn. An ordinary assignment does the reverse
+(D-035, fixed the same day). That is why `set` is lowered itself rather than as
+an assignment: `lower_cell_store` moves the old value to a slot, stores, and
+only then drops. ADR-020's last paragraph is the note not to generalise either
+rule to the other.
+
+**`into_inner` needed one trick worth remembering.** It takes `owned self`, so
+the payload leaves and the cell must not be dropped behind it. A move out of a
+*field* is a partial move and `[OWN-3]`'s analysis does not track one, so the
+receiver would still look live and be dropped at scope end — freeing the value
+the caller now holds. Moving the **whole cell** into a slot first is what marks
+the receiver moved, and the slot is `temp_unowned` so nothing drops it either.
+Exactly one `ember_vec_free` in the emitted program, checked.
+
+**`[CELL-2]` rests on ordinary privacy, not on a clever name.** The payload is a
+private field whose `declaring_module` is `usize::MAX`, which no real module can
+be, so `check_field_visible` refuses it everywhere — read, write and `ref` all
+`E1020`. An *unspellable* field name (`$value`) was tried first and is wrong:
+the backend writes field names into the C verbatim, `$` in an identifier is a
+compiler extension, and `[CG-C-1]` says the emitted C must not depend on one. It
+compiled clean under `-Wall -Wextra`; only `-pedantic` said so. **Read the
+emitted C for anything that puts a new name into it.**
+
+**The harness gained `assert-c-order`**, and it was needed rather than
+convenient. `assert-c`'s needle is one line of literal text, so it can say what
+the backend emitted but not in what order — and both `[CELL-1]` and `[OWN-5]`
+are entirely about order, invisible in output, because seeing the difference
+needs a destructor that re-enters the value being replaced and no safe Ember
+program can build that back-pointer (a `static` holding a cell is refused:
+`[STA-*]` wants a literal initialiser). `#$ assert-c-order: "a" then "b"` asserts
+both are present and in that order. Verified by flipping the store and the drop
+in `lower_cell_store` and watching the case go red with the right message.
+
+**Anchor an order assertion on text that does not move.** The first needles were
+`_1.value = _4` and `em_Bag_drop(&_5)`, which depend on MIR local numbering.
+`.value = ` and `em_Bag_drop(&` do not — and the `&` is load-bearing: without
+it, `em_Bag_drop(` matches the *prototype* at the top of the file, which
+precedes everything and would make the assertion vacuously true.
+
+**A cosmetic thing left alone.** A compiler-known generic shows in diagnostics
+under its interned name — `Cell_i32`, and `Option_i32` has always done the same.
+Fixing it means changing how `Option` and `Result` display and re-baselining the
+cases that quote them, so it is not folded into this.
+
 ### Block G's core, and block D unblocked
 
 `Array`, `Span`, `MutSpan`, `Box` and `Map` could not be written in Ember

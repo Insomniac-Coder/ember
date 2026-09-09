@@ -38,6 +38,19 @@ struct Expectations {
     exit: Option<i32>,
     /// `!contains("…")` or `contains("…")` against the emitted C.
     assert_c: Vec<(bool, String)>,
+    /// `#$ assert-c-order: "a" then "b"` — both appear in the emitted C, and
+    /// the first before the second.
+    ///
+    /// `assert-c`'s needle is one line of literal text, so it can say what the
+    /// backend emitted but not in what **order**. Some rules are entirely about
+    /// order: `[CELL-1]` requires `set` to store the new value *before*
+    /// dropping the old one, and `[OWN-5]` requires an assignment to do the
+    /// opposite. Both are invisible in a program's output — the difference only
+    /// shows if a destructor re-enters the value being replaced, which needs a
+    /// back-pointer no safe program can build — so without this the two rules
+    /// could only be checked by reading the C by hand, once, and would silently
+    /// stop holding the next time either path was touched.
+    assert_c_order: Vec<(String, String)>,
     /// A `run-fail` test: the program must panic, and the message must contain
     /// this text.
     panics: Option<String>,
@@ -104,6 +117,17 @@ fn parse_expectations(source: &str) -> Expectations {
                 .and_then(|s| s.strip_suffix(')'))
             {
                 expectations.assert_c.push((expect_present, inner.trim_matches('"').to_string()));
+            }
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("assert-c-order:") {
+            // `"first" then "second"`. Split on the keyword rather than on the
+            // quotes, so either needle may contain one.
+            if let Some((before, after)) = value.split_once(" then ") {
+                let first = before.trim().trim_matches('"').to_string();
+                let second = after.trim().trim_matches('"').to_string();
+                if !first.is_empty() && !second.is_empty() {
+                    expectations.assert_c_order.push((first, second));
+                }
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("error[") {
@@ -294,6 +318,28 @@ stderr:
 stderr:
 {}",
                 checked.stderr
+            );
+        }
+    }
+
+    // The emitted C, for `assert-c-order`.
+    if !expectations.assert_c_order.is_empty() {
+        let emitted = ember(&["build", &relative, "--emit", "c"], root);
+        assert_eq!(emitted.exit, 0, "emitting C for {relative} failed:\n{}", emitted.stderr);
+        for (first, second) in &expectations.assert_c_order {
+            let at_first = emitted.stdout.find(first.as_str());
+            let at_second = emitted.stdout.find(second.as_str());
+            let (Some(at_first), Some(at_second)) = (at_first, at_second) else {
+                panic!(
+                    "{relative}: assert-c-order needs both needles present; {} is missing\n--- emitted C ---\n{}",
+                    if at_first.is_none() { format!("{first:?}") } else { format!("{second:?}") },
+                    emitted.stdout
+                );
+            };
+            assert!(
+                at_first < at_second,
+                "{relative}: expected {first:?} before {second:?}, found it after\n--- emitted C ---\n{}",
+                emitted.stdout
             );
         }
     }

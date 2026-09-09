@@ -24,3 +24,9 @@ fn main():
 #$ stdout: 1
 #$ 0
 #$ 2
+#$ assert-c-order: "(em_R){ 2 }" then "em_R_drop(&"
+# The parenthetical, asserted rather than inferred. "after evaluating the new
+# value: `x = f(x)` moves `x` into `f`, then stores" — so the new value must be
+# built before the old one is dropped. That ordering is invisible in the output
+# (both orders print the same three lines), which is why the sibling case could
+# only ever check that a drop happened, not when.

@@ -293,6 +293,11 @@ struct Checker<'a> {
     instances: HashMap<Instance, DefId>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
+    /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
+    /// is an ordinary `StructId` everywhere else in the compiler, so this is
+    /// what tells method dispatch that `set` on it is a builtin rather than a
+    /// missing method.
+    cells: HashMap<StructId, Ty>,
     /// Instantiations still to have their bodies checked.
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
@@ -349,6 +354,7 @@ impl<'a> Checker<'a> {
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
+            cells: HashMap::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
             locals: Vec::new(),
@@ -2016,6 +2022,26 @@ impl<'a> Checker<'a> {
                     self.reject_stored_view(elem, t.span, "a container element");
                     return self.types.intern(TyKind::Vec { elem });
                 }
+                // `[CELL-1]`, `[CELL-11]` — `Cell[T]`. In the prelude by the
+                // owner's `OQ-10`, which for a compiler-known type means the
+                // name resolves without an import, as `Array` and `Option` do.
+                if name.is("Cell") {
+                    if args.len() != 1 {
+                        self.error(codes::E2020, ty.span, "`Cell` takes one type argument");
+                        return self.common.error;
+                    }
+                    let ast::GenericArg::Type(t) = &args[0] else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    let inner = self.resolve_type(t);
+                    // `[TYP-15]` — a cell is storage like any other, so a view
+                    // may not be put in one: `Cell[Span[T]]` would outlive the
+                    // region the span borrows exactly as a container element
+                    // would.
+                    self.reject_stored_view(inner, t.span, "a cell's contents");
+                    return self.cell_of(inner);
+                }
                 // `[TYP-16]` — a user generic struct, instantiated on demand:
                 // `Pair[i32, f32]` is its own struct with its own layout.
                 if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
@@ -2649,6 +2675,71 @@ impl<'a> Checker<'a> {
     fn option_of(&mut self, inner: Ty) -> Ty {
         let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.display(inner))));
         self.builtin_enum(name, &[(Symbol::intern("None"), Vec::new()), (Symbol::intern("Some"), vec![inner])])
+    }
+
+    /// `[CELL-1]`, `[CELL-2]`, `[CELL-4]` — `Cell[T]`, as a transparent
+    /// one-field struct built once per `T`.
+    ///
+    /// ADR-019 makes it compiler-known rather than Ember written on
+    /// `UnsafeCell`, because the document names `UnsafeCell` once and defines
+    /// it nowhere. A **struct** rather than a `TyKind` of its own is what makes
+    /// `[CELL-2]`'s "no overhead relative to a plain field" true by
+    /// construction instead of by promise, and it hands `[CELL-4]` over
+    /// whole: `is_copy` on a struct is `derives_copy && !has_drop && every
+    /// field Copy`, and `needs_drop` is `has_drop || any field needs it`, so
+    /// with `derives_copy` set and `has_drop` clear both questions reduce to
+    /// the same question about `T`. "`Cell[T]` is `Copy` when `T: Copy` …
+    /// move-only for a non-`Copy` `T`, and is `Drop` iff `T` is" then needs no
+    /// code at all.
+    ///
+    /// **The field is unreachable from source, which is what `[CELL-2]` rests
+    /// on** — "`Cell` never hands out a reference to its contents, so no
+    /// aliasing rule can be violated". What enforces it is `[MOD-2]`'s own
+    /// privacy: the field is private and the declaring module is `usize::MAX`,
+    /// which no real module can be, so `check_field_visible` refuses it
+    /// everywhere with `E1020`. Every route to the value is a builtin, so the
+    /// borrow checker sees a call where a user write would otherwise be, and
+    /// needs no exemption for it.
+    ///
+    /// The name is an ordinary identifier on purpose. An unspellable one —
+    /// `$value`, which the Ember lexer cannot produce — was tried first and is
+    /// wrong: the backend writes field names into the C verbatim, `$` in an
+    /// identifier is a compiler extension, and `[CG-C-1]` says the emitted C
+    /// must "not depend on compiler extensions". It compiled, and only
+    /// `-pedantic` said so. Privacy is the mechanism; the name is just a name.
+    fn cell_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!("Cell_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: inner,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.cells.insert(id, inner);
+        ty
+    }
+
+    /// The payload type, if this is a `Cell`.
+    fn cell_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.cells.get(id).copied(),
+            _ => None,
+        }
     }
 
     /// `Result[T, E]`, likewise.
@@ -5460,6 +5551,51 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return built;
         }
 
+        // `[CELL-1]` — `Cell(v)`, or `Cell[T](v)` where the value alone does
+        // not say what `T` is. The payload is `owned`: the cell takes the
+        // value, it does not observe one.
+        //
+        // A plain struct literal, not a builtin. `[CELL-2]` asks for "no
+        // overhead relative to a plain field", and the way to get that is to
+        // emit the thing that has none.
+        if name.is("Cell") {
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Cell` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // Written `Cell[i32](0)`, expected from the annotation, or left to
+            // the value. The written form wins, so a literal can be widened.
+            let hint = explicit
+                .first()
+                .copied()
+                .or_else(|| expected.and_then(|e| self.cell_inner(e)));
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => {
+                    let synthesised = self.synth_committed(&args[0].value);
+                    self.read_through(synthesised)
+                }
+            };
+            if value.ty == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = value.ty;
+            self.reject_stored_view(inner, args[0].value.span, "a cell's contents");
+            let ty = self.cell_of(inner);
+            let TyKind::Struct(id) = *self.types.kind(ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            return Expr {
+                ty,
+                kind: ExprKind::StructLit { struct_id: id, fields: vec![value] },
+                span,
+            };
+        }
+
         // `Array[T]()` and `String()` — the compiler-known constructors.
         if name.is("Array") || name.is("String") {
             if !args.is_empty() {
@@ -6351,6 +6487,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty) {
             return self.synth_span_method(receiver, elem, mutable, name, args, span);
         }
+        // `[CELL-1]` — a cell is an ordinary struct to every other part of the
+        // compiler, so its methods are found here rather than in `self.methods`.
+        if let Some(inner) = self.cell_inner(receiver.ty) {
+            return self.synth_cell_method(receiver, inner, name, args, span);
+        }
         // `[TYP-17]` — on a generic parameter, only what its bounds provide
         // is permitted, and that is exactly what is looked up.
         if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
@@ -6928,6 +7069,147 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 args: vec![borrowed],
             },
             span,
+        }
+    }
+
+    /// `[CELL-1]` — the methods on `Cell[T]`.
+    ///
+    /// All of them take `self`, a **shared** borrow, and three of them mutate.
+    /// Nothing in safe Ember can do that, so something has to be the exception,
+    /// and ADR-019 records why it is these builtins rather than an `UnsafeCell`
+    /// the document never defines. What makes it sound is `[CELL-2]`: because
+    /// no reference to the contents ever escapes, the write is not an aliasing
+    /// question at all — so the borrow checker is told about a builtin call and
+    /// is not weakened anywhere.
+    ///
+    /// `get` and `update` are `T: Copy` only, per the rule. `take` needs
+    /// `T: Default` and `Default` does not exist yet — `CELL-DEF-1` in
+    /// `docs/BACKLOG.md` — so it reports that rather than being quietly absent.
+    fn synth_cell_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let shown = self.types.display(inner);
+
+        // `take` and `update`'s `T: Default` arm are the two members the
+        // compiler cannot reach. Say so, rather than "no method named `take`",
+        // which would send the reader looking for a typo.
+        if name.name.is("take") {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    name.span,
+                    "`take` needs `T: Default`, and `Default` is not built yet",
+                )
+                .help("`c.replace(v)` gives the old value back and puts `v` in its place")
+                .note("`[CELL-1]`; the gap is `CELL-DEF-1` in docs/BACKLOG.md"),
+            );
+            return error;
+        }
+
+        let arity = match name.name.as_str() {
+            "get" | "into_inner" => 0,
+            "set" | "replace" | "update" => 1,
+            _ => {
+                self.error(
+                    codes::E1010,
+                    name.span,
+                    format!("`Cell[{shown}]` has no method named `{}`", name.name),
+                );
+                return error;
+            }
+        };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {arity} arguments, found {}", name.name, args.len()),
+            );
+            return error;
+        }
+
+        // `set`, `replace` and `update` write through the receiver, and
+        // `[CELL-1]` makes that a borrow of it. A borrow needs something to
+        // point at: writing into a value that dies at the end of the statement
+        // is a mistake with no way to observe it.
+        let writes = matches!(name.name.as_str(), "set" | "replace" | "update");
+        if writes && !is_place(&receiver.kind) {
+            self.error(
+                codes::E2140,
+                span,
+                format!("`{}` needs a cell to write into, not a temporary", name.name),
+            );
+            return error;
+        }
+
+        // `[CELL-1]` — "`get(self) -> T` is provided only where `T: Copy`".
+        // The reason is `[CELL-2]`: a non-`Copy` `T` could only be *handed*
+        // out, which would either move the cell's contents away or alias them.
+        if matches!(name.name.as_str(), "get" | "update") && !self.types.is_copy(inner) {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    name.span,
+                    format!("`{}` on `Cell[{shown}]` needs `{shown}: Copy`", name.name),
+                )
+                .help("`c.replace(v)` takes the value out and puts `v` in its place")
+                .note("a `Cell` hands out no reference, so a non-`Copy` value can only be replaced [CELL-1]"),
+            );
+            return error;
+        }
+
+        match name.name.as_str() {
+            // A load of the field, which is all `[CELL-2]` says it is.
+            "get" => Expr {
+                ty: inner,
+                kind: ExprKind::Field { base: Box::new(receiver), index: 0 },
+                span,
+            },
+            "set" => {
+                let value = self.check_expr(&args[0].value, inner);
+                Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin { which: Builtin::CellSet, args: vec![receiver, value] },
+                    span,
+                }
+            }
+            "replace" => {
+                let value = self.check_expr(&args[0].value, inner);
+                Expr {
+                    ty: inner,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::CellReplace,
+                        args: vec![receiver, value],
+                    },
+                    span,
+                }
+            }
+            "into_inner" => Expr {
+                ty: inner,
+                kind: ExprKind::Builtin { which: Builtin::CellIntoInner, args: vec![receiver] },
+                span,
+            },
+            // `update(f)` is `set(f(get()))`, and it needs the receiver twice —
+            // once to read the old value and once to store the new one. A HIR
+            // expression cannot be duplicated, so the pair travels to lowering,
+            // which has a `Place` and can use it as often as it likes.
+            _ => {
+                let fn_ty = self.types.intern(TyKind::Fn { params: vec![inner], ret: inner });
+                let f = self.check_expr(&args[0].value, fn_ty);
+                Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::CellUpdate,
+                        args: vec![receiver, f],
+                    },
+                    span,
+                }
+            }
         }
     }
 

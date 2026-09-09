@@ -17,7 +17,7 @@ cannot go in `std` at all, because `[STD-1]` holds `std.core`, `std.mem`,
 
 | | |
 |---|---|
-| Total | 32 tasks — 20 must-have, 12 nice-to-have |
+| Total | 34 tasks — 20 must-have, 12 nice-to-have, plus compiler debt |
 | Started | none |
 | Blocked on phases | all |
 
@@ -80,6 +80,8 @@ do yet, found while applying v0.5.
 | ~~**LT-REG-1**~~ | ~~Real region variables with a constraint graph~~ | — | **done 2026-09-09.** `compiler/ember_analysis/src/regions.rs`; `[LT-1]`'s elision is in at the call site and in the body (`E3062`). `[LT-2]`'s view structs and `[LT-7]`'s callback regions build on it |
 | **LNT-CFG-1** | `[MAN-3]`'s `[lints]` configuration | 2 | `[LT-1b]`'s `L3014` is an opt-in lint and there is nowhere to opt in |
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |
+| **CELL-DEF-1** | `Cell[T].take()`, and `update`'s `T: Default` arm | 2 | `[CELL-1]` gives `take(self) -> T where T: Default` and lets `update` take `T: Default` **or** `T: Copy`. There is no `Default` interface in the compiler at all, so only the `Copy` arm of `update` is built and `take` reports the gap by name rather than reading as a missing method (`tests/conformance/CELL-1/reject_take_needs_default.em` pins the message). Done when `Default` exists and both are written as the rule states them. **The rule is not softened**: what is missing is the interface, not the requirement |
+| **CELL-SYNC-1** | `[CELL-3]`'s `!Sync` on `Cell[T]` | 4 | "`Cell[T]` is `!Sync` (`[THR-1]`): it may be moved between threads if `T: Send`, but never shared." There is no `Send`, no `Sync` and no thread in the compiler, so there is nothing for the marker to mean yet and nothing that could violate it — the restriction is unenforceable rather than unenforced. Done when `[THR-1]` exists and a program sharing a `Cell` across threads is refused |
 
 ---
 

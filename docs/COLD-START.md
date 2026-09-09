@@ -10,7 +10,7 @@ plan (its own "Start here" is marked superseded — ignore it) and
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..019 |
+| `docs/DECISIONS.md` | ADR-001..020 |
 
 ---
 
@@ -28,7 +28,7 @@ plan (its own "Start here" is marked superseded — ignore it) and
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
-56 conformance rule directories, 126 cases. 48 defects recorded, **1 open**
+60 conformance rule directories, 137 cases. 49 defects recorded, **1 open**
 (D-030). 5 deviations. 2 errata awaiting the owner. Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
 reason in the commit message.
@@ -114,8 +114,16 @@ left is coverage:
     DRP   3/6    missing DRP-4 (needs effects, Phase 4), DRP-5 (= D-030, open),
                  DRP-6 (Box/handle/Shared — Phase 3)
     SPN   3/3    done
-    CELL  0/12   needs the implementation — see §5
+    OWN-5        both clauses now, after D-035 — see the note below
+    CELL  4/12   Cell is built (CELL-1, 2, 4, 11). RefCell is CELL-5..8,
+                 CELL-9, CELL-10, CELL-6a; Arena is ARN-*. See §5
     DIA   0/5    needs tests/ui snapshots — see §6
+
+**A directory named for a rule is not coverage of the rule.**
+`tests/conformance/OWN-5/` existed and passed while the compiler ran no
+destructor on an overwrite at all (D-035). Its case tested the sentence's
+parenthetical and was written so the main clause could not fire. When a rule
+states two things, count two cases.
 
 ### The method that found twelve defects — keep using it
 
@@ -129,43 +137,51 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: `Cell[T]` (block I)
+## 5. Next task: `RefCell[T]`, then `Arena` (block I, the rest)
 
-ADR-019 decides the approach and ERR-043 says why. **Read both.** Short version:
-`[CELL-9]` names `UnsafeCell` as the primitive and the document defines it
-nowhere, so `Cell`/`RefCell`/`Arena` are **compiler-known**, as `Array`, `Span`,
-`Option` and `Result` already are under Part XX.1.
+**`Cell[T]` is done, 2026-09-09.** `Cell()`, `set`, `replace`, `into_inner`,
+`get` (`T: Copy`) and `update`'s `T: Copy` arm; `[CELL-1]`, `[CELL-2]`,
+`[CELL-4]` and `[CELL-11]` have conformance cases. `take` and `[CELL-3]`'s
+`!Sync` are filed as `CELL-DEF-1` and `CELL-SYNC-1` in `docs/BACKLOG.md` —
+`Default`, `Send`, `Sync` and threads do not exist yet, and neither rule was
+softened to fit. The reasoning is in `docs/HANDOFF.md`'s **Block I** section;
+read it before starting `RefCell`, because three of its findings apply directly.
 
-I began this and set the scaffolding aside so a version cut could land
-warning-free. **The design, which was working:**
+ADR-019 still governs: `[CELL-9]` names `UnsafeCell` as the primitive and the
+document defines it nowhere (ERR-043), so all three of these are
+**compiler-known**, as `Array`, `Span`, `Option` and `Result` are under
+Part XX.1. Amendment A13 records that the three share the implementation
+concern and **not** the concept — do not build `RefCell` by generalising
+`Cell`.
 
-* `Cell[T]` is a **transparent one-field struct**, built like `option_of` —
-  `cell_of(inner)` interns a `StructDef` named `Cell_<stem>` with a single
-  private field, and records `cells: HashMap<StructId, Ty>` on the `Checker` so
-  method dispatch can tell a cell from an ordinary struct.
-* That gives `[CELL-4]` for free — `Copy` when `T` is, move-only when it is not,
-  `Drop` iff `T` is — because all three are read off the field. `[CELL-2]`'s "no
-  overhead relative to a plain field" is why a struct is right rather than a new
-  `TyKind` (`Span` needs 20 sites; this needs almost none).
-* The field is private and **unreachable from source**. Every path to the value
-  goes through a builtin, which is what makes `[CELL-2]`'s "never hands out a
-  reference to its contents, so no aliasing rule can be violated" true by
-  construction.
+**What carries over from `Cell`:**
 
-**What is left, and it is the actual point of the type:** `[CELL-1]`'s `set`
-takes `self` — a *shared* borrow — and writes. Model the methods on
-`synth_span_method`, with builtins `CellNew`/`CellGet`/`CellSet`/`CellReplace`/
-`CellIntoInner`; the borrow checker sees a builtin call rather than a user write,
-so it needs no exemption. `get` is `T: Copy` only.
+* The **transparent-struct shape**. `cell_of` interns a `StructDef` per `T` and
+  records it in `cells` on the `Checker`; `RefCell` wants the same, with a
+  second field for `[CELL-5]`'s one-word borrow counter. `[CELL-4]`'s `Copy`
+  and `Drop` questions answered themselves off the field, and will again —
+  except that `RefCell` is **never** `Copy`, because copying the counter would
+  fork the borrow state.
+* **Privacy is the mechanism**, not an unspellable name. `declaring_module:
+  usize::MAX` plus a private field refuses read, write and `ref` everywhere with
+  `E1020`. A `$`-prefixed name breaks `[CG-C-1]` — the backend writes field
+  names into the C verbatim and `$` in an identifier is a compiler extension,
+  which only `-pedantic` reports.
+* **Order rules need `assert-c-order`**, added to the harness for this.
+  `assert-c` matches one line and cannot express "a before b"; a drop that
+  re-enters the value being replaced is unobservable in output, and no safe
+  program can build the back-pointer that would make it observable. Anchor the
+  needles on text that survives MIR renumbering, and remember that a bare
+  function name matches its own prototype at the top of the file.
 
-**`[CELL-1]`'s invariant, which the owner called out twice:** `set` and `replace`
-**MUST store the new value before dropping the old one.** A drop can re-enter the
-same cell, and a drop-then-store leaves it observably uninitialised across that
-window. Make this a conformance case, not a comment.
-
-Then `RefCell` (a borrow counter, `[CELL-5..8]`, checked in **every** profile per
-`[CELL-9]`) and `Arena` (`[ARN-*]`, a region proved statically). Amendment A13
-records that the three share the implementation concern and **not** the concept.
+**What `RefCell` adds, and it is the hard half:** `[CELL-5]`'s `borrow` and
+`borrow_mut` hand out `Ref[T]`/`RefMut[T]`, which `[CELL-7]` makes **view
+types** whose region borrows the cell and whose `drop` releases the borrow
+state. So unlike `Cell`, something *does* escape, `[TYP-15]` applies to it, and
+the region work in `regions.rs` is load-bearing. `[CELL-9]` puts the check in
+**every** profile and `[CELL-6a]` forbids any profile making `try_borrow`
+infallible. `[CELL-7]`'s `L3011` needs `LNT-CFG-1` first, or there is nowhere to
+opt in.
 
 ## 6. After that: `[DIA-7..10]` and `tests/ui/`
 
@@ -219,6 +235,23 @@ snapshot per shape is what stops the next one.
   test failing.
 * **CRLF.** The Edit tool writes CRLF on this host while `.gitattributes` pins
   LF. Normalise every changed file before every commit.
+* **A name the compiler invents ends up in the C verbatim.** `Cell`'s payload
+  field was called `$value` so that no Ember program could spell it. `$` in a C
+  identifier is a **compiler extension**, which `[CG-C-1]` forbids relying on —
+  and it compiles clean under `-Wall -Wextra`, so nothing said so until
+  `-pedantic` was tried by hand. Privacy, not spelling, is what makes a field
+  unreachable. **Read the emitted C after anything that puts a new identifier
+  into it.**
+* **A conformance directory named for a rule can test almost none of it.**
+  `tests/conformance/OWN-5/` passed for as long as the rule went unimplemented
+  (D-035): its one case covered the sentence's parenthetical, and was written so
+  the main clause could not fire. Before trusting a green directory, read the
+  rule and count its clauses.
+* **`grep -c` returning zero exits 1**, which reads as a failed command in a
+  chained shell line and can be mistaken for a failing test run. Twice.
+* **A gate needs its real arguments.** `python tools/split_spec.py --check`
+  alone throws `IndexError`; CI passes it the source and the output directory.
+  `.github/workflows/ci.yml` is the authority on how each gate is invoked.
 
 ## 9. Where the code is
 
