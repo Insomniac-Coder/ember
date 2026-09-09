@@ -319,6 +319,69 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[RNG-3a]` — `T.clamped(v)`, "defined as `min(max(v, lo), hi)` for an
+    /// inclusive range and as the nearest representable value strictly inside
+    /// a half-open one".
+    ///
+    /// For a float representation the C library's `fmin`/`fmax` are used
+    /// rather than a conditional, because they are what makes `NaN` map to
+    /// `lo` as `[RNG-3a]` requires: `fmax(NaN, lo)` is `lo`, while
+    /// `NaN < lo ? lo : NaN` is `NaN`.
+    fn range_clamp(&self, id: ember_types::RangeId, value: &str) -> String {
+        let def = self.types.range_def(id);
+        let is_float = matches!(self.types.kind(def.repr), TyKind::Float(_));
+        let lo = self.bound_literal(def.lo, def.repr);
+        let hi = if def.inclusive {
+            self.bound_literal(def.hi, def.repr)
+        } else {
+            // "the nearest representable value strictly inside a half-open
+            // one".
+            match def.hi {
+                ember_types::Bound::Int(v) => self.bound_literal(ember_types::Bound::Int(v - 1), def.repr),
+                ember_types::Bound::Float(_) => {
+                    let hi = self.bound_literal(def.hi, def.repr);
+                    let lo_lit = self.bound_literal(def.lo, def.repr);
+                    let f = if matches!(self.types.kind(def.repr), TyKind::Float(FloatTy::F64)) {
+                        "nextafter"
+                    } else {
+                        "nextafterf"
+                    };
+                    format!("{f}({hi}, {lo_lit})")
+                }
+            }
+        };
+        if is_float {
+            let (fmin, fmax) =
+                if matches!(self.types.kind(def.repr), TyKind::Float(FloatTy::F64)) {
+                    ("fmin", "fmax")
+                } else {
+                    ("fminf", "fmaxf")
+                };
+            format!("{fmin}({fmax}(({value}), {lo}), {hi})")
+        } else {
+            // Two compares, as the rule says. The value is named twice, so it
+            // is parenthesised and the caller has already spilled anything
+            // with a side effect into a temporary.
+            format!("(({value}) < ({lo}) ? ({lo}) : (({value}) > ({hi}) ? ({hi}) : ({value})))")
+        }
+    }
+
+    /// A range endpoint as a C literal of the representation type.
+    fn bound_literal(&self, bound: ember_types::Bound, repr: Ty) -> String {
+        match bound {
+            ember_types::Bound::Int(v) => v.to_string(),
+            ember_types::Bound::Float(v) => {
+                let suffix =
+                    if matches!(self.types.kind(repr), TyKind::Float(FloatTy::F64)) { "" } else { "f" };
+                if v.fract() == 0.0 && v.is_finite() {
+                    format!("{v:.1}{suffix}")
+                } else {
+                    format!("{v}{suffix}")
+                }
+            }
+        }
+    }
+
     /// The element type of an `Array[T]`, given the receiver's type — which
     /// may be a `ref mut Array[T]`, because `push` takes the receiver by
     /// reference.
@@ -697,6 +760,28 @@ impl Emitter<'_> {
                     Builtin::SizeOf => {
                         return format!("sizeof({})", self.c_type(*arg_ty));
                     }
+                    // `[RNG-3a]` — total: no failure mode, no `Panic`, no
+                    // `RuntimeCheck(k)`. "On the C backend it lowers to two
+                    // compares or the target's `min`/`max` instruction pair,
+                    // strictly cheaper than `[RNG-3]`'s
+                    // check-and-branch-to-panic."
+                    Builtin::RangeClamped(id) => {
+                        return self.range_clamp(*id, &rendered[0]);
+                    }
+                    // `[RNG-10]` — the `unsafe` route. `[RNG-9]` makes an
+                    // out-of-range value undefined behaviour, so nothing is
+                    // emitted: the caller's obligation is the whole check.
+                    // The `debug_assert` `[RNG-10]` requires waits for
+                    // `debug_assert` itself (Phase 1's assertion set).
+                    Builtin::RangeNewUnchecked(_) => {
+                        return format!("({})", rendered[0]);
+                    }
+                    // `[RNG-3]` — the fallible form. Lowered in MIR into a
+                    // branch and two enum aggregates, so it never reaches
+                    // here.
+                    Builtin::RangeChecked(_) => {
+                        unreachable!("[RNG-3] `checked` is lowered in MIR")
+                    }
                     Builtin::Println | Builtin::Print => {}
                 }
                 let suffix = self.builtin_suffix(*arg_ty);
@@ -1006,6 +1091,11 @@ impl Emitter<'_> {
             TyKind::Str => format!("{RT}str"),
             TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
             TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
+            // `[COST-3]` — a range type is "not observable": erased to the
+            // representation, with the construction site carrying the check.
+            // It emits no C type of its own, so `Roughness` and `f32` are the
+            // same bits and `[RNG-8]`'s FFI representation falls out.
+            TyKind::Range(id) => self.c_type(self.types.range_def(*id).repr),
             TyKind::Ref { mutable, inner } | TyKind::Ptr { mutable, inner } => {
                 let inner = self.c_type(*inner);
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }

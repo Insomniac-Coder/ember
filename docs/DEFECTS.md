@@ -54,8 +54,8 @@ same fixes are likely to have been carried forward.
 
 | # | Defect | Rule | Status | Where |
 |---|---|---|---|---|
-| D-012 | `E1020` is used for "you referred to a type from a library layer this build omitted", and `[GRM-4]` already uses `E1020` for redeclaring a name in the same block | `[BLD-11]`, `[GRM-4]` | **open** | the owner's v0.6 revision |
-| D-013 | `[STD-7a]` says const generics are governed by `[CG-1]`..`[CG-4]`; none of those four rules is defined anywhere in the document | `[STD-7a]` | **open** | the owner's v0.6 revision |
+| D-012 | `E1020` is used for "you referred to a type from a library layer this build omitted", and `[GRM-4]` already uses `E1020` for redeclaring a name in the same block | `[BLD-11]`, `[GRM-4]` | **fixed by v0.8.3** | `[BLD-11]` now reports `E1021` and says in terms that `E1020` "remains `[GRM-4]`'s and MUST NOT be reused" |
+| D-013 | `[STD-7a]` says const generics are governed by `[CG-1]`..`[CG-4]`; none of those four rules is defined anywhere in the document | `[STD-7a]` | **fixed by v0.8.3** | it now cites `[GRM-8]`, `[CT-1]`, `[MONO-1]` and `[TYP-19]`, all of which exist |
 
 **Two claims of mine that were wrong**, recorded so they are not re-raised as
 defects. I reported that `roughness + metallic` compiles — unprovable, because the

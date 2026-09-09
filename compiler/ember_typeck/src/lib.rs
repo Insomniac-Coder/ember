@@ -25,8 +25,8 @@ use ember_hir::{
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
-    CommonTypes, EnumDef, EnumId, FieldDef, OverflowPolicy, StructDef, StructId, Ty, TyKind, UintTy,
-    TypeTable, VariantDef, int_max,
+    Bound, CommonTypes, EnumDef, EnumId, FieldDef, OverflowPolicy, RangeDef, StructDef,
+    StructId, Ty, TyKind, TypeTable, UintTy, VariantDef, int_max,
 };
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
@@ -462,7 +462,14 @@ impl<'a> Checker<'a> {
                     deferred.push(decl);
                     continue;
                 }
-                let ty = self.resolve_type(value);
+                let repr = self.resolve_type(value);
+                // `[RNG-1]` — an alias carrying an `in` clause declares a
+                // **nominal** numeric type over `repr`; one without it is
+                // transparent, exactly as `[LEX-15a]` specifies.
+                let ty = match &decl.range {
+                    Some(clause) => self.declare_range_type(decl, repr, clause),
+                    None => repr,
+                };
                 self.named_types.insert(name, ty);
             }
             pending = deferred;
@@ -480,6 +487,162 @@ impl<'a> Checker<'a> {
             let name = self.qualified(decl.name.name);
             self.named_types.insert(name, ty);
         }
+    }
+
+    /// `[RNG-1]` — build the nominal range type an `in` clause declares.
+    ///
+    /// The clause "takes a range expression (`a .. b` or `a ..= b`) whose
+    /// endpoints are constant expressions of the representation type". Every
+    /// way that can be false is `E2212`, except a non-numeric representation,
+    /// which is `E2213` — the two codes IV.2a's diagnostic list gives.
+    fn declare_range_type(
+        &mut self,
+        decl: &ast::TypeAlias,
+        repr: Ty,
+        clause: &ast::Expr,
+    ) -> Ty {
+        let is_int = matches!(
+            self.types.kind(repr),
+            TyKind::Int(_) | TyKind::Uint(_)
+        );
+        let is_float = matches!(self.types.kind(repr), TyKind::Float(_));
+        if !is_int && !is_float {
+            let shown = self.types.display(repr);
+            self.error(
+                codes::E2213,
+                clause.span,
+                format!("`{shown}` is not a numeric type, so it has no range"),
+            );
+            return repr;
+        }
+
+        let ast::ExprKind::Range { lo, hi, inclusive } = &clause.kind else {
+            self.error(
+                codes::E2212,
+                clause.span,
+                "an `in` clause takes a range: write `a ..= b` or `a .. b`",
+            );
+            return repr;
+        };
+        let (Some(lo_expr), Some(hi_expr)) = (lo.as_ref(), hi.as_ref()) else {
+            self.error(
+                codes::E2212,
+                clause.span,
+                "a range type needs both endpoints: `a ..` and `.. b` are open",
+            );
+            return repr;
+        };
+
+        let Some(lo_bound) = self.const_bound(lo_expr, is_float) else { return repr };
+        let Some(hi_bound) = self.const_bound(hi_expr, is_float) else { return repr };
+
+        // "or are inverted" — `[RNG-1]`'s other rejection.
+        if !lo_bound.le(hi_bound) {
+            self.error(
+                codes::E2212,
+                clause.span,
+                "the range is inverted: the low endpoint is above the high one",
+            );
+            return repr;
+        }
+        // A half-open range whose endpoints are equal holds nothing, and
+        // `[RNG-9]` makes every value of such a type invalid — a type no
+        // program can construct a value of is a mistake, not a design.
+        if !inclusive && lo_bound == hi_bound {
+            self.error(
+                codes::E2212,
+                clause.span,
+                "this range is empty, so the type has no valid value",
+            );
+            return repr;
+        }
+
+        let id = self.types.add_range(RangeDef {
+            name: decl.name.name,
+            repr,
+            lo: lo_bound,
+            hi: hi_bound,
+            inclusive: *inclusive,
+            span: decl.name.span,
+        });
+        self.types.intern(TyKind::Range(id))
+    }
+
+    /// One endpoint of an `in` clause, folded to a constant. `[RNG-1]` admits
+    /// "constant expressions of the representation type"; this phase accepts a
+    /// literal, a unary minus on one, and a `const` — which is what
+    /// `const_len` already accepts for an array length, and for the same
+    /// reason: the comptime interpreter that would evaluate the rest is
+    /// Phase 4's (`[CT-1]`).
+    fn const_bound(&mut self, expr: &ast::Expr, want_float: bool) -> Option<Bound> {
+        let mut expr = expr;
+        let mut negate = false;
+        loop {
+            match &expr.kind {
+                ast::ExprKind::Paren(inner) => expr = inner,
+                ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => {
+                    negate = !negate;
+                    expr = operand;
+                }
+                _ => break,
+            }
+        }
+        let bound = match &expr.kind {
+            ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => {
+                let v = i128::try_from(*value).ok()?;
+                let v = if negate { -v } else { v };
+                // `[LEX-16]` — an untyped integer literal takes the type
+                // context wants, and here that is the representation.
+                if want_float { Bound::Float(v as f64) } else { Bound::Int(v) }
+            }
+            ast::ExprKind::Lit(ast::Literal::Float { value, .. }) => {
+                if !want_float {
+                    self.error(
+                        codes::E2212,
+                        expr.span,
+                        "a float endpoint on an integer representation",
+                    );
+                    return None;
+                }
+                // `[RNG-6]` — "NaN is in no range", so an endpoint that is one
+                // describes nothing.
+                if value.is_nan() {
+                    self.error(codes::E2212, expr.span, "`NaN` is not a range endpoint");
+                    return None;
+                }
+                Bound::Float(if negate { -*value } else { *value })
+            }
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                match self.constants.get(&segments[0].name).map(|c| &c.kind) {
+                    Some(hir::ExprKind::Int(value)) => {
+                        let v = i128::try_from(*value).ok()?;
+                        let v = if negate { -v } else { v };
+                        if want_float { Bound::Float(v as f64) } else { Bound::Int(v) }
+                    }
+                    Some(hir::ExprKind::Float(value)) if want_float => {
+                        let value = *value;
+                        Bound::Float(if negate { -value } else { value })
+                    }
+                    _ => {
+                        self.error(
+                            codes::E2212,
+                            expr.span,
+                            "a range endpoint must be a constant of the representation type",
+                        );
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                self.error(
+                    codes::E2212,
+                    expr.span,
+                    "a range endpoint must be a constant of the representation type",
+                );
+                return None;
+            }
+        };
+        Some(bound)
     }
 
     /// Every named type mentioned in an alias body is already known. Used to
@@ -2763,6 +2926,44 @@ impl<'a> Checker<'a> {
 
                 let place = self.synth(target);
                 let place_ty = place.ty;
+                // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
+                // would produce an `R` where a `T` is required and is
+                // `E2214`". The fallback `a = a op b` of `[TYP-21]` is exactly
+                // what produces that `R`, so it must not be reached.
+                if let (Some(bin), TyKind::Range(id)) = (op, self.types.kind(place_ty)) {
+                    let def = self.types.range_def(*id);
+                    let name = def.name.to_string();
+                    let repr = self.types.display(def.repr);
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2214,
+                            stmt.span,
+                            format!("`{}=` is not defined on `{name}`", bin.as_str()),
+                        )
+                        .primary_label(format!(
+                            "this would produce a `{repr}`, and `{name}` is wanted"
+                        ))
+                        .help(match &target.kind {
+                            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                                let p = segments[0].name;
+                                format!(
+                                    "write the construction: `{p} = {name}.clamped({p} {} …)`, \
+                                     or `{name}.checked(…)` where the difference matters",
+                                    bin.as_str()
+                                )
+                            }
+                            _ => format!(
+                                "write the construction: assign `{name}.clamped(…)`, or \
+                                 `{name}.checked(…)` where the difference matters"
+                            ),
+                        })
+                        .note(
+                            "arithmetic on a range type yields its representation, and \
+                             producing a range value again is a construction [RNG-3]",
+                        ),
+                    );
+                    return;
+                }
                 let value = match op {
                     // `a op= b` is `a = a op b` when no `AddAssign` exists
                     // (`[TYP-21]`); Phase 0 has scalars only, so it always is.
@@ -3802,6 +4003,61 @@ impl<'a> Checker<'a> {
                 return Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span };
             }
         }
+        // `[RNG-2]` — "two range types are distinct types even when
+        // representation and range are identical". This is checked before
+        // erasure, so the message names the two types rather than the one
+        // representation they share, which is the confusion the feature exists
+        // to catch.
+        if let (TyKind::Range(found), TyKind::Range(wanted)) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+        {
+            let (found, wanted) = (*found, *wanted);
+            if found != wanted {
+                let f = self.types.range_def(found);
+                let w = self.types.range_def(wanted);
+                let (fname, wname) = (f.name.to_string(), w.name.to_string());
+                let same_repr = f.repr == w.repr;
+                let span = expr.span;
+                let mut d = Diagnostic::error(
+                    codes::E2210,
+                    span,
+                    format!("`{fname}` is not `{wname}`"),
+                )
+                .primary_label(format!("this is `{fname}`"));
+                if same_repr {
+                    let repr = self.types.display(w.repr);
+                    d = d.note(format!(
+                        "both are `{repr}` underneath, and telling them apart is what a \
+                         range type is for [RNG-2]"
+                    ));
+                }
+                self.sink.emit(d);
+                return Expr { ty: expected, kind: ExprKind::Error, span };
+            }
+        }
+        // `[TYP-5]` **range erasure**: a value of a range type over `R`
+        // coerces to `R`, and the step composes with widening — so
+        // `Roughness → f32 → f64` and `Percent → u8 → u32` are coercions.
+        // It is admitted at coercion sites only; `[RNG-2]` says a range type
+        // never converts implicitly in operator position, which is
+        // `[RNG-5a1]`'s generated impls instead.
+        if let TyKind::Range(id) = self.types.kind(expr.ty) {
+            let id = *id;
+            let repr = self.types.range_def(id).repr;
+            if repr == expected || self.types.widens_to(repr, expected) {
+                let span = expr.span;
+                let erased =
+                    Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(expr)), span };
+                return if repr == expected { erased } else { self.coerce(erased, expected) };
+            }
+        }
+        // `[RNG-3]` — construction. A constant the compiler can place in range
+        // needs no check; one it can place outside is `E2211`; anything else
+        // is outside `[RNG-10]`'s closed set and is `E2215`.
+        if let TyKind::Range(id) = self.types.kind(expected) {
+            let id = *id;
+            return self.construct_range(expr, id);
+        }
         if self.types.is_untyped_literal(expr.ty) && self.literal_fits(&expr, expected) {
             return self.adopt_literal(expr, expected);
         }
@@ -3822,6 +4078,105 @@ impl<'a> Checker<'a> {
                 .note("Ember does not convert between numeric types implicitly [TYP-4]"),
         );
         Expr { ty: expected, kind: ExprKind::Error, span }
+    }
+
+    /// `[RNG-3]`/`[RNG-10]` — a range-typed value arises in Safe code only
+    /// from a constant the compiler placed in range, `T.checked`, `T.clamped`,
+    /// a value whose known range is contained in the target's, or a copy. This
+    /// handles the first; the middle two are ordinary calls, the fourth waits
+    /// for `[RNG-4]`'s range tracking, and the last is `Copy`.
+    fn construct_range(&mut self, expr: Expr, id: ember_types::RangeId) -> Expr {
+        let span = expr.span;
+        let def = self.types.range_def(id).clone();
+        let name = def.name.to_string();
+
+        // The value must first be one of the representation, which for an
+        // untyped literal it becomes by `[LEX-16]`/`[LEX-17]`.
+        let value = if self.types.is_untyped_literal(expr.ty) {
+            if !self.literal_fits(&expr, def.repr) {
+                let repr = self.types.display(def.repr);
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}` holds a `{repr}`, and this literal is not one"),
+                );
+                return Expr { ty: self.types.intern(TyKind::Range(id)), kind: ExprKind::Error, span };
+            }
+            self.adopt_literal(expr, def.repr)
+        } else if expr.ty == def.repr || self.types.widens_to(expr.ty, def.repr) {
+            self.coerce(expr, def.repr)
+        } else {
+            let found = self.types.display(expr.ty);
+            let repr = self.types.display(def.repr);
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` holds a `{repr}`, and this is a `{found}`"),
+            );
+            return Expr { ty: self.types.intern(TyKind::Range(id)), kind: ExprKind::Error, span };
+        };
+
+        let range_ty = self.types.intern(TyKind::Range(id));
+        match self.constant_bound_of(&value) {
+            Some(bound) if def.contains(bound) => {
+                // `[RNG-3]` — "construction from a constant in range […] emits
+                // no check", and `[COST-3]` classes the type itself as not
+                // observable, so the value is the representation's.
+                Expr { ty: range_ty, kind: value.kind, span }
+            }
+            Some(bound) => {
+                // `E2211` — IV.2a's worked example is this diagnostic.
+                let shown = show_bound(bound);
+                let bounds = show_range(&def, self.types);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2211,
+                        span,
+                        format!("{shown} is outside `{name}`"),
+                    )
+                    .primary_label(format!("`{name}` holds {bounds}"))
+                    .help(format!(
+                        "clamp it, or take the fallible form: `{name}.checked({shown})`"
+                    )),
+                );
+                Expr { ty: range_ty, kind: ExprKind::Error, span }
+            }
+            None => {
+                // `[RNG-10]` — outside the closed construction set.
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2215,
+                        span,
+                        format!("a `{name}` cannot be built from a value this is not known to be in range"),
+                    )
+                    .help(format!(
+                        "`{name}.clamped(x)` is total; `{name}.checked(x)` returns a \
+                         `Result` when the difference matters"
+                    ))
+                    .note(
+                        "the ways to make a range value are a constant in range, `checked`, \
+                         `clamped`, a value whose known range fits, and a copy [RNG-10]",
+                    ),
+                );
+                Expr { ty: range_ty, kind: ExprKind::Error, span }
+            }
+        }
+    }
+
+    /// The constant value of an already-checked expression, where it has one.
+    /// This is the seed of `[RNG-4]`'s range tracking: the analysis that
+    /// derives a range for a non-constant expression is not built, and until
+    /// it is, "a value whose known range is contained in the target's" means a
+    /// constant.
+    fn constant_bound_of(&self, expr: &Expr) -> Option<Bound> {
+        match &expr.kind {
+            ExprKind::Int(value) => i128::try_from(*value).ok().map(|v| {
+                if self.types.is_float(expr.ty) { Bound::Float(v as f64) } else { Bound::Int(v) }
+            }),
+            ExprKind::Float(value) => Some(Bound::Float(*value)),
+            ExprKind::Widen { expr, .. } => self.constant_bound_of(expr),
+            _ => None,
+        }
     }
 
     fn literal_fits(&self, expr: &Expr, expected: Ty) -> bool {
@@ -4174,6 +4529,18 @@ impl<'a> Checker<'a> {
                 self.synth_variant(id, *name, args, span)
             }
 
+            // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
+            // `Roughness.clamped(x)`, `unsafe Roughness.new_unchecked(x)`.
+            // A type name on the left is an associated function, not a
+            // receiver, so it is matched here beside the variant constructor
+            // rather than in `[TYP-24]`'s method resolution.
+            ast::ExprKind::MethodCall { recv, name, args, .. }
+                if self.range_named(recv).is_some() =>
+            {
+                let id = self.range_named(recv).expect("just checked");
+                self.synth_range_construction(id, *name, args, span)
+            }
+
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
             ast::ExprKind::MethodCall { recv, name, args, .. } => {
                 self.synth_method_call(recv, *name, args, span)
@@ -4366,6 +4733,12 @@ impl<'a> Checker<'a> {
         if let ast::ExprKind::Field { base, name } = &callee.kind {
             if let Some(id) = self.enum_named(base) {
                 return self.synth_variant(id, *name, args, span);
+            }
+            // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
+            // `Roughness.clamped(x)`, `unsafe Roughness.new_unchecked(x)`.
+            // These parse the same way a variant constructor does.
+            if let Some(id) = self.range_named(base) {
+                return self.synth_range_construction(id, *name, args, span);
             }
         }
         // `[TYP-18]` — `f[i32](x)` names the instantiation explicitly, which
@@ -4791,6 +5164,112 @@ impl<'a> Checker<'a> {
             return None;
         }
         self.enum_ids.get(&self.resolve_name(name)).copied()
+    }
+
+    /// A path naming a range type, for `Roughness.checked(x)`.
+    fn range_named(&self, expr: &ast::Expr) -> Option<ember_types::RangeId> {
+        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
+        if segments.len() != 1 {
+            return None;
+        }
+        let name = segments[0].name;
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        let ty = *self.named_types.get(&self.resolve_name(name))?;
+        match self.types.kind(ty) {
+            TyKind::Range(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// `[RNG-3]`, `[RNG-3a]`, `[RNG-10]` — the three named constructors.
+    ///
+    /// `T.checked(v) -> Result[T, RangeError]` is the fallible form;
+    /// `T.clamped(v) -> T` is total and introduces no `Panic` and no
+    /// `RuntimeCheck(k)`; `unsafe T.new_unchecked(v) -> T` is the one route
+    /// outside the closed set and carries `[RNG-9]`'s obligation.
+    fn synth_range_construction(
+        &mut self,
+        id: ember_types::RangeId,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let def = self.types.range_def(id).clone();
+        let range_ty = self.types.intern(TyKind::Range(id));
+        let type_name = def.name.to_string();
+        let error = |this: &mut Self, msg: String| -> Expr {
+            this.error(codes::E2020, span, msg);
+            Expr { ty: this.common.error, kind: ExprKind::Error, span }
+        };
+
+        let which = match name.name.as_str() {
+            "checked" => 0,
+            "clamped" => 1,
+            "new_unchecked" => 2,
+            other => {
+                return error(
+                    self,
+                    format!(
+                        "`{type_name}` has no `{other}`; a range type is built with \
+                         `checked`, `clamped`, or `unsafe new_unchecked` [RNG-10]"
+                    ),
+                );
+            }
+        };
+
+        if args.len() != 1 || args[0].name.is_some() {
+            return error(
+                self,
+                format!("`{type_name}.{}` takes one value", name.name),
+            );
+        }
+
+        // `[RNG-10]` — "Any other route is `unsafe`", so `new_unchecked`
+        // needs the boundary `[TIER-1]` names.
+        if which == 2 && !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    format!("`{type_name}.new_unchecked` requires `unsafe`"),
+                )
+                .help(format!(
+                    "`{type_name}.clamped(x)` is total and needs no `unsafe`; \
+                     `{type_name}.checked(x)` returns a `Result`"
+                ))
+                .note(
+                    "a value of a range type outside its range is undefined behaviour, \
+                     exactly as a `bool` that is not 0 or 1 is [RNG-9]",
+                ),
+            );
+        }
+
+        // The argument is a value of the representation. An untyped literal
+        // adopts it; a range value of this same type erases to it.
+        let value = self.check_expr(&args[0].value, def.repr);
+
+        let builtin = match which {
+            0 => hir::Builtin::RangeChecked(id),
+            1 => hir::Builtin::RangeClamped(id),
+            _ => hir::Builtin::RangeNewUnchecked(id),
+        };
+        let ty = if which == 0 {
+            let err = self.range_error_ty();
+            self.result_of(range_ty, err)
+        } else {
+            range_ty
+        };
+        Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![value] }, span }
+    }
+
+    /// `RangeError`, the error half of `[RNG-3]`'s `Result`. A unit-only enum
+    /// with one variant, so it is `Copy` and zero-cost; `std.core` declares it
+    /// once the standard library can be written in Ember.
+    fn range_error_ty(&mut self) -> Ty {
+        let name = Symbol::intern("RangeError");
+        self.builtin_enum(name, &[(Symbol::intern("OutOfRange"), vec![])])
     }
 
     /// `[ENM-1]` — a variant constructor, positional or by name. A unit
@@ -5258,6 +5737,115 @@ impl<'a> Checker<'a> {
         Expr { ty: ret, kind: ExprKind::Call { callee: def, args: vec![receiver, rhs] }, span }
     }
 
+    /// `[RNG-5]`/`[RNG-5a1]` — what an operator does when a range type is one
+    /// of its operands. `None` where neither is one.
+    ///
+    /// `[RNG-5a1]` specifies this as generated impls in the type's declaring
+    /// module — `T: Add[T, Output = R]`, `T: Add[R, Output = R]` and
+    /// `R: Add[T, Output = R]` — so that `[TYP-20]`'s orphan rule is satisfied
+    /// without an exemption. This compiler's scalar operators are built in
+    /// rather than resolved through `Add` (Part IV §8's interfaces cover user
+    /// types only), so the impls have no place to live yet. The **observable**
+    /// rule is implemented exactly: which programs are accepted, and the type
+    /// of every result. ADR-016 records the deviation and what closes it.
+    fn range_binary(
+        &mut self,
+        hir_op: hir::BinOp,
+        op: ast::BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: Span,
+    ) -> Option<RangeBinary> {
+        let l = match self.types.kind(lhs.ty) {
+            TyKind::Range(id) => Some(*id),
+            _ => None,
+        };
+        let r = match self.types.kind(rhs.ty) {
+            TyKind::Range(id) => Some(*id),
+            _ => None,
+        };
+        let (l, r) = match (l, r) {
+            (None, None) => return None,
+            pair => pair,
+        };
+
+        // Two **distinct** nominal range types resolve to no generated impl.
+        // `[RNG-5]`: "Arithmetic between two distinct nominal range types is
+        // rejected (`E2214`) unless at least one operand is explicitly
+        // converted to its representation type."
+        if let (Some(a), Some(b)) = (l, r) {
+            if a != b {
+                let (an, bn) = (
+                    self.types.range_def(a).name.to_string(),
+                    self.types.range_def(b).name.to_string(),
+                );
+                let repr = self.types.display(self.types.range_def(a).repr);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2214,
+                        span,
+                        format!(
+                            "`{}` is not defined between `{an}` and `{bn}`",
+                            op.as_str()
+                        ),
+                    )
+                    .primary_label("these are two different range types".to_string())
+                    .help(format!(
+                        "convert one side explicitly: `x as {repr}`"
+                    ))
+                    .note(
+                        "arithmetic on a range type yields its representation, and two \
+                         distinct range types share no operator [RNG-5]",
+                    ),
+                );
+                return Some(RangeBinary::Rejected);
+            }
+        }
+
+        let id = l.or(r).expect("one side is a range type");
+        let repr = self.types.range_def(id).repr;
+
+        // The other side must be the same range type, an untyped literal, or
+        // a value of the representation — `[RNG-5]`: "A range value MAY
+        // participate directly in arithmetic with an ordinary value of its
+        // representation type."
+        let other = if l.is_some() { rhs } else { lhs };
+        let other_ok = matches!(self.types.kind(other.ty), TyKind::Range(_))
+            || self.types.is_untyped_literal(other.ty)
+            || other.ty == repr
+            || other.ty == self.common.error;
+        if !other_ok {
+            let name = self.types.range_def(id).name.to_string();
+            let found = self.types.display(other.ty);
+            let shown_repr = self.types.display(repr);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2214,
+                    span,
+                    format!("`{}` is not defined between `{name}` and `{found}`", op.as_str()),
+                )
+                .help(format!(
+                    "`{name}` erases to `{shown_repr}`, so both sides must be `{shown_repr}`"
+                )),
+            );
+            return Some(RangeBinary::Rejected);
+        }
+
+        let _ = hir_op;
+        Some(RangeBinary::ToRepr(repr))
+    }
+
+    /// Erase one operand of a range-typed operator to the representation.
+    /// `[RNG-5a1]` defines the generated impls "by erasing each operand to
+    /// `R` and applying `R`'s operator", which is this.
+    fn erase_operand(&mut self, expr: Expr, repr: Ty) -> Expr {
+        if matches!(self.types.kind(expr.ty), TyKind::Range(_)) {
+            let span = expr.span;
+            return Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(expr)), span };
+        }
+        expr
+    }
+
     fn synth_binary(
         &mut self,
         op: ast::BinOp,
@@ -5284,6 +5872,29 @@ impl<'a> Checker<'a> {
         if let Some(method) = operator_method(op) {
             if self.methods.contains_key(&(lhs.ty, Symbol::intern(method))) {
                 return self.call_operator(method, lhs, rhs, span);
+            }
+        }
+
+        // `[RNG-5]`/`[RNG-5a1]` — operators on range types. This runs before
+        // the literal rules below because `[RNG-5a2]` requires the operand
+        // types to be matched **exactly** before any `[TYP-5]` coercion:
+        // without it `Roughness + Roughness` matches both the generated
+        // `Roughness: Add[Roughness]` and, after erasure, `f32: Add[f32]`,
+        // and resolution is ambiguous.
+        if let Some(result) = self.range_binary(hir_op, op, &lhs, &rhs, span) {
+            match result {
+                RangeBinary::Rejected => {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                RangeBinary::ToRepr(repr) => {
+                    // `[RNG-5]` — "arithmetic involving a range type normally
+                    // yields its **representation**, not the range type".
+                    // Erasing both sides is exactly what `[RNG-5a1]`'s
+                    // generated impls do: "defined by erasing each operand to
+                    // `R` and applying `R`'s operator".
+                    lhs = self.erase_operand(lhs, repr);
+                    rhs = self.erase_operand(rhs, repr);
+                }
             }
         }
 
@@ -5541,4 +6152,36 @@ fn mangle(name: Symbol, is_main: bool) -> String {
     }
     // A qualified name carries dots, which C does not allow in an identifier.
     ember_branding::mangled(name.as_str())
+}
+
+/// A range endpoint, rendered the way a diagnostic should show it.
+fn show_bound(bound: Bound) -> String {
+    match bound {
+        Bound::Int(v) => v.to_string(),
+        Bound::Float(v) => {
+            // `1` reads as an integer where the range is over floats, and
+            // IV.2a's example prints `1.4`, so a whole float keeps its point.
+            if v.fract() == 0.0 && v.is_finite() {
+                format!("{v:.1}")
+            } else {
+                v.to_string()
+            }
+        }
+    }
+}
+
+/// `0.0 ..= 1.0`, as `[RNG-1]` writes it.
+fn show_range(def: &RangeDef, _types: &TypeTable) -> String {
+    let op = if def.inclusive { "..=" } else { ".." };
+    format!("{} {op} {}", show_bound(def.lo), show_bound(def.hi))
+}
+
+/// What `[RNG-5]` does with an operator one of whose operands is a range type.
+enum RangeBinary {
+    /// Both operands erase to the representation and `R`'s operator applies
+    /// (`[RNG-5a1]`).
+    ToRepr(Ty),
+    /// Two distinct range types, or a mismatched representation: no generated
+    /// impl matches and the operator is `E2214`.
+    Rejected,
 }

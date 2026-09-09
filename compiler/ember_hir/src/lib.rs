@@ -15,7 +15,7 @@
 //! the full one so that later phases add cases rather than reshaping it.
 
 use ember_span::{Span, Symbol};
-use ember_types::{EnumId, OverflowPolicy, StructId, Ty};
+use ember_types::{EnumId, OverflowPolicy, RangeId, StructId, Ty};
 
 /// A resolved item: a function, a struct, a constant.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -192,6 +192,11 @@ pub enum ExprKind {
     /// A lossless widening inserted at a coercion site (`[TYP-5]`). Kept
     /// distinct from `Cast` because it is implicit and always lossless.
     Widen { expr: Box<Expr>, to: Ty },
+    /// `[TYP-5]` **range erasure**: a value of a range type read as its
+    /// representation. Kept distinct from `Widen` because it changes no bits
+    /// — `[COST-3]` classes a range type as *not observable* — and from
+    /// `Cast` because it is implicit and cannot fail. Lowering drops it.
+    EraseRange(Box<Expr>),
     /// A call the compiler knows about directly, before `std` exists.
     Builtin { which: Builtin, args: Vec<Expr> },
     /// A subexpression that failed to check. Absorbs errors.
@@ -289,6 +294,19 @@ pub enum Builtin {
     PtrWrite,
     /// `size_of[T]() -> usize`, which needs no `unsafe`.
     SizeOf,
+    /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
+    /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
+    /// makes a range type its representation's bits.
+    RangeChecked(RangeId),
+    /// `[RNG-3a]` — `T.clamped(v) -> T`, **total**: no failure mode, no
+    /// `Panic`, no `RuntimeCheck(k)`. "On the C backend it lowers to two
+    /// compares or the target's `min`/`max` instruction pair, strictly cheaper
+    /// than `[RNG-3]`'s check-and-branch-to-panic."
+    RangeClamped(RangeId),
+    /// `[RNG-10]` — `unsafe T.new_unchecked(v) -> T`, the one route outside
+    /// the closed construction set. `[RNG-9]` makes an out-of-range value
+    /// undefined behaviour, which is the caller's obligation.
+    RangeNewUnchecked(RangeId),
 }
 
 impl Builtin {
@@ -317,6 +335,11 @@ impl Builtin {
             Builtin::PtrRead => "read",
             Builtin::PtrWrite => "write",
             Builtin::SizeOf => "size_of",
+            // `[RNG-10]`'s construction set. Named as they are
+            // written, so a diagnostic quoting one reads as source.
+            Builtin::RangeChecked(_) => "checked",
+            Builtin::RangeClamped(_) => "clamped",
+            Builtin::RangeNewUnchecked(_) => "new_unchecked",
         }
     }
 }
@@ -575,6 +598,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         }
         ExprKind::Cast { expr: inner, to } => {
             format!("({} as {})", dump_expr(inner, function, types), types.display(*to))
+        }
+        ExprKind::EraseRange(inner) => {
+            format!("(erase {})", dump_expr(inner, function, types))
         }
         ExprKind::Widen { expr: inner, to } => {
             format!("widen({} -> {})", dump_expr(inner, function, types), types.display(*to))

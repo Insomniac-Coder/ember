@@ -359,3 +359,57 @@ genuinely open, so the rule is simplest-to-implement-soundly and
 most-predictable. **The alternative rejected:** widening `E0107` to cover
 `yield`. It would make one code mean two things and would tell the programmer
 that `yield` is a jump, which is the one thing about it that is not true.
+
+---
+
+## ADR-016 — `[RNG-5a1]`'s generated operator impls are implemented as behaviour, not as impls
+
+**Spec rule:** `[RNG-5]`, `[RNG-5a1]`, `[RNG-5a2]`, `[TYP-20]`, `[TYP-21]`.
+**Status:** taken 2026-09-09. Revisit when scalar operators go through the
+operator interfaces.
+
+**Context.** `[RNG-5a1]` specifies operators on range types as **generated
+impls**: for every range type `T` over representation `R` the compiler emits,
+*in `T`'s declaring module*, `T: Add[T, Output = R]`, `T: Add[R, Output = R]`
+and `R: Add[T, Output = R]`, plus the `Sub`, `Mul`, `Div`, `Rem`, `Neg`,
+`PartialEq` and `PartialOrd` forms, "defined by erasing each operand to `R`
+(`[TYP-5]`) and applying `R`'s operator". Emitting them in the declaring module
+is what satisfies `[TYP-20]`'s orphan rule without an exemption.
+
+This compiler resolves operators on **scalars** as built-in operations, not
+through `Add`. `[TYP-21]` is implemented for user types — `synth_binary` looks
+up an `add` method and calls it — and falls through to the built-in path when
+the operand is a scalar. There is therefore nowhere for `f32: Add[Roughness]`
+to live: `f32` has no impl table.
+
+**Decision.** Implement the rule's **observable content** exactly, and not its
+mechanism. Specifically:
+
+* `T op T`, `T op R` and `R op T` are accepted for the arithmetic and
+  comparison operators, and each erases both operands to `R` and applies `R`'s
+  operator — which is precisely how `[RNG-5a1]` defines the generated impls;
+* the result is `R`, per `[RNG-5]`;
+* two **distinct** range types resolve to no impl and are `E2214`;
+* no `*Assign` form exists, so `r += 1.0` is `E2214` with the `help` that names
+  `r = Roughness.clamped(r + 0.1)`;
+* `[RNG-5a2]`'s "exact impl before coercion" is honoured by checking the
+  operand types **before** any `[TYP-5]` coercion runs — which is why the
+  range case sits above the untyped-literal rules in `synth_binary` rather
+  than below them.
+
+**Consequences.** Every program is accepted or rejected as `[RNG-5a1]`
+requires, and every result has the type it requires. One thing differs and is
+recorded here rather than discovered later: a user cannot today write
+`extend Roughness implements Add[Vec3]:` and have it participate, because the
+generated impls are not in an impl table for the resolver to see alongside it.
+`[TYP-20]`'s orphan rule would place such an impl in `Roughness`'s declaring
+module, so the conflict is reachable in principle. It is unreachable in
+practice until operator interfaces cover scalars, at which point the honest
+implementation is to generate the impls for real and delete the special case.
+
+**The alternative rejected:** making scalars carry impl tables now, so the
+generated impls have somewhere to live. That is a change to `[TYP-21]`'s whole
+implementation for one feature's benefit, it costs a table lookup on every
+`i32 + i32` unless it is then specialised back out, and `[BUD-5]` gives the
+compile-time budget veto power over exactly this kind of change. The narrow
+form is recorded and can be widened; the wide form cannot be narrowed.

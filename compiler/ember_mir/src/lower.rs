@@ -587,6 +587,14 @@ impl<'a> Builder<'a> {
                 });
                 self.current = next;
             }
+            // `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two
+            // compares and a branch, building `Ok(v)` or `Err(OutOfRange)`.
+            // It is lowered here rather than in the backend because it
+            // produces an enum value, which is a branch and two aggregates
+            // rather than a C expression.
+            hir::ExprKind::Builtin { which: hir::Builtin::RangeChecked(id), args } => {
+                self.lower_range_checked(place, *id, &args[0], expr.ty, expr.span);
+            }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.
                 // For most builtins that is the first argument; `alloc` takes
@@ -981,6 +989,115 @@ impl<'a> Builder<'a> {
 
     /// Emit `op` together with the check it needs, leaving the result in
     /// `place` and the cursor on the success path.
+    /// `[RNG-3]` — `T.checked(v)`.
+    ///
+    /// `in_range = v >= lo and v <= hi` (or `v < hi` for a half-open range),
+    /// then `Ok(v)` or `Err(RangeError.OutOfRange)`. `[RNG-6]` falls out: NaN
+    /// fails both comparisons, so it lands in `Err`, which is what "NaN is in
+    /// no range" means at the construction site.
+    fn lower_range_checked(
+        &mut self,
+        place: Place,
+        id: ember_types::RangeId,
+        value: &'a hir::Expr,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let def = self.types.range_def(id).clone();
+        let repr = def.repr;
+        let value = self.lower_operand(value);
+
+        let lo = self.bound_operand(def.lo, repr);
+        let hi = self.bound_operand(def.hi, repr);
+
+        let above_lo = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(above_lo),
+            rvalue: Rvalue::BinaryOp { op: BinOp::Ge, lhs: value.clone(), rhs: lo },
+        });
+        let below_hi = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(below_hi),
+            rvalue: Rvalue::BinaryOp {
+                op: if def.inclusive { BinOp::Le } else { BinOp::Lt },
+                lhs: value.clone(),
+                rhs: hi,
+            },
+        });
+        let in_range = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(in_range),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::BitAnd,
+                lhs: Operand::Copy(Place::local(above_lo)),
+                rhs: Operand::Copy(Place::local(below_hi)),
+            },
+        });
+
+        // `Result[T, RangeError]` — `Ok` is variant 0 and `Err` variant 1, in
+        // the order `result_of` builds them.
+        let TyKind::Enum(result_enum) = *self.types.kind(result_ty) else {
+            unreachable!("[RNG-3] `checked` returns a Result enum");
+        };
+
+        let ok_bb = self.new_block();
+        let err_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(in_range)),
+            targets: vec![(0, err_bb)],
+            otherwise: ok_bb,
+        });
+
+        self.current = ok_bb;
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(result_enum, 0),
+                operands: vec![value],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = err_bb;
+        // `RangeError` has one unit variant, so the payload is empty.
+        let TyKind::Enum(err_enum) =
+            *self.types.kind(self.types.enum_def(result_enum).variants[1].fields[0].ty)
+        else {
+            unreachable!("[RNG-3] the error half is `RangeError`");
+        };
+        let err_value = self.temp(self.types.enum_def(result_enum).variants[1].fields[0].ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(err_value),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(err_enum, 0),
+                operands: Vec::new(),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(result_enum, 1),
+                operands: vec![Operand::Move(Place::local(err_value))],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = join_bb;
+    }
+
+    /// A range endpoint as a MIR operand of the representation type.
+    fn bound_operand(&mut self, bound: ember_types::Bound, repr: Ty) -> Operand {
+        match bound {
+            ember_types::Bound::Int(v) => {
+                // A negative endpoint is stored as the two's-complement bit
+                // pattern, which is what `Const::Int`'s `u128` holds.
+                Operand::Const(Const::Int { value: v as u128, ty: repr })
+            }
+            ember_types::Bound::Float(v) => Operand::Const(Const::Float { value: v, ty: repr }),
+        }
+    }
+
     fn lower_checked_binary(
         &mut self,
         place: Place,
@@ -1134,6 +1251,12 @@ impl<'a> Builder<'a> {
                 let operand = self.lower_operand(inner);
                 Rvalue::Cast { kind: CastKind::Widen, operand, to: *to }
             }
+            // `[TYP-5]` range erasure. `[COST-3]` classes a range type as
+            // **not observable**: it is its representation's bits, and the
+            // check lives at the construction site. So the node disappears
+            // here rather than lowering to a conversion — there is nothing to
+            // convert.
+            hir::ExprKind::EraseRange(inner) => Rvalue::Use(self.lower_operand(inner)),
             hir::ExprKind::StructLit { struct_id, fields } => {
                 let operands = fields.iter().map(|f| self.lower_operand(f)).collect();
                 Rvalue::Aggregate { kind: AggregateKind::Struct(*struct_id), operands }

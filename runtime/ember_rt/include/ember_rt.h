@@ -11,6 +11,8 @@
 #ifndef EMBER_RT_H
 #define EMBER_RT_H
 
+#include <math.h>   /* [RNG-3a]: `T.clamped` is `fmin`/`fmax`, which is
+                       what makes NaN map to the low endpoint */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

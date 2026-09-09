@@ -24,6 +24,10 @@ pub struct StructId(pub u32);
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EnumId(pub u32);
 
+/// Index of a user-declared range type (`[RNG-1]`) in the type table.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct RangeId(pub u32);
+
 /// An inference variable, resolved by `ember_typeck`'s union-find.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InferId(pub u32);
@@ -70,6 +74,13 @@ pub enum TyKind {
     Str,
     Struct(StructId),
     Enum(EnumId),
+    /// `[RNG-1]` — a **nominal** numeric type over a representation,
+    /// restricted to a range. `[RNG-2]` makes two of them distinct types even
+    /// when representation and range are identical, which is why this carries
+    /// an id and not the range itself: interning by structure would make
+    /// `Roughness` and `Metallic` the same type, and telling them apart is the
+    /// entire point.
+    Range(RangeId),
     Tuple(Vec<Ty>),
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
@@ -194,12 +205,84 @@ impl EnumDef {
     }
 }
 
+/// One endpoint of a range type's `in` clause (`[RNG-1]`).
+///
+/// The two arms are kept apart rather than both stored as `f64` because
+/// `[RNG-6]` makes float ranges obey strict IEEE semantics and `[TYP-8]`'s
+/// integer overflow reasoning needs exact 128-bit integers: a `u64` endpoint
+/// does not survive a round trip through `f64`.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum Bound {
+    Int(i128),
+    Float(f64),
+}
+
+impl Bound {
+    /// Ordering within one representation. Two bounds of different arms never
+    /// arise: `[RNG-1]` requires both endpoints to be constants of the
+    /// representation type, and a representation is integer or float.
+    pub fn le(self, other: Bound) -> bool {
+        match (self, other) {
+            (Bound::Int(a), Bound::Int(b)) => a <= b,
+            // `[RNG-6]` — NaN is in no range, and a NaN endpoint is rejected
+            // by `[RNG-1]`'s constant check before it reaches here.
+            (Bound::Float(a), Bound::Float(b)) => a <= b,
+            _ => false,
+        }
+    }
+}
+
+/// `[RNG-1]` — a nominal numeric type over `repr`, restricted to `lo..hi`.
+#[derive(Clone, Debug)]
+pub struct RangeDef {
+    pub name: Symbol,
+    /// The representation. `[RNG-8]`: a range type erases to this at every
+    /// coercion site and crosses an FFI boundary as this.
+    pub repr: Ty,
+    pub lo: Bound,
+    pub hi: Bound,
+    /// `..=` rather than `..`.
+    pub inclusive: bool,
+    pub span: Span,
+}
+
+impl RangeDef {
+    /// Whether a constant lies in the declared range. `[RNG-3]`: a constant in
+    /// range emits no check; one outside is `E2211`.
+    pub fn contains(&self, v: Bound) -> bool {
+        if !self.lo.le(v) {
+            return false;
+        }
+        if self.inclusive { v.le(self.hi) } else { v.le(self.hi) && v != self.hi }
+    }
+
+    /// Whether every value of `other` is a value of this range — `[RNG-10]`(d),
+    /// "a value whose `[RNG-4]` range is contained in the target's".
+    pub fn contains_range(&self, other: &RangeDef) -> bool {
+        if self.repr != other.repr {
+            return false;
+        }
+        let lo_ok = self.lo.le(other.lo);
+        let hi_ok = match (self.inclusive, other.inclusive) {
+            // `a ..= b` contains `c .. d` iff d <= b + 1, which is not
+            // expressible without knowing the representation's successor. The
+            // conservative answer is the correct one: only compare like with
+            // like, and say no otherwise.
+            (true, true) | (false, false) => other.hi.le(self.hi),
+            (true, false) => other.hi.le(self.hi),
+            (false, true) => false,
+        };
+        lo_ok && hi_ok
+    }
+}
+
 /// The interner and type table for one compilation.
 pub struct TypeTable {
     kinds: Vec<TyKind>,
     lookup: HashMap<TyKind, Ty>,
     structs: Vec<StructDef>,
     enums: Vec<EnumDef>,
+    ranges: Vec<RangeDef>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -240,6 +323,7 @@ impl TypeTable {
             lookup: HashMap::new(),
             structs: Vec::new(),
             enums: Vec::new(),
+            ranges: Vec::new(),
             next_infer: 0,
             pointer_size: 8,
         };
@@ -402,6 +486,32 @@ impl TypeTable {
         self.structs.iter().enumerate().map(|(i, d)| (StructId(i as u32), d))
     }
 
+    /// `[RNG-2]` — every declaration gets its own id, so two range types
+    /// over the same representation with the same bounds are distinct types.
+    pub fn add_range(&mut self, def: RangeDef) -> RangeId {
+        let id = RangeId(self.ranges.len() as u32);
+        self.ranges.push(def);
+        id
+    }
+
+    pub fn range_def(&self, id: RangeId) -> &RangeDef {
+        &self.ranges[id.0 as usize]
+    }
+
+    pub fn ranges(&self) -> impl Iterator<Item = (RangeId, &RangeDef)> {
+        self.ranges.iter().enumerate().map(|(i, d)| (RangeId(i as u32), d))
+    }
+
+    /// `[RNG-8]`/`[TYP-5]` — the representation a range type erases to, or the
+    /// type itself where it is not one. Written once so that every coercion
+    /// site, every operator and the backend all erase the same way.
+    pub fn erase_range(&self, ty: Ty) -> Ty {
+        match self.kind(ty) {
+            TyKind::Range(id) => self.range_def(*id).repr,
+            _ => ty,
+        }
+    }
+
     pub fn add_enum(&mut self, def: EnumDef) -> EnumId {
         let id = EnumId(self.enums.len() as u32);
         self.enums.push(def);
@@ -484,6 +594,9 @@ impl TypeTable {
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
             TyKind::Enum(id) => self.enum_layout(*id),
+            // `[RNG-8]` — a range type erases to its representation, so
+            // it is laid out as one and crosses an FFI boundary as one.
+            TyKind::Range(id) => self.layout(self.range_def(*id).repr),
             // A pointer and two lengths, whatever the element type.
             TyKind::Vec { .. } => Layout {
                 size: self.pointer_size * 3,
@@ -575,6 +688,11 @@ impl TypeTable {
                             .iter()
                             .all(|v| v.fields.iter().all(|f| self.is_copy(f.ty))))
             }
+            // `[RNG-1]`/`[RNG-10]`(e) — a range type is its representation
+            // with a narrower set of valid values, and every representation is
+            // a scalar, so it is `Copy` and a copy is one of the five ways a
+            // range-typed value may arise.
+            TyKind::Range(_) => true,
             // An `Array` owns its buffer, so copying it would share one
             // allocation between two owners.
             TyKind::Vec { .. } => false,
@@ -726,6 +844,7 @@ impl TypeTable {
             TyKind::Str => "str".into(),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
+            TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Param { name, .. } => name.to_string(),
             TyKind::Assoc { name } => format!("Self.{name}"),
             // `String` prints as itself, not as `Array[u8]`.
