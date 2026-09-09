@@ -112,6 +112,7 @@ from mine at a glance.
 | A12 | `[STD-8]` | what `not in` evaluates to | a second search and a second evaluation both admissible |
 | A13 | `[CELL-2]` | that `Cell`/`RefCell`/`Arena` are one capability | three unrelated special cases in any implementation |
 | **A14** | **`[RNG-8]`** | **its opening, lost to a truncation** | **two facts about `Copy` and layout, stated nowhere** |
+| A15 | `[BLD-3]` | what "flags" means in the `.embind` cache key | a binding that survives a change that alters its ABI |
 | ~~A4~~ | ~~`[LT-2]`~~ | **withdrawn** — the owner reopened the question | — |
 
 ---
@@ -379,6 +380,33 @@ the two statements are at different levels.
 
 ---
 
+### A15 — `[BLD-3]`: what "flags" covers
+
+    Spec semantic change:   no
+    Implementation change:  none yet (Phase 7)
+    Source recovery:        no
+
+**Authorised by** fix-list item 18: "Define one authoritative ABI fingerprint
+set… If changing a configuration can change generated binding semantics or ABI,
+it must invalidate the binding."
+
+**Why it was needed.** `[BLD-3]` gives the `.embind` cache key as "header hash
++ flags + overlay-list hash". Every dangerous setting is named *somewhere* —
+`[BLD-FFI-1b]` requires the MSVC runtime switch, `_DEBUG` and
+`_ITERATOR_DEBUG_LEVEL` to be inherited byte-for-byte, `[CXX-6]` runs the corpus
+across both compilers, both CRTs, RTTI on and off and both iterator-debug
+levels — but none of that says those settings are *in the cache key*, and an
+implementer reading `[BLD-3]` alone would reasonably read "flags" as the
+compiler's command line.
+
+The amendment enumerates the minimum set and, more usefully, states the test
+that generates it: if changing a setting can change a binding's semantics or
+ABI, it is part of the key. It also names the one an enumeration would miss —
+**the thunk generator's own version**, because a change in how a thunk owns,
+copies or catches changes the contract without changing the header.
+
+---
+
 ## Not amended, and why
 
 **The diagnostic-code collisions.** `[GRM-23]` names `E0104` where Part III's
@@ -388,6 +416,41 @@ the compiler changes. No amendment is needed for the compiler to be correct, so
 none was made — the tension with `[DIA-6a]`'s one-code-per-rule is recorded at
 the registry entries in `compiler/ember_diag/src/codes.rs` and in
 `docs/spec-errata.md` under ERR-026 and ERR-039.
+
+**Fix-list items 19 and 20 — `std::function` and `std::optional<T>`.** Both are
+real inconsistencies and **the document already adjudicates them**. `[FFI-17]`'s
+numbered list says `std::function` "is not importable (`E5030`)" while XVI.7a's
+table says "not importable *as a parameter*; importable as an opaque owned
+object"; the list says `std::optional<T>` maps "for trivially copyable `T`"
+while the table says "where `T` maps, by value across the thunk". `[FFI-17]`
+declares its own list **`NON-NORMATIVE` under `[CAT-1]`** — "where it and a rule
+disagree, the rule governs" — and names `std::function` as one of the four
+contradictions that demotion exists for. So the tables govern and there is
+nothing to decide.
+
+What the document asks for is a *deletion*: "A future revision should delete
+from the list every claim a rule already makes rather than keep two copies in
+step." That is a revision-level edit to owner prose, not a hardening, which may
+only add. Left for the owner.
+
+**Fix-list items 21 and 22 — reload termination and COMMIT synchronisation.**
+Both are **already fixed in v0.8.3**, which post-dates the review they were
+raised from.
+
+* Item 21 asked that a foreign `noexcept` call which can terminate the process
+  during migration become opt-in. 0.8's change log row 1 records exactly that:
+  `[HR-39]` had permitted it and called termination "a known consequence"; such
+  a call is now `E2227`, and `[HR-43]`'s `@allow_reload_terminate` is the
+  explicit opt-in, reported by `ember tcb` and counted rather than forbidden by
+  `[GATE-3]`.
+* Item 22 asked which threads may execute, whether they are quiesced, when new
+  addresses become visible, what memory ordering applies, and what happens to a
+  thread already inside old code. `[HR-42]` and `[HR-42a]` (§XVIII.4b) answer
+  all five: the per-thread Ember-depth counter is the synchronising object,
+  acquire on entry and release on exit, acquire-scan then release-publish on the
+  reload side; new addresses become visible at a thread's next entry; and a
+  thread executing old code cannot exist, because `[HR-3]` makes the scenario
+  unreachable rather than merely survivable.
 
 **Everything in `docs/spec-errata.md` not listed above.** Duplicated sentences,
 stale counts superseded by a later rule, editorial instructions pasted into the
