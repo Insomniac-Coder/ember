@@ -468,3 +468,62 @@ passing its address, so that `mut` stays uniformly `ref mut`. It compiles
 `normalize(buf)` and still rejects `normalize(buf.as_mut_span())`, so it does
 not save the example; and it adds an indirection to every element access in
 exactly the code `[SPN-*]` exists to make fast.
+
+---
+
+## ADR-018 — `fn(A) -> R` is a function pointer in this phase, not a generic
+
+**Spec rule:** `[CLO-1]`, `[CLO-3]`, `[COST-3]`, `[FN-6]`.
+**Status:** taken 2026-09-09. **This is the deviation that capturing closures
+close**; it is not permanent and the upgrade is described below.
+
+**Context.** `[CLO-3]` says: "A parameter declared `f: fn(A) -> R` is a generic
+over `Callable` (static dispatch, monomorphised)." `[CLO-1]` says a closure's
+type is "a unique anonymous struct type implementing `Callable`", holding its
+captures. Together they mean `fn(A) -> R` in parameter position is sugar for a
+generic parameter bounded by `Callable`, and each closure type instantiates it.
+
+This compiler implements `TyKind::Fn { params, ret }` as a **concrete function
+pointer**. A named function and a capture-free closure both fit it, because
+both are code with no environment; a capturing closure does not, because it has
+one.
+
+**Decision.** Keep the function-pointer reading for now, and refuse a capturing
+closure by name — with a diagnostic that says what it is and what to do —
+rather than compiling it to something that silently drops the captures.
+
+**What differs, precisely.**
+
+* **Accepted programs.** A capturing closure is rejected. Nothing else
+  differs: every program the generic reading accepts and this one also accepts
+  behaves identically.
+* **Cost.** `[COST-3]` classes "generic call, specialised" as *not observable*
+  — "direct call, inlinable". A function pointer is one **indirect** call. So
+  a program that compiles under both is slower here than the specification
+  allows, which `[COST-1]`'s definition of zero-cost cares about even though
+  no test can currently see it.
+
+**The upgrade, which is the same work as capturing closures.**
+
+1. A closure literal builds a **synthetic struct** whose fields are its
+   captures — `ref T` for a read-only capture, `ref mut T` for a mutated one
+   (`[CLO-2]`) — with a synthesised `call` method. `[CLO-1]`'s "it is a view
+   type if it captures anything by reference" then falls out of `is_view`,
+   which already reports a struct with a `ref` field as one, and `[CLO-4]`'s
+   escape rule falls out of `[TYP-15]`.
+2. A parameter written `f: fn(A) -> R` becomes a synthetic **generic
+   parameter** carrying that signature as its bound.
+3. `f(args)` in the body resolves to the parameter's `call`, which
+   `synth_bound_method` already does for a bound's method.
+4. Instantiation re-checks the body with the parameter bound to the closure's
+   struct type, which `check_instantiations` already does for every other
+   generic.
+
+Steps 3 and 4 are existing machinery. Step 2 is the new part, and step 1 is
+where `[CLO-2]`'s capture inference lives.
+
+**Why it is not done here.** It is a redesign of the type a `fn(A) -> R`
+annotation produces, reaching the signature collector, the call checker, the
+instantiation cache and the backend. Half of it — closures that build an
+environment and a `fn(A) -> R` that is still a pointer — would compile
+programs that drop captures on the floor, which is worse than refusing them.

@@ -1108,7 +1108,11 @@ impl Parser<'_> {
                 self.bump(); // '='
                 ident
             });
-            let value = self.parse_expr();
+            // `[LEX-6a]` — inside brackets a lambda's `:` body is a single
+            // `small_stmt`, not a block: indentation is not significant here,
+            // so there is nothing for a second statement to belong to.
+            // `[GRM-17]` is the diagnostic when one is written anyway.
+            let value = self.parse_expr_no_block();
             args.push(Arg { name, value, span: start.to(self.prev_span()) });
             if !self.eat_punct(Punct::Comma) {
                 break;
@@ -1159,6 +1163,34 @@ impl Parser<'_> {
             LambdaBody::Expr(Box::new(self.parse_expr()))
         } else if allow_block_lambda && self.eat_punct(Punct::Colon) {
             LambdaBody::Block(self.parse_block())
+        } else if !allow_block_lambda && self.at_punct(Punct::Colon) {
+            // `[LEX-6a]` — "Inside brackets, a lambda's `:` body is a single
+            // `small_stmt`, terminated by the enclosing closing bracket or by
+            // a `,` at the same bracket depth. No `NEWLINE` is required or
+            // emitted." So the `:` form **is** admitted here; what is not is a
+            // body of more than one statement, which `[GRM-17]` reports —
+            // indentation means nothing inside brackets, so there is no block
+            // for the rest of it to belong to.
+            let colon = self.span();
+            self.bump();
+            let body = self.parse_expr_no_block();
+            if !self.at_punct(Punct::Comma)
+                && !self.at_punct(Punct::RParen)
+                && !self.at_punct(Punct::RBracket)
+                && !self.at_punct(Punct::RBrace)
+                && !self.at_eof()
+            {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0106,
+                        colon.to(self.span()),
+                        "a multi-statement closure cannot be written inside brackets",
+                    )
+                    .help("bind it on a preceding line: `h = fn(e): …` then pass `h`")
+                    .note("indentation is not significant inside brackets [LEX-6]"),
+                );
+            }
+            LambdaBody::Expr(Box::new(body))
         } else {
             let span = self.span();
             self.report(

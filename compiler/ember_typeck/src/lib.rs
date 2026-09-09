@@ -6056,6 +6056,15 @@ impl<'a> Checker<'a> {
         }
         let (body, body_ty) = match &lambda.body {
             ast::LambdaBody::Expr(expr) => {
+                // `[LEX-6a]`'s bracketed form is `fn(x): <small_stmt>`, and
+                // the statement is very often `return e`. `[GRM-16]` makes
+                // that an expression, so it arrives here as one; `fn(x): e`
+                // and `fn(x) => e` mean the same thing and produce the same
+                // body.
+                let expr = match &expr.kind {
+                    ast::ExprKind::Jump(ast::Jump::Return(Some(inner))) => inner.as_ref(),
+                    _ => expr.as_ref(),
+                };
                 let value = match ret {
                     Some(ty) if ty != self.common.void => self.check_expr(expr, ty),
                     _ => self.synth(expr),
