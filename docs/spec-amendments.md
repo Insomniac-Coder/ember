@@ -157,7 +157,7 @@ generates its list rather than the list.
 | A9 | `extern_class` | a production for `extern class` | ERR-037 — `[FFI-39]` rests on syntax that does not exist |
 | A10 | `item_body` | admitting A9's production | — |
 | A11 | `[THR-2]` | what `Sync` claims, as against what it is tested by | a rule that reads as a guarantee it does not give |
-| A12 | `[STD-8]` | what `not in` evaluates to | a second search and a second evaluation both admissible |
+| A12 | `[STD-8]`, as a bullet beside `[STD-8b]` | what `not in` evaluates to | a second search and a second evaluation both admissible |
 | A13 | `[CELL-2]` | that `Cell`/`RefCell`/`Arena` are one capability | three unrelated special cases in any implementation |
 | **A14** | **`[RNG-8]`** | **its opening, lost to a truncation** | **two facts about `Copy` and layout, stated nowhere** |
 | A15 | `[BLD-3]` | what "flags" means in the `.embind` cache key | a binding that survives a change that alters its ABI |
@@ -532,6 +532,60 @@ that generates it: if changing a setting can change a binding's semantics or
 ABI, it is part of the key. It also names the one an enumeration would miss —
 **the thunk generator's own version**, because a change in how a thunk owns,
 copies or catches changes the contract without changing the header.
+
+---
+
+## The editorial repairs and leftover removals (E1–E4, V1–V4, K1)
+
+These were carried out in the same pass and described in the change log, and
+until `tools/hardening_check.py` existed they were **not entered here** — which
+the gate reported on its first run as ten undeclared differences. That is the
+gate working: prose in a change log is not a declaration, and an edit nobody has
+to look up is an edit nobody reviews.
+
+### E1–E4 — editorial repairs
+
+    Class: EDITORIAL REPAIR
+    Implementation change:  none
+
+Four editorial instructions had been pasted into normative prose instead of
+being carried out. Each is now performed and the instruction deleted, so a
+reader is no longer doing the editor's job — differently each time.
+
+| # | Rule | The instruction | What was done |
+|---|---|---|---|
+| E1 | `[RNG-7]` | a quoted block duplicating the rule and adding to it | the addition is real normative content — a range type supplies a niche only where its range does not exhaust its representation — and is now the rule's text rather than a quotation |
+| E2 | `[FFI-33b]` | a quoted refinement of "on construction" | substituted: the creating thread is recorded at the point the box is formed, which is `[FFI-36]`'s wrapping or the `adopt` call |
+| E3 | `[FFI-2a]` | a literal *After "…calling convention", insert: "…"* | inserted where it says; instruction removed |
+| E4 | `[BLD-2]` | *add the `[verify]` package-config section to the enumerated key* | **deleted unperformed.** 0.6.2 removed that layer, so carrying it out would have resurrected it. The one place an explicit instruction in the document was overridden, and it is recorded rather than quietly skipped |
+
+### V1–V4 — leftovers of the layer 0.6.2 removed
+
+    Class: EDITORIAL REPAIR
+    Implementation change:  none
+
+Only the removed system's vocabulary. Ember still calls `@noalloc`, `@nosync`,
+`@noblock` and `@nopanic(explicit)` contracts and all 57 mentions are untouched;
+what went is `@requires`, the prover, the `verify` layer and the `Contract` kind.
+Each removal is settled by the document's own closed owner questions,
+OQ-28..OQ-32.
+
+| # | Rule | Removed |
+|---|---|---|
+| V1 | `[EFF-18]` | `Contract` from `RuntimeCheck`'s kinds — `[EFF-16]` assigns four and `[EFF-22]` permits four |
+| V2 | `[EFF-17]` | the consequent "does not forbid `RuntimeCheck(Contract)`" |
+| V3 | `[STD-6]` | the **verify** layer from the std layering (OQ-32) |
+| V4 | `[UNS-7]` | the recommendation to carry `@requires` beside `@safety` (OQ-29) |
+
+### K1 — one keyword status
+
+    Class: EDITORIAL REPAIR
+    Implementation change:  none — the lexer has had 49 keywords all along
+
+`yield` appeared in both the v1 keyword table and the reserved-for-future list,
+claiming two statuses for one word. `[LEX-15b]` already makes it a v1 keyword
+and says its count "supersedes" `[LEX-15]`'s, so the rule was the half that
+governed and the table is brought to match. The tables carry a note saying so.
 
 ---
 

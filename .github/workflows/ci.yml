@@ -60,6 +60,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The owner's file is the contract, and the hardened copy may differ from
+      # it only where the amendment ledger says. An undeclared edit to a rule
+      # reads exactly like the specification, which is the point: nobody
+      # reviews a change they do not know is there.
+      - name: every difference from the owner's specification is declared
+        run: python tools/hardening_check.py
+
       # Part XX §1 ground rule 3 — `docs/spec/` is generated and must not be
       # hand-edited. A hand edit looks exactly like the specification in
       # review, so it is caught mechanically instead.
