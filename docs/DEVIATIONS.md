@@ -8,8 +8,15 @@ that the compiler moves rather than the document: when the two disagree and the
 rule is sound, the rule wins. Everything here is either waiting on a phase that
 has not started, or waiting on a mechanism that does not exist yet.
 
+**One entry here is not debt but a standoff.** D5 exists because the document
+contradicts itself and the owner has not ruled: the compiler cannot comply
+without making the specification's own example uncompilable, and it cannot be
+said to conform either. Recording it is the whole point — an unratified reading
+left only in the code is indistinguishable from a bug.
+
 **What does not belong here.** A rule with nothing built against it is a *gap*,
-not a deviation — 833 rules are stated and 36 have conformance directories, so
+not a deviation — the document states on the order of 820 rules and 37 have
+conformance directories, so
 gaps are the overwhelming majority and listing them would bury this. A deviation
 is where something *is* built and behaves differently from what the rule says.
 
@@ -35,6 +42,12 @@ that would expose it lands, and the entry says which feature that is.
 | **Target** | with operator interfaces (Phase 3, block D) |
 
 ## D2 — `[CLO-6]`'s `owned f: fn(A) -> R` is refused, not implemented
+
+> **`[CLO-3]` is closed; `[CLO-6]` is this entry, and is open.** They are
+> different rules and only one of them is done. `fn(A) -> R` as a monomorphised
+> generic over `Callable` works, capturing lambdas and all (ADR-018, closed
+> below). `owned f`, which `[CLO-6]` bounds by `CallableOnce`, does not.
+
 
 | | |
 |---|---|
@@ -76,6 +89,21 @@ that would expose it lands, and the entry says which feature that is.
 | **Fix plan** | nothing to fix. It stops being unemitted when a rule claims it |
 | **Owner** | ERR-039 |
 | **Target** | — |
+
+## D5 — a `mut` parameter whose type is itself a borrow
+
+| | |
+|---|---|
+| **Rule** | `[FN-1]`, against Part VII §7's worked example |
+| **Normative behaviour** | read literally: "The argument MUST be a mutable place" |
+| **Current behaviour** | where the parameter's declared type is `MutSpan[T]`, the view is passed **by value** and the place requirement applies to whatever it was taken of |
+| **Soundness impact** | none. A `MutSpan[T]` already carries the exclusivity a `ref mut` would add: it holds the pointer, and `[SPN-3]` makes it move-only so there is exactly one |
+| **Observable today** | **yes** — the literal reading would reject `normalize(buf.as_mut_span())` |
+| **Why the compiler does not simply comply** | complying makes the *document's own worked example* uncompilable. Part VII §7 writes `normalize(buf.as_mut_span())`, and `split_at` — which `[SPN-*]` names as the sanctioned way to obtain two mutable borrows into one container — could not be called on its own result either |
+| **Status** | **unratified.** This reading was written into `[FN-1]` as amendment A6 and the owner withdrew it: a hardening may not answer what Ember means. So neither side moves — the rule stands as written, the compiler stands as built, and the difference is recorded here instead of being hidden in either |
+| **Fix plan** | one line in `mut_param_ty` if the owner rules for the literal text; nothing if the example governs |
+| **Owner** | ERR-041, ADR-017 |
+| **Target** | owner decision |
 
 ---
 

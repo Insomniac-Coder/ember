@@ -53,11 +53,37 @@ modernised or completed by inference it becomes a reconstruction — and a
 reconstruction presented as a recovery is the worst outcome available here,
 because it enters the document wearing the owner's voice.
 
-So each entry below carries three flags:
+So each entry below declares **one class**, and a hardening admits only four of
+the five:
 
-    Spec semantic change:   did what Ember means change?
-    Implementation change:  did the compiler have to move?
-    Source recovery:        is this text found, or written?
+    SEMANTICALLY NEUTRAL CLARIFICATION   permitted
+    IMPLEMENTATION INVARIANT             permitted
+    SOURCE RECOVERY                      permitted
+    EDITORIAL REPAIR                     permitted
+    OWNER-APPROVED SEMANTIC CHANGE       NOT permitted — forces a language revision
+
+The fifth is the line, and it is drawn in one sentence: **the moment an edit
+answers *what Ember means* rather than *how to implement what Ember already
+means*, it stops being a hardening.**
+
+Two drafts crossed it and were withdrawn, both after the owner caught them and
+not before:
+
+* **A4** wrote a determination about `E3064` into `[LT-2]` — that no v1 source
+  can demand two independent regions. It was even a correct determination, and
+  it was still the wrong place for it: a conclusion in a rule is no longer a
+  conclusion, it is the rule.
+* **A6** wrote an unruled reading of `[FN-1]` into the rule. The reading may
+  well be right; ERR-041 is open and it is the owner's to answer.
+
+The pattern in both is the same and worth naming: I did the analysis correctly,
+then put the answer in the normative text instead of the ledger. The class
+labels exist to make that mechanically visible rather than a matter of my
+judgement in the moment.
+
+Each entry also records whether the compiler had to move, because an amendment
+that forced a compiler change is a different kind of claim from one that
+documented what was already there.
 
 **These are the only permitted edits to the document.** The standing rule is
 that the specification is the contract and is never altered to make the
@@ -80,8 +106,8 @@ one was reverted; the file was byte-identical to as-received again
 The reverted set is listed in the commit *"Revert every edit to the
 specification; the document is the owner's"*.
 
-**2026-09-09, afternoon — thirteen amendments and one recovery, below; one
-since withdrawn.** Authorised by the owner:
+**2026-09-09, afternoon — thirteen clarifications and one recovery, below; two
+drafts withdrawn (A4, A6).** Authorised by the owner:
 *"update the v0.8.3 spec doc with the missing implementation details, if there
 was ambiguity that led to these or if there was any missing details that would
 have made implementation much straightforward"*, together with the specific
@@ -94,6 +120,28 @@ is owed. Each is marked in the text, *(clarified …)* for a clarification and
 *(head recovered verbatim …)* for the recovery, so a reader can tell owner text
 from mine at a glance.
 
+## Owner review of Hardened_1 (2026-09-09)
+
+The owner reviewed the four files as a set — the original, Hardened_1, this file
+and `DEVIATIONS.md` — and did not declare Hardened_1 clean. Three corrections
+were required and are applied:
+
+1. **A6 removed from the normative body.** It answered an unruled question; the
+   same failure as A4. Withdrawn, and the compiler's behaviour is now carried as
+   D5 in `DEVIATIONS.md` instead of being implied by a rule.
+2. **A13 narrowed.** The semantic relationship stays; the requirement that an
+   implementation share one internal capability is gone. A hardening constrains
+   observable behaviour, not architecture.
+3. **Bookkeeping.** "Fourteen clarifications" was thirteen plus one recovery,
+   and the 826-vs-833 rule counts are now explained rather than left as two
+   authoritative-looking numbers in one lineage.
+
+Also adopted: **every entry declares one of five classes**, and a hardening
+admits only four — the fifth forces a language revision. That makes the A6
+failure mechanically visible rather than a matter of judgement. A3's
+representation detail became permissive, and A15 now leads with the test that
+generates its list rather than the list.
+
 ## The fourteen
 
 | # | Rule | What was missing | What it cost |
@@ -103,7 +151,7 @@ from mine at a glance.
 | A3 | `[RNG-3]` | where `RangeError` lives | D-025 — the rule's own signature would not compile |
 | A4 | `[LT-2]` | whether `E3064` is reachable in v1 | an open question the ledger could not close |
 | A5 | `[CLO-3]` | how a `fn(A) -> R` parameter is realised | ADR-018 — a function pointer, so capturing lambdas are rejected |
-| A6 | `[FN-1]` | a `mut` parameter whose type is itself a borrow | ERR-041 — the document's own example is `E2140` |
+| ~~A6~~ | ~~`[FN-1]`~~ | **withdrawn** — an unruled reading; ERR-041 is the owner's | — |
 | A7 | `[FFI-17d]` | any definition of `@ffi(no_virtual_dtor)` | ERR-034 — an attribute named and defined nowhere |
 | A8 | `fn_header` | a production for `extern "C" fn` | ERR-036 — XVI.10's example does not parse |
 | A9 | `extern_class` | a production for `extern class` | ERR-037 — `[FFI-39]` rests on syntax that does not exist |
@@ -118,6 +166,8 @@ from mine at a glance.
 ---
 
 ### A1 — `[SPN-1]`: the coercion takes a borrow
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION + IMPLEMENTATION INVARIANT
 
 **Authorised by** fix-list item 1, which gives the substance: *"A coercion from
 `Array[T]` to `Span[T]` or `MutSpan[T]` creates a borrow of the source array.
@@ -147,6 +197,8 @@ sufficient instruction to an implementer.
 
 ### A2 — `[BRW-1]`: a reference local is not re-seatable
 
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+
 **Authorised by** the general instruction: this is a missing detail, not a
 contradiction. No rule anywhere said what `r = e` means when `r` is a
 reference.
@@ -167,6 +219,8 @@ assignable`. Aliasing-XOR-mutability was being upheld by the backend happening
 to emit `const`, not by the language.
 
 ### A3 — `[RNG-3]`: `RangeError` is a prelude type
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
 
 **Authorised by** fix-list item 12, *"`RangeError` must become a real
 user-facing type… resolvable by the compiler; usable in `Result`; documented;
@@ -189,6 +243,9 @@ depend on an import), and that the name must resolve during signature
 collection.
 
 ### A4 — WITHDRAWN
+
+    Class:                  would have been OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  none
 
     Spec semantic change:   none (reverted)
     Implementation change:  none
@@ -234,6 +291,8 @@ leave a rule apparently unimplemented.
 
 ### A5 — `[CLO-3]`: `fn(A) -> R` is a bound, not a representation
 
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION + IMPLEMENTATION INVARIANT
+
 **Authorised by** fix-list item 3, which is explicit that the rule stands and
 the compiler must catch up, and lists the pieces.
 
@@ -250,7 +309,28 @@ captures; and — stated as a prohibition, because that is the part an
 implementer will otherwise get wrong — a conforming implementation **must not**
 use a function pointer, which is what `extern "C" fn` is for.
 
-### A6 — `[FN-1]`: a `mut` parameter whose type is itself a borrow
+### A6 — WITHDRAWN
+
+    Class:                  would have been OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  none (the compiler already behaved this way)
+
+`[FN-1]` reads exactly as the owner wrote it. The text this amendment added is
+removed from the document.
+
+**Why.** It answered a question the owner has not ruled on. The amendment file
+said so in its own first line — "Not yet ruled on by the owner" — and the text
+went into the normative rule anyway, which is the same failure as A4 one page
+earlier. Writing "this is open" above an edit does not make the edit open; the
+document does not carry the caveat, only the sentence.
+
+**Where the reading now lives.** The compiler still behaves this way, because
+the literal rule makes the specification's own worked example uncompilable, and
+"comply with the letter and break the example" is not obviously better than the
+reverse. So neither side moves and the gap is recorded as **D5** in
+`docs/DEVIATIONS.md`, with `mut_param_ty`'s own comment saying plainly that the
+exception it implements is unratified. ERR-041 holds the question.
+
+### A6 (original) — `[FN-1]`: a `mut` parameter whose type is itself a borrow
 
 **Not yet ruled on by the owner.** ERR-041 remains open; this records the
 reading the document's own example forces, and it is the one amendment here
@@ -275,6 +355,8 @@ and the compiler change is one line in `mut_param_ty`.
 
 ### A7 — `[FFI-17d]`: `@ffi(no_virtual_dtor)` is defined
 
+    Class: EDITORIAL REPAIR
+
 **Authorised by** fix-list item 17, which asks for the cross-reference to point
 at the rule that defines the attribute.
 
@@ -290,6 +372,9 @@ Item 17 also asks for a rule-index check that every rule reference resolves.
 That is not built yet and is tracked as follow-up work.
 
 ### A8, A9, A10 — the two missing productions
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION (grammar the document already uses)
+    Implementation change:  yes — both productions are now parsed
 
 **Authorised by** fix-list items 7 and 8.
 
@@ -315,11 +400,53 @@ A10 admits A9 in `item_body`.
 
 ---
 
+### A11 — `[THR-2]`: what `Sync` claims
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+    Implementation change:  none — threads are not implemented
+
+`[THR-1]` gives a structural test for `Sync` and never says what passing it
+means, so the name reads as a guarantee about mutation. It is not one: `Sync`
+says that *sharing a handle* is safe, and `[THR-1]`'s test is satisfied
+precisely because every mutable field already carries its own synchronisation.
+`Atomic`, `Mutex` and `RwLock` are what make a particular mutation safe. The
+amendment adds that, and forbids a diagnostic from calling a `Sync` type
+thread-safe.
+
+### A12 — `[STD-8]`: `not in` is one negation of one call
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+    Implementation change:  none — `Contains` is not implemented
+
+`[GRM-23]` makes `not in` a single operator and stops there, which leaves a
+second search admissible. It is `not b.contains(a)`: each operand evaluated
+once, in the order written, `contains` invoked once. The test worth keeping is
+`xs.pop() not in ys`, which must remove one element and not two.
+
+### A13 — `[CELL-2]`: what `Cell`, `RefCell` and `Arena` share
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+    Implementation change:  none — none of the three is implemented
+
+Each rule describes its own mechanism and none says what the three have in
+common, so an implementer meets them as three unrelated features. They share one
+semantic property — mutation is permitted through an otherwise shared access
+path — and differ in the mechanism that makes it safe: whole-value replacement
+with no reference handed out, a runtime borrow counter, or a region proved
+statically. What follows for all three is the part worth stating: interior
+mutability never means the borrow checker stops caring, the obligation moves.
+
+**Narrowed after owner review.** The first draft said the three "are one
+capability under three policies, not three mechanisms, and an implementation
+SHOULD build them that way", which prescribes an architecture rather than a
+semantics. An implementation may share machinery between them and nothing here
+requires it to; the observable behaviour is what the rule constrains.
+
 ### A14 — `[RNG-8]` source recovery
 
-    Spec semantic change:   NO
-    Implementation change:  NO
-    Source recovery:        YES
+    Class: SOURCE RECOVERY
+    Implementation change:  none — both recovered clauses were already true of
+                            the compiler and were checked against it
 
 **Approved by the owner, 2026-09-09.** Not a change to `[RNG-8]`: a restoration
 of the part of it that a truncation removed.
@@ -382,9 +509,10 @@ the two statements are at different levels.
 
 ### A15 — `[BLD-3]`: what "flags" covers
 
-    Spec semantic change:   no
-    Implementation change:  none yet (Phase 7)
-    Source recovery:        no
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+    Implementation change:  none yet — the `.embind` cache is Phase 7
 
 **Authorised by** fix-list item 18: "Define one authoritative ABI fingerprint
 set… If changing a configuration can change generated binding semantics or ABI,

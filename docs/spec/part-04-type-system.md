@@ -87,9 +87,9 @@ fn clamped(x: f32) -> Roughness:
   is a language-defined construction under `[RNG-10]` rather than a library
   function, so its error type cannot depend on a module having been imported, and
   an implementation MUST have the name resolvable while *signatures* are being
-  collected and not merely once some body mentions `checked`. It is a unit-only
-  enum under `[ENM-3]`, so `Copy`, `Eq` and `Debug` come free and it costs
-  nothing in a `Result` that `[TYP-13]` can niche. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+  collected and not merely once some body mentions `checked`. An implementation
+  MAY represent it as a unit-only enum under `[ENM-3]`, which costs nothing in a
+  `Result` that `[TYP-13]` can niche; the representation is not prescribed here. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[RNG-4]` The compiler tracks a known range for every numeric expression it
   can — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
   compared the value, and arithmetic on operands with known ranges — and uses it

@@ -39,12 +39,36 @@ or an editorial instruction pasted in instead of carried out.
 Each edit is marked where it sits — *(clarified …)*, *(head recovered verbatim …)*,
 *(editorial instruction carried out …)*, *(0.6.2 leftover removed …)* — so a reader
 can tell the owner's text from an implementer's addition without consulting anything
-else. `docs/spec-amendments.md` records, for every entry, the defect its absence
+else.
+
+**Every edit declares its class, and a hardening admits only four of the five:**
+
+    SEMANTICALLY NEUTRAL CLARIFICATION   permitted
+    IMPLEMENTATION INVARIANT             permitted
+    SOURCE RECOVERY                      permitted
+    EDITORIAL REPAIR                     permitted
+    OWNER-APPROVED SEMANTIC CHANGE       NOT permitted — forces a language revision
+
+The fifth is the line. The moment an edit answers *what Ember means* rather than *how
+to implement what Ember already means*, it stops being a hardening. Two drafts of this
+one crossed it and were withdrawn: A4, which wrote a determination about `E3064` into
+`[LT-2]`, and A6, which wrote an unruled reading of `[FN-1]` into the rule. Both are
+open questions for the owner and neither side moves until they are answered. `docs/spec-amendments.md` records, for every entry, the defect its absence
 caused and three flags: whether Ember's semantics changed (never), whether the
 compiler had to move, and whether the text was found or written.
 
-**Fourteen clarifications.** Each is an addition to an existing rule; none coins a
-rule id, so the index still holds 833 rules.
+**Thirteen clarifications and one recovery.** Each clarification is an addition to an
+existing rule and none coins a rule id.
+
+*On the rule counts, which do not agree and should not be made to.* 0.8.3's own
+change log speaks of **826 rules**; `tools/rule_index.py` reports **833**. They are
+different measurements, not a discrepancy to reconcile: the tool counts every distinct
+rule id appearing anywhere in the document, which includes ids only *cited* — 14 of
+them, nine genuinely undefined (ERR-042) and three surviving only in an earlier
+revision's change log — while 826 is the owner's count of normative rules at authoring
+time, by a method not recorded here. Of the tool's 833, **819 are stated as rules**.
+What matters for this hardening is that all three numbers are the same before and
+after it, because it coined no id.
 
 | # | Rule | What was missing | What its absence cost |
 |---|---|---|---|
@@ -52,7 +76,6 @@ rule id, so the index still holds 833 rules.
 | A2 | `[BRW-1]` | that a reference local is not re-seatable — `r = e` writes *through* it | a write through a shared `ref` passed every check and was caught only by the C backend emitting `const` |
 | A3 | `[RNG-3]` | that `RangeError` is a prelude type, resolvable while signatures are collected | the rule's own worked example did not compile |
 | A5 | `[CLO-3]` | that `fn(A) -> R` is a **bound**, not a representation, and MUST NOT be a function pointer | every capturing lambda was rejected |
-| A6 | `[FN-1]` | that a `mut` parameter whose type is itself a borrow takes it by value | Part VII's own example was `E2140` |
 | A7 | `[FFI-17d]` | any definition of `@ffi(no_virtual_dtor)` | an attribute named by a rule, cited to a rule about templates, and defined nowhere |
 | A8 | `fn_header` | `["extern" string_lit]` | XVI.10's `pub extern "C" fn on_update(…)` did not parse |
 | A9 | `extern_class` | the production | `[FFI-39]` rested on syntax Part III did not define |
@@ -90,7 +113,13 @@ reserved-for-future list. `[LEX-15b]` already makes it a v1 keyword and says its
 count supersedes `[LEX-15]`'s, so the rule governed and the table is brought to
 match: 49 entries.
 
-**Deliberately not done, and recorded instead.** `[EFF-18]` states the effect set
+**Deliberately not done, and recorded instead.** `[FN-1]` says a `mut` argument "MUST
+be a mutable place" and Part VII's own worked example passes `buf.as_mut_span()`, a call
+result — so read literally the document's own example is `E2140`, and `split_at` cannot
+be called on its own result either. A reading that resolves it was drafted, and putting
+it into the rule would have been this hardening answering *what Ember means* rather than
+how to implement what it already means. The rule stands as written; the question is
+ERR-041 and belongs to the owner. `[EFF-18]` states the effect set
 without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
 table row defining the effect. Two normative statements disagree and neither is
 marked non-normative, so it is an owner decision rather than a hardening.

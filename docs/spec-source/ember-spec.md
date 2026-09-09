@@ -68,12 +68,36 @@ or an editorial instruction pasted in instead of carried out.
 Each edit is marked where it sits — *(clarified …)*, *(head recovered verbatim …)*,
 *(editorial instruction carried out …)*, *(0.6.2 leftover removed …)* — so a reader
 can tell the owner's text from an implementer's addition without consulting anything
-else. `docs/spec-amendments.md` records, for every entry, the defect its absence
+else.
+
+**Every edit declares its class, and a hardening admits only four of the five:**
+
+    SEMANTICALLY NEUTRAL CLARIFICATION   permitted
+    IMPLEMENTATION INVARIANT             permitted
+    SOURCE RECOVERY                      permitted
+    EDITORIAL REPAIR                     permitted
+    OWNER-APPROVED SEMANTIC CHANGE       NOT permitted — forces a language revision
+
+The fifth is the line. The moment an edit answers *what Ember means* rather than *how
+to implement what Ember already means*, it stops being a hardening. Two drafts of this
+one crossed it and were withdrawn: A4, which wrote a determination about `E3064` into
+`[LT-2]`, and A6, which wrote an unruled reading of `[FN-1]` into the rule. Both are
+open questions for the owner and neither side moves until they are answered. `docs/spec-amendments.md` records, for every entry, the defect its absence
 caused and three flags: whether Ember's semantics changed (never), whether the
 compiler had to move, and whether the text was found or written.
 
-**Fourteen clarifications.** Each is an addition to an existing rule; none coins a
-rule id, so the index still holds 833 rules.
+**Thirteen clarifications and one recovery.** Each clarification is an addition to an
+existing rule and none coins a rule id.
+
+*On the rule counts, which do not agree and should not be made to.* 0.8.3's own
+change log speaks of **826 rules**; `tools/rule_index.py` reports **833**. They are
+different measurements, not a discrepancy to reconcile: the tool counts every distinct
+rule id appearing anywhere in the document, which includes ids only *cited* — 14 of
+them, nine genuinely undefined (ERR-042) and three surviving only in an earlier
+revision's change log — while 826 is the owner's count of normative rules at authoring
+time, by a method not recorded here. Of the tool's 833, **819 are stated as rules**.
+What matters for this hardening is that all three numbers are the same before and
+after it, because it coined no id.
 
 | # | Rule | What was missing | What its absence cost |
 |---|---|---|---|
@@ -81,7 +105,6 @@ rule id, so the index still holds 833 rules.
 | A2 | `[BRW-1]` | that a reference local is not re-seatable — `r = e` writes *through* it | a write through a shared `ref` passed every check and was caught only by the C backend emitting `const` |
 | A3 | `[RNG-3]` | that `RangeError` is a prelude type, resolvable while signatures are collected | the rule's own worked example did not compile |
 | A5 | `[CLO-3]` | that `fn(A) -> R` is a **bound**, not a representation, and MUST NOT be a function pointer | every capturing lambda was rejected |
-| A6 | `[FN-1]` | that a `mut` parameter whose type is itself a borrow takes it by value | Part VII's own example was `E2140` |
 | A7 | `[FFI-17d]` | any definition of `@ffi(no_virtual_dtor)` | an attribute named by a rule, cited to a rule about templates, and defined nowhere |
 | A8 | `fn_header` | `["extern" string_lit]` | XVI.10's `pub extern "C" fn on_update(…)` did not parse |
 | A9 | `extern_class` | the production | `[FFI-39]` rested on syntax Part III did not define |
@@ -119,7 +142,13 @@ reserved-for-future list. `[LEX-15b]` already makes it a v1 keyword and says its
 count supersedes `[LEX-15]`'s, so the rule governed and the table is brought to
 match: 49 entries.
 
-**Deliberately not done, and recorded instead.** `[EFF-18]` states the effect set
+**Deliberately not done, and recorded instead.** `[FN-1]` says a `mut` argument "MUST
+be a mutable place" and Part VII's own worked example passes `buf.as_mut_span()`, a call
+result — so read literally the document's own example is `E2140`, and `split_at` cannot
+be called on its own result either. A reading that resolves it was drafted, and putting
+it into the rule would have been this hardening answering *what Ember means* rather than
+how to implement what it already means. The rule stands as written; the question is
+ERR-041 and belongs to the owner. `[EFF-18]` states the effect set
 without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
 table row defining the effect. Two normative statements disagree and neither is
 marked non-normative, so it is an owner decision rather than a hardening.
@@ -1074,9 +1103,9 @@ fn clamped(x: f32) -> Roughness:
   is a language-defined construction under `[RNG-10]` rather than a library
   function, so its error type cannot depend on a module having been imported, and
   an implementation MUST have the name resolvable while *signatures* are being
-  collected and not merely once some body mentions `checked`. It is a unit-only
-  enum under `[ENM-3]`, so `Copy`, `Eq` and `Debug` come free and it costs
-  nothing in a `Result` that `[TYP-13]` can niche. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+  collected and not merely once some body mentions `checked`. An implementation
+  MAY represent it as a unit-only enum under `[ENM-3]`, which costs nothing in a
+  `Result` that `[TYP-13]` can niche; the representation is not prescribed here. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[RNG-4]` The compiler tracks a known range for every numeric expression it
   can — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
   compared the value, and arithmetic on operands with known ranges — and uses it
@@ -1317,7 +1346,7 @@ pub fn name[T: Bound](a: A, mut b: B, owned c: C, d: D = default) -> R where T: 
 
 * Parameter modes `[FN-1]`:
   * `a: A` — **borrowed** (shared). The callee reads through a `ref A`. For `Copy` types smaller than 2 pointers the compiler passes by value in registers (ABI detail; semantics identical). The callee cannot mutate or move `a`.
-  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`). Where `B` is itself a borrow — `ref mut T`, `MutSpan[T]`, or a `@view struct` carrying one — the argument **is** that borrow and is passed by value, and the mutable-place requirement applies to whatever the borrow was taken of. Without this, Part VII's own example `normalize(buf.as_mut_span())` is rejected, and `split_at` — which `[SPN-*]` names as the sanctioned way to obtain two mutable borrows into one container — could not be called on its own result. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`).
   * `owned c: C` — **consumed**. The argument is moved (or copied if `Copy`; retained if a handle). The callee owns it and will drop it or move it on.
   * `[FN-2]` Missing mode is `borrowed`. There is no by-value-copy mode; if the callee wants its own copy it writes `owned` and the caller writes `f(x.clone())` or `f(x)` for `Copy` types.
 * `[FN-3]` Return values are moved out; returning a `ref`/view requires that the region be tied to a parameter by elision (Part VII §5).
@@ -1927,7 +1956,7 @@ fn advance(s: Sprite):                        # note: `s` is borrowed, not `mut`
 
 * `[CELL-1]` `Cell[T]` places any `T`. Its unconditional API is `Cell(owned v)`, `set(self, owned v: T)`, `replace(self, owned v: T) -> T`, `into_inner(owned self) -> T`, and `take(self) -> T where T: Default`; all take `self` (a shared borrow) and mutate. `get(self) -> T` is provided only where `T: Copy`, by `extend[T: Copy] Cell[T]:` — ordinary Part V §6 machinery, no specialisation implied, `[TYP-19]` unaffected. `update(self, f: fn(T) -> T)` requires `T: Default` or `T: Copy`. **`set` and `replace` MUST store the new value before dropping the old one.** A drop can run arbitrary user code that re-enters the same `Cell` (`Cell[Box[Node]]` where `Node`'s drop reaches back and reads it); a drop-then-store implementation would leave the `Cell` observably uninitialised across that window, which is a read of uninitialised memory.
 * `[CELL-4]` A `Cell` field does not make its containing struct mutable in any other respect. `Cell[T]` is `Copy` when `T: Copy`, and copying such a `Cell` copies the value it holds at that moment; `Cell[T]` for a non-`Copy` `T` is move-only, and is `Drop` iff `T` is.
-* `[CELL-2]` `Cell` never hands out a reference to its contents, so no aliasing rule can be violated and **no runtime check is needed**. `get` is a load; `set` is a store. There is no overhead relative to a plain field. **`Cell`, `RefCell` and `Arena` are one capability under three policies, not three mechanisms**, and an implementation SHOULD build them that way. Each is a type that may be mutated through a *shared* borrow, and they differ only in what must be proved first: `Cell[T]` replaces the whole value and hands out no reference, so there is nothing to prove and no runtime state; `RefCell[T]` mutates *through* a reference, so `[BRW-1]`'s question is asked at run time against a borrow counter (`[CELL-5]`..`[CELL-8]`); `Arena`'s mutation is allocation, and what it must prove is a region rather than an alias, which `[ARN-1]` does statically by giving the views the arena's region and taking `mut self` to reset. Interior mutability therefore never means the borrow checker stops caring — the obligation moves, to a replacement that cannot alias, to a counter, or to a region — and an implementation that satisfies any of the three by exempting a type from `[BRW-1]` has not implemented it. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+* `[CELL-2]` `Cell` never hands out a reference to its contents, so no aliasing rule can be violated and **no runtime check is needed**. `get` is a load; `set` is a store. There is no overhead relative to a plain field. **`Cell`, `RefCell` and `Arena` share one semantic property and differ in the mechanism that makes it safe.** The shared property is that mutation is permitted through an otherwise shared access path. The mechanisms are distinct: `Cell[T]` replaces the whole value and hands out no reference, so nothing has to be proved and there is no runtime state; `RefCell[T]` mutates *through* a reference, so `[BRW-1]`'s question is asked at run time against a borrow counter (`[CELL-5]`..`[CELL-8]`); `Arena`'s mutation is allocation, and what it must prove is a region rather than an alias, which `[ARN-1]` does statically by giving the views the arena's region and taking `mut self` to reset. What follows for every one of them is that interior mutability never means the borrow checker stops caring: the obligation moves — to a replacement that cannot alias, to a counter, or to a region — and an implementation that satisfies any of the three by exempting a type from `[BRW-1]` has not implemented it. An implementation MAY share internal machinery between them; nothing here requires it to. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[CELL-3]` `Cell[T]` is `!Sync` (`[THR-1]`): it may be moved between threads if `T: Send`, but never shared. The `Sync` equivalent is `Atomic[T]`.
 
 ### `RefCell[T]` — dynamically checked borrows of any `T`
@@ -4374,7 +4403,7 @@ large_copy = { level = "warn", threshold = 256 }
 
 * `[BLD-1]` Unit of compilation and caching: the **module** (one `.em` file) for front-end stages; the **package** for monomorphisation and codegen (one C file per module is emitted, but instantiations are placed in the module that first requests them, with COMDAT-style `static inline`/weak linkage to dedupe).
 * `[BLD-2]` Cache key of a module's front-end artefact: BLAKE3 of (source, compiler version, language version, package config, transitive **interface hashes** of imported modules — the hash of exported signatures, types, layouts, effect sets and inline bodies, not of private bodies). A change to a private function body recompiles only its module's codegen and any callers' *effect checks* if its effect set changed (`[EFF-4]`). *(editorial instruction carried out 2026-09-09; see `docs/spec-amendments.md`)*
-* `[BLD-3]` The `.embind` cache key remains header hash + flags + overlay-list hash, but the **entity identities** it records are `[FFI-30]`'s C identities, so two cache entries for the same header and flags describe the same entities under different views. **"Flags" is not the compiler's command line: it is the set of settings that can change what a binding means**, and a binding MUST be invalidated when any of them changes. That set is, at minimum: the compiler and its version; the language standard; the target triple and ABI; the C++ standard library implementation and its version; on MSVC the runtime-library switch and the effective `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which `[BLD-FFI-1b]` already requires to be inherited byte-for-byte because they change the layout of `std::string`/`std::vector` and the identity of the CRT heap; RTTI and exception settings, and the `/Zc` conformance switches; every `-D`/`/D` reaching the header; the calling convention and name-mangling scheme; and the thunk generator's own version, since a change in how a thunk owns, copies or catches changes the contract without changing the header. The governing test is not the length of that list: **if changing a setting can change a generated binding's semantics or its ABI, it is part of the key.** A setting the toolchain cannot determine is `E9021` and MUST NOT be defaulted (`[BLD-FFI-1b]`), for the same reason — a guess here binds successfully and differs at run time. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+* `[BLD-3]` The `.embind` cache key remains header hash + flags + overlay-list hash, but the **entity identities** it records are `[FFI-30]`'s C identities, so two cache entries for the same header and flags describe the same entities under different views. **"Flags" is not the compiler's command line.** The governing rule is: **if changing a setting can change a generated binding's semantics or its ABI, it is part of the key**, and a binding MUST be invalidated when such a setting changes. A flag that cannot do either — an optimisation level, a diagnostic switch — is not part of it. The settings that qualify are, at minimum: the compiler and its version; the language standard; the target triple and ABI; the C++ standard library implementation and its version; on MSVC the runtime-library switch and the effective `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which `[BLD-FFI-1b]` already requires to be inherited byte-for-byte because they change the layout of `std::string`/`std::vector` and the identity of the CRT heap; RTTI and exception settings, and the `/Zc` conformance switches; every `-D`/`/D` reaching the header; the calling convention and name-mangling scheme; and the thunk generator's own version, since a change in how a thunk owns, copies or catches changes the contract without changing the header. The list is a floor, not a definition — the rule above decides. A setting the toolchain cannot determine is `E9021` and MUST NOT be defaulted (`[BLD-FFI-1b]`), for the same reason — a guess here binds successfully and differs at run time. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
 * `[BLD-4]` The C compiler and linker are invoked through a Ninja file generated per build (`target/<profile>/build.ninja`) so that incremental C compilation is handled by Ninja; MSVC is driven with `/showIncludes`, Clang/GCC with `-MD`.
 * `[BLD-5]` Output layout: `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
 * `[BLD-6]` **Link-time optimisation.** `profiles.<p>.lto` takes `"off" | "on" | "thin"`, mapped by the C backend to MSVC/clang-cl `/GL` + `/LTCG`, Clang `-flto=thin` / `-flto=full`, GCC `-flto`. Where a value is unsupported the toolchain MUST substitute the nearest supported value and record the substitution in the build record. **LTO MUST NOT be required to satisfy `[CG-C-3]` and MUST NOT be required for any correctness property** (XXIII.2).

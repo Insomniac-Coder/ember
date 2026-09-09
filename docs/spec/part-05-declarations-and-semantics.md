@@ -30,7 +30,7 @@ pub fn name[T: Bound](a: A, mut b: B, owned c: C, d: D = default) -> R where T: 
 
 * Parameter modes `[FN-1]`:
   * `a: A` — **borrowed** (shared). The callee reads through a `ref A`. For `Copy` types smaller than 2 pointers the compiler passes by value in registers (ABI detail; semantics identical). The callee cannot mutate or move `a`.
-  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`). Where `B` is itself a borrow — `ref mut T`, `MutSpan[T]`, or a `@view struct` carrying one — the argument **is** that borrow and is passed by value, and the mutable-place requirement applies to whatever the borrow was taken of. Without this, Part VII's own example `normalize(buf.as_mut_span())` is rejected, and `split_at` — which `[SPN-*]` names as the sanctioned way to obtain two mutable borrows into one container — could not be called on its own result. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`).
   * `owned c: C` — **consumed**. The argument is moved (or copied if `Copy`; retained if a handle). The callee owns it and will drop it or move it on.
   * `[FN-2]` Missing mode is `borrowed`. There is no by-value-copy mode; if the callee wants its own copy it writes `owned` and the caller writes `f(x.clone())` or `f(x)` for `Copy` types.
 * `[FN-3]` Return values are moved out; returning a `ref`/view requires that the region be tied to a parameter by elision (Part VII §5).

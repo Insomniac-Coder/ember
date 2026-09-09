@@ -5963,15 +5963,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Normally `ref mut T`: the mode is an inout borrow, so every mention of
     /// the name reads through it and the caller sees the writes.
     ///
-    /// A `MutSpan[T]` is the exception, and Part VII §7's own example is what
-    /// forces it: `fn normalize(mut xs: MutSpan[f32])` is called as
-    /// `normalize(buf.as_mut_span())`, whose argument is a call result and not
-    /// a place at all. A `MutSpan` **is** the mutable access — it carries the
-    /// pointer, and `[SPN-3]` makes it move-only so there is exactly one — so
-    /// `mut` on one means "you may write through it", and the place
-    /// requirement lands on whatever the view was taken of. Wrapping it would
-    /// make a reference to a reference and reject the document's own example.
-    /// ADR-017.
+    /// A `MutSpan[T]` is the exception here, and **that exception is not in the
+    /// specification** — it is D5 in `docs/DEVIATIONS.md`, live and unratified.
+    ///
+    /// The document contradicts itself. `[FN-1]` says a `mut` argument "MUST be
+    /// a mutable place"; Part VII §7 calls `fn normalize(mut xs: MutSpan[f32])`
+    /// as `normalize(buf.as_mut_span())`, whose argument is a call result and
+    /// not a place at all. Read literally the document's own example is
+    /// `E2140`, and `split_at` — which `[SPN-*]` names as the sanctioned way to
+    /// obtain two mutable borrows into one container — cannot be called on its
+    /// own result either.
+    ///
+    /// This takes the example's side: a `MutSpan` **is** the mutable access —
+    /// it carries the pointer, and `[SPN-3]` makes it move-only so there is
+    /// exactly one — so `mut` on one means "you may write through it" and the
+    /// place requirement lands on whatever the view was taken of.
+    ///
+    /// That reading was written into `[FN-1]` as amendment A6 and the owner
+    /// **withdrew it**: a hardening may not answer what Ember means, only how
+    /// to implement what it already means, and this answers the former. So the
+    /// rule stands as written, the compiler stands as built, and the gap
+    /// between them is recorded rather than hidden. ERR-041 and ADR-017 hold
+    /// the question; one line changes here if it is ruled the other way.
     fn mut_param_ty(&mut self, ty: Ty) -> Ty {
         if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
             return ty;
