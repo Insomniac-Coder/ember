@@ -3111,6 +3111,7 @@ impl<'a> Checker<'a> {
                 // `[MOD-7]` — assignment and augmented assignment are both
                 // writes.
                 self.reject_readonly_write(&place, target.span);
+                self.reject_write_through_shared_ref(&place, target.span);
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
                 // would produce an `R` where a `T` is required and is
@@ -5573,6 +5574,63 @@ impl<'a> Checker<'a> {
     /// The whole projection chain is walked, not just its last step: writing
     /// `h.value.inner` takes a mutable borrow of `h.value`, which the rule
     /// names.
+    /// `[BRW-1]` — "while shared borrows are live the owner may read (and
+    /// copy) but **not write**". A write whose destination is reached through
+    /// a shared `ref` is that forbidden write.
+    ///
+    /// ADR-010 settled that a reference local is not re-seatable: `m = ref mut
+    /// y` writes *through* `m` rather than pointing it somewhere new, which is
+    /// what lets regions be location-insensitive. That is sound for `ref mut`
+    /// and is the whole of `[BRW-1]`'s prohibition for a shared `ref` — and
+    /// the shared case was not checked. `r: ref i32 = ref x` then `r = 99`
+    /// passed every Ember check, emitted `(*_2) = 99`, and was caught by
+    /// **clang** rather than by the compiler:
+    ///
+    /// ```text
+    /// error: read-only variable is not assignable
+    /// ```
+    ///
+    /// So aliasing-XOR-mutability was being upheld by the backend's `const`
+    /// rather than by the language. That is luck, not a rule: a backend that
+    /// did not emit `const` would have mutated through a shared borrow in
+    /// silence. It is rejected here, where the type alone answers the
+    /// question and no flow analysis is needed.
+    fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) {
+        let mut current = place;
+        loop {
+            if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
+                let shown = self.types.display(current.ty);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E3021,
+                        span,
+                        "cannot write through a shared reference",
+                    )
+                    .primary_label(format!("this is `{shown}`, which only reads"))
+                    .help(concat!(
+                        "take the borrow as `ref mut` if the callee must write, ",
+                        "or assign to the place itself rather than through the reference"
+                    ))
+                    .note(concat!(
+                        "while a shared borrow is live the owner may read and copy ",
+                        "but not write [BRW-1]"
+                    )),
+                );
+                return;
+            }
+            match &current.kind {
+                // A path to a reference local reads as `Deref(Local)` with the
+                // *pointee's* type, so the reference is one node further in
+                // and the walk has to reach it — checking the target's own
+                // type alone sees `i32` and says nothing.
+                ExprKind::Field { base, .. }
+                | ExprKind::Index { base, .. }
+                | ExprKind::Deref(base) => current = base,
+                _ => return,
+            }
+        }
+    }
+
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
         let mut current = place;
         loop {
