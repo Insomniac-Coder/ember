@@ -144,6 +144,17 @@ were required and are applied:
    and the 826-vs-833 rule counts are now explained rather than left as two
    authoritative-looking numbers in one lineage.
 
+**Second review, after 0.8.4_Hardened_1 was cut.** Two more, both about the
+version rather than a rule:
+
+1. **The header contradicted itself.** It still read "Source files still declare
+   `#! language "0.8.3"`, because the language did not move — only the
+   document's completeness did". True of 0.8.3_Hardened_1, and false the moment
+   S1 made this 0.8.4. It now says the language *did* move, why, and that both
+   versions are accepted. A stale sentence about versioning, in the header of
+   the document that defines versioning, is the worst place to leave one.
+2. **A16**: `[MOD-6]` names the accepted set instead of leaving it to be derived.
+
 Also adopted: **every entry declares one of five classes**, and a hardening
 admits only four — the fifth forces a language revision. That makes the A6
 failure mechanically visible rather than a matter of judgement. A3's
@@ -169,6 +180,7 @@ generates its list rather than the list.
 | A13 | `[CELL-2]` | that `Cell`/`RefCell`/`Arena` are one capability | three unrelated special cases in any implementation |
 | **A14** | **`[RNG-8]`** | **its opening, lost to a truncation** | **two facts about `Copy` and layout, stated nowhere** |
 | A15 | `[BLD-3]` | what "flags" means in the `.embind` cache key | a binding that survives a change that alters its ABI |
+| A16 | `[MOD-6]` | which language versions this revision accepts | an implementer deriving the set from the lineage |
 | ~~A4~~ | ~~`[LT-2]`~~ | **withdrawn** — the owner reopened the question | — |
 
 ---
@@ -514,6 +526,22 @@ supplies a niche only where its range does not exhaust its representation — an
 the two statements are at different levels.
 
 ---
+
+### A16 — `[MOD-6]`: the accepted language versions, named
+
+    Class: SEMANTICALLY NEUTRAL CLARIFICATION
+    Implementation change:  none — `LANGUAGE_VERSIONS` already carries both
+
+`[MOD-6]` requires the compiler's supported set to "include every language
+version whose source it still accepts", which is the rule and is unchanged. It
+illustrates with `#! language "0.5"`, so an implementer reading it after 0.8.4
+has to derive the currently accepted set from the lineage paragraph. The
+amendment names it: `"0.8.4"` selects this language, `"0.8.3"` stays valid
+because 0.8.4 is additive over it.
+
+Deliberately an example rather than a rule change — the general statement
+already permitted both, and rewriting it would be churn against something
+already correct.
 
 ### A15 — `[BLD-3]`: what "flags" covers
 
