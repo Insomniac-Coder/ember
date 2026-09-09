@@ -11,7 +11,11 @@
 //! `[MIR-5]` retain/release only on handles) are added by the phases that
 //! introduce the constructs they govern.
 
-use crate::{BasicBlockId, Body, LocalId, Operand, Place, Rvalue, StmtKind, Terminator};
+use crate::{
+    BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue,
+    StmtKind, Terminator,
+};
+use ember_types::{Ty, TyKind, TypeTable};
 
 #[derive(Debug)]
 pub struct Violation {
@@ -236,6 +240,148 @@ pub fn verify_all(bodies: &[Body]) {
     assert!(
         violations.is_empty(),
         "MIR verification failed:\n{}",
+        violations
+            .iter()
+            .map(|v| format!("  {}: {}", v.body, v.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The view invariant
+// ---------------------------------------------------------------------------
+
+/// **Every view in the MIR must have arrived from a borrow.**
+///
+/// This is the structural backstop for D-022. `[SPN-1]` reads like a coercion
+/// — "`Array[T]` coerces to `Span[T]` at borrow sites" — and it was
+/// implemented like one, so `v: Span[i32] = a` produced a view with no
+/// `Rvalue::Ref` anywhere near it. `collect_loans` looks for `Rvalue::Ref` and
+/// found none, so the borrow checker saw no borrow, `a.push(…)` was permitted,
+/// the push reallocated, and `v` pointed into freed memory. A use-after-free
+/// with no `unsafe` in the program, which is precisely what `[PHIL-10]` says
+/// cannot happen.
+///
+/// The lesson generalises past spans: **a construct that changes lifetime or
+/// aliasing must not be represented as a conversion.** So rather than trusting
+/// that every future view-producing path remembers to take a borrow, the
+/// finished MIR is checked for the shape a forgotten one leaves behind.
+///
+/// A view-typed place may be written only by a *provenance-carrying* rvalue:
+///
+/// * `Ref` — the borrow itself, which is where provenance begins;
+/// * `Use` of a place — a copy or move of a view that already has provenance
+///   (`[SPN-3]` makes `Span[T]` `Copy`);
+/// * `Use` of a string constant — `[LEX-20]` gives literals static region;
+/// * `Aggregate`/`Repeat` — a view struct or tuple, whose provenance is its
+///   operands' (`[LT-2]`).
+///
+/// and never by one that manufactures a value out of representation: `Cast`,
+/// `BinaryOp`, `UnaryOp` or `Discriminant`. None of those has anything to
+/// point into, so a view coming out of one is a view with no loan behind it.
+///
+/// Separately, `Builtin::SpanFrom` is the one producer, and its argument must
+/// be a reference: the borrow has to be *written down* in the IR, because an
+/// implied one is exactly what the analyses cannot see.
+///
+/// This runs in debug builds of the compiler beside [`verify_all`]. It is a
+/// compiler-internal invariant, not a diagnostic — a violation is a bug in a
+/// lowering, and the program that provoked it may be perfectly correct Ember.
+pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let mut fail = |message: String| {
+        violations.push(Violation { body: body.symbol.to_string(), message });
+    };
+
+    for (index, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            if !types.is_view(place_ty(body, types, place)) {
+                continue;
+            }
+            let manufactured = match rvalue {
+                Rvalue::Cast { .. } => Some("a cast"),
+                Rvalue::BinaryOp { .. } => Some("an arithmetic operation"),
+                Rvalue::UnaryOp { .. } => Some("a unary operation"),
+                Rvalue::Discriminant(_) => Some("an enum discriminant"),
+                Rvalue::Use(Operand::Const(c)) if !matches!(c, Const::Str(_)) => {
+                    Some("a non-string constant")
+                }
+                _ => None,
+            };
+            if let Some(what) = manufactured {
+                fail(format!(
+                    "bb{index}: a view is assigned from {what}, which carries no borrow \
+                     — a view-producing path must take one (see D-022)"
+                ));
+            }
+        }
+
+        if let Terminator::Call { func, args, .. } = &block.terminator {
+            let FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. } = func else {
+                continue;
+            };
+            let borrowed = match args.first() {
+                Some(Operand::Copy(p) | Operand::Move(p)) => {
+                    matches!(types.kind(place_ty(body, types, p)), TyKind::Ref { .. })
+                }
+                _ => false,
+            };
+            if !borrowed {
+                fail(format!(
+                    "bb{index}: `SpanFrom` is applied to something that is not a \
+                     reference — the borrow a view is built from must be explicit \
+                     in the IR, or `collect_loans` cannot see it (see D-022)"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+/// Where a place lands, following its projections. A projection that does not
+/// apply leaves the type alone: the type checker has already rejected such a
+/// program, and the verifier only has to stay on its feet.
+fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant else { continue };
+                let fields = &types.enum_def(*id).variants[v].fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+                variant = None;
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                let fields = &types.struct_def(*id).fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => {
+                ty = items.get(*i).copied().unwrap_or(ty);
+            }
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            (Projection::Deref, TyKind::Ref { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    ty
+}
+
+/// Verify the view invariant across every body, panicking on the first
+/// violation. Called from the driver in debug builds, after the borrow checker
+/// has run on the same MIR.
+pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
+    let violations: Vec<Violation> =
+        bodies.iter().flat_map(|b| verify_views(b, types)).collect();
+    assert!(
+        violations.is_empty(),
+        "MIR view verification failed:\n{}",
         violations
             .iter()
             .map(|v| format!("  {}: {}", v.body, v.message))

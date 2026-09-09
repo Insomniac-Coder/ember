@@ -4234,30 +4234,7 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             if source == Some(want) {
-                let span = expr.span;
-                // The view is built **by borrowing** the container, and the
-                // borrow is written out rather than implied: `Rvalue::Ref` is
-                // what creates a loan, and the call's elision carries that
-                // loan's region to the view. Without it the borrow checker
-                // sees nothing, and `v: Span[i32] = a` followed by `a.push(…)`
-                // compiles — the push reallocates and `v` dangles, which is
-                // exactly what `[UNS-4]` and `[PHIL-10]` forbid.
-                let container = expr.ty;
-                let reference =
-                    self.types.intern(TyKind::Ref { mutable, inner: container });
-                let borrowed = Expr {
-                    ty: reference,
-                    kind: ExprKind::Ref { place: Box::new(expr), mutable },
-                    span,
-                };
-                return Expr {
-                    ty: expected,
-                    kind: ExprKind::Builtin {
-                        which: Builtin::SpanFrom { mutable },
-                        args: vec![borrowed],
-                    },
-                    span,
-                };
+                return self.view_of(expr, expected, mutable);
             }
         }
         // `[RNG-3]` — construction. A constant the compiler can place in range
@@ -6162,6 +6139,42 @@ impl<'a> Checker<'a> {
         Some(Expr { ty, kind: ExprKind::FnValue(def), span })
     }
 
+    /// **The only way a view is built.** `[SPN-1]`'s coercion and `[STD-*]`'s
+    /// `as_span`/`as_mut_span` both come here, and anything else that produces
+    /// a view must too.
+    ///
+    /// A view is not a conversion. It points **into** its container, so the
+    /// container has to be borrowed for as long as the view lives — and the
+    /// borrow has to be *written down*, because `Rvalue::Ref` is what
+    /// `collect_loans` looks for and `[LT-1]`'s elision is what carries the
+    /// loan's region out of the call. D-022 was exactly this borrow missing:
+    /// `v: Span[i32] = a` followed by `a.push(…)` compiled, the push
+    /// reallocated, and `v` pointed at freed memory — a use-after-free
+    /// reachable from Safe Ember, which `[UNS-4]` and `[PHIL-10]` forbid.
+    ///
+    /// One producer is the point. A second view-making path that forgot the
+    /// borrow would reintroduce the same defect silently, so there is no
+    /// second path; `verify_views` in `ember_mir` then checks after the fact
+    /// that no view in the finished MIR arrived without one.
+    fn view_of(&mut self, container: Expr, view_ty: Ty, mutable: bool) -> Expr {
+        let span = container.span;
+        let reference =
+            self.types.intern(TyKind::Ref { mutable, inner: container.ty });
+        let borrowed = Expr {
+            ty: reference,
+            kind: ExprKind::Ref { place: Box::new(container), mutable },
+            span,
+        };
+        Expr {
+            ty: view_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::SpanFrom { mutable },
+                args: vec![borrowed],
+            },
+            span,
+        }
+    }
+
     /// `[SPN-2]`, `[SPN-3]` — the methods on `Span[T]` and `MutSpan[T]`.
     ///
     /// Part VII §7 names the full set (`.len()`, `.iter()`, `.iter_mut()`,
@@ -6256,6 +6269,41 @@ impl<'a> Checker<'a> {
         let is_string = matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8));
         let usize_ty = self.common.usize;
         let str_ty = self.common.str_;
+
+        // `[STD-*]`'s Array table names `as_span` and `as_mut_span`, and Part
+        // VII §7 writes `buf.as_mut_span()` in its own worked example. They are
+        // the explicit spelling of `[SPN-1]`'s coercion and go through the one
+        // producer, so the container is borrowed either way — writing the
+        // conversion out does not opt out of the borrow.
+        let explicit_view = if name.name.is("as_span") && !is_string {
+            Some(false)
+        } else if name.name.is("as_mut_span") && !is_string {
+            Some(true)
+        } else {
+            None
+        };
+        if let Some(mutable) = explicit_view {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes 0 arguments, found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // A view of a temporary would dangle the moment the statement
+            // ended, and there would be nothing for the loan to name.
+            if !is_place(&receiver.kind) {
+                self.error(
+                    codes::E2140,
+                    span,
+                    format!("`{}` needs a variable to point into", name.name),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let view = self.types.intern(TyKind::Span { elem, mutable });
+            return self.view_of(receiver, view, mutable);
+        }
 
         let (which, takes, ret) = if name.name.is("len") {
             let which = if is_string { Builtin::StringLen } else { Builtin::ArrayLen };

@@ -427,6 +427,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     write_unclassified_log(&sink, options);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
+        // D-022's backstop. Every view in the finished MIR must have arrived
+        // from a borrow the analyses can see; a view-producing path that
+        // forgot to take one leaves a shape this recognises. Checked here
+        // rather than at lowering because it must hold of the MIR the borrow
+        // checker actually ran on.
+        ember_mir::verify::verify_views_all(&bodies, &types);
     }
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
