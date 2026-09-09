@@ -58,6 +58,7 @@ ERR-008) is worth being able to read again.
 | ERR-038 | `E2213` in IV.2a and `[GRM-8d]` | **decided** — one title covers both conditions; `[RNG-1]` is the defining rule |
 | ERR-039 | `E9010` in `[TYP-9c]` and `[MAN-3]` | **decided** — `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012` |
 | ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |
+| ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
 
 ---
 
@@ -1671,3 +1672,52 @@ naming undeclared types still passes. The code ranges were a shorthand for
 kinds `parse-pass` and `parse-fail`, which run this command. They are how a
 rule whose *grammar* has landed ahead of its semantics gets a real `[TST-4a]`
 accept-and-reject pair rather than a directory holding an aspiration.
+
+---
+
+## ERR-041 — `[FN-1]` and Part VII §7 disagree about a `mut` view argument
+
+**Status: decided. Part VII §7's example governs; ADR-017 records the reading.**
+
+**Where.** `[FN-1]` on the `mut` mode:
+
+> `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable
+> place; the callee may mutate; no move out (except by `mem.replace`/`take`).
+
+Part VII §7, four lines of its own worked example:
+
+```ember
+fn normalize(mut xs: MutSpan[f32]):
+    …
+normalize(buf.as_mut_span())          # or simply normalize(buf)
+left, right = buf.as_mut_span().split_at(1)
+```
+
+`buf.as_mut_span()` is a **call result**. It is not a place, so under `[FN-1]`
+read literally the document's own example is `E2140`, and `split_at` — which
+`[SPN-*]` names as "the sanctioned way to obtain multiple mutable borrows into
+one container" — cannot be called on one either.
+
+**Decision.** Where a `mut` parameter's declared type is `MutSpan[T]`, the view
+is passed **by value**, and `[FN-1]`'s mutable-place requirement lands on
+whatever the view was taken *of*.
+
+**Why this is the reading and not a relaxation.** A `MutSpan[T]` already **is**
+a mutable borrow: it carries the pointer, and `[SPN-3]` makes it move-only
+precisely so that there is exactly one of it — which is the guarantee `[BRW-1]`
+obtains from `ref mut`. Wrapping one in a `ref mut` would make a reference to a
+reference whose second level guarantees nothing the first does not, and
+`[BRW-6]`'s "passing a `ref mut` local to a `mut` parameter reborrows rather
+than moving it" is the same observation about the same shape.
+
+**What a rule would say.** If the owner wants this written down rather than
+inferred, the minimal form is an amendment to `[FN-1]`: *"Where `B` is itself a
+borrow — `ref mut T`, `MutSpan[T]`, or a `@view struct` carrying one — the
+argument is that borrow and the place requirement applies to what it was taken
+of."* That is one sentence and it covers `split_at`'s result, `chunks_mut`'s,
+and `columns_mut`'s, all three of which Part VII §7 and `[BRW-5]` name.
+
+**If the owner rules the other way** — that `[FN-1]` is literal and a `mut`
+view parameter takes a `ref mut MutSpan[T]` — then Part VII §7's three example
+lines change, `split_at` grows a binding before every use, and the fix is one
+line in `mut_param_ty`.
