@@ -555,3 +555,48 @@ annotation produces, reaching the signature collector, the call checker, the
 instantiation cache and the backend. Half of it — closures that build an
 environment and a `fn(A) -> R` that is still a pointer — would compile
 programs that drop captures on the floor, which is worse than refusing them.
+
+## ADR-019 — `Cell`, `RefCell` and `Arena` are compiler-known, not built on `UnsafeCell`
+
+**Decided 2026-09-09.** An implementation choice, not a language question:
+`[CELL-2]` already fixes the observable behaviour, and this decides only what
+builds it.
+
+**The fork.** `[CELL-1]`'s `set` takes `self` — a *shared* borrow — and writes.
+Nothing in Safe Ember can do that, so something has to be the exception. Two
+candidates:
+
+1. **`UnsafeCell`**, which `[CELL-9]` names, with `Cell`/`RefCell`/`Arena`
+   written in Ember on top of it.
+2. **Compiler-known types with builtins**, as `Array`, `String`, `Option`,
+   `Result` and `Span` already are under Part XX.1 — "compiler-known until
+   Phase 2's generics let the standard library write them".
+
+**Chosen: 2, and the reason is that 1 is not available.** `UnsafeCell` appears
+**exactly once** in the whole document — in `[CELL-9]`, as a citation to
+`[UNS-*]` — and no rule defines it. `[UNS-5]`, which enumerates what `std.mem`
+provides, does not list it. Building on it would mean inventing its semantics,
+and its semantics are the one construct that suspends `[BRW-1]`: that is
+answering what Ember means, which is the owner's to do. Filed as ERR-043.
+
+**And `[CELL-9]` does not actually ask for route 1.** Its sentence is about a
+*user package*: "A package that requires an interior-mutability primitive with
+no check uses `unsafe` (`UnsafeCell`)". That governs what a third party may
+build, not how `std`'s own `Cell` is built. Route 2 is consistent with it.
+
+**What route 2 costs.** `UnsafeCell` stays undefined, so a *user* package cannot
+write its own interior-mutability primitive. That is a real limitation and it is
+the owner's to lift; it blocks nothing in `std`.
+
+**What makes it sound.** `[CELL-2]` — "`Cell` never hands out a reference to its
+contents, so no aliasing rule can be violated and **no runtime check is
+needed**". Because nothing escapes, the builtin's write is not an aliasing
+question at all, and the borrow checker can be told that directly rather than
+being weakened. `RefCell` moves the same question to a counter (`[CELL-5]`),
+`Arena` to a region (`[ARN-1]`); amendment A13 records that the three share the
+implementation concern and not the concept.
+
+**What would expire this.** Interface generics good enough for `std` to write
+these in Ember, plus an owner-defined `UnsafeCell`. Then all three move out of
+the compiler, and `[CELL-9]`'s sentence starts governing `std` too.
+

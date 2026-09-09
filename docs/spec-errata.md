@@ -93,6 +93,7 @@ ERR-008) is worth being able to read again.
 | ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |
 | ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
 | ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
+| ERR-043 | `[CELL-9]` with `[UNS-5]` | **open — reported to the owner** — `UnsafeCell` is named as *the* primitive a package uses for unchecked interior mutability, and no rule defines it |
 
 ---
 
@@ -1811,4 +1812,41 @@ citation is to a rule the document no longer carries. Nothing in the compiler
 turns on any of them today, so this blocks nothing — but `[IDE-*]` is a
 Part XX deliverable with no text behind it, and `[TYP-26]` is load-bearing for
 a decision already taken.
+
+---
+
+## ERR-043 — `UnsafeCell` is named as the primitive and defined by no rule
+
+**Status: open. Reported to the owner.**
+
+**Where.** `[CELL-9]`, once, in the whole document:
+
+> A package that requires an interior-mutability primitive with no check uses
+> `unsafe` (`UnsafeCell`, `[UNS-*]`), which is visible in review and in `grep`.
+
+That is the only occurrence of the word. `[UNS-5]` enumerates what `std.mem`
+provides — `MaybeUninit[T]`, `transmute[A, B]`, `ptr.copy_nonoverlapping`,
+`mem.zeroed[T]()` — and `UnsafeCell` is not among them. `[UNS-4]`'s invariant
+list does not mention it either.
+
+**Why this one is not a hardening.** `RangeError` was named and undeclared too,
+and that *was* a hardening (A3): its meaning was never in doubt, only its home.
+`UnsafeCell` is the opposite. It is the one construct that suspends `[BRW-1]` —
+"aliasing XOR mutability", the guarantee the whole language is built to keep —
+and nothing in the document says what suspending it permits, what the `unsafe`
+block then owes under `[UNS-4]`, whether the contents may be reached as a `ref`
+or only as a raw pointer, or how `[TYP-15]`'s storage rules see it. Writing that
+would be deciding what Ember means.
+
+**What is blocked, and what is not.** Nothing in `std` is blocked: ADR-019 takes
+the other route, making `Cell`, `RefCell` and `Arena` compiler-known as `Array`
+and `Span` already are, which `[CELL-2]`'s "no aliasing rule can be violated"
+fully specifies. What is blocked is a **third-party package writing its own**
+interior-mutability primitive, which is precisely what `[CELL-9]`'s sentence is
+about.
+
+**What it needs from the owner.** A definition — at minimum: what `UnsafeCell[T]`
+exposes, what the `unsafe` block promises in exchange, and how `[UNS-4]`'s
+"no two views that are simultaneously live may overlap unless both are shared"
+is discharged around it. It is a small rule and it cannot be guessed.
 
