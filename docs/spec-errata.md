@@ -95,6 +95,7 @@ ERR-008) is worth being able to read again.
 | ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
 | ERR-043 | `[CELL-9]` with `[UNS-5]` | **open — reported to the owner** — `UnsafeCell` is named as *the* primitive a package uses for unchecked interior mutability, and no rule defines it |
 | ERR-044 | `[TYP-15]` with `[LT-3]` | **open — reported to the owner** — one says a static-region view is *always forbidden* in a class field, the other says a `str` literal *may* be stored in one |
+| ERR-045 | `[LT-1]`'s example with `[LT-1a]` and Part III §2 | **decided** — `[LT-1a]` and the grammar govern; `[LT-1]`'s trailing-suffix example does not parse |
 
 ---
 
@@ -1914,4 +1915,41 @@ are legal Ember, and the document currently says both yes and no.
 the view's region is `static`"; or `[LT-3]`'s parenthetical is struck and
 static-region views are genuinely forbidden in those places; or the two are
 merged. Also which code the rejection carries.
+
+---
+
+## ERR-045 — `[LT-1]`'s own example of `@borrows` does not parse
+
+**Status: decided.** `[LT-1a]` and the grammar govern. No compiler change; no
+document change.
+
+**Where.** `[LT-1]` closes with an example written as a trailing suffix:
+
+> `@borrows(param)` on a function overrides rule 3 to tie the return to one
+> named parameter (e.g. `fn longest(a: str, b: str) -> str @borrows(a)`), which
+> lets the caller keep using `b`.
+
+`[LT-1a]` states the position normatively, and differently:
+
+> The attribute `@borrows(p₁, …, pₙ)`, **written on its own line preceding
+> the function declaration**, overrides the region that rules 1–3 would assign.
+
+**Why this one is not ERR-044's kind.** Two things settle it, and both point
+the same way, so nothing is owed to the owner. Part III §2 admits attributes
+only before an item — `item := {attribute} [visibility] item_body` — and there
+is no production for an attribute after a return type. And `[LT-1a]` exists
+*specifically* to state where the attribute goes, which an example in passing
+does not. Written as `[LT-1]` shows it:
+
+```text
+error[E0100]: expected the end of the line
+```
+
+**What the implementation does.** The form `[LT-1a]` prescribes works and is
+`tests/conformance/LT-1a/`. The suffix form is rejected by the parser, which is
+the only thing it can be.
+
+**What would change if the owner disagrees** and wants the suffix form: a
+production for a trailing attribute on `fn_header`, which would be the first
+place in the grammar an attribute may follow the thing it attaches to.
 
