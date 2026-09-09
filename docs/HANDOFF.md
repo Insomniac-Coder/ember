@@ -16,7 +16,7 @@ committed split.
 | Where | What | Status |
 |---|---|---|
 | `docs/spec-source/Ember_v0.6_spec.md` | **the full v0.6 spec I generated**: v0.5 with eleven Aegis features substituted into the Parts they belong to. 3,725 lines | superseded by the incoming document |
-| `C:\Users\ism19\Downloads\Ember_v0.6_Specification.md` | **the owner's revision of that file**, 3,782 lines. Fixes eight of the ten flaws found in mine | superseded by the incoming document, but see the two open defects below |
+| `docs/spec-source/Ember_v0.6_owner_revision.md` | **the owner's revision of that file**, 3,782 lines (copied in from `Downloads/Ember_v0.6_Specification.md` so it is diffable). Fixes eight of the ten flaws found in mine | superseded by the incoming document, but see the two open defects below |
 | `docs/RFC-v0.6.md` | the rationale: why each feature was taken, the three decisions, the amendment table | keep; it explains the *why* the spec does not |
 
 **Nothing v0.6 is normative.** `docs/spec-source/ember-spec.md` is still v0.5 and
@@ -109,6 +109,15 @@ ERR-014, ERR-019 and ERR-022 already cost once:
 
 Everything else in the revision checks out: 485 rule definitions with no duplicate
 id, and `E2214` and `E4054` are unused elsewhere.
+
+### Repository state at the hand-off
+
+**Nine commits on `main`, `1204a5e` onwards, and they are NOT pushed.** The working
+tree is clean. `cargo test --workspace` is 161 green, the build is warning-free, and
+all four gates pass (`rule_index.py`, `spec_check.py`, `check_branding.py`,
+`split_spec.py --check`). Today's compiler work is Phase 2 block E's region graph,
+described under "Block E: the borrow checker" further down; that section is current
+and nothing in v0.6 affects it.
 
 ---
 

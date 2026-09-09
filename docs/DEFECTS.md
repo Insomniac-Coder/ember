@@ -46,6 +46,26 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 | D-010 | The AST printer showed a variant as its bare name, so `[FMT-1]`'s round-trip test could not see D-009 | `[FMT-1]`, `[TST-1]` | **fixed** | `28aa05d` |
 | D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **open — no case found** | ADR-012 |
 
+## 2026-09-09 — the v0.6 draft
+
+Defects in a **proposed** document, not in the compiler. Re-check both against the
+expanded v0.6 specification when it arrives: they were introduced by fixes, and the
+same fixes are likely to have been carried forward.
+
+| # | Defect | Rule | Status | Where |
+|---|---|---|---|---|
+| D-012 | `E1020` is used for "you referred to a type from a library layer this build omitted", and `[GRM-4]` already uses `E1020` for redeclaring a name in the same block | `[BLD-11]`, `[GRM-4]` | **open** | the owner's v0.6 revision |
+| D-013 | `[STD-7a]` says const generics are governed by `[CG-1]`..`[CG-4]`; none of those four rules is defined anywhere in the document | `[STD-7a]` | **open** | the owner's v0.6 revision |
+
+**Two claims of mine that were wrong**, recorded so they are not re-raised as
+defects. I reported that `roughness + metallic` compiles — unprovable, because the
+conversion rule never says *where* an implicit conversion applies and an operand has
+no expected type to convert against, so the real gap is the missing "where". And I
+reported that fixed-capacity containers need a language feature Ember lacks — the
+grammar has const-generic arguments and fixed arrays already use them, so the gap is
+in the compiler, not the design. A claimed contradiction that turns out not to exist
+has cost this project three errata already; check before recording one.
+
 ### How each was verified
 
 **D-001, D-002, D-003.** Three programs that write through a dangling
