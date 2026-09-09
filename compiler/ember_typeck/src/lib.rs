@@ -259,6 +259,18 @@ struct Checker<'a> {
     /// The generic parameters of the function being checked, so a method call
     /// on one can find its bounds (`[TYP-17]`).
     current_generics: Vec<GenericParam>,
+    /// `[RNG-4]` — the interval each local is known to lie in, where one was
+    /// derived at its initialiser.
+    ///
+    /// A range fact has to survive a binding or it is worth almost nothing:
+    /// `half = r * 0.5` then `back: Roughness = half` is the shape `[RNG-10]`(d)
+    /// exists for, and without this the fact dies at the `=` and the second
+    /// line is `E2215`.
+    ///
+    /// A local that is written again loses its fact rather than joining it —
+    /// conservative, and the conservative direction is a check that gets
+    /// emitted rather than one that does not.
+    local_ranges: HashMap<LocalId, (Bound, Bound)>,
     /// `[CLO-1]` — the function that runs each capturing closure, keyed by the
     /// anonymous struct that is its environment. A value of that struct type is
     /// callable, and this is what it calls.
@@ -328,6 +340,7 @@ impl<'a> Checker<'a> {
             current_module: 0,
             type_params: HashMap::new(),
             current_generics: Vec::new(),
+            local_ranges: HashMap::new(),
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             captures: None,
@@ -3304,6 +3317,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E2060, stmt.span, format!("cannot infer the type of `{name}`"));
                 }
                 let local = self.declare(Some(name), ty, stmt.span);
+                if let Some(range) = init.as_ref().and_then(|e| self.range_of(e)) {
+                    self.local_ranges.insert(local, range);
+                }
                 out.push(Stmt::Let { local, init });
             }
             ast::StmtKind::Assign { targets, op, value } => {
@@ -3330,12 +3346,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         }
                         let init = self.synth_committed(value);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
+                        if let Some(range) = self.range_of(&init) {
+                            self.local_ranges.insert(local, range);
+                        }
                         out.push(Stmt::Let { local, init: Some(init) });
                         return;
                     }
                 }
 
                 let place = self.synth(target);
+                // A written local no longer holds whatever `[RNG-4]` derived
+                // at its initialiser. Dropped rather than joined: the
+                // conservative direction here is a check that gets emitted.
+                if let ExprKind::Local(local) = place.kind {
+                    self.local_ranges.remove(&local);
+                }
                 // `[MOD-7]` — assignment and augmented assignment are both
                 // writes.
                 self.reject_readonly_write(&place, target.span);
@@ -4545,6 +4570,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
 
         let range_ty = self.types.intern(TyKind::Range(id));
+
+        // `[RNG-10]`(d) — "a value whose `[RNG-4]` range is contained in the
+        // target's" is one of the five ways a range value arises in Safe code,
+        // and it needs no check: every value the expression can take is
+        // already a value of the target. Tried before the constant path
+        // because it subsumes it, and a non-constant that qualifies would
+        // otherwise be `E2215`.
+        if let Some((lo, hi)) = self.range_of(&value) {
+            if def.contains(lo) && def.contains(hi) {
+                return Expr { ty: range_ty, kind: value.kind, span };
+            }
+        }
+
         match self.constant_bound_of(&value) {
             Some(bound) if def.contains(bound) => {
                 // `[RNG-3]` — "construction from a constant in range […] emits
@@ -4591,11 +4629,83 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[RNG-4]` — the interval an expression is known to lie in.
+    ///
+    /// "The compiler tracks a known range for every numeric expression it can
+    /// — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
+    /// compared the value, and arithmetic on operands with known ranges."
+    /// This covers the first and the last of those; the branch arms need a
+    /// flow-sensitive pass and `min`/`max`/`clamp` need `std.math`, and both
+    /// are still missing (D-018).
+    ///
+    /// The fact that carries most of the weight is not arithmetic at all: **a
+    /// value of a range type is in its declared range**, because `[RNG-9]`
+    /// makes that an invariant rather than a convention and `[RNG-4]` "MAY
+    /// assume" it. That is what makes `[RNG-10]`(d) — "a value whose `[RNG-4]`
+    /// range is contained in the target's" — mean anything, and until this
+    /// existed (d) admitted a constant and nothing else.
+    ///
+    /// Returns `None` where nothing is known, which is always safe: the caller
+    /// then emits the check it would have emitted anyway.
+    fn range_of(&self, expr: &Expr) -> Option<(Bound, Bound)> {
+        // Anything *at* a range type is in that range, whatever produced it.
+        if let TyKind::Range(id) = *self.types.kind(expr.ty) {
+            let def = self.types.range_def(id);
+            return Some((def.lo, def.hi));
+        }
+        match &expr.kind {
+            ExprKind::Int(_) | ExprKind::Float(_) => {
+                let bound = self.constant_bound_of(expr)?;
+                Some((bound, bound))
+            }
+            ExprKind::Widen { expr, .. } => self.range_of(expr),
+            ExprKind::Local(local) => self.local_ranges.get(local).copied(),
+            ExprKind::Deref(inner) => self.range_of(inner),
+            // The erasure `[TYP-5]` inserts. The value is the representation's
+            // now, and what is known about it is the range it came from.
+            ExprKind::EraseRange(inner) => {
+                let TyKind::Range(id) = *self.types.kind(inner.ty) else { return None };
+                let def = self.types.range_def(id);
+                Some((def.lo, def.hi))
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                let a = self.range_of(lhs)?;
+                let b = self.range_of(rhs)?;
+                let (lo, hi) = interval(*op, a, b)?;
+                // `[RNG-4a]` — "A range fact MUST NOT be derived from the
+                // mathematical range of an operation that can overflow, **in
+                // any profile**", because `[TYP-8]`'s policy differs between
+                // `debug` and `release` and `[PRF-1]` forbids the set of checks
+                // from depending on that difference. So a derived interval is
+                // kept only where it provably fits the representation.
+                self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether an interval lies inside what `repr` can hold. A float
+    /// representation additionally requires both ends finite: an overflow to
+    /// infinity is exactly the case `[RNG-4a]` refuses to derive a fact from.
+    fn fits_repr(&self, repr: Ty, lo: Bound, hi: Bound) -> bool {
+        match (lo, hi) {
+            (Bound::Float(a), Bound::Float(b)) => {
+                self.types.is_float(repr) && a.is_finite() && b.is_finite()
+            }
+            (Bound::Int(a), Bound::Int(b)) => match int_max(self.types, repr) {
+                Some(max) => {
+                    let max = i128::try_from(max).unwrap_or(i128::MAX);
+                    let signed = matches!(self.types.kind(repr), TyKind::Int(_));
+                    let min = if signed { -max - 1 } else { 0 };
+                    a >= min && b <= max
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     /// The constant value of an already-checked expression, where it has one.
-    /// This is the seed of `[RNG-4]`'s range tracking: the analysis that
-    /// derives a range for a non-constant expression is not built, and until
-    /// it is, "a value whose known range is contained in the target's" means a
-    /// constant.
     fn constant_bound_of(&self, expr: &Expr) -> Option<Bound> {
         match &expr.kind {
             ExprKind::Int(value) => i128::try_from(*value).ok().map(|v| {
@@ -7518,6 +7628,42 @@ fn mangle(name: Symbol, is_main: bool) -> String {
     }
     // A qualified name carries dots, which C does not allow in an identifier.
     ember_branding::mangled(name.as_str())
+}
+
+/// `[RNG-4]` — the interval an arithmetic operation produces, given its
+/// operands' intervals.
+///
+/// Only `+`, `-` and `*` are derived. Division is left out on purpose: the
+/// interval depends on whether the divisor's range straddles zero, and a
+/// divisor that can be zero panics under `[TYP-8]` rather than producing a
+/// value, so the fact would describe a program that does not reach the
+/// statement. `%`, shifts and the bitwise operators are the "bit-operation
+/// facts" D-018 lists as later work.
+fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    let corners = |f: fn(f64, f64) -> f64, g: fn(i128, i128) -> Option<i128>| {
+        match (a.0, a.1, b.0, b.1) {
+            (Bound::Float(a0), Bound::Float(a1), Bound::Float(b0), Bound::Float(b1)) => {
+                let vals = [f(a0, b0), f(a0, b1), f(a1, b0), f(a1, b1)];
+                let lo = vals.iter().copied().fold(f64::INFINITY, f64::min);
+                let hi = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                Some((Bound::Float(lo), Bound::Float(hi)))
+            }
+            (Bound::Int(a0), Bound::Int(a1), Bound::Int(b0), Bound::Int(b1)) => {
+                let vals = [g(a0, b0)?, g(a0, b1)?, g(a1, b0)?, g(a1, b1)?];
+                Some((
+                    Bound::Int(*vals.iter().min()?),
+                    Bound::Int(*vals.iter().max()?),
+                ))
+            }
+            _ => None,
+        }
+    };
+    match op {
+        BinOp::Add => corners(|x, y| x + y, |x, y| x.checked_add(y)),
+        BinOp::Sub => corners(|x, y| x - y, |x, y| x.checked_sub(y)),
+        BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
+        _ => None,
+    }
 }
 
 /// A range endpoint, rendered the way a diagnostic should show it.
