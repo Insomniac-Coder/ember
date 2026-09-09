@@ -545,10 +545,25 @@ hidden because the owner made the decision explicitly and asked for it to be
 recorded as one: *"Please resolve ERR-044 as an owner semantic decision, not as
 a hardening-only change."*
 
-Which version it lands in is a question for the owner, not for me. The protocol
-says the fifth class "forces a language revision", so this either cuts **v0.8.4**
-or rides in Hardened_2 flagged as it is here. The text and the compiler are the
-same either way; only the number differs.
+**The version is not settled, and the file says so.** The protocol says the
+fifth class "forces a language revision", so this cannot ride quietly in a
+hardening. Until the checkpoint the document's header reads
+*0.8.3_Hardened_1 **+ S1, pending a version decision***, which is neither claim
+made prematurely.
+
+The owner's reading, recorded so the checkpoint does not re-litigate it:
+
+* **Option A — v0.8.4.** The cleanest semantic-versioning story. 0.8.3 stays
+  exactly the language previously specified, and 0.8.4 formally admits
+  static-region views in unbounded storage. *The owner's preference.*
+* **Option B — Hardened_2.** No version bump, but the document must then say in
+  terms that Hardened_2 contains an owner-approved semantic change and is no
+  longer pure hardening.
+
+The reason A is the better default is not the size of the change — it is tiny
+and additive, and no 0.8.3 program becomes invalid — but the boundary it
+protects: **hardening must never quietly become language evolution.** The text
+and the compiler are identical under either option; only the number differs.
 
 **What was wrong.** ERR-044. `[TYP-15]` stated a principle — a view may not be
 stored "in a place whose region is not outlived by the view's region" — and then
