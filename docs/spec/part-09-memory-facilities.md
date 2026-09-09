@@ -1,5 +1,39 @@
 # Part IX — Memory Facilities
 
+## IX.0 Choosing a storage mechanism
+
+Ember has several storage and lifetime mechanisms on purpose — Part 0 row 2 makes
+storage a property of the declared type rather than something the compiler infers,
+and that only works if the programmer can choose. This table is the choice, in one
+place. It is **normative guidance**, not a new rule: every cell restates a rule from
+the part named in the last column.
+
+| Use | Ownership | Aliasing | Destruction | Threads | Reach for it when |
+|---|---|---|---|---|---|
+| `struct` / `enum` | unique, moved | borrow-checked | end of scope, reverse order | `Send`/`Sync` by field | **the default.** Data with no identity: maths, components, messages (VII) |
+| `Box[T]` | unique, heap | borrow-checked | deterministic, on drop | by `T` | one owner, but the value must be on the heap — recursion, a large payload, an unsized tail (IX.1) |
+| `class` | shared, counted | dynamic exclusivity | deterministic, at count 0 | atomic count iff `Sync` | the thing has **identity** and several places refer to it: a scene node, an observer, an editor panel (VIII) |
+| `Shared[T]` | shared, counted | borrow-checked | deterministic, at count 0 | atomic count iff `Sync` | shared ownership of a **value** type, where `class`'s identity and header are not wanted. Advanced; prefer `class` (IX.1) |
+| `Weak[C]` | none | — | never | follows `C` | breaking a cycle, or observing something you do not keep alive (VIII.5, `[WK-1]`) |
+| `Arena` | region | borrow-checked | all at once, at reset | thread-confined | many values with one lifetime: a frame, a level load, a parse (IX.2) |
+| `Handle[Tag]` | none — an index | `Copy` | the pool decides | plain value | a resource the engine owns and may recycle: GPU objects, ECS entities. Generation-checked, so a stale handle is caught (IX.6) |
+| `Cell[T]` | the owner's | interior, whole-value | with the owner | `!Sync` | a counter or memo inside a `struct` you only have a `ref` to (IX.7) |
+| `RefCell[T]` | the owner's | interior, runtime-checked | with the owner | `!Sync` | as `Cell`, but you need a reference to the inside; the check is present in every profile (`[CELL-9]`) |
+| `Mutex[T]` / `RwLock[T]` | the owner's | synchronised | with the owner | `Sync` | mutation shared **across threads** (XI) |
+| `ForeignBox[T]` | foreign, adopted | raw | the foreign destructor | foreign contract | an owned pointer from C or C++ (XVI, `[FFI-36]`) |
+| `CppShared[T]` | foreign, `std::shared_ptr` | raw | C++'s count | C++'s rules | a `std::shared_ptr` crossing the boundary. **Not** `Shared[T]` — two independent counts over one object is a double free (`[FFI-17a]`) |
+
+* `[SEL-1]` **The order above is the order to try.** A design that reaches for
+  `class` where a `struct` would do pays a heap allocation, a header, reference
+  counting and dynamic exclusivity for nothing, and `[CLS-*]`'s ergonomics are not
+  a reason to skip the question. `ember inspect --alloc` reports which mechanism a
+  declaration actually used.
+* `[SEL-2]` **Two mechanisms are never interchangeable across the foreign
+  boundary.** `Shared[T]` and `CppShared[T]` both denote shared ownership and use
+  *different reference counts*; `Weak[C]` and `CppWeak[T]` likewise. Converting one
+  to the other by transmute or by an overlay declaration is `E5065`, and the
+  diagnostic names the double free it prevents.
+
 ## IX.1 The library heap types
 
 | Type | Semantics | Copy? | Thread |
@@ -62,6 +96,8 @@ fn parse(data: Span[u8]) -> Option[u32]:
 * `[UNS-4]` Invariants safe code may assume and unsafe code MUST uphold: every `ref` is non-null, aligned, points to initialised memory of the right type, and is not aliased by a `ref mut` while live; every `Span` length is within its allocation; every class handle points to a live object with a correct header; every `str` is valid UTF-8; no `Send`/`Sync` violation. No two views (`Span`, `MutSpan`, `str`, `Ref`, `RefMut`, a `@view struct`, or a `ref`) that are simultaneously live in safe code may overlap unless both are shared. Constructing overlapping views through raw pointers, `transmute`, or a foreign call and handing them to safe code is undefined behaviour; `[SIMD-3]` and `[CG-C-4]` depend on this invariant. Unsafe code MUST NOT use a raw pointer derived from a `ref` after that reference's region has ended, nor one derived from a class-object field after the object's last live handle has been released (`[RC-5]`).
 * `[UNS-5]` `MaybeUninit[T]`, `transmute[A, B]`, `ptr.copy_nonoverlapping`, `mem.zeroed[T]()` (requires `T: Zeroable`, an unsafe marker interface auto-derived for all-scalar/POD structs) are provided in `std.mem`.
 * `[UNS-6]` Inline assembly: `unsafe asm("…", inputs, outputs, clobbers)` following LLVM's constraint syntax; the C backend rejects it (`E5090`) except on Clang/GCC where it emits `__asm__ volatile`. Prefer `std.cpu` intrinsics.
+* `[UNS-7]` **`@safety("…")` on an `unsafe fn`.** Every `pub unsafe fn` SHOULD carry at least one `@safety("<obligation>")` attribute stating in one sentence, per obligation, what the caller must guarantee. The text is normative documentation, not a checked expression (errata ERR-027: the sentence recommending `@requires` beside it is struck, 0.6.2 having removed the attribute). **`std` MUST carry a `@safety` on every `unsafe fn` it exports.** A `pub unsafe fn` outside `std` with no `@safety` is `L3015 undocumented unsafe obligation`, at **warn**, whose fix-it inserts `@safety("TODO: state the caller's obligation")`; `L3016` reports a `@safety` text still reading `TODO`.
+* `[UNS-8]` **An `unsafe` block records the obligations it discharges.** The compiler MUST record, per `unsafe:` block, the `unsafe fn`s called within it together with their `[UNS-7]` obligations, and MUST emit `W3012 unsafe block with no SAFETY note` at `warn` when the block is not preceded by a `## SAFETY:` doc comment. This is a reporting rule and introduces **no fourth tier**: `[TIER-1]`'s three boundaries are unchanged and neither attribute licenses any operation.
 
 ## IX.5 Layout attributes
 

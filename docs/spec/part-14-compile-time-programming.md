@@ -2,7 +2,7 @@
 
 ## XIV.1 `comptime`
 
-* `[CT-1]` `comptime:` blocks and `comptime fn` functions are executed by the **MIR interpreter** (Part XVIII §7) during compilation. Any Ember function whose transitive effect set ⊆ `{Panic}` and that uses only `comptime`-supported operations may be called at compile time — there is no separate sub-language. Supported: all arithmetic, structs, enums, `Array`/`String`/`Map` (interpreted heap), `match`, loops, recursion, `assert`; the interpreter emulates target endianness, pointer size and `@layout(c)`.
+* `[CT-1]` `comptime:` blocks and `comptime fn` functions are executed by the **MIR interpreter** (Part XIX §7) during compilation. Any Ember function whose transitive effect set ⊆ `{Panic}` and that uses only `comptime`-supported operations may be called at compile time — there is no separate sub-language. Supported: all arithmetic, structs, enums, `Array`/`String`/`Map` (interpreted heap), `match`, loops, recursion, `assert`; the interpreter emulates target endianness, pointer size and `@layout(c)`.
 * `[CT-2]` Not supported at compile time: FFI, threads, `unsafe` raw-pointer deref into non-interpreter memory, I/O except `comptime.read_file(path)` (path relative to the package; recorded as a build dependency) and `comptime.env(name)`.
 * `[CT-3]` Limits: 10^8 MIR steps and 256 MB interpreter heap per `comptime` evaluation by default (`ember.toml [comptime]`); exceeding is `E6001`.
 * `[CT-4]` `comptime` values are hashed into the module cache key with their inputs; determinism is required (`E6002` if two evaluations of the same block differ — checked in `--verify-comptime` CI mode).
@@ -23,7 +23,7 @@ comptime:
 
 * `[RFL-1]` `reflect[T]()` (comptime) returns a `TypeDesc`: `{name, kind, size, align, fields: [FieldDesc{name, type: TypeDesc, offset, attrs}], variants, methods (v2), attributes}`.
 * `[RFL-2]` Runtime reflection is opt-in with `@reflect` on the type: the compiler emits a `TypeInfo` table entry with field descriptors accessible via `type_info_of[T]()` / `h.type_info()` for class handles. Unused runtime metadata is dead-stripped by the linker (each table is its own section/COMDAT).
-* `[RFL-3]` `@reflect` fields may carry user attributes readable at runtime (`@ragev.field(range=(0, 1), tooltip="…")`) — the editor bridge in Part XXI uses this exactly as RageV's `RVShowInEditor` markers are used by `rvgen` today.
+* `[RFL-3]` `@reflect` fields may carry user attributes readable at runtime (`@ragev.field(range=(0, 1), tooltip="…")`) — the editor bridge in Part XXII uses this exactly as RageV's `RVShowInEditor` markers are used by `rvgen` today.
 
 ## XIV.3 Derives
 

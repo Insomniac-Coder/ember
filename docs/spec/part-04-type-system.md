@@ -14,7 +14,7 @@ Every type belongs to exactly one **category**, which determines storage, copy/m
 | **Existential** | `dyn I`, `Box[dyn I]`, class handle upcast | fat pointer (data + vtable) | per underlying | per underlying |
 | **Unit / Never** | `void`, `!` | zero-size | trivial | trivial |
 
-`[TYP-1]` Every concrete type has compile-time-known `size`, `align`, `is_copy`, `is_send`, `is_sync`, `needs_drop`, `is_view`, `has_niche`. The compiler computes these in the `TypeInfo` table (Part XVIII §4.3).
+`[TYP-1]` Every concrete type has compile-time-known `size`, `align`, `is_copy`, `is_send`, `is_sync`, `needs_drop`, `is_view`, `has_niche`. The compiler computes these in the `TypeInfo` table (Part XIX §4.3).
 
 ## IV.2 Scalar types
 
@@ -29,7 +29,7 @@ Every type belongs to exactly one **category**, which determines storage, copy/m
 | `void` | 0 | the unit type; value `()` |
 | `!` | 0 | never type; coerces to every type; result of `panic`, `return`, `break`, `continue`, infinite `while true` |
 
-`[TYP-4]` **No implicit conversions between scalar types in operators.** `i32 + i64` is `E2020`. `[TYP-5]` **Coercion sites** (assignment, argument, return, field initialiser, array element) allow **lossless widening**: `iN → iM` (M>N), `uN → uM` (M>N), `uN → iM` (M>N), `f32 → f64`, `f16 → f32`. Nothing converts to/from `bool` or `char` implicitly. `[TYP-6]` Everything else uses `as`:
+`[TYP-4]` **No implicit conversions between scalar types in operators.** `i32 + i64` is `E2020`. `[TYP-5]` **Coercion sites** (assignment, argument, return, field initialiser, array element) allow **lossless widening**: `iN → iM` (M>N), `uN → uM` (M>N), `uN → iM` (M>N), `f32 → f64`, `f16 → f32`; and **range erasure**: a value of a range type `T` over representation `R` (`[RNG-1]`) coerces to `R`. Range erasure is a distinct coercion step that composes with the widening rules above, so `Roughness → f32 → f64` and `Percent → u8 → u32` are coercions. **No coercion produces a range type** — construction is `[RNG-3]`/`[RNG-3a]`. Nothing converts to/from `bool` or `char` implicitly. `[TYP-6]` Everything else uses `as`:
 
 * `x as T` for numeric types: truncation for narrowing integers (bit truncation), float→int saturating with NaN→0 (Rust semantics), int→float round-to-nearest.
 * `x as u8` from `char`, `x as char` from `u8` only (wider ints via `char.from_u32() -> Option[char]`).
@@ -40,6 +40,90 @@ Every type belongs to exactly one **category**, which determines storage, copy/m
 **Floating point** `[TYP-9]`: strict IEEE semantics; no fast-math, no FMA contraction, no reassociation unless the function is `@fastmath`, in which case the C backend emits `#pragma float_control(precise, off)`/`-ffast-math`-equivalent attributes for that function only. `NaN == NaN` is false; `Ord` is not implemented for floats — use `partial_cmp` or `total_cmp`.
 
 **Shifts** `[TYP-10]`: shift amount ≥ bit width panics in debug and is masked in release (like Rust).
+
+## IV.2a Range and domain types
+
+A range type is a nominal numeric type that carries its own bounds. Two of them
+over the same representation are different types, so a roughness cannot be
+passed where a metallic is wanted even though both are `f32` — which is the
+point, because that confusion is not detectable in any other way.
+
+```ember
+type Roughness = f32 in 0.0 ..= 1.0
+type Metallic  = f32 in 0.0 ..= 1.0
+type Fov       = f32 in 1.0 ..= 179.0
+type Percent   = u8  in 0 ..= 100
+
+fn demo():
+    r: Roughness = 0.5      ## in range at compile time; no check is emitted
+    m: Metallic  = r        ## E2210: `Roughness` is not `Metallic`
+```
+
+A value the compiler cannot place in range is converted fallibly:
+
+```ember
+fn from_slider(x: f32) -> Result[Roughness, RangeError]:
+    return Roughness.checked(x)
+
+fn clamped(x: f32) -> Roughness:
+    y = min(max(x, 0.0), 1.0)
+    return Roughness.checked(y).unwrap()      ## [RNG-4] discharges the check
+```
+
+* `[RNG-1]` A `type` alias carrying an `in` clause declares a **nominal**
+  numeric type over the named representation, restricted to that range. A `type`
+  alias without one is transparent, exactly as `[LEX-15a]` specifies. The clause
+  takes a range expression (`a .. b` or `a ..= b`) whose endpoints are constant
+  expressions of the representation type.
+* `[RNG-2]` Two range types are distinct types even when representation and
+  range are identical (`E2210`). A range type converts to its representation
+  implicitly; the reverse requires `[RNG-3]`. The implicit conversion this rule names is `[TYP-5]`'s range erasure and is admitted at `[TYP-5]`'s coercion sites only; a range type never converts implicitly in operator position except through `[RNG-5a1]`'s generated impls.
+* `[RNG-3]` Construction from a value not statically known to be in range is
+  `T.checked(v) -> Result[T, RangeError]`. Construction from a constant in
+  range, or from a value whose known range is contained in the target's, emits
+  no check.
+* `[RNG-4]` The compiler tracks a known range for every numeric expression it
+  can — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
+  compared the value, and arithmetic on operands with known ranges — and uses it
+  to discharge `[RNG-3]`'s check and `[TYP-8]`'s overflow check. A range fact is
+  never derived from inside a `@fastmath` function. A range fact derived from an arithmetic operation is that operation's **mathematical** range only when the mathematical range is contained in the representation's range — that is, when the operation provably cannot overflow, in which case `[TYP-8]`'s check for it is discharged by the same fact. Otherwise the derived range is the representation's full range, or, under an effective `@overflow(saturate)`, the mathematical range clamped to the representation's. A range fact MUST NOT be derived from the mathematical range of an operation that can overflow, **in any profile**: `[TYP-8]`'s policy differs between `debug` and `release`, and `[PRF-1]` and `[PHIL-5]` forbid the set of checks the compiler emits from depending on that difference. **`[RNG-5a]`'s range-preserving clamp family is exempt**: `min`, `max` and `clamp` cannot overflow, so their mathematical range is always the computed one and `T.clamped` keeps its fact.
+* `[RNG-5]` Arithmetic involving a range type normally yields its **representation**,
+  not the range type: `r * 2.0` is `f32`. A range value MAY participate directly in
+  arithmetic with an ordinary value of its representation type. Arithmetic between
+  two **distinct nominal range types** is rejected (`E2214`) unless at least one
+  operand is explicitly converted to its representation type. Thus `Roughness +
+  Roughness` is permitted, `Roughness * 2.0` is permitted, but `Roughness +
+  Metallic` is rejected. Producing a range type again is a construction and goes
+  through `[RNG-3]`. This preserves the range types' nominal purpose without
+  inventing a range-propagating result type for every operator.
+* `[RNG-6]` Range reasoning over floats obeys `[TYP-9]`'s strict IEEE semantics.
+  NaN is in no range. A range with endpoints `-0.0` and `+0.0` contains both
+  zeros. `[TYP-9a]`'s prohibition on contraction is what keeps a range fact from
+  being invalidated by an FMA the backend introduced.
+* `[RNG-7]` A range type is a niche for `[TYP-13]`: `Option[Percent]` occupies
+  one byte. **A range type supplies a niche only where its range does not exhaust its representation**: `type Full = u8 in 0 ..= 255` has no invalid value and `Option[Full]` is two bytes. The compiler MUST NOT claim a niche it does not have.
+* `[RNG-8]` A range type erases to its representation at every coercion site (`[TYP-5]`) and crosses an FFI boundary as its representation (`[FFI-5]`). A range type is not itself writable in a foreign signature (`[RNG-10b]`); a value arriving from foreign code enters at the representation type and becomes a range value only through `[RNG-3]` or `[RNG-3a]`.
+  * `[RNG-9]` **Range validity is an invariant, not a convention.** A value of a range type whose representation does not lie in the declared range is **invalid**; producing one is undefined behaviour and requires `unsafe`, exactly as `[TYP-2]` provides for `bool`. `[RNG-4]` MAY assume validity, which is what licenses it to discharge `[TYP-8]`'s overflow check and `[OPT-2]`'s bounds check. Invalidity is not merely a wrong number: by `[RNG-7]` a range type is a niche, so an out-of-range representation is a bit pattern that is neither a payload nor a discriminant.
+  * `[RNG-10]` **The construction set is closed.** In Safe code a range-typed value arises only from: (a) a constant the compiler placed in range (`[RNG-3]`); (b) `T.checked(v)`; (c) `T.clamped(v)` (`[RNG-3a]`); (d) a value whose `[RNG-4]` range is contained in the target's; (e) a copy or move of an already-valid value. Any other route is `unsafe` and is `T.new_unchecked(v)`, whose safety condition is written in its documentation and whose `debug` build MUST `debug_assert` the range. Constructing a range-typed value outside this set in Safe code is `E2215`. * `[RNG-10a]` A generated `deserialize` (`@derive(Deserialize)`, XIV.4) MUST emit `T.checked(...)` for every range-typed field, transitively through nested aggregates, and MUST map a failure to `SerError`. A derive that omits the check is a compiler defect, not a performance option. * `[RNG-10b]` A range type MUST NOT appear as a parameter type, return type or field type in an `extern` declaration, an `@ffi` overlay signature, or an imported foreign type — **nor in any aggregate transitively containing one, nor as the pointee of any pointer passed to or returned from foreign code.** It is `E5054`, whose help is to declare the representation and construct with `T.checked(...)` in the Ember-side wrapper (`[FFI-13]`). An `unsafe extern` does not discharge this: `[TIER-1]`'s boundary lets the programmer assert a signature, not a range, and `[FFI-38]`'s "the importer MUST reject rather than guess" applies. * `[RNG-10c]` `unsafe` reads through a raw pointer, `mem` reinterpretation and uninitialised storage may produce a value at a range type; that is the `unsafe` block's obligation under `[UNS-4]`, and `[UNS-*]` is unchanged.
+  * `[RNG-3a]` **Total construction.** Every range type whose endpoints are finite provides `T.clamped(v: Repr) -> T`, defined as `min(max(v, lo), hi)` for an inclusive range and as the nearest representable value strictly inside a half-open one. It is **total**: it has no failure mode and introduces no `Panic` and no `RuntimeCheck(k)`, and `[EFF-16]` is amended to state that `T.clamped` introduces no `Panic(Explicit)`. For a float representation, `NaN` maps to `lo` — which the `docs/errors/` reference page MUST state — and `-0.0`/`+0.0` follow `[RNG-6]`. On the C backend it lowers to two compares or the target's `min`/`max` instruction pair, **strictly cheaper than `[RNG-3]`'s check-and-branch-to-panic**. `T.checked` remains for code that must distinguish an out-of-range input from a clamped one.
+  * `[RNG-5a]` **The clamp family is range-preserving.** Where `min`, `max` or `clamp` is applied to operands of one range type `T`, or to a `T` and constants of its representation lying within `T`'s range, the result is `T`, not the representation. This is the one exception to `[RNG-5]` and is sound because the result's range is contained in `T`'s by construction; `[RNG-4]` discharges it with no emitted check. FIX-013's `[RNG-4]` amendment **exempts this case explicitly**, so `clamped` keeps the fact that makes it free. `L2003` warns where a fallible construction (`T.checked`) is written and a total one (`T.clamped`, or a literal the compiler can place in range) would do, because a `Result` the programmer immediately unwraps is a panic path that need not exist.
+  * `[RNG-4a]` **Float facts come only from the true arm.** Over a float representation, a range fact is derived only from the **true** arm of a comparison. `not (x > hi)` does not establish `x <= hi`: `[RNG-6]` puts NaN in no range and NaN fails both comparisons, so the false arm of a float comparison establishes no bound. A fact derived from a float comparison MUST record whether NaN is excluded, and a fact that does not exclude NaN MUST NOT discharge a `[RNG-3]` construction.
+  * `[RNG-5a1]` **Operators on range types resolve through interfaces, not through a built-in rule.** For every range type `T` over representation `R` the compiler generates, **in `T`'s declaring module**, the impls `T: Add[T, Output = R]`, `T: Add[R, Output = R]`, `R: Add[T, Output = R]` and the corresponding `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `PartialEq`, `PartialOrd` forms, defined by erasing each operand to `R` (`[TYP-5]`) and applying `R`'s operator. Because they are emitted in the type's own declaring module they satisfy `[TYP-20]`'s orphan rule as written and **need no exemption**. No `*Assign` form is generated: `r += 1.0` would produce an `R` where a `T` is required and is `E2214`, whose help names `r = Roughness.clamped(r + 0.1)` or the fallible form. An operator with operands of two **distinct** range types resolves to no generated impl and is `E2214`, whose help names the explicit erasure — `Roughness + Metallic` is therefore rejected by ordinary overload resolution, not by a special case.
+  * `[RNG-5a2]` **Exact impl before coercion.** `[TYP-24]`'s resolution selects an impl matching the operand types **exactly** before applying any `[TYP-5]` coercion. Without this, `Roughness + Roughness` matches both the generated `Roughness: Add[Roughness]` and, after erasure, `f32: Add[f32]`, and resolution is ambiguous.
+
+Diagnostics: `E2210` a value of one range type where another was expected;
+`E2211` a constant outside the target's range; `E2212` an `in` clause whose
+endpoints are not constants of the representation, or are inverted; `E2213` an
+`in` clause on a non-numeric representation.
+
+```text
+error[E2211]: 1.4 is outside `Roughness`
+
+    roughness: Roughness = 1.4
+                           ^^^ `Roughness` holds 0.0 ..= 1.0
+
+  = help: clamp it, or take the fallible form: `Roughness.checked(1.4)`
+```
 
 ## IV.3 Compound value types
 
@@ -76,7 +160,7 @@ A `class C` declaration introduces the type `C` whose values are **handles** (no
 
 ## IV.7 Generics
 
-* `[TYP-16]` Generic functions and types are **monomorphised**: every distinct instantiation produces a distinct symbol. Code size is the programmer's responsibility; the compiler deduplicates identical instantiations across modules at link time (COMDAT in the C backend via `inline`/`selectany`, weak symbols via LLVM).
+* `[TYP-16]` Generic functions and types are **monomorphised**: every distinct instantiation produces a distinct symbol. Code size is the programmer's responsibility; the compiler deduplicates identical instantiations across modules at link time (COMDAT in the C backend via `inline`/`selectany`, weak symbols via LLVM). XIX §4.11a gives the programmer the instrument that sentence assumes: a count, a report, a budget, and — for a generic that uses its parameter only to call its bounds' methods — the option of one shared function in place of the set.
 * Type parameters are **bounded** by interfaces: `fn sum[T: Numeric](xs: Span[T]) -> T`. `[TYP-17]` Inside a generic body, only operations provided by the bounds (and universal operations: copy if `T: Copy`, move, drop, `size_of`) are permitted. There is no duck typing; a missing bound is `E2040` with a suggested bound.
 * Const generics: `fn zero[T, const N: usize]() -> [T; N]`.
 * Associated types in interfaces: `interface Iterator: type Item; fn next(mut self) -> Option[Item]`. Bindings: `Iterator[Item = i32]`.
@@ -192,7 +276,7 @@ interface From[T]:
 5. Untyped literals are resolved last (`[LEX-16/17]`).
 6. Method resolution on an inference variable is deferred until the variable is solved; if a method call forces resolution and multiple types are possible, `E2062`.
 
-The algorithm is Hindley–Milner-style unification over a per-function inference table (union–find of type variables with occurs check), with interface-bound obligations collected and solved after unification (Part XVIII §4.4). There is no let-polymorphism for locals.
+The algorithm is Hindley–Milner-style unification over a per-function inference table (union–find of type variables with occurs check), with interface-bound obligations collected and solved after unification (Part XIX §4.4). There is no let-polymorphism for locals.
 
 ## IV.11 Method resolution and auto-ref
 

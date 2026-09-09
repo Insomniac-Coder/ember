@@ -26,9 +26,34 @@ There is no fourth tier. `[TIER-1]` Safe code MUST NOT invoke an operation with 
 * `[PHIL-6]` Any expensive or dangerous conversion at an FFI boundary is either explicit in source or reported by the compiler.
 * `[PHIL-7]` Panics are for programmer errors. Recoverable failures use `Result`.
 * `[PHIL-8]` **The enforcement ladder.** Ember MUST guarantee memory safety, lifetime safety and data-race freedom for Safe code. The compiler SHOULD prove a required property statically whenever practical. Where static proof is unavailable but the property can be enforced safely at runtime, Ember MAY emit a runtime check instead of rejecting the program. An operation that can be made safe by neither static proof nor runtime enforcement MUST require an explicit `unsafe` boundary. Rejecting a program is correct only when no safe enforcement exists **and** the operation is expressible some other way — in which case the diagnostic MUST name that way (`[DIA-7]`).
-* `[PHIL-8a]` **The ladder is enforced on every revision.** Every error code that rejects a program a previous language version accepted MUST have a diagnostic shape in §XIX.6.1 or §XIX.6.2 whose mandated `help`, applied literally to the rejected program, produces a program that compiles. `tools/rule_index.py` MUST verify this mechanically over `tests/ui/`: for each shape, the recorded "before" program fails with that code and the "after" program — obtained by applying the mandated fix — compiles. A shape whose fix does not compile is a defect of the same kind as `[DIA-11]`'s.
+* `[PHIL-8a]` **The ladder is enforced on every revision.** Every error code that rejects a program a previous language version accepted MUST have a diagnostic shape in §XX.6.1 or §XX.6.2 whose mandated `help`, applied literally to the rejected program, produces a program that compiles. `tools/rule_index.py` MUST verify this mechanically over `tests/ui/`: for each shape, the recorded "before" program fails with that code and the "after" program — obtained by applying the mandated fix — compiles. A shape whose fix does not compile is a defect of the same kind as `[DIA-11]`'s.
 
 `[PHIL-8]` is the sentence that distinguishes Ember from a language whose only safety mechanism is static proof. It is a rule about **how** a guarantee is met, not about *which* guarantees hold: the guarantee list never shrinks, and no profile, contract or attribute weakens it outside `unsafe`.
+
+
+## I.3a The Safe Ember invariant
+
+The guarantee Safe Ember makes is distributed across ownership, borrowing, classes,
+effects, FFI and runtime checks. This section states it once, so that every other
+rule can be read as a means to it.
+
+* `[PHIL-10]` **The invariant.** A program that contains no `unsafe` block, no
+  `unsafe fn`, and no unbacked foreign fact (`[FFI-35]`) cannot perform an invalid
+  ownership operation, a use-after-free, a double release, a data race, an
+  out-of-bounds access, an invalid range construction (`[RNG-9]`), a read of
+  uninitialised memory, or an access through an invalid reference. Foreign code and
+  explicitly `unsafe` operations lie outside the guarantee and are isolated by
+  typed boundaries whose obligations `[UNS-7]` and `[FFI-35]` require to be
+  written down and `ember tcb` requires to be enumerable.
+* `[PHIL-11]` **What remains possible**, and is therefore not a defect in the
+  guarantee: resource exhaustion (`[ALC-1]` panics on it); deadlock (`[THR-*]` does
+  not prove liveness); a logical race between correctly synchronised operations;
+  a reference cycle leaking (`[WK-1]`); a bug in a foreign library reached through
+  a correctly declared boundary; a hardware fault; deliberate process termination
+  through `panic`/`abort`; and any violation of a safety obligation inside an
+  `unsafe` block or an inaccurate `asserted` foreign fact. `[PHIL-5]` governs the
+  last of these: declining to look is not a proof, and an unbacked assertion is
+  recorded as unbacked rather than treated as discharged.
 
 ## I.4 Static proof and runtime enforcement
 

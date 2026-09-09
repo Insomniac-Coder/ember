@@ -23,7 +23,7 @@ pos, vel = particles.columns_mut(position, velocity)   # two disjoint MutSpans i
 * `[SOA-2]` Column borrows are **disjoint places** for the borrow checker (`[BRW-4]` applies field-wise across columns), so two systems can hold `mut` borrows of different columns simultaneously.
 * `[SOA-3]` `SoA[T]` provides `swap_remove`, `retain`, `sort_by_column`, `len`, `reserve`; element order is stable across all columns.
 * `[SOA-4]` `ArenaSoA[T]` is the arena-backed view variant.
-* `[SOA-5]` `columns_mut(f0, f1, …)` takes **field-name arguments**: identifiers resolved against `T`'s fields at compile time rather than as expressions. It is the only construct with this argument kind; a name that is not a field of `T` is `E2020`. This is an argument *kind*, not overloading (XXII.2 unaffected).
+* `[SOA-5]` `columns_mut(f0, f1, …)` takes **field-name arguments**: identifiers resolved against `T`'s fields at compile time rather than as expressions. It is the only construct with this argument kind; a name that is not a field of `T` is `E2020`. This is an argument *kind*, not overloading (XXIII.2 unaffected).
 
 ## XII.2 SIMD
 
@@ -80,7 +80,7 @@ world.run(integrate, dt)                               # borrows the storages na
 * `[ECS-3]` `Query[(A, mut B, Option[C], Not[D])]` is a view type over the world; it iterates the smallest storage among its required components and probes the others. Iteration yields `ref`/`ref mut` tuples; component access is two loads and an index (`[ECS-2]` layout). `[ECS-4]` The query's read/write set is a comptime constant; `World.run` and `World.run_parallel([sys1, sys2])` use it for access-set scheduling (`[JOB-3]`) and reject conflicting systems at compile time when both are known (`E7020`).
 * `[ECS-5]` Structural changes (`add`/`remove`/`destroy`) during iteration go through a `Commands` buffer applied after the system returns (`q.commands().destroy(e)`), which keeps iteration borrow-safe.
 * `[ECS-6]` Iteration order is insertion order with swap-remove holes, i.e. deterministic for an untouched scene (RageV's requirement 3 in `ECS.h`).
-* `[ECS-7]` `@derive(Component)` registers the type in a comptime component registry used by serialisation and by the editor bridge (Part XXI).
+* `[ECS-7]` `@derive(Component)` registers the type in a comptime component registry used by serialisation and by the editor bridge (Part XXII).
 
 ---
 

@@ -21,7 +21,8 @@ A **place expression** denotes memory: a local, a field of a place, an index int
 | `a == b` | `Eq.eq(a, b)` | `!=` is `not (a == b)` |
 | `a < b` | `Ord.cmp(a,b) == Less` or `PartialOrd` | floats use `PartialOrd`; `NaN` comparisons are `false` |
 | `a is b` | handle identity (same object) | only for class handles and `ref`s; `E2150` otherwise |
-| `x in coll` | `coll.contains(x)` | `Contains` interface |
+| `x in coll` | `coll.contains(x)` | `Contains` (`[STD-8]`); comparison precedence, non-associative (`[GRM-23]`) |
+| `x not in coll` | `not coll.contains(x)` | one operator, not `not` applied to `in` (`[GRM-23]`) |
 | `a[i]` | `Index.index(a, i)` / `IndexMut.index_mut(a, i)` | selected by context (read vs write/mut-borrow) |
 | `a[i..j]`, `a[..j]`, `a[i..]` | `a.slice(range)` → `Span`/`MutSpan` | bounds-checked; `..` and `..=` |
 | `a?.f`, `a?.m()` | `match a: Some(v) => Some(v.f), None => None` | on `Option`; also `Result` (maps `Ok`) |
@@ -71,6 +72,34 @@ task   = owned fn() => process(data)      # captures `data` by move/copy/retain;
 * `[CLO-6a]` **`CallableOnce` is not `dyn`-compatible in v1**: `call_once` takes `owned self`, which `[TYP-22]` does not admit through a vtable. `[CLO-3]`'s `Box[dyn fn(A) -> R]` therefore remains a `Callable`, and a boxed once-callable payload is expressed by moving the payload into the closure's captures and having the boxed closure take it by `mem.take` from an `Option` field — the one place the `Option` dance survives, and the reason `[TYP-22]`'s by-value-self restriction is worth revisiting in v2.
 * `[CLO-7]` `thread.spawn`, `jobs.submit`, `jobs.submit_after`, `Option.map`/`and_then`/`unwrap_or_else`, and `Result.map`/`map_err`/`and_then`/`unwrap_or_else` MUST declare their callable parameter `owned f:`. `[JOB-1]`'s inline job slot is unaffected: the closure remains a value moved into the slot.
 * `[CLO-6]` **Once-callable closures.** `std.core` declares `interface CallableOnce[Args, R]: fn call_once(owned self, args: Args) -> R`, and `interface Callable[Args, R]: CallableOnce[Args, R]`, so every reusable closure is also once-callable. A parameter written `owned f: fn(A) -> R` is a generic bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are bounded by `Callable`. **No call site changes**: the mode already selects the bound, exactly as `[FN-1]`'s three modes already work for every other type. Calling a value bounded by `CallableOnce` consumes it; a second call is `E3040 use of moved value` under `[OWN-3]` and requires no additional analysis. `E3030` is emitted only when a closure implementing `CallableOnce` alone is supplied where `Callable` is required, and MUST use shape O5's help.
+
+## VI.5a Coroutines
+
+Gameplay is full of sequences that span frames: play a sound, wait half a second,
+swing the door open over two seconds, then let the player through. Written as a state
+machine, five lines of intent become fifty lines of bookkeeping, and every such
+sequence in the game gets the same treatment. This is the single largest reason RageV
+hosts gameplay in C#.
+
+```ember
+gen fn open_door(mut self) -> Coroutine[()]:
+    play_sound(self.unlock)
+    yield wait(0.5)
+    yield animate(self.door, 2.0)
+    self.passable = true
+```
+
+* `[CORO-1]` A function declared `gen fn` is a **coroutine**. Calling it executes no part of the body; it returns a `Coroutine[R]` value holding the suspended frame. The body runs only when that value is resumed.
+* `[CORO-2]` `yield e` suspends the coroutine and delivers `e` to whoever resumed it. `yield` outside a `gen fn` body is `E2220`. A `gen fn` with no `yield` in its body is accepted — it runs to completion on first resume — and `[LNT-4]` warns (`L2004`), because it is nearly always a mistake.
+* `[CORO-3]` `std.core` declares `enum CoroutineState[R, Y]: Suspended(Y); Done(R)` and `interface Resumable: type Return; type Yield; fn resume(mut self) -> CoroutineState[Return, Yield]`. **`Coroutine[R]` in a `gen fn`'s return position is not that interface**: it names the concrete frame type the compiler synthesises for *that* function (`[MIR-6]`) — sized, move-only, and implementing `Resumable` — so `[TYP-22]`'s prohibition on bare unsized interface types is not engaged. Two `gen fn`s have distinct, unnameable frame types; a caller storing coroutines of different functions in one container uses `Box[dyn Resumable]` and pays `[TYP-22]`'s dispatch for it. Resuming a coroutine already in `Done` is `E-panic: coroutine resumed after completion` in `debug` and `release`, and unchecked in `shipping` under `[EXC-6]`'s policy.
+* `[CORO-4]` **Lowering.** The compiler rewrites the body into a state machine over the frame: locals live across a `yield` become frame fields, locals that are not remain ordinary stack slots of `resume`, and a `state` discriminant selects the resume point. This is a MIR transformation (`[MIR-6]`) and introduces no runtime machinery beyond the frame.
+* `[CORO-5]` **Nothing about a coroutine allocates.** The frame's size is a compile-time constant produced by `[CORO-4]` and reported by `size_of[Coroutine[R]]()`; `Coroutine[R]` is an ordinary move-only value type that may live in a local, a struct field, an `Array` or an `Arena`. `Box[Coroutine[R]]` is available for a caller who wants it on the heap and is the only form that allocates. A `gen fn` therefore carries `Alloc` only if its body does, and may be called from `@noalloc`.
+* `[CORO-6]` **No borrow may be held across a `yield`.** A reference whose region (`[LT-*]`) spans a suspension point is `E2221`, naming the borrow, the `yield` it crosses, and the place it was taken from. The frame outlives the stack frame that created it and the borrow checker cannot see the resumer, so this restriction is what makes coroutines safe without a new analysis. Values **owned** by the frame are unrestricted; only borrows are refused, and the diagnostic's `help` names moving the value in as the fix.
+* `[CORO-7]` A suspended coroutine **owns** everything moved into its frame. Dropping one runs the drops for exactly the locals live at its current suspension point, in reverse declaration order per `[DRP-1]`. The compiler synthesises one drop function per suspension point and selects on `state`; a coroutine dropped before completion is normal and leaks nothing.
+* `[CORO-8]` A coroutine's effect set is the union over every path through its body, computed once at the `gen fn` rather than per resume. `@noalloc`, `@deterministic`, `@realtime` and the rest apply to a `gen fn` exactly as to any other function.
+* `[CORO-9]` **Self-referential frames are not permitted in v1.** A frame holding a pointer into itself would break the moment the `Coroutine[R]` value moves. `[CORO-6]` already forbids writing one in safe code; `unsafe` code that constructs one carries the obligation, and `[UNS-7]`'s `@safety` text MUST state it.
+* `[CORO-10]` A `gen fn` may not be `extern`, may not be `@export`ed, and may not be passed to C as a function pointer (`E2222`): its calling convention is not C's. Coroutines are driven from Ember and their results cross the boundary as ordinary values.
+* `[CORO-11]` `std.coroutine` provides what gameplay needs on top of `[CORO-3]`, with no further compiler support: `Scheduler` (resume a set of coroutines once per frame and drop those reporting `Done`), `wait(seconds)`, `wait_frames(n)`, `wait_until(pred)`. `Scheduler` calls `hot.checkpoint()` (`[HR-33]`) between frames, which is what makes a project using it hot-reloadable without writing one.
 
 ## VI.6 Assertions and panics
 

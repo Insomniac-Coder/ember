@@ -1,4 +1,4 @@
-# Ember specification (v0.5), by part
+# Ember specification (v0.8.3), by part
 
 **Generated** by `tools/split_spec.py` from `docs/spec-source/ember-spec.md`, which is the normative document. Do not hand-edit these files: apply the ruling to the source, record it in `docs/spec-errata.md`, and regenerate.
 
@@ -23,9 +23,10 @@
 | [part-15-standard-library-surface-v1.md](part-15-standard-library-surface-v1.md) | Part XV — Standard Library Surface (v1) |
 | [part-16-foreign-function-interface.md](part-16-foreign-function-interface.md) | Part XVI — Foreign Function Interface |
 | [part-17-gpu-host-model-and-shader-interface.md](part-17-gpu-host-model-and-shader-interface.md) | Part XVII — GPU Host Model and Shader Interface |
-| [part-18-compiler-architecture.md](part-18-compiler-architecture.md) | Part XVIII — Compiler Architecture |
-| [part-19-toolchain.md](part-19-toolchain.md) | Part XIX — Toolchain |
-| [part-20-implementation-plan.md](part-20-implementation-plan.md) | Part XX — Implementation Plan |
-| [part-21-ragev-integration-plan.md](part-21-ragev-integration-plan.md) | Part XXI — RageV Integration Plan |
-| [part-22-open-questions-non-goals-glossary-rule-index.md](part-22-open-questions-non-goals-glossary-rule-index.md) | Part XXII — Open Questions, Non-Goals, Glossary, Rule Index |
+| [part-18-hot-reload-and-live-editing.md](part-18-hot-reload-and-live-editing.md) | Part XVIII — Hot Reload and Live Editing |
+| [part-19-compiler-architecture.md](part-19-compiler-architecture.md) | Part XIX — Compiler Architecture |
+| [part-20-toolchain.md](part-20-toolchain.md) | Part XX — Toolchain |
+| [part-21-implementation-plan.md](part-21-implementation-plan.md) | Part XXI — Implementation Plan |
+| [part-22-ragev-integration-plan.md](part-22-ragev-integration-plan.md) | Part XXII — RageV Integration Plan |
+| [part-23-open-questions-non-goals-glossary-rule-index.md](part-23-open-questions-non-goals-glossary-rule-index.md) | Part XXIII — Open Questions, Non-Goals, Glossary, Rule Index |
 | [appendix-a-syntax-quick-reference.md](appendix-a-syntax-quick-reference.md) | Appendix A — Syntax quick reference |

@@ -1,7 +1,7 @@
-# Part XX — Implementation Plan
+# Part XXI — Implementation Plan
 * `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`..`[IDE-10]` are **reserved** for the language server itself, a named milestone before 1.0 rather than a v0.4 commitment: `ember lsp` (stdio, LSP 3.17) with `tests/ide/` in the conformance suite; the v1 capability list (diagnostics, hover including the effect set, definition, references, symbols, completion, signature help with parameter modes, rename, formatting, code actions for every machine-applicable `[DIA-1]` fix-it, semantic tokens, inlay hints); incrementality keyed on `[BLD-2]`'s interface hash within `[BLD-7]`'s budget; parity between `ember check` and `ember lsp` tested over the conformance corpus; and editor client packages in `editors/`. `[IDE-7]` **cost inlay hints** is the item worth specifying even if it lands late: the inferred type of each `x = expr`; the parameter mode at each call argument where it is not written; an `alloc` marker at each expression contributing the `Alloc` effect; at each site in the `[EFF-10]` side table, the check kind and its `[EFF-11]` reason code; and each inserted `Retain`/`Release`. That is the per-line form of what Part X mandates be visible.
 
-## XX.1 Ground rules for the implementing agent
+## XXI.1 Ground rules for the implementing agent
 
 1. Work in the order of the phases below. Do not start a phase's optional items before its **exit criteria** pass.
 2. Every phase adds tests before code: write the `tests/conformance/<rule>/` cases from the spec text, then implement until they pass.
@@ -12,7 +12,7 @@
 6. Prefer boring implementations. No novel algorithms where a textbook one exists (Pratt parsing, union–find inference, Maranget pattern compilation, NLL).
 7. Do not build the LLVM backend, async, named lifetimes, procedural derives, or the kernel language in v1 even if they seem easy at the time.
 
-## XX.2 Phases
+## XXI.2 Phases
 
 ### Phase 0 — Skeleton (exit: `hello.em` compiles via C and runs on Windows + Linux)
 
@@ -21,7 +21,7 @@
 * Minimal `ember_types`/`ember_typeck` for scalars, structs, `void`, function calls, locals.
 * Straight-line MIR lowering (no borrowck yet), `ember_codegen_c`, `ember_rt` with `ember_alloc`, `ember_panic`, `println` for scalars/`str`.
 * `ember build/run` driving `cl.exe`/`clang`.
-* **Milestone test**: M1 (§XX.3; `Vec3` add) compiles to C with no heap allocation (assert by grepping the C for `ember_alloc`) and prints `5`.
+* **Milestone test**: M1 (§XXI.3; `Vec3` add) compiles to C with no heap allocation (assert by grepping the C for `ember_alloc`) and prints `5`.
 
 ### Phase 1 — Core language (exit: conformance for Parts II–VI except closures/generics)
 
@@ -36,11 +36,11 @@
 
 * Generics with bounds, monomorphisation, associated types, `Iterator`/`Iterable` and the adaptor set; `Array`, `Span`, `MutSpan`, `Box`, `Map` written in Ember (`std/collections`).
 * Moves, `Copy`, drop elaboration with drop flags, `Drop` interface, `mem.*`.
-* NLL borrow checker (§XVIII.4.7) incl. two-phase borrows, disjoint fields, reborrows, view structs `@view`, elision rules, `@borrows`.
+* NLL borrow checker (§XIX.4.7) incl. two-phase borrows, disjoint fields, reborrows, view structs `@view`, elision rules, `@borrows`.
 * Closures (`[CLO-*]`), `Callable`, `fn(A)->R` generic parameters.
 * `Arena`, `FixedArena`, `ScopedArena` (`[ARN-*]`), `unsafe`, raw pointers, `MaybeUninit`, `transmute`.
 * `Cell[T]`, `RefCell[T]`, `Ref`/`RefMut` guards (`[CELL-*]`), `std.cell`; `assert_disjoint`/`assume_disjoint` (`[DSJ-*]`) with the proof-carrying return and the backend aliasing facts.
-* Diagnostics quality pass on borrow errors: the full shape catalogue of §XIX.6.1 with a `ui/borrow/<shape>/` snapshot each (`[DIA-3]`, `[DIA-7]`, `[DIA-10]`), the classifier, and `ember explain --borrow` (`[DIA-8]`).
+* Diagnostics quality pass on borrow errors: the full shape catalogue of §XX.6.1 with a `ui/borrow/<shape>/` snapshot each (`[DIA-3]`, `[DIA-7]`, `[DIA-10]`), the classifier, and `ember explain --borrow` (`[DIA-8]`).
 
 ### Phase 3 — Objects (exit: `[OBJ-*]`, `[RC-*]`, `[EXC-*]`, `[DSP-*]`, `[WK-*]` tests; leak/cycle report works)
 
@@ -78,9 +78,17 @@
 ### Phase 7 — C++ FFI, and the interpreter as a supported mode (exit: `[FFI-17..20, 24]`, `[CT-*]` differential testing)
 
 * C++ importer: thunk generation, MSVC ABI matching, template instantiation lists, STL views, exceptions → `Result[..,CppError]`, `ember bind --report`.
-* *(v0.6)* `std.gpu`: handles, `Device` interface, `Frame`, `Ring`, access states, deferred destruction, `History`, `ShaderInterface`, `ember shader-bind` from SPIRV-Cross JSON — implementing Part XVII's existing `[GPU-*]` rules, and Part XXI's `[RV-*]` rules for RageV Stages 2–3.
+* *(v0.6)* `std.gpu`: handles, `Device` interface, `Frame`, `Ring`, access states, deferred destruction, `History`, `ShaderInterface`, `ember shader-bind` from SPIRV-Cross JSON — implementing Part XVII's existing `[GPU-*]` rules, and Part XXII's `[RV-*]` rules for RageV Stages 2–3.
 * The MIR interpreter becomes a **supported restricted execution mode** (`ember run --interp`) within a declared intrinsic and file-I/O capability set; native FFI is not implicitly available. Differential execution against the native backend is mandatory for deterministic programs. WebAssembly is treated as an implementation target of that mode, never as a semantic dependency of the language.
-* **The GPU host model is scheduled, not respecified.** Part XVII's `[GPU-*]` rules and Part XXI's `[RV-*]` rules remain the sole normative source for that surface; implementing them is **v0.6 work** and is not a v1 exit criterion. v0.5 MUST NOT make an architectural decision that would require redesigning them — the compatibility surface that must survive is: Vulkan-capable C/C++ FFI, imported value types and opaque handles, `unsafe overlay` boundaries, callback-bound command signatures (which `[LT-7]` now supplies), frame and arena lifetime primitives, deferred-destruction API shapes, a stable runtime ABI boundary, and the metadata shader reflection needs. If v0.6 requires a genuinely new GPU rule it takes an unused id after the existing Part XVII range; an existing `[GPU-*]` id MUST NOT be reused for a different meaning.
+* **The GPU host model is scheduled, not respecified.** Part XVII's `[GPU-*]` rules and Part XXII's `[RV-*]` rules remain the sole normative source for that surface; implementing them is **v0.6 work** and is not a v1 exit criterion. v0.5 MUST NOT make an architectural decision that would require redesigning them — the compatibility surface that must survive is: Vulkan-capable C/C++ FFI, imported value types and opaque handles, `unsafe overlay` boundaries, callback-bound command signatures (which `[LT-7]` now supplies), frame and arena lifetime primitives, deferred-destruction API shapes, a stable runtime ABI boundary, and the metadata shader reflection needs. If v0.6 requires a genuinely new GPU rule it takes an unused id after the existing Part XVII range; an existing `[GPU-*]` id MUST NOT be reused for a different meaning.
+
+### Phase 7a — Iteration, determinism and instantiation cost (exit: `[CORO-*]`, `[DET-*]`, `[HR-1..19]`, `[BUD-*]`, `[MONO-2..9]` tests)
+
+* Coroutines: `[MIR-6]`'s lowering, `[CORO-6]`'s borrow restriction with its diagnostic, per-suspension-point drop glue, `std.coroutine`. Conformance includes a coroutine dropped at every suspension point with a leak check on each.
+* Determinism: the `Nondet` effect through the existing `[EFF-1]` fixpoint, `std.math.det`, `[BLD-13]`'s reproducible build with a two-machine byte-comparison test, `--build-id`.
+* Hot reload, in two tiers. **Tier 1 (`[HR-19]` bodies-only)** first: permanent thunks (`[HR-6]`), the reload manifest (`[HR-8]`), the depth-counter safe point (`[HR-3]`), the schema diff as a refusal check, and the watcher — no migration, no 40-byte header, no live-instance list. Acceptance: edit a gameplay function body, save, see it in the running host with the scene loaded and no entity re-created. **Tier 2 (`[HR-11..18]`, Phase 7b)** adds schemas, the live-instance list, the four-phase migration of `[HR-2]`/`[HR-2a]`, and relocation. Acceptance: add a field to a live script class with 400 instances, save, and see every instance keep its other fields — with a leak check and a forced panic in `migrate_from` proving `[HR-2]` holds.
+* The compile-time budget: `bench/bigpkg` at the current phase's subset (`[BUD-1a]`), `tests/perf/calibrate`, and both gates of `[BUD-3]`.
+* Instantiation budget: `[MONO-2]`'s counting, the report, `W2220`, `[MONO-5]`'s shareability analysis, and shared emission over the vtable machinery `[TYP-22]` already requires. Acceptance is that a package with a ceiling set and one shared generic produces the same test results, byte-identical `--build-id` aside, as the same package with `@always_specialize` everywhere.
 
 ### Phase 8 — Hardening and 1.0 (exit: full conformance + perf suite + two external packages)
 
@@ -88,7 +96,7 @@
 * Fuzzing targets, differential testing against the interpreter.
 * Package registry client (v1.1), LSP (v1.1), LLVM backend (v2), PGO/ThinLTO (v2).
 
-## XX.3 Milestone acceptance tests (must exist verbatim in `tests/milestones/`)
+## XXI.3 Milestone acceptance tests (must exist verbatim in `tests/milestones/`)
 
 **M1 — value code has no runtime cost** (Phase 0/1):
 ```ember
@@ -146,7 +154,7 @@ fn hot(mut xs: Array[i32]): helper(xs)                      #$ error[E4001]: @no
 
 **M7 — C++ classes bind** (Phase 7): construct/call/destroy a C++ class through generated thunks; a thrown `std::runtime_error` surfaces as `Err(CppError)`; MSVC and clang-cl both pass.
 
-## XX.4 Performance suite
+## XXI.4 Performance suite
 
 `tests/perf/` holds paired `.em`/`.cpp` programs and thresholds; `ember bench --compare` runs both with the same C++ compiler, 10 iterations, reports median. Gates: scalar/tight loops ≤ 1.05×, SoA/SIMD ≤ 1.10×, FFI call overhead = 0 extra instructions for ABI-direct calls (asm diff), RC-heavy object code ≤ 1.3× of equivalent Swift-style hand-written C++ with `shared_ptr` (informational, not gating), allocation counts asserted exactly for `@noalloc` paths.
 
@@ -154,21 +162,22 @@ fn hot(mut xs: Array[i32]): helper(xs)                      #$ error[E4001]: @no
 * `[BEN-2]` **Gating.** A gate is failed only when the **lower** bound of the ratio's 95 % confidence interval exceeds the threshold. A point estimate above the threshold whose interval includes it is reported *inconclusive* and re-run, never failed.
 * `[BEN-3]` **Noise floor.** Every run additionally measures the C++ reference against a second, independently linked copy of itself. If that self-ratio's interval excludes 1.00 ± 0.02, the run is **void** — neither pass nor fail — and the machine is reported unfit for gating.
 * `[BEN-4]` **Deterministic signal.** Every benchmark records retired instructions, and cycles where the platform provides them. Instruction count is deterministic for a fixed binary and input; a change beyond ± 0.5 % against the recorded baseline is a hard failure independent of `[BEN-2]`, and is the signal used in CI where `[BEN-3]` voids the timing gate.
-* `[BEN-5]` **Configuration equality.** Both sides MUST be built with the same optimisation level, the same LTO setting (`[BLD-6]`), the same floating-point model (`[TYP-9a]`), and the same target-CPU flags. The harness records all four; a mismatch voids the run. M6 and every entry of §XX.4 are subject to this rule.
+* `[BEN-5]` **Configuration equality.** Both sides MUST be built with the same optimisation level, the same LTO setting (`[BLD-6]`), the same floating-point model (`[TYP-9a]`), and the same target-CPU flags. The harness records all four; a mismatch voids the run. M6 and every entry of §XXI.4 are subject to this rule.
 * `[BEN-6]` **Baselines.** Gates: scalar/tight loops ≤ 1.05×; SoA/SIMD ≤ 1.10×; `@noalloc` paths assert allocation counts exactly. FFI call overhead is gated on **retired instructions for the call sequence** being equal to the C++ reference's, not on an assembly diff. RC-heavy object code is compared against a **non-atomic intrusive reference count** in C++ when the Ember class under test is `!Sync` (gate ≤ 1.15×), and against `std::shared_ptr` only for `Sync` classes (informational). Comparing a non-atomic Ember count against `shared_ptr` is forbidden.
-* `[BEN-7]` XXI.6's pass criteria and ADR-008's Stage 2 decision are decided by `[BEN-1]`..`[BEN-6]`; a void or inconclusive run is not evidence for either shape.
+* `[BEN-7]` XXII.6's pass criteria and ADR-008's Stage 2 decision are decided by `[BEN-1]`..`[BEN-6]`; a void or inconclusive run is not evidence for either shape.
+* `[BEN-8]` **End-to-end reload.** `[HR-1]`'s one second is edit-to-visible, which `[BUD-2]`'s B2 does not measure on its own: B2 ends at a loadable image, and the load, plan, prepare and commit phases of Part XVIII follow it. `bench/reload/` MUST measure the sum on `[BUD-1]`'s machine, over `bench/bigpkg` with a live set of 10,000 registered instances, for three edits — a function body, a field added with a default, and a field requiring `migrate_from` — reporting the split `[HR-32]` exposes. The first MUST meet one second; the other two are recorded and are what `[HR-1]` is measured against once Phase 7b lands, since a claim about migration cannot be tested by an edit that migrates nothing.
 
-## XX.5 Repository layout
+## XXI.5 Repository layout
 
 ```
 ember/
   Cargo.toml                 workspace
-  compiler/…                 crates per §XVIII.1
+  compiler/…                 crates per §XIX.1
   runtime/ember_rt/          C11 runtime, CMakeLists.txt, vendored mimalloc
   std/                       ember.toml + src/**.em
   tools/                     fmt, lint, shader-bind, rule_index.py, perf harness
   cmake/EmberModule.cmake
-  tests/                     per §XIX.5
+  tests/                     per §XX.5
   docs/
     spec/                    THIS DOCUMENT split by part, plus spec-errata.md
     DECISIONS.md  HANDOFF.md  errors/EXXXX.md  book/ (user guide, v1.1)
@@ -176,3 +185,68 @@ ember/
 ```
 
 ---
+## XXI.6 The 1.0 release gate
+
+"Phase 8 exits at full conformance" is not a release criterion, it is an intention.
+This section is the criterion: every line is a number or a binary, and 1.0 ships when
+all of them hold. Nothing here is new machinery — each row names an instrument the
+document already specifies.
+
+* `[GATE-1]` **Language completeness.** Every normative rule has a conformance
+  directory that passes and contains both an accept and, where the rule can reject
+  source, a reject case (`[TST-4]`, `[TST-4a]`), with `[TST-4c]`'s baseline **empty**; every diagnostic code has a registry entry and a
+  `docs/errors/` page, in both directions (`[DIA-6a]`); zero owner decisions in
+  XXIII.1 remain open for a v1 requirement (`[GATE-8]`); zero known soundness
+  defects, where "known" means recorded in `docs/spec-errata.md`.
+* `[GATE-2]` **Compiler correctness.** The C backend passes the whole semantic
+  suite. Where the LLVM backend exists it passes the same suite, and differential
+  execution across the two produces no divergence that is not explained by an
+  `implementation-defined` row of `[COST-3]`. The MIR verifier passes on every
+  compiler test. Fuzzing has run ≥ 72 CPU-hours on the parser and ≥ 72 on the
+  type checker since the last change to either, with zero crashes and zero
+  assertion failures outstanding.
+* `[GATE-3]` **Safety.** Zero known memory-safety or data-race defects reachable
+  from Safe Ember as `[PHIL-10]` defines it. Every `unsafe` block carries a
+  `[UNS-7]` obligation and a `[UNS-9]` category. Every foreign fact is graded and
+  appears in `ember tcb`; the count of `asserted` facts with no test exercising them
+  is published in the release notes rather than being zero, because `[PHIL-5]`
+  forbids pretending otherwise.
+* `[GATE-4]` **FFI.** The C ABI suite passes on every supported target triple. The
+  `[CXX-6]`'s nine C++ migration conditions are met on the corpus of `[CXX-1]`/`[CXX-2]`. The
+  C++ layout suite passes on every supported `[cpp.<project>]` configuration —
+  MSVC and Clang at minimum, each in debug and release CRT. Runtime ABI
+  compatibility tests pass for every version pair `[ABI-1]` declares compatible, and
+  every incompatible pair produces the diagnostic `[ABI-2]` requires rather than a
+  crash.
+* `[GATE-5]` **Performance.** `[BUD-2]`'s nine build budgets met on `[BUD-1]`'s
+  machine, and both gates of `[BUD-3]` green. `[BEN-1..8]` met, including
+  `[BEN-8]`'s end-to-end reload second. Runtime safety overhead is **measured and
+  published per check class**, not estimated: the `[COST-3]` rows marked
+  conditionally elidable each have a figure for how often they were elided on the
+  RageV workload.
+* `[GATE-6]` **Tooling.** The first-hour test passes: install, `ember new`, build,
+  run, break something, read the diagnostic, fix it — on Windows and Linux, from a
+  clean machine, without consulting this document. The formatter is idempotent over
+  the whole corpus. The diagnostics snapshot suite passes. The language server
+  answers `[IDE-4]`'s capabilities on a 50k-line package. `ember inspect` output is
+  schema-versioned so tooling can depend on it.
+* `[GATE-7]` **Conformance declaration.** The reference implementation declares
+  `Ember Dynamic` under `[CONF-1]` — the full ladder — and the declaration is
+  produced by the test run rather than written by hand.
+* `[GATE-8]` **No requirement rests on an open question.** A v1 requirement whose
+  behaviour depends on an unresolved `OQ-n` blocks 1.0. An `OQ` may remain open only
+  if it is classified `deferred-v2` under `[GATE-8a]`.
+* `[GATE-8a]` **Open-question status is explicit.** Every entry in XXIII.1 carries
+  exactly one of: `decided` (the owner ruled; the rule text reflects it),
+  `implementation-confirmed` (decided and a conformance test pins it),
+  `deferred-v2` (out of scope for 1.0 and no v1 requirement depends on it), or
+  `open` (blocks 1.0). The statuses are assigned by the same one-time pass as
+  `[CAT-2]`, defaulting from the prose already in each entry — an entry reading
+  "Closed" becomes `decided`, one naming a conformance test becomes
+  `implementation-confirmed`, one naming a later version becomes `deferred-v2`, and
+  anything else becomes `open` for the owner to rule on. `tools/rule_index.py`
+  fails CI on an entry with no status, and on an `open` entry cited by a
+  `LANGUAGE-NORMATIVE` rule, **from the commit that lands that pass**.
+
+---
+

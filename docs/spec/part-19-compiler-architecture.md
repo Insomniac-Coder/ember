@@ -1,6 +1,6 @@
-# Part XVIII — Compiler Architecture
+# Part XIX — Compiler Architecture
 
-## XVIII.1 Overview
+## XIX.1 Overview
 
 ```
  .em files ─► Lexer ─► Parser ─► AST ─► Name resolution ─► Type checking/inference ─► HIR (typed, desugared)
@@ -26,6 +26,8 @@
 
 Effect analysis runs **after** monomorphisation and after the target-independent subset of MIR optimisation, because `[EFF-9]`'s `RuntimeCheck(k)` describes generated code: a check that elision removes must not appear in the effect set. It runs under the **contract profile** (`[EFF-15]`), so a contract has one verdict for a given source rather than one per build profile.
 
+`[CMP-3]` **Ember's semantics are defined by this document, not by the C backend.** The C11 backend is an implementation target chosen for bootstrap and portability (Part 0 row 7). Where C cannot express an Ember guarantee directly — aliasing, function identity across a reload, weak references, exclusivity, panic behaviour, coroutine frames, alignment, the `[SIMD-*]` contracts, `[COST-3]`'s elision guarantees — the backend MUST implement the guarantee by other means and MUST NOT narrow it to what C makes convenient. A rule may not be justified by "the C backend cannot do otherwise": `[CAT-3]` already forbids a `LANGUAGE-NORMATIVE` rule resting on a `REFERENCE-IMPLEMENTATION` one, and this states it for the backend specifically. Where a guarantee is genuinely unimplementable on the C backend the correct outcome is a recorded gap and an LLVM-only capability, never a quieter guarantee.
+
 `[CMP-1]` The compiler is a Rust workspace (`emberc`). Each stage is a crate with a documented input/output type and a `--emit=<stage>` flag so intermediate representations can be dumped and snapshot-tested. `[CMP-2]` No stage after parsing may report a diagnostic without a source span.
 
 ### Crate layout
@@ -33,7 +35,7 @@ Effect analysis runs **after** monomorphisation and after the target-independent
 ```
 compiler/
   ember_span         FileId, Span, SourceMap (line/column mapping, UTF-8 aware)
-  ember_diag         Diagnostic model, rendering (ariadne-style), error-code registry (Part XIX §6), JSON output
+  ember_diag         Diagnostic model, rendering (ariadne-style), error-code registry (Part XX §6), JSON output
   ember_lexer        tokens, indentation algorithm, literal decoding
   ember_ast          AST types (§2), visitor, pretty-printer (used by the formatter)
   ember_parser       recursive descent + Pratt; error recovery; produces AST + parse diagnostics
@@ -57,10 +59,10 @@ tools/
 runtime/
   ember_rt/          C11 runtime (§9)
 std/                 standard library in Ember
-tests/               conformance suite (Part XIX §5)
+tests/               conformance suite (Part XX §5)
 ```
 
-## XVIII.2 AST
+## XIX.2 AST
 
 The AST is a faithful, span-carrying tree. Node kinds (Rust enum names given; fields abbreviated):
 
@@ -86,7 +88,7 @@ Pattern   = Wild | Lit | Range | Bind{name, by_ref, mutable, sub: Option} | Path
 
 `[AST-1]` Every node has `span: Span` and an `id: NodeId` (dense, per file) used by side tables (types, resolutions). `[AST-2]` The parser recovers at statement boundaries (skip to next `NEWLINE` at the current indentation) and at item boundaries; it never produces fewer than one diagnostic for a malformed region and never a cascade of more than 3 for one region (tested by the `parser/recovery` suite).
 
-## XVIII.3 HIR
+## XIX.3 HIR
 
 HIR is the AST after name resolution, type checking and desugaring. Differences from AST:
 
@@ -98,7 +100,7 @@ HIR is the AST after name resolution, type checking and desugaring. Differences 
 
 `[HIR-1]` HIR is the input to the comptime interpreter's MIR lowering and to the formatter's semantic lints. `[HIR-2]` `--emit=hir` prints a stable textual form used in snapshot tests.
 
-## XVIII.4 MIR
+## XIX.4 MIR
 
 MIR is a control-flow graph of basic blocks over **places** and **operands**, in the style of Rust MIR, with explicit borrows, moves, drops and RC operations.
 
@@ -178,19 +180,40 @@ Replace `Drop{place}` terminators with: nothing (if `!needs_drop`), a call to th
 
 Per Part X: compute a bottom-up fixpoint over the call graph SCCs of the monomorphised program; store the effect set on each function instance; check contracts; produce chains for diagnostics. Before monomorphisation, generic functions are checked once with their bounds' declared effects.
 
+### 4.10a Coroutine lowering
+
+`[MIR-6]` A `gen fn` (`[CORO-1]`) is lowered before monomorphisation. Liveness is computed across suspension points; every local live across at least one `yield` becomes a field of the frame type, laid out by the ordinary rules of `[STR-*]`; every other local stays a stack slot of `resume`. The body becomes a `switch` on the frame's `state` field, one arm per suspension point plus entry and completion. Drop glue is synthesised per suspension point and selected on `state`, satisfying `[CORO-7]`. The frame type is an ordinary nominal type from this point on, so monomorphisation, effect analysis and the borrow checker see nothing coroutine-specific, and `[CORO-6]`'s restriction is what makes that true.
+
 ### 4.11 Monomorphisation
 
-Collect instantiation roots (`main`, `@export`s, `@test`s, statics); walk MIR bodies substituting generic arguments; instantiate on demand with a `(DefId, substs)` cache; synthesise drop glue, vtables (`dyn` and class), and closure bodies. `[MONO-1]` Instantiations are named deterministically (§8) so that separate compilation units dedupe at link time.
+Collect instantiation roots (`main`, `@export`s, `@test`s, statics); walk MIR bodies substituting generic arguments; instantiate on demand with a `(DefId, substs)` cache; synthesise drop glue, vtables (`dyn` and class), and closure bodies. `[MONO-1]` Instantiations are named deterministically (§8) so that separate compilation units dedupe at link time. §4.11a specifies the instantiation budget, the report, and the conditions under which an instantiation set is emitted as one shared function rather than one function per type.
+
+### 4.11a Instantiation budget and shared instantiation
+
+`[TYP-16]` makes every distinct instantiation a distinct symbol and says code size is
+the programmer's responsibility. That is only a fair thing to say if the programmer
+can see the cost and has something to do about it. This section supplies both. Neither
+changes what a program computes: `[PRF-1]` governs, and nothing below may alter
+observable behaviour.
+
+* `[MONO-2]` **Counting.** The monomorphiser records per generic item the number of distinct instantiations produced and the time spent generating and optimising them. The count is taken after `[MONO-1]`'s dedup, so a generic instantiated identically from forty modules counts once.
+* `[MONO-3]` **The budget.** `[build] max_instantiations = N` (`[MAN-6]`) sets a per-generic ceiling. It is unset by default, and unset means no ceiling and no behaviour from this section. Exceeding it is `W2220`, naming the generic, its count, the ceiling, and the three most recently added instantiations with source locations — the last of which is what makes the warning actionable on the commit that caused it rather than a year later. Under `edition_lints = "strict"` it is an error, like any W-level diagnostic. A non-integer or negative value is `E9034`.
+* `[MONO-4]` **The report.** `ember build --report=instantiations` prints every generic with its count and time, descending by time, and writes the same data to `target/<profile>/instantiations.json`. It is available in every profile and costs nothing when not requested.
+* `[MONO-5]` **Shareability.** A generic item is **shareable** at a type parameter `T` when every occurrence of `T` in its MIR body is the receiver of a call to a method of one of `T`'s bounds, and `T` occurs nowhere else — not in arithmetic, not as a field type, not as an operand of `size_of` or `align_of`, not by value in a signature the body depends on, and in no position `[TYP-22]` makes `dyn`-incompatible. Shareability is a property of the generic, computed once from its body, not per instantiation.
+* `[MONO-6]` **Shared emission.** For a shareable generic the compiler MAY emit **one** function taking `{data*, vtable*}` in place of `T`, together with one witness table per instantiating type, and rewrite that generic's call sites to pass the table — that is, it may emit what `[TYP-22]`'s `dyn` already denotes, from source that did not write `dyn`. The decision is per generic, and is taken only when the generic is shareable **and** its `[MONO-2]` count exceeds `[MONO-3]`'s ceiling **and** no call site to it lies in a loop the compiler judges hot. With no ceiling set, the compiler MUST NOT share anything: a build that never asked for this gets exactly the code 0.6.2 produced. This is consistent with Part 0's governing principle — *the programmer's declared type determines the storage and lifetime model; the compiler may only perform optimisations that preserve that model's observable semantics* — because sharing changes neither storage nor lifetime nor any observable behaviour, only the number of function bodies emitted. Part 0 row 2 rejected letting the compiler choose a value's **storage strategy**; `[MONO-6]` chooses a **calling form** for code the programmer already wrote as a generic, and `[MONO-8]` binds it to produce identical results.
+* `[MONO-7]` **The programmer has the last word.** `@always_specialize` on a generic forbids shared emission for it; `@never_specialize` requires it wherever it is legal. `@never_specialize` on a generic that is not shareable is `E2223`, naming the occurrence of `T` that prevents it — which is also the diagnostic that teaches what shareability is. Neither attribute changes the meaning of any program.
+* `[MONO-8]` **Semantics are preserved exactly.** A shared instantiation MUST compute what the specialised instantiations would have computed. It costs one indirect call per bound-method call and forfeits inlining at those sites; it costs nothing else, and in particular it introduces no allocation and no `dyn`-typed value the programmer can observe. `ember inspect` reports per generic whether it was specialised or shared and which clause of `[MONO-6]` decided it. Effect analysis runs on the post-decision program, so `[EFF-9]`'s `RuntimeCheck(k)` continues to describe generated code.
+* `[MONO-9]` A shared instantiation is a distinct symbol under `[MNG-*]` and participates in `[MONO-1]`'s link-time dedup like any other. An `@export`ed or `extern` item is never shared: its ABI is its signature.
 
 ### 4.12 MIR optimisations (v1 set)
 
 `RC pair elision` (`[RC-2]`), `SROA` (scalar replacement of `Copy` struct temporaries), `const propagation`, `copy propagation`, `dead-store/dead-code`, `bounds-check elimination` (range analysis for `for i in 0..len(a)` patterns — guaranteed by `[CTL-3a]`-style tests), `inline` of functions ≤ 8 MIR statements or marked `@inline`, `drop-flag elimination`, `tail-temporary merging`. All are optional for correctness; the C compiler/LLVM does the heavy lifting.
 
-## XVIII.5 Comptime interpreter (`ember_interp`)
+## XIX.5 Comptime interpreter (`ember_interp`)
 
 Executes MIR directly over an interpreter heap with typed allocations (each allocation knows its `Ty` and layout). Supports every MIR construct except `Call` into `extern` functions and raw-pointer deref outside interpreter allocations (`E6010`). Provides intrinsics: `size_of`, `align_of`, `offset_of`, `reflect`, `read_file`, `env`, `target()`. Results are converted back to `Const` values (including aggregate constants and byte strings) for embedding as statics. Step and memory limits per `[CT-3]`.
 
-## XVIII.6 C backend (`ember_codegen_c`)
+## XIX.6 C backend (`ember_codegen_c`)
 
 Emits one `.c` file per Ember module plus `ember_types.h` (all struct/enum/vtable definitions, topologically sorted) and `ember_decls.h` (prototypes).
 
@@ -224,16 +247,16 @@ Emits one `.c` file per Ember module plus `ember_types.h` (all struct/enum/vtabl
 * `[CG-C-3]` **Cross-translation-unit inlining.** Because `[BLD-1]` emits one translation unit per module, a call to a function defined in another module is opaque to the host C compiler unless the callee's definition is visible in the caller's translation unit. Extending `[BLD-1]`'s existing COMDAT-style mechanism from monomorphised instantiations to non-generic definitions, the C backend MUST emit, per package, an **inline header** `target/<profile>/c/<package>_inline.h`, included by every emitted `.c` file of that package and of every package that depends on it, holding a `static inline` definition of every function that is: (a) annotated `@inline`; (b) an impl of an operator interface (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Index`, `IndexMut`, `Eq`, `Ord`, `*Assign`, …) on a type whose `size_of` ≤ 64 bytes; (c) `len`, `is_empty`, `as_span`, `as_mut_span`, `iter`, `iter_mut`, `next`, a field accessor, or a `Deref`/`Iterator` method of a `std` view or container type; or (d) any other function whose MIR body after §4.12 is ≤ 40 statements and whose effect set does not contain `FFI`. A function emitted this way MUST NOT also be emitted with external linkage in its defining module unless it is `@export`ed or its address is taken, so `[MONO-1]`'s link-time dedup is unaffected.
 * `[CG-C-3a]` `@inline` is **binding on the C backend**, not a hint: such a function MUST be emitted per `[CG-C-3]` and MUST carry `__forceinline` (MSVC) or `__attribute__((always_inline))` (Clang/GCC). Part III §7's table and the glossary entry for "Contract" are amended accordingly, resolving the existing contradiction with the `[CG-C-*]` code shapes. `@noinline` remains a hint.
 * `[CG-C-3b]` A package MUST publish the MIR bodies of every function selected by `[CG-C-3]` in its build artefact, and `[BLD-2]`'s interface hash MUST cover them — `[BLD-2]` already names "inline bodies"; this rule fixes which bodies those are. A change to such a body invalidates dependent modules' codegen.
-* `[CG-C-8]` **Step fidelity.** A `#line` directive MUST precede every emitted statement and MUST name the span of the *source construct that produced it*, never the declaration span of a place it mentions. All C statements lowered from one Ember statement MUST carry the same `#line`, so "step over" advances exactly one Ember statement. Desugared constructs (`for`, `?`, `?.`, `with`, f-strings, operator calls — XVIII §3) MUST attribute to the source syntax, not to the desugaring. **This requires MIR `Stmt` and `Term` to carry a source span**, and the MIR verifier checks that every statement has one.
+* `[CG-C-8]` **Step fidelity.** A `#line` directive MUST precede every emitted statement and MUST name the span of the *source construct that produced it*, never the declaration span of a place it mentions. All C statements lowered from one Ember statement MUST carry the same `#line`, so "step over" advances exactly one Ember statement. Desugared constructs (`for`, `?`, `?.`, `with`, f-strings, operator calls — XIX §3) MUST attribute to the source syntax, not to the desugaring. **This requires MIR `Stmt` and `Term` to carry a source span**, and the MIR verifier checks that every statement has one.
 * `[CG-C-7]` **Names.** Every MIR local carrying a user name MUST be emitted with that name as its C identifier, transliterated per `[MNG-3]`, suffixed `_<n>` only on collision with a C keyword, a reserved identifier, or another local in the same C scope. Parameters keep their Ember names; compiler temporaries keep `_<index>`. A profile MAY set `debug_names = false`; no default profile does. Deterministic naming keeps `[CG-C-2]`'s diff-based review intact.
 * `[CG-C-9]` **Debugger visualisers.** `ember build` MUST emit, beside the binary, `target/<profile>/<package>.natvis` (passed with `/NATVIS:` on MSVC) and `<package>-gdb.py` / `<package>-lldb.py`, generated from the same `TypeInfo` table (§4.3) the backend already walks. They MUST render at minimum: `Option[T]` as `None`/`Some(v)` including every niche form; `Result[T,E]`; each payload enum as `Variant(fields)`; `String`/`str` as text including the SSO form; `Array`/`Span`/ `MutSpan` as `len` elements; `Box`, `Shared`, `Weak` as their pointee plus counts; a class handle as `Class { fields }` with the header hidden; `Handle[Tag]` as `index:generation`; `SoA[T]` as reconstructed `T` values.
 * `[CG-C-10]` **Stacks.** `[RT-4]`'s panic output and `ember_backtrace_print` MUST print Ember function paths and Ember `file:line:col`, demangled from `[MNG-1]`'s scheme, never raw C symbols. The toolchain ships `ember demangle` (a stdin/stdout filter) so MSVC and GDB stacks can be read.
 
-## XVIII.7 LLVM backend (v2)
+## XIX.7 LLVM backend (v2)
 
-Maps MIR to LLVM IR through `inkwell`: the same type mapping; `noalias`/`readonly`/`dereferenceable(N)`/`nonnull` attributes from the borrow checker's facts; `!nontemporal`, `!alias.scope` for `@simd` loops; DWARF/CodeView debug info with Ember type names; PGO via LLVM instrumentation; ThinLTO. It becomes the default when it passes the full conformance suite plus the performance suite (Part XX §4).
+Maps MIR to LLVM IR through `inkwell`: the same type mapping; `noalias`/`readonly`/`dereferenceable(N)`/`nonnull` attributes from the borrow checker's facts; `!nontemporal`, `!alias.scope` for `@simd` loops; DWARF/CodeView debug info with Ember type names; PGO via LLVM instrumentation; ThinLTO. It becomes the default when it passes the full conformance suite plus the performance suite (Part XXI §4).
 
-## XVIII.8 Name mangling
+## XIX.8 Name mangling
 
 ```
 em_<pkg>_<module path with '_'>_<item>[__g<hash of generic args>][__v<vtable>]      e.g. em_std_math_Vec3_length, em_game_ecs_integrate__g3f2a1c
@@ -242,7 +265,7 @@ em_<pkg>_<module path with '_'>_<item>[__g<hash of generic args>][__v<vtable>]  
 `[MNG-1]` Hash = first 12 hex digits of BLAKE3 of the canonical type string of the generic arguments. `[MNG-2]` `@export("name")` overrides the symbol entirely. `[MNG-3]` Identifiers are transliterated to ASCII (`_uXXXX_` for non-ASCII). `[MNG-4]` Class object structs are `em_obj_<mangled class>`; vtables `em_vt_<mangled>`; type infos `em_ti_<mangled>`.
 * `[MNG-5]` The mangled prefix `em_` of `[MNG-1]`/`[MNG-4]` is derived from `EMBER_SYMBOL_PREFIX` and constructed in exactly one function.
 
-## XVIII.9 Runtime ABI (`ember_rt`, C11)
+## XIX.9 Runtime ABI (`ember_rt`, C11)
 
 Header `ember_rt.h`, ABI version macro `EMBER_RT_ABI = 1`. Everything below is `[RT-*]` normative.
 
@@ -300,13 +323,13 @@ void ember_debug_alloc_stats(ember_alloc_stats*);
 * `[RT-4]` Panics print `panic at <file>:<line>:<col>: <message>` followed by a backtrace in debug/release, then call `cfg.on_panic` (if set) and `abort()`.
 * `[RT-5]` Every runtime symbol, macro and header name is **generated** from a single build constant `EMBER_SYMBOL_PREFIX` (default `ember`), defined in exactly one place in `ember_rt` and one in the compiler. `ember_rt.h` is a **generation output** carrying literal identifiers, not a header of macro concatenations — it is the interface document C embedders read, and it must stay readable. No file in the compiler, runtime, CMake module, examples or test corpus may hard-code the symbol prefix, the CLI name, the manifest file name, or the source and binding-cache extensions; each is read from a single `branding` module. `tools/check_branding.py` fails CI on any hard-coded occurrence.
 
-## XVIII.10 Compiler correctness strategy
+## XIX.10 Compiler correctness strategy
 
 * Snapshot tests per stage (`--emit=tokens|ast|hir|mir|mir-opt|c`) with `insta`.
 * The MIR verifier runs after every pass in debug builds of the compiler.
 * Differential testing: every `run-pass` test is executed through both backends (once LLVM exists) and through the comptime interpreter where applicable; outputs must match.
 * Fuzzing: `cargo-fuzz` targets for the lexer, parser, type checker (well-typed program generator), and borrow checker (random mutation of accepted programs must either still pass or produce an error with a span).
 * FFI layout tests: a generated C program asserts `sizeof`/`offsetof` for every type crossing the boundary and is compiled with each supported compiler in CI.
-* Performance regression suite (Part XX §4) gates releases.
+* Performance regression suite (Part XXI §4) gates releases.
 
 ---

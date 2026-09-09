@@ -35,6 +35,27 @@ each entry states exactly what would change if the owner rules the other way.
 | ERR-023 | `[TYP-14]`, Part IV §2 | **decided** — reading through is a property of the type in a value context, not of the form |
 | ERR-024 | Part XVIII §4.7 step 6 | **decided** — a by-value parameter's storage ends with the frame, so `E3060` covers it |
 
+**Against v0.8.3**, installed 2026-09-09. ERR-001..ERR-024 were raised against
+v0.5 and are **superseded**: v0.8.3 is authored from 0.8.2c and carries its own
+resolution of each. They are kept because a resolution reversed once (ERR-004,
+ERR-008) is worth being able to read again.
+
+| ID | Rule | Status |
+|---|---|---|
+| ERR-025 | `[LEX-15b]` with Part II §4's reserved-for-future list | **decided** — `yield` is a v1 keyword; the reserved set is 49 and the future list is 9 |
+| ERR-026 | `[GRM-23]` with `[ATT-1]`, `[DIA-6a]` | **decided** — `a in b in c` is `E0102`, not `E0104` |
+| ERR-027 | `[UNS-7]`, `[STD-6]`, `[EFF-17]`, `[EFF-18]`, XX §6's registry paragraph | **decided** — four leftovers from the layer 0.6.2 removed, struck |
+| ERR-028 | `[EFF-18]` with Part X §1 and `[DET-2]` | **decided** — the effect set has ten members; `Nondet` was added after `[EFF-18]` was written |
+| ERR-029 | `[BLD-2]`, `[FFI-34]`, `[FFI-38]`, `[FFI-2a]`, `[BLD-11]`, `[TCB-5]`, `[FFI-33b]`, `[TST-13]`, `[RNG-7]`, `[RNG-8]` | **decided** — ten editorial instructions read as carried out; the replacement text is quoted in full at each site |
+| ERR-030 | `[GRM-16]` with Part III §4's `small_stmt` | **decided** — the rule supersedes the production; already implemented that way |
+| ERR-031 | `[TST-11]` | **decided** — a merge artefact; the obligations read as the surrounding clauses state them |
+| ERR-032 | `[TST-7]` with XVI.4 and XVI.7a's fenced blocks | **decided** — the two overlay blocks are fenced `ember,ignore`, as the rule says they are |
+| ERR-033 | `[LEX-15a]`, `[GRM-20]`, `[GRM-8d]`, `[FFI-34a]` | **decided** — each states its rule twice; the second copy is redundant, not a second rule |
+| ERR-034 | `[FFI-17d]` citing `[FFI-17b]` | **open — reported to the owner** — `@ffi(no_virtual_dtor)` is named but defined by no rule |
+| ERR-035 | Section placement in Parts XV, XVI, XX, XXI | **decided** — recorded, not moved; the split follows the source |
+| ERR-036 | Part III §2 `fn_header` with XVI.10, `[FFI-26]`, `[FFI-31b]` | **open — reported to the owner** — no production admits `pub extern "C" fn` |
+| ERR-037 | Part III §2 with `[FFI-39]` | **open — reported to the owner** — no production admits `extern class` |
+
 ---
 
 ## ERR-001 — Three parser errors were numbered into the lexer's range
@@ -1108,3 +1129,431 @@ owner asked for them:
 `docs/spec-source/as-received/Ember_v0.5_spec.md` is still byte-identical to
 what the owner sent, so every one of these divergences can be diffed and each
 has a reason written above it.
+
+---
+
+## ERR-025 — `yield` is a v1 keyword, and the table that lists it says otherwise
+
+**Status: decided. `[LEX-15b]` governs; the reserved set is 49.**
+
+**Where.** Part II §4 lists `yield` under **"Reserved for future use (lexed as
+keywords, `E0005` if used)"**, alongside `actor`, `async`, `await`, `macro`,
+`move`, `trait`, `union`, `loop` and `unless`. `[LEX-14a]` requires `E0005`'s
+message to **name the version that will introduce** the word.
+
+`[LEX-15b]`, added by 0.6.3, says the opposite and says it explicitly:
+
+> `yield` is **fully reserved** — a keyword everywhere, with `r#yield`
+> (`[LEX-14]`) required to use the name — because `[CORO-2]` makes it an
+> expression form, and an expression keyword cannot be contextual without
+> ambiguity at the start of a statement. […] `[LEX-15]`'s reserved set
+> therefore has **49** entries, not 48; **this rule supersedes that count and
+> no other part of it.**
+
+`[CORO-2]` then uses `yield` as a v1 expression and gives `yield` outside a
+`gen fn` its own code, `E2220`. A word cannot simultaneously be `E0005`
+("reserved for a future version") and `E2220` ("used outside a `gen fn`").
+
+**Decision.** `[LEX-15b]` is later, is explicit that it supersedes, and is the
+only one of the two that can be implemented — `E0005`'s message has no version
+to name for `yield`, because the version that introduces it is this one.
+
+* the reserved keyword set is **49**: Part II §4's 48 plus `yield`;
+* the reserved-for-future list is **9**: `actor`, `async`, `await`, `macro`,
+  `move`, `trait`, `union`, `loop`, `unless`;
+* `gen` is **contextual** — a keyword only immediately before `fn`, an
+  ordinary identifier everywhere else, so a field or variable named `gen` is
+  unaffected. It is in neither list.
+
+**If the owner rules the other way** — that `yield` stays future-reserved —
+then `[CORO-2]`'s `yield` expression, `[GRM-22]`'s `yield_expr` and `E2220` all
+go with it, and coroutines lose their suspension syntax. That is a language
+change, not an editorial one.
+
+**Applied to.** `ember_lexer::token`'s keyword table and its keyword-count
+assertion, the future-word table, and `E0005`'s message.
+
+---
+
+## ERR-026 — `a in b in c` is reported with the unknown-attribute code
+
+**Status: decided. `E0102`.**
+
+**Where.** `[GRM-23]`:
+
+> `membership := expression ("in" | "not" "in") expression`, at **comparison
+> precedence** — the same level as `==` and `<` — and **non-associative**:
+> `a in b in c` is `E0104` […]
+
+`E0104` is `[ATT-1]`'s **unknown attribute**. `[DIA-6a]` is unambiguous: "**A
+code MUST be defined by exactly one rule.** `tools/rule_index.py` MUST fail CI
+when two rules name the same code with different titles."
+
+**Decision.** `E0102 chained comparison` already exists, is already in the
+parser's range, and already covers exactly this: Part III §5's precedence table
+puts `in` and `not in` on the same non-associative row as `==` `!=` `<` `>`
+`<=` `>=` `is` `is not`, and says of that whole row "chaining `a < b < c` is
+`E0102` (no Python chaining)". `a in b in c` is a chained comparison by the
+same rule that gives `in` its precedence. No new code is needed and none is
+invented.
+
+**Applied to.** `[GRM-23]`'s sentence in the source document; the parser emits
+`E0102` for a chained membership operator exactly as it does for `<`.
+
+---
+
+## ERR-027 — Four leftovers from the contract layer 0.6.2 removed
+
+**Status: decided. Struck.**
+
+**Where.** 0.6.2's change log row 1 is exhaustive: `@requires`, `@ensures`,
+`@invariant`, `@decreases`, `@verified`, `@assume`, the `[CTR-*]` and `[PRV-*]`
+rules, sections X.2a and X.2b, proof manifests, the `--contracts` and
+`--verify` flags and the *contract* `proven` grade all go. `OQ-27` confirms it
+as an owner decision. Four sites still refer to what went:
+
+1. **`[UNS-7]`** — "where an obligation *is* expressible as a contract
+   expression the function SHOULD additionally carry `@requires`". There is no
+   `@requires`, it is in no table in Part III §7, and `[ATT-1]` makes an
+   attribute absent from that table `E0104`. The sentence asks for a program
+   the compiler must reject.
+2. **`[STD-6]`** — the layer list ends "**verify** (proof-only helpers)". The
+   proof-only helpers were the prover's.
+3. **`[EFF-18]`** — "`RuntimeCheck(k)`'s kinds are `{Bounds, Overflow,
+   Aliasing, Stale, Contract}`", and **`[EFF-17]`** — "Bare `@nopanic` (v2) […]
+   does not forbid `RuntimeCheck(Contract)`" and "`@no_runtime_checks` (v2,
+   reserved) excludes all five kinds". §X.1.1's table defines **four** kinds and
+   `[EFF-9]`, `[EFF-11]`, `[EFF-12]` and `[COST-3]` all reason over four. A
+   `Contract` check is a check of a contract expression, and there are none.
+4. **XX §6's registry paragraph** — "Codes added by 0.6 and 0.6.1 […]
+   `E4050`–`E4057` and `E4060`–`E4064` (contracts and verification)", and the
+   warning `W4001` (`result`/`old` shadowing). `result` and `old` are
+   `@ensures` vocabulary. `[DIA-6a]` requires every registry entry to cite a
+   rule that exists; these thirteen codes and one warning cite rules 0.6.2
+   deleted.
+
+**Decision.** All four struck. The kinds are four: `Aliasing`, `Bounds`,
+`Stale`, `Overflow`. The layers are five: core, alloc, sync, io, ffi.
+`[UNS-7]`'s `@safety("…")` prose obligation stands unchanged and is the whole
+of that rule. `E4050`–`E4057`, `E4060`–`E4064` and `W4001` are **not**
+registered and are not reused, in the manner XXIII.4 requires of a superseded
+id.
+
+**Consequence.** `@no_runtime_checks` (v2, reserved) excludes **four** kinds,
+not five. `[EFF-17]`'s sentence about `RuntimeCheck(Contract)` says nothing
+once the kind is gone and is struck rather than reworded.
+
+---
+
+## ERR-028 — `[EFF-18]` enumerates the effect set without `Nondet`
+
+**Status: decided. Ten effects.**
+
+**Where.** Part X §1's opening sentence:
+
+> The compiler infers, for every function, an **effect set** ⊆ `{Alloc, Sync,
+> Lock, Io, Panic, Unsafe, FFI, Block, Nondet, RuntimeCheck(k)}`.
+
+`[EFF-18]`, five paragraphs later:
+
+> The full set is `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block,
+> RuntimeCheck(k)}`.
+
+**Decision.** `[EFF-18]` was written for 0.6, which added `Io` and `Lock`.
+`Nondet` arrived in 0.6.3 with `[DET-1]`/`[DET-2]`, and 0.6.3's change-log row 3
+adds it to X.1 without revisiting `[EFF-18]`'s parenthetical count. X.1's set
+governs and `[DET-2]` enumerates `Nondet`'s sources exhaustively. `[EFF-18]`'s
+own sentence — "`[EFF-18]` does not remove an effect previously attached to any
+operation; it refines the effect model" — says it is not trying to be an
+exclusive list.
+
+**Applied to.** `[EFF-18]`'s enumeration gains `Nondet`. Nothing else changes:
+`@noio`, `@nolock`, `@noblock` and `@nosync` remain independent, which is what
+the rule is for.
+
+---
+
+## ERR-029 — Ten editorial instructions shipped inside rule bodies
+
+**Status: decided. Read as carried out.**
+
+**Where.** 0.8.1's change-log row 2 records this as the third time the document
+family has done it, names `[STD-7]` and `[FFI-17]` as the earlier two, and asks
+`[DIA-6a]`'s completeness pass to grow a check for imperative second-person
+prose in rule bodies. Ten sites in v0.8.3 carry one:
+
+| Rule | Shape |
+|---|---|
+| `[BLD-2]` | a trailing fragment adding the `[verify]` package-config section to the cache key — and `[verify]` is ERR-027's removed layer |
+| `[FFI-34]` | *Replace "Claiming a grade whose evidence is absent is `E5050`" with: "…"* |
+| `[FFI-38]` | *Strike "or exception behaviour" … and add: "…"* |
+| `[FFI-2a]` | *After "…calling convention", insert: "…"* |
+| `[BLD-11]` | *replace "(`E1020`)" with "(`E1021 …`)"* |
+| `[TCB-5]` | a sentence relocating the evidence record to `.ember/ffi-evidence/`, appended after the rule already gave `target/<profile>/ffi-evidence/` |
+| `[FFI-33b]` | an appended quoted clause fixing when the creating thread is recorded |
+| `[TST-13]` | *add: an instrumented run in which …* |
+| `[RNG-7]` | the amendment appended in quotation marks, opening with an ellipsis |
+| `[RNG-8]` | the whole rule body is a quoted fragment opening with an ellipsis |
+
+**Decision.** In every one of the ten the replacement text is present in full
+beside the instruction, so the rule's meaning is recoverable and the
+instruction is read as carried out. Specifically:
+
+* `[BLD-2]`'s trailing fragment is struck (ERR-027 removes what it adds);
+* `[FFI-34]`'s operative text is the quoted replacement — an unbacked or stale
+  grade is `W5050`, the fact is reported and used at `asserted`, and `E5050` is
+  raised only under `--require-evidence` / `tcb --require` / `audit --require`;
+* `[FFI-38]` no longer covers exception behaviour, which `[FFI-24]`'s catch-all
+  establishes universally;
+* `[FFI-2a]`'s unknown-filling list gains `borrowed`, `from =` and the aliasing
+  words **in return position only**;
+* `[BLD-11]` reports `E1021`, and `E1020` stays `[GRM-4]`'s;
+* `[TCB-5]`'s default evidence path is `.ember/ffi-evidence/`, relocatable by
+  `[MAN-5]`'s `[ffi] evidence` key;
+* `[FFI-33b]`, `[TST-13]`, `[RNG-7]` and `[RNG-8]` read with their appended
+  clauses as part of the rule.
+
+**Why this is recorded rather than silently applied.** `[PHIL-5]`'s discipline
+applies to reading a document as much as to an analysis: an instruction is not
+its result, and the next revision authored from this one will carry these
+forward again unless someone can point at the list.
+
+---
+
+## ERR-030 — `[GRM-16]` deletes three `small_stmt` alternatives that III.4 still lists
+
+**Status: decided. The rule governs; already implemented that way.**
+
+**Where.** Part III §4:
+
+```
+small_stmt      := var_decl | assignment | expression | "return" [expression] | "break" [label]
+                 | "continue" [label] | "pass" | "defer" ":" ...
+```
+
+`[GRM-16]`:
+
+> Part III §4's `small_stmt` alternatives `"return" [expression]`,
+> `"break" [label]` and `"continue" [label]` **are removed**; a jump written as
+> a statement is an expression statement.
+
+**Decision.** `[GRM-16]` is the rule and the production is the text it amends;
+`OQ-14` confirms jumps are expressions of type `!` at the lowest precedence.
+The compiler already parses them as `ExprKind::Jump` and there is nothing to
+change — this entry exists so that a later reading of III.4 does not "repair"
+the parser backwards. ERR-008 recorded the same reversal against v0.5.
+
+---
+
+## ERR-031 — `[TST-11]`'s v0.6 obligations carry a merge artefact
+
+**Status: decided. Read as the surrounding clauses state.**
+
+**Where.** `[TST-11]` ends with two sentence fragments spliced together, the
+splice falling inside the words "v0.6" and "std.ser.yaml". The surviving pieces
+name their rules, so the obligations are legible:
+
+* `[TCB-6]`'s **evidence invalidation** after a foreign identity or contract
+  hash changes;
+* a **`std.ser.yaml`** round trip with an out-of-range field producing
+  `SerError` rather than an invalid value — `[RNG-10a]`'s derive obligation;
+* `[RNG-10b]`'s rejection of a range type in an `extern` block and behind a
+  pointer parameter;
+* `[RNG-7]`'s `Option[Full]` occupying two bytes.
+
+**Decision.** The four obligations above are the v0.6 regression set and are
+what `tests/conformance/TST-11/` must contain, alongside the v0.5 set the rule
+lists in full before the artefact.
+
+---
+
+## ERR-032 — `[TST-7]` says two blocks carry `,ignore`; they do not
+
+**Status: decided. The blocks are fenced as the rule describes.**
+
+**Where.** `[TST-7]`, repaired by 0.8.1 precisely to close this:
+
+> A fourth permitted reason is **overlay-language source, until Part III
+> defines `overlay_decl`**; XVI.4's `overlay c "vulkan/vulkan.h":` block and
+> XVI.7a's `overlay cpp "RageV/VulkanBackend.hpp":` block **carry it**, so the
+> baseline is explicit rather than implied.
+
+Both blocks are fenced as ordinary `ember` in v0.8.3. `tools/spec_check.py`
+therefore reports them as newly failing, which is exactly the outcome 0.8.1's
+row said it had prevented — the instruction was applied to the rule's prose and
+not to the fences.
+
+**Decision.** Both are fenced `ember,ignore` with the one-line reason on the
+preceding line, which is what the rule says of them. Part III still defines no
+`overlay_decl`, so the opt-out is the correct state and not a concession.
+
+---
+
+## ERR-033 — Four rules state themselves twice
+
+**Status: decided. The second copy is redundant.**
+
+`[LEX-15a]`, `[GRM-20]`, `[GRM-8d]` and `[FFI-34a]` each contain their rule
+text twice, the second copy differing only in wording. `tools/rule_index.py`
+counts a definition once — the id opens the bullet — so this trips no gate, and
+in all four the two copies agree.
+
+**Decision.** Read as one rule. Recorded because a future revision editing one
+copy and not the other produces exactly the class of defect 0.8.2b's rows 1 and
+2 were fixing, and because `[LEX-15a]`'s two copies already differ in what they
+list: the first names `extern_item` and the second does not.
+
+---
+
+## ERR-034 — `[FFI-17d]` cites a rule that does not say what it cites it for
+
+**Status: open. Reported to the owner.**
+
+**Where.** `[FFI-17d]`:
+
+> A `@ffi(trampoline)` type whose base has no virtual destructor MUST declare
+> `owner=`; **`[FFI-17b]`'s `@ffi(no_virtual_dtor)`** covers the remaining
+> case, and omitting both is `E5059`.
+
+`[FFI-17b]` is "Templates are available only as explicit instantiations". It
+says nothing about destructors and does not mention `@ffi(no_virtual_dtor)`.
+That attribute is named nowhere else in the document: it is in no table in
+Part III §7, so `[ATT-1]` makes writing it `E0104`.
+
+**Why this is not resolved here.** The other nine `[FFI-*]` citations in the
+same paragraph resolve correctly, so this is a wrong id rather than a missing
+rule — but there is no way to tell *which* rule was meant, because no rule
+defines the attribute. The two readings are (a) `@ffi(no_virtual_dtor)` is a
+real attribute whose defining rule was lost, in which case Part III §7 needs a
+row and some `[FFI-*]` id needs the text; or (b) it was dropped in favour of
+`owner=` alone, in which case `[FFI-17d]`'s clause goes and `E5059` fires
+whenever `owner=` is absent on such a base.
+
+**Provisional choice, per Part XXI §1 ground rule 3 and the guiding sentence in
+"How to use this document":** reading (b). `owner=` alone is sufficient — under
+`owner="foreign"` Ember never runs the C++ destructor, and under
+`owner="ember"` the pair is destroyed through the trampoline subclass, whose
+own destructor is the derived one. `E5059` is then "a `@ffi(trampoline)` base
+with no virtual destructor and no `owner=`", which is what its registry title
+already says. This is Phase 7 work; the decision is recorded now so it is not
+taken silently later. `docs/DECISIONS.md` carries it as ADR-013.
+
+---
+
+## ERR-035 — Five sections sit outside the Part they are numbered for
+
+**Status: decided. Recorded, not moved.**
+
+| Section | Numbered for | Physically inside |
+|---|---|---|
+| `## VIII.5a Cycle diagnosis` | Part VIII | Part XV |
+| `## IX.5a Unsafe categorisation` | Part IX | Part XV |
+| `## XX.13 The C++ importer corpus and migration gate` | Part XX | Part XVI |
+| `## XVI.7a C++ exception policy` | Part XVI | Part XX |
+| `## Compile-time budget` (`[BUD-*]`) | — (unnumbered) | Part XX |
+
+`[IDE-1]`'s bullet also sits between Part XXI's heading and §XXI.1, before the
+part's own first section.
+
+**Decision.** `tools/split_spec.py` cuts on `# Part` headings only, so each of
+these lands in the file for the Part it is physically inside. That is a
+faithful split of the normative document and is left alone: moving text in the
+source to tidy the split would be a hand edit of the specification, which
+Part XXI §1 ground rule 3 forbids for exactly this reason. Rule ids are
+unaffected — `[WK-4]`, `[UNS-9]`, `[CXX-*]`, `[FFI-43]` and `[BUD-*]` are found
+by id, not by file. `docs/spec/README.md` records the placement so a reader
+looking for `[WK-4]` in Part VIII is told where it is.
+
+---
+
+## ERR-036 — Part III admits no item-level `extern "C" fn` declaration
+
+**Status: open. Reported to the owner. Two blocks in `[TST-7]`'s baseline.**
+
+**Where.** XVI.10 writes, and `[FFI-26]`, `[FFI-28]`, `[FFI-31b]` and `[HR-21]`
+all depend on:
+
+```
+@export("rv_script_on_update")
+pub extern "C" fn on_update(entity: u64, dt: f32) -> i32: pass
+```
+
+Part III §2's `fn_header` is:
+
+```
+fn_header       := ["unsafe"] ["virtual" | "override"] "fn" identifier [generic_params]
+                   "(" [param_list] ")" ["->" type] [where_clause]
+```
+
+There is no `["extern" string_lit]` prefix. The only place `extern` may precede
+`fn` in the grammar is `fn_type` (a function *type*, `["extern" string_lit]
+"fn" "(" …`) and `extern_block` (`["unsafe"] "extern" string_lit ":"`, which
+declares foreign functions Ember calls, not Ember functions foreign code
+calls). `pub extern "C" fn on_update(…)` therefore parses under no production.
+
+**Why it matters and why it is not just an example's slip.** `[FN-6]` says a
+capture-free function "coerce[s] to `extern "C" fn(A) -> R` when their types are
+FFI-safe" — a coercion, not a declaration form. But `@export` needs a
+*definition* with the C calling convention, and `[FFI-31b]`'s `E5015` is
+specified over "an `@export` or `@export_table` signature", which presupposes
+one. The Appendix A fixture does not exercise it, which is why the gap survived.
+
+**Two readings.**
+
+* **(a) The prefix belongs on `fn_header`.** `fn_header` gains
+  `["extern" string_lit]` after the optional `unsafe`, admitted only at item
+  level and only on a function with no generic parameters (the calling
+  convention has no meaning for an uninstantiated generic). This is the
+  smallest change and matches what every example writes.
+* **(b) `@export` supplies the convention.** `extern "C"` is dropped from the
+  example and `@export("name")` alone means "C ABI, C symbol", since `[MNG-2]`
+  already says `@export` overrides the symbol entirely. This is fewer tokens but
+  makes the convention invisible at the declaration, which `[PHIL-6]` argues
+  against for boundary-crossing costs.
+
+**Provisional choice: (a).** It is what the document's own examples write in
+three places, it keeps the convention visible at the declaration, and it leaves
+`[FN-6]`'s coercion untouched. Recorded as ADR-014. This is Phase 5 work; the
+grammar change is not made until the owner rules, and until then XVI.10's block
+sits in `[TST-7]`'s baseline rather than being fenced `,ignore` — the baseline
+is where a gap the gate exists to expose belongs.
+
+---
+
+## ERR-037 — Part III admits no `extern class` declaration
+
+**Status: open. Reported to the owner. In `[TST-7]`'s baseline.**
+
+**Where.** `[FFI-39]`, forty lines of v1 specification, writes:
+
+```
+@ffi(trampoline, virtuals=["OnAttach", "OnDetach", "OnUpdate", "OnEvent"])
+extern class cpp.RageV.Layer:
+    init(name: CppString)                       # names a C++ base constructor
+```
+
+Part III §2 has `class_decl`, which admits no `extern` and whose name is an
+`identifier`, not a dotted path; and `extern_block`, whose `extern_item` is
+`fn_header NEWLINE | static_decl | "type" identifier NEWLINE` — no class. The
+member `init(name: CppString)` is also written without `fn`, which
+`type_member` does not admit either.
+
+`[FFI-39]` is explicit that this is not the opaque form — "`[FFI-8]`'s
+opaque-`extern type` form remains available and remains unsized; the two are
+different declarations and only this one may be inherited" — so it cannot be
+read as `extern type` with attributes.
+
+**What is missing**, precisely: a production for a foreign base declaration; a
+rule that its name may be a path into a synthetic `cpp` module; and a member
+form declaring a base constructor's signature without a body.
+
+**Provisional choice.** None taken. Unlike ERR-036 there is no smallest-change
+reading: the declaration introduces a name that is not an Ember item (it is a
+view of a foreign type, per `[FFI-30a]`), its members are signatures of foreign
+constructors, and `[CLS-4]`'s "at most one base class, written in parentheses"
+has to be reconciled with `class DebugOverlay(cpp.RageV.Layer)` naming one.
+Writing a production without the owner's ruling would be deciding the shape of
+the C++ inheritance surface silently, which Part XXI §1 ground rule 3 forbids.
+
+`[FFI-39]`'s block sits in `[TST-7]`'s baseline. This is Phase 7 work and
+nothing before it depends on the answer.

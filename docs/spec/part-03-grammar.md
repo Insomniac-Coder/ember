@@ -26,7 +26,8 @@ item_body       := fn_decl | struct_decl | class_decl | enum_decl | interface_de
                  | comptime_block | test_decl
 attribute       := "@" identifier ["(" [attr_args] ")"] NEWLINE?
 attr_args       := attr_arg {"," attr_arg}
-attr_arg        := expression | identifier "=" expression
+attr_arg        := (expression | identifier "=" expression) [grade]
+grade           := "@" ("asserted" | "checked" | "instrumented" | "proven")
 ```
 
 ## III.2 Declarations
@@ -68,7 +69,8 @@ extend_decl     := "extend" type [implements_clause] [where_clause] ":" type_bod
 
 const_decl      := "const" identifier [":" type] "=" expression NEWLINE
 static_decl     := "static" ["mut"] identifier ":" type "=" expression NEWLINE
-type_alias      := "type" identifier [generic_params] "=" type NEWLINE
+type_alias      := "type" identifier [generic_params] "=" type [range_clause] NEWLINE
+range_clause    := "in" expression                                      (* a `..` or `..=` range expression *)
 
 extern_block    := ["unsafe"] "extern" string_lit ":" NEWLINE INDENT {extern_item} DEDENT
 extern_item     := {attribute} (fn_header NEWLINE | static_decl | "type" identifier NEWLINE)
@@ -104,10 +106,11 @@ array_type      := "[" type ";" expression "]"                          (* fixed
 
 ```ebnf
 block           := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
-statement       := simple_stmt NEWLINE | compound_stmt
+statement       := {attribute} (simple_stmt NEWLINE | compound_stmt)
 simple_stmt     := small_stmt                                           (* one statement per line; `;` is not a separator *)
-small_stmt      := var_decl | assignment | expression | "return" [expression] | "break" [label]
-                 | "continue" [label] | "pass" | "defer" ":" ...      (* defer is compound, see below *)
+small_stmt      := var_decl | assignment | expression | "pass"
+                 (* `return`, `break` and `continue` are expressions (`[GRM-16]`, `OQ-14`), so a jump
+                    written as a statement is an `expression`; errata ERR-030. `defer` is compound. *)
 var_decl        := pattern ":" type ["=" expression]                    (* typed declaration, may be uninitialised *)
 assignment      := target_list ("=" | augassign) expression
 target_list     := target {"," target}                                  (* tuple destructuring *)
@@ -206,7 +209,7 @@ field_pattern   := pattern | identifier "=" pattern                       (* pos
 
 * `[GRM-12]` An identifier in pattern position resolves to a unit variant or `const` if one of that name is in scope; otherwise it is a fresh binding. The compiler warns `W1002` when a binding shadows a same-named variant in another enum to catch typos.
 * `[GRM-13]` Patterns bind by value for `Copy` types and by **reference** (`ref`) otherwise when matching on a place expression that is not consumed; `match owned x:` consumes and binds by move. This mirrors Rust's default binding modes.
-* `[GRM-8a]` Inside `[` `]` in expression position the parser MUST commit to `type_only_arg` when the next token is one of `ref`, `*`, `dyn`, `fn`, `extern`, `void`, `!`; otherwise it parses an `expression`. Each argument is recorded in the `IndexOrInstantiate` node as `TypeOrExpr::{Type, Expr}` (Part XVIII §2). The set is unambiguous: Ember has no prefix `*` and no prefix `!` (`not` and `~` are the operators), and the rest are keywords, so committing on those seven tokens cannot misparse an expression.
+* `[GRM-8a]` Inside `[` `]` in expression position the parser MUST commit to `type_only_arg` when the next token is one of `ref`, `*`, `dyn`, `fn`, `extern`, `void`, `!`; otherwise it parses an `expression`. Each argument is recorded in the `IndexOrInstantiate` node as `TypeOrExpr::{Type, Expr}` (Part XIX §2). The set is unambiguous: Ember has no prefix `*` and no prefix `!` (`not` and `~` are the operators), and the rest are keywords, so committing on those seven tokens cannot misparse an expression.
 * `[GRM-8b]` Name resolution resolves the node per `[GRM-8]`. If it resolves to an **index** and any argument is a `TypeOrExpr::Type` or an `identifier "=" type` binding, it is `E2172 cannot index with a type`, naming the argument. If it resolves to an **instantiation**, each `TypeOrExpr::Expr` argument is reinterpreted as a type or a const-generic argument by the ordinary rules: an array-repeat literal `[T; N]` reinterprets as `array_type`, a tuple literal as `tuple_type`, a path expression as `path_type`; anything not reinterpretable is `E2173 not a type or const-generic argument`.
 * `[GRM-8c]` `identifier "=" type` inside `[` `]` is an associated-type binding in both type and expression position; it is never a named argument and never an assignment.
 * `[GRM-17]` A block-bodied lambda inside brackets whose body is not a single `small_stmt` is `E0106 a multi-statement closure cannot be written inside brackets`, with `help: bind it on a preceding line: `h = fn(e): …` then pass `h`` and `note: indentation is not significant inside brackets ([LEX-6])`.
@@ -245,14 +248,24 @@ Unknown attributes are `E0104` unless prefixed with a registered plugin namespac
 | `@assume_noalloc(expr)` | expression, inside `unsafe` | effect override (`[EFF-7]`) |
 | `@allocator(Name)` | class | **reserved (v2)** (`[OBJ-4]`) |
 | `@prelude` | module | import (`[MOD-3]`) |
-| `@export_table("Name", protocol=N)` | struct | ABI (`[FFI-26]`, Part XXI) |
+| `@export_table("Name", protocol=N)` | struct | ABI (`[FFI-26]`, Part XXII) |
 | `@non_exhaustive` | enum | FFI import (`[FFI-8]`) |
 | `@component(layout=soa\|aos)` | struct | ECS storage (`[ECS-2]`) |
 | `@soa(flatten)` | field | SoA column layout (`[SOA-1]`) |
 | `@gpu` | fn | **reserved (v3)** (XVII §8) |
 | `@allow(code, …)` | any item, and any statement admitting a statement attribute | suppresses the named `W`/`L` diagnostics within the annotated item |
+| `@realtime` | fn | hard-contract set (X.1 `[EFF-19]`) |
+| `@noio` `@nolock` | fn | hard contract (X.2 `[EFF-20]`, `[EFF-21]`) |
+| `@safety("text")` | unsafe fn | trusted-base obligation (IX `[UNS-7]`) |
 | `@must_drop` | struct, class | drop is load-bearing for a borrow guarantee (`[THR-6]`) |
 | `@fp(contract)` | fn | float control (`[TYP-9b]`) |
 | `@deprecated(since, note)` | any item | policy (`[VER-3]`, intent) |
+| `@deterministic` | fn, module, interface method, fn type | hard contract (X.2a `[DET-1]`) |
+| `@reloadable` `@noreload` | module, fn, class | hot-reload scope (`[HR-25]`) |
+| `@renamed_from("name")` | field, enum variant | migration identity (`[HR-14]`, `[HR-11a]`) |
+| `@reinit_on_reload` | static | re-run the initialiser on reload (`[HR-17a]`) |
+| `@allow_reload_terminate` | `migrate_from` | admits a `noexcept` foreign call that may terminate the process (`[HR-43]`) |
+| `@ffi(throws = "translate" \| "noexcept")` | extern fn / overlay | C++ exception policy (`[FFI-43]`) |
+| `@always_specialize` `@never_specialize` | generic fn, generic type | monomorphisation control (`[MONO-7]`) |
 
 ---

@@ -28,6 +28,238 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
+## Change log — 0.8.3
+
+0.8.3 is a precision pass. No new language feature; seven items, each closing an
+ambiguity that an implementer would otherwise have to resolve by guessing. It follows
+a review whose central recommendation — freeze features, sharpen what exists, then
+build — is adopted: the dominant risk has moved from whether the design works to
+whether 826 rules can be implemented.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **The reload transaction no longer has a hole.** `[HR-39]` permitted a `throws = "noexcept"` foreign call inside `migrate_from` and let it terminate the process, calling that "a known consequence". It was the wrong default — it opened by omission the one gap in a transaction whose entire value is having none. Such a call is now `E2227`, and `[HR-43]`'s `@allow_reload_terminate` is the explicit opt-in, reported by `ember tcb` beside the `unsafe` surface and counted rather than forbidden by `[GATE-3]`. | XVIII.4a |
+| 2 | **Hot reload gains a memory model** (`[HR-42]`, `[HR-42a]`, new §XVIII.4b). `[HR-3]` established that no thread is inside Ember at COMMIT; that is a precondition, not an ordering. The depth counter is now the synchronising object — acquire on entry, release on exit, acquire scan then release publish on the reload side — which answers when new addresses become visible (at the thread's next entry), which threads may run (any not inside Ember), and what happens to a thread executing old code (it cannot exist; `[HR-3]` makes the scenario unreachable, not merely survivable). `[HR-42a]` forbids making entry take a lock. | XVIII.4b |
+| 3 | **`str` membership is defined** (`[STD-8b]`). 0.8.2c said "`str` and `String`, as a substring test" and left `char in str` and `Span[u8] in str` open. Matching is by Unicode scalar: `Contains[char]` and `Contains[str]` only, `Span[u8] in str` is `E2226`, a `char` needle can never match a continuation byte and a `str` needle never a split codepoint. Byte search stays on `Span[u8]`, where the question is well-posed. | XV |
+| 4 | **`Sync` says what it does not mean** (`[THR-7]`). It permits handles to cross threads and makes the count atomic; it does not make fields race-free. `[PHIL-10]`'s data-race guarantee holds because the ordinary exclusivity rules apply to a `Sync` class unchanged, not because `Sync` waives them — which is also why a `let` field is not exempt from the derivation. | XI |
+| 5 | **`@nopanic(explicit)` says what it does not mean** (`[EFF-22]`). It forbids the panics the programmer writes and permits four `RuntimeCheck` kinds, every one of which can abort. The name is kept — renaming is churn against a distinction the effect set makes precisely — and the price is that every diagnostic naming it MUST state the permitted checks. | X |
+| 6 | **The silence fallback no longer invites analogy.** "Closest to what a C programmer would expect" is removed as a rule for language semantics: two implementations reasoning independently from it reach two languages, and an analogy is not checkable. An implementation now records a provisional decision, marks it as a specification gap, and raises it. Simplest-and-most-predictable survives for the things genuinely left open — diagnostics' wording, internal structures, optimisation aggressiveness. | How to use this document |
+| 7 | **The C backend does not define the language** (`[CMP-3]`). Where C cannot express a guarantee — aliasing, function identity across a reload, exclusivity, coroutine frames, `[COST-3]`'s elisions — the backend implements it by other means and MUST NOT narrow it. A rule may not be justified by "the C backend cannot do otherwise"; the correct outcome is a recorded gap and an LLVM-only capability, never a quieter guarantee. | XIX |
+
+Not adopted: moving the change log's historical material out of this document. The
+rationale prose inside rules could go to an ADR, but the exhaustive change log stays —
+it is the mechanism that has caught the most defects here, including the `proven`
+contradiction, which surfaced *because* a change-log row claimed something the body
+did not do. A separate history file is optional reading, and optional is how that
+stops working.
+
+## Change log — 0.8.2c
+
+0.8.2c finishes one operator the document had asserted without specifying. A syntax
+review proposed adding `in`; checking found it already in VI.3's operator table and
+**nowhere else** — `Contains` occurred exactly once in 5,269 lines, with no interface
+declaration, no grammar production, no precedence, no `not in`, no cost row and no
+diagnostic. An operator in the table and nothing behind it is worse than an absent
+one, because a reader takes the table at its word.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **`in` and `not in` are specified** (`[GRM-23]`, `[STD-8]`, `[STD-8a]`, `E2226`). A production at comparison precedence, non-associative — `a in b in c` is rejected, because Ember has no chained comparison and the Python reading would mislead. `not in` is one operator, so `x not in xs` cannot misparse as `(not x) in xs`. The two existing uses of the token, `for p in e` and `[RNG-1]`'s `type T = R in a ..= b`, are disambiguated by enclosing construct rather than by lookahead. | VI.3, III, XV |
+| 2 | **`Contains` is declared and its cost is disclosed** (`[STD-8]`, `[STD-8a]`, and a `[COST-3]` row as `[COST-5]` requires). `x in coll` lowers to a **declared bound**, never to a compiler-synthesised scan: `Map`/`Set` answer in O(1) and by **key**, `Array`/`Span`/`str` in O(n), `ember inspect --cost` names which, and a type with no `Contains` is `E2226` rather than a silent linear walk. This is what keeps the operator from becoming the hidden cost the review's own §22.6 rejects. | XV, X.4 |
+| 3 | **Rule-index correction.** `[GRM-20]`..`[GRM-23]` live in Part V beside the declaration rules they constrain, while the index listed `GRM` as Part III only. The index now says both. This drift arrived with 0.6.3's coroutine productions and had gone unnoticed through five revisions. | XXIII.4 |
+| 4 | Not changed: `from … import` (already present, with `as` renaming and `*`), `with … as` (Ember binds with `=`; a respelling would break every existing example), and comprehensions (the review defers them itself, correctly). The review's §23 "recommended baseline" was not adopted as written: `player: mut Player` is `E2020` and contradicts the same document's §4, `string` is not an Ember type (`[TXT-1]`), `with lock = … as guard:` mixes two forms, and `if Some(p) = …` has no if-let to parse into — pasted into this document, `[TST-7]` would reject the block. Its `-> void` was correct and my objection to it was wrong: Part IV names `void` the unit type with value `()`. | — |
+
+## Change log — 0.8.2b
+
+0.8.2b repairs three contradictions in the C++ boundary, all three of which were
+one fact stated in two places with one copy left stale, and adds the evidence the
+C++ design has never had. Two of the three were introduced by earlier revisions of
+this document fixing one copy and not the other.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **`std::string_view` no longer maps to `str` in two different ways.** `[FFI-17a]`'s table said `Span[u8]`; `[FFI-17]` item 3 still said `str`. 0.7.2 fixed the table and left the prose, so the exact hole `[TXT-2]` exists to close — foreign bytes acquiring Ember's UTF-8 invariant without validation — was still open in one copy. Item 3 now says `Span[u8]`, and `CppString.as_str()` is corrected to the fallible `.to_str()`. | XVI.7 |
+| 2 | **C++ inheritance is no longer both supported and unsupported.** `[FFI-17]` item 5 read "Ember cannot subclass C++ classes in v1" and dated the trampoline to v2, contradicting `[FFI-39]`'s forty lines of v1 specification. 0.7.2 fixed the copy in XXIII.2's non-goals and missed this one. Item 5 now defers to `[FFI-39]` and states what remains unsupported. | XVI.7 |
+| 3 | **The `proven` grade is reinstated in the record, because it never left.** The 0.6.2 change log said the grade went with the prover, while the grammar production, `[TCB-1]`, `[FFI-37*]` and `ember tcb`'s own sample output all kept using it. The change-log row was the false one: `[TCB-1]`'s `proven` means *discharged by analysis of the generated adapter*, which has nothing to do with the contract prover. The row is corrected, `proven` is defined precisely as non-prover evidence, and the grammar and the prose are required to agree. | Part 0, XX.6a |
+| 4 | **`[FFI-17]`'s numbered list is demoted to `NON-NORMATIVE`.** It has now been the site of four contradictions with the rules beside it. A prose restatement of a rule drifts from the rule and nothing detects it; the list now says the rules govern, names them, and records that a future revision should delete the duplicated claims rather than keep two copies in step. | XVI.7 |
+| 5 | **`instrumented` carries how completely the run observed the fact** (`[FFI-37f]`): observed, partially observed, unobserved, or structurally unavailable. The last covers a custom pool, a pre-installed arena, a statically linked allocator or a VMA allocation, and is reported as **evidence of a gap, not as evidence** — `[PHIL-5]` forbids treating "the run could not have falsified this" as support for it. | XVI.9 |
+| 6 | **A normative C++ compatibility table** (`[FFI-44]`, new §XVI.7b): twenty-four constructs classified automatic / overlay / native island / rejected, each citing the rule that decides it. It answers "can Ember consume this header" without reading Part XVI. | XVI.7b |
+| 7 | **The unsupported-construct list becomes a rule** (`[FFI-48]`). Demoting `[FFI-17]`'s prose in row 4 left its item 14 — the only statement of what C++ Ember refuses — without a normative home, a gap this revision created. `[FFI-48]` is now thirteen constructs, each with the reason it is unsupported and the thing to do instead, and `E5034` names the row. The 0.7 review had already found that the prose version listed six constructs while claiming fourteen, and gave a reason *and* a workaround for one of them. | XVI.7b |
+| 8 | **A C++ importer corpus and migration gate** (`[CXX-1]`..`[CXX-7]`, new §XX.13). The corpus includes real RageV headers and a third-party header-only library, because a fixture the importer's author wrote tests the importer against its own assumptions; generated thunks are golden-tested; every entry runs under both compilers, both CRTs, RTTI on and off and both iterator-debug levels, and disagreement must fail deterministically rather than bind and differ at runtime. `[CXX-6]`'s nine conditions are incorporated into `[GATE-4]`. `[CXX-7]` makes a dependency's `noexcept` change an API change, since it changes the Ember signature. | XX.13, XXI.6 |
+
+## Change log — 0.8.1
+
+0.8.1 makes conformance coverage mean something, and repairs one rule whose text
+carried an unapplied editorial instruction. Two rows; no semantics change.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **A rule needs a test that fails, not only one that passes** (`[TST-4a]`..`[TST-4c]`). `[TST-4]` required a directory to exist; a directory with one happy-path case passes against a compiler that never enforces the rule, which is the likeliest way an implementation looks conforming and is not. Which rules need a reject case is decided mechanically from `[DIA-6a]`'s existing rule→code map — a rule naming a diagnostic needs a reject case per code, a rule naming none is waived automatically — so no list is maintained by hand. `[TST-4c]` ships a recorded baseline in `[TST-7]`'s idiom that may shrink and never grow, and `[GATE-1]` requires it empty for 1.0. This is the narrow form of the maturity review's traceability proposal; the eight-field matrix stays deferred, since its remaining fields point at the reference compiler's layout and `[CAT-3]` exists to keep the language rules uncoupled from it. | XX.5, XXI.6 |
+| 2 | **`[TST-7]` repaired.** Its text ended with an unapplied RFC instruction — *"add to the permitted opt-out reasons: … Fence XVI.4's block … as ```ember,ignore"* — pasted in rather than carried out. The reason is now stated as a fourth permitted opt-out and the two blocks are described as carrying it. This is the third time this document family has shipped editorial text inside a normative rule (`[STD-7]` and `[FFI-17]` were the earlier two), which is why `[DIA-6a]`'s completeness pass should grow a check for imperative second-person prose in rule bodies. | XX.5 |
+
+## Change log — 0.8
+
+0.8 changes no semantics. Every addition states something the document already meant
+but had left the reader to reconstruct, or turns an intention into a number. It adds
+one diagnostic code and no language feature. The prompt for it was a maturity review
+whose two highest-priority items were already present in 0.7.2 — the Safe Ember
+invariant (`[PHIL-10]`) and ABI versioning (`[ABI-*]`) — and whose C++ migration
+scorecard contradicted `[FFI-17a]` on four rows; what survived verification is below.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **The 1.0 release gate is quantitative** (`[GATE-1]`..`[GATE-8a]`, new §XXI.6). Phase 8's exit criterion was one line — "full conformance + perf suite + two external packages" — with no numbers. Every row now names an instrument the document already specifies: `[TST-4]` coverage, `[DIA-6a]` both directions, fuzzing hours, differential execution against `[COST-3]`'s implementation-defined rows, `[BUD-2]`/`[BEN-1..8]`, a first-hour test on a clean machine, and a `[CONF-1]` declaration produced by the test run rather than written by hand. `[GATE-8a]` gives every open question a status, and an `open` one blocks 1.0. | XXI.6 |
+| 2 | **"Zero-cost" is defined** (`[COST-1]`, new §X.4). It appeared in the document as a phrase and nowhere as a definition, which for a language whose first pillar is the speed of C is the first thing a reviewer challenges. The definition is per *use*, not per abstraction, and "the equivalent C" means C upholding the same invariant — so an emitted bounds check is the price of a guarantee, not a failure of the claim. | X.4 |
+| 3 | **Every implicit cost is classified** (`[COST-2]`..`[COST-5]`). Five classes — guaranteed elidable, guaranteed required, conditionally elidable, implementation-defined, not observable — applied to twenty mechanisms from bounds checks to coroutine resumes to reload thunks. `ember inspect --cost` reports the resolved class per item, and `[COST-5]` makes a new implicit cost without a row a CI failure. | X.4 |
+| 4 | **A storage-selection table** (`[SEL-1]`, `[SEL-2]`, new §IX.0). Twelve mechanisms with ownership, aliasing, destruction, thread model and when to reach for each. Part 0 row 2 makes storage the programmer's choice; this is the first place the document helps them make it. `[SEL-2]` and `E5065` make the `Shared[T]` ↔ `CppShared[T]` confusion a diagnostic, since the two use different reference counts and conflating them double-frees. | IX.0 |
+| 5 | **The hot-reload failure matrix** (`[HR-41]`). Sixteen rows covering every way a reload can fail and what each leaves behind, including the two rows that read "cannot occur" — a panic in `migrate_from`, forbidden at compile time by `[HR-35]`, and a failure during COMMIT, forbidden by `[HR-2]`. It restates nine rules as one auditable table. | XVIII.5 |
+| 6 | **Every rule carries a requirement category** (`[CAT-1]`..`[CAT-5]`, new §XXIII.5): language, ABI, toolchain, reference-implementation, RageV, or non-normative. This separates what Ember *means* from how this compiler happens to work, which matters the moment a second implementation exists. `[CAT-3]` flags a language rule justified by a reference-implementation one — either the language rule is wrong or its real reason is unstated. Categorisation is descriptive: it records what each rule already was. | XXIII.5 |
+| 7 | Not taken from the review: its formal-guarantees section (`[PHIL-10]`/`[PHIL-11]`, added in 0.7.2), its guarantee matrix (the same two rules as a table), its ABI examples (`[ABI-1..5]`, 0.7.2), and its migration scorecard, which marked `shared_ptr → Shared`, `weak_ptr → Weak` and arbitrary templates as automatic against `[FFI-17a]` and `[FFI-17b]`. Its traceability proposal is a genuine extension of `[TST-4]`/`[DIA-6a]` and is deferred rather than rejected. | — |
+
+## Change log — 0.7.2
+
+0.7.2 is a correctness and coherence release. It closes one soundness hole that
+0.7.1 asserted its way past, states the guarantee the rest of the document exists to
+provide, and adds the small high-value items from the 0.7.2 feedback review. It adds
+no new language feature and rejects the feedback's proposals to split the effect
+lattice and to require an explicit access block for aliased class mutation — the
+first would break `@deterministic`, `@nosync` and `[RC-1]`, and the second is the
+ceremony this language exists to avoid.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **The reload transaction failure model is fixed** (`[HR-34]`..`[HR-40]`, new §XVIII.4a). 0.7.1's `[HR-2]` promised that a failed reload leaves the process on the old image, while `[PAN-1]` makes panic **abort** and defers unwinding to v2, and `[ALC-1]`'s allocator panics on exhaustion — so a panic in `migrate_from` killed the process and the guarantee was unachievable. 0.7.2 makes PREPARE **incapable of panicking** rather than catching panics: every operation in it excludes the `Panic` effect or is fallible-by-value, allocation goes through `try_alloc` into a `ReloadTransactionArena` released wholesale on failure, and `migrate_from` returns `Result[Self, ReloadError]` with a panic-free body (`E2225`). No unwinder is introduced. | XVIII.4a, XVIII.1, XVIII.4 |
+| 2 | **The Safe Ember invariant is stated** (`[PHIL-10]`, `[PHIL-11]`, new §I.3a). One paragraph saying what a program with no `unsafe` and no unbacked foreign fact cannot do, and one enumerating what remains possible — exhaustion, deadlock, logical races, cycles, foreign bugs, deliberate termination. The guarantee was previously distributed across ownership, borrowing, classes, effects, FFI and runtime checks and stated nowhere. | I.3a |
+| 3 | **Conformance profiles** (`[CONF-1]`..`[CONF-6]`, new §XX.11): Core, Systems, Native, Dynamic, cumulative, declared by `ember --version`, and claimable only when every conformance test for the rules they name passes. This addresses the real process risk in a specification this size — not a wrong rule, but a partial implementation becoming the de facto language. | XX.11 |
+| 4 | **ABI protocol versions** (`[ABI-1]`..`[ABI-5]`, new §XX.12). `EMBER_C_ABI`, `EMBER_RUNTIME_ABI`, `EMBER_RELOAD_ABI` and `EMBER_CPP_BINDING_ABI` are versioned independently and checked before any code runs — as a link error where the boundary links, and as `E9037` on image load where it does not. | XX.12 |
+| 5 | **Every imported C++ function carries an explicit exception policy** (`[FFI-43]`, `[FFI-43a]`, new §XVI.7a). `throws = "translate"` produces `Result[T, CppError]`; `throws = "noexcept"` terminates at the boundary and is applied automatically to a header-declared `noexcept`. An unstated policy is `E5061` and a contradictory one `E5062`; there is no default, because a silent assumption here is undefined behaviour crossing an ABI. | XVI.7a |
+| 6 | **A normative string and text model** (`[TXT-1]`..`[TXT-8]`, new §XV.4a). Four types, one UTF-8 guarantee held by two of them, and **no unvalidated route into `str`** (`E5063`) — `std::string` and `std::string_view` now map to `CppString` and `Span[u8]`, from which conversion is fallible. This closes the hole by which a `yaml-cpp` scalar, a `cgltf` name or an ImGui buffer entered safe Ember as a `str` and was walked by a UTF-8 decoder. Also fixes null termination, slicing at a codepoint boundary, stated conversion costs, and the C ABI representation. | XV.4a |
+| 7 | **The leak reporter names the cycle** (`[WK-4]`, new §VIII.5a): the shortest strong cycle through each leaked object, as `Type.field` edges, with the suggested edge to weaken (`L3017`). `[WK-1]`'s statement that cycles leak is unchanged and no collector is added. | VIII.5a |
+| 8 | **Unsafe blocks carry a machine-readable reason** (`[UNS-9]`, `[UNS-9a]`, new §IX.5a) from a closed set, aggregated by `ember tcb` (`L3018`). It changes no check and no codegen; it makes the unsafe surface of a large engine answerable. | IX.5a |
+| 9 | **Non-goals contradiction repaired.** XXIII.2 still read "no C++ subclassing from Ember" while `[FFI-39]` specified it. The bounded form is now a goal; unrestricted subclassing — multiple inheritance, virtual bases, unnamed virtuals — remains a non-goal. | XXIII.2 |
+| 10 | Codes added: `E2225`, `E5061`–`E5064`, `E9037`, `L3017`, `L3018`. Attribute added: `@ffi(throws = …)`. CLI added: `ember inspect --alloc`. | V §8, XX §1, XX §6 |
+
+## Change log — 0.7.1
+
+0.7.1 is 0.6.3 with hot reload rebuilt as a first-class language feature, the
+compile-time budget adopted, and the C++ boundary completed. It takes the design of
+the 0.7 draft for all three and none of its text: 0.7 was authored from v0.3 and
+silently reverted 239 rules settled in 0.4 through 0.6.2, so its contribution is
+carried onto this base rather than the other way round. Everything 0.6.3 guarantees
+is unchanged, and no rule below rejects source that 0.6.3 accepted.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **Hot reload is a Part, not a toolchain section** (new Part XVIII, `[HR-1]`..`[HR-33]`). 0.6.3's `[HOT-1]`..`[HOT-10]` are replaced entirely. The new part keeps 0.7's design decisions — package-granularity image swap over binary patching, name-keyed slots, refusal as a transactional invariant, live state migrated rather than serialised — and repairs the seven defects that made it unimplementable. It is host-agnostic: `[HR-30]` states a four-call contract any program can satisfy, and `ember run --hot` is one host among others rather than the mechanism. | XVIII |
+| 2 | **Permanent thunks replace 0.7's `{table_id, slot}` function values** (`[HR-6]`, `[HR-6a]`). A reloadable function's address, everywhere it can be observed, is a fixed thunk address. `fn` values, closure code pointers, vtable slots, witness tables and `extern "C" fn` values therefore keep the representation Part IV §9 and `[OBJ-2]` already give them, and `std`, `ember_rt`, non-reloadable packages and foreign code need no knowledge that reload exists. This deletes an entire class of defect — 0.7's widened vtable slot was read as a raw code pointer by `std` and by the C11 runtime — and makes `[HR-21]`'s stable `@export` address fall out for free rather than needing a second mechanism. | XVIII.2 |
+| 3 | **Migration is four phases, and only two of them can fail** (`[HR-2]`, `[HR-2a]`). PLAN decides every refusal from the schemas before anything is touched; PREPARE allocates and runs `migrate_from` without mutating, moving from, or dropping any live instance; COMMIT is specified as infallible and allocation-free; RECLAIM runs the drops afterwards. 0.7 asserted a transactional guarantee while specifying a single pass that ran user `drop` and `migrate_from` code with no rollback and no unwinding, so a panic partway through aborted having already destroyed part of the live set. | XVIII.1, XVIII.4 |
+| 4 | **The safe point is a depth counter, not an attach flag** (`[HR-3]`, `[HR-3a]`). 0.7 reused `[FFI-22]`'s thread-attach state, which records whether a thread has *ever* entered Ember; in any host with a long-lived render or worker thread it is permanently non-zero and reload never fires. Ember-spawned threads and job workers are registered too. | XVIII.1 |
+| 5 | **Schemas cover enum variants, statics' initialisers, and recursion** (`[HR-11]`, `[HR-11a]`, `[HR-14]`, `[HR-17a]`). 0.7's schema recorded fields only, so no enum change was representable and no rule renumbered a stored discriminant; it also kept a static's old value when the initialiser changed, silently discarding the edit. Range-typed fields are refused rather than migrated, because `[RNG-10]`'s construction set is closed and migration is not in it. | XVIII.3, XVIII.4 |
+| 6 | **Relocation covers `Weak[C]` and registered interior references** (`[HR-15]`), and **`std` containers over reloadable element types migrate** (`[HR-13a]`) — 0.7's rule could not fire, because `std` is not reloadable and the registration was placed there rather than in the instantiating package. | XVIII.3, XVIII.4 |
+| 7 | **The 40-byte header is a whole-process property with a link-time guard** (`[HR-12]`, `[HR-12a]`), and **the runtime is shared, not duplicated per image** (`[HR-29]`). 0.7 made the header a per-package key with no guard, so two packages in one process disagreed about field offsets; and it never said where `ember_rt` lives, so a reloadable `cdylib` statically linking its own copy would load with an empty live set and a separate heap. | XVIII.3, XVIII.9 |
+| 8 | **Bodies-only is a specified tier** (`[HR-19]`), carrying forward what 0.6.3's now-deleted bodies-only rule guaranteed: no schemas, no live-instance list, the 24-byte header, and every non-body change refused. It is what Phase 7a ships before migration is trusted. `[HR-10a]` also drops 0.7's rule that a `@noreload` function may not call a reloadable one, which rejected the ordinary shape of an opted-out hot loop and was unsatisfiable for `std` generic instances. | XVIII.5, XVIII.2 |
+| 9 | **The compile-time budget is adopted, with the gates made measurable** (`[BUD-1]`..`[BUD-6]`, XX). Absolute and regression gates are separated and both stated; CI normalises against a calibration workload instead of gating a laptop figure on a hosted runner; a run whose own spread exceeds the gate is inconclusive rather than failing; `bench/bigpkg` grows with the compiler so Phase 0 does not gate against a package it cannot build; `[BUD-5]` names one row (B3) instead of three; and `[BUD-5a]` applies the rule to hot reload and interop themselves. | XX |
+| 10 | **A foreign base can be inherited** (`[FFI-39]`..`[FFI-39e]`, `[FFI-17c]`, `[FFI-17d]`). This is 0.7's headline interop feature and the real gap in 0.6.3. The repairs: an `@ffi(trampoline)` `extern class` is a declared, sized, implicitly `open` base that satisfies `[CLS-4]` rather than an opaque unsized `extern type`; `super.init` selects a C++ base constructor, so a base like `Layer(const std::string&)` is constructible; destruction is derived-first per `[CLS-6]` rather than 0.7's inverted order; ownership is declared in both directions rather than fixed at "Ember owns", which is what makes `PushLayer(Layer*)` expressible; re-entrant callbacks do not trip `[EXC-1]`; and the inbound path has a panic boundary. | XVI.7 |
+| 11 | **Member mapping completed** (`[FFI-40]`..`[FFI-42a]`): `this`-qualifiers and reference mapping, statics, nested types and namespaces, operators, and `Iterable` from `begin`/`end`. Iterator invalidation is a `MUST` with a `ref mut` borrow rather than 0.7's `SHOULD`, which left a use-after-free reachable from safe Ember; and a `const` member of a type with `mutable` state is assumed to invalidate unless the overlay says otherwise, because `const` is not an aliasing guarantee in C++. | XVI.7 |
+| 12 | **Cross-language LTO and a generated C++ header** (`[BLD-FFI-4]`, `[BLD-FFI-5]`). `[BLD-FFI-5a]` generates a copyable C++ smart handle only for a `Sync` class; 0.7 generated one for every class, inlining a non-atomic refcount that any C++ worker thread could tear. | XVI.11 |
+| 13 | Not taken from 0.7: its FFI section (49 rules short of this one, and missing `[FFI-35]`/`[FFI-36]`/`adopt`, the trust grades and `[TCB-*]`), its open-question list (which re-asks ten decisions settled in 0.4/0.5), and its 24-byte-header, range-type, `[CG-C-*]`, `[DIA-*]` and `[BEN-*]` regressions. `[FFI-17e]`, `[FFI-29]` and `[FFI-5a]` already covered 0.7's bridge-type declarations, header-only shims and layout verification, and cover them better. | — |
+| 14 | Attributes added: `@reloadable`, `@noreload`, `@renamed_from`, `@reinit_on_reload`, and `trampoline`/`virtuals`/`owner`/`invalidates` as arguments of `@ffi`. Codes added: `E2224`, `E5056`–`E5060`, `E9035`, `E9036`, `W5033`, `W5034`, `L2005`. `[MAN-6]` gains `[MAN-7]`. | V §8, XX §6 |
+
+## Change log — 0.6.3
+
+0.6.3 adds four features aimed at the day-to-day experience of writing a game in
+Ember rather than at the safety model: the iteration loop (hot reload), the
+readability of frame-spanning gameplay code (coroutines), the guarantee lockstep
+networking and replay need (determinism), and visibility plus control over what
+monomorphisation costs (the instantiation budget). It removes no guarantee,
+reopens no confirmed ADR. It rejects 0.6.2 source in exactly one way, recorded in
+row 2 and nowhere else: `yield` becomes a reserved word, so a 0.6.2 program using it
+as an identifier no longer parses. Per the 0.6 convention for source-rejecting
+changes, the diagnostic (`E0104`) MUST name `r#yield` as the mechanical fix and
+`ember fmt --migrate` MUST apply it.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **Hot reload** (`[HOT-1]`..`[HOT-10]`, new section XX.11). `ember run --hot` swaps changed function bodies into a running process at a declared quiescent point. Bodies only: any change to a signature, layout, effect set, export set or `const` is rejected with `E9030` and the process keeps running the old code, which is what lets `[HOT-5]` promise that live state — class instances, refcounts, arenas, ECS storage, open resources — survives untouched. Reloadability is opt-in per module (`@hot_reload`), so the call indirection `[HOT-3]` needs is paid only where iteration speed is wanted, and exists in no profile but `dev`. | XX.11, XX.4 |
+| 2 | **Coroutines** (`[CORO-1]`..`[CORO-11]`, new section VI.5a). `gen fn` and `yield` turn a frame-spanning sequence into straight-line code. The frame is a compile-time-sized value, so **nothing about a coroutine allocates** and a `gen fn` may be called from `@noalloc` (`[CORO-5]`). One restriction carries the safety argument: no borrow may be held across a `yield` (`[CORO-6]`, `E2221`). `yield` becomes fully reserved and `gen` contextual, taking `[LEX-15]`'s reserved set from 48 to 49 (`[LEX-15b]`). | VI.5a, II, III, XIX.4.10a |
+| 3 | **Determinism** (`[DET-1]`..`[DET-9]`, new section X.2a). `@deterministic` is a hard contract over a new `Nondet` effect, in the manner of `@noalloc` — it constrains results, not timing (`[DET-6]`). `std.math.det` supplies bit-reproducible transcendentals (`[DET-4]`). `[BLD-13]` makes the build itself reproducible and gives lockstep peers a `--build-id` to compare, which is what `[DET-7]`'s cross-machine claim actually rests on. | X.1, X.2a, XX.3 |
+| 4 | **Instantiation budget and shared instantiation** (`[MONO-2]`..`[MONO-9]`, new section XIX.4.11a). The compiler counts instantiations per generic and reports them (`ember build --report=instantiations`); a manifest ceiling makes crossing it `W2220` on the commit that crossed it. Where a generic uses `T` only to call its bounds' methods, the compiler may emit one shared function plus a witness table per type instead of one function per type — `[TYP-22]`'s `dyn`, chosen by the compiler from source that did not write it. `@always_specialize` / `@never_specialize` settle it per generic. `[PRF-1]` holds throughout: this changes what is emitted, never what is computed. | XIX.4.11a, XX.2 |
+| 5 | **`[TYP-16]` is amended** to point at XIX.4.11a. Its existing sentence — code size is the programmer's responsibility — stands; 0.6.3 gives the programmer the instrument that sentence assumes. | IV.7 |
+| 6 | Attributes added: `@deterministic`, `@hot_reload`, `@always_specialize`, `@never_specialize`, and `deterministic` as an argument of `@ffi`. Codes added: `E2220`–`E2223`, `E4070`–`E4073`, `E9030`–`E9034`, `W2220`, `W9030`, `L2004`. | V §8, XX.6 |
+
+## Change log — 0.6.2
+
+0.6.2 removes the contract and verification layer and finishes the C++ boundary. It is the
+correctness pass over 0.6 (all of which is retained below) plus one scope decision.
+
+**This change log is exhaustive for normative text: a revision that alters a rule without a row
+here is a defect.**
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **Contracts and verification are removed.** `@requires`, `@ensures`, `@invariant`, `@decreases`, `@verified`, `@assume`, the `[CTR-*]` and `[PRV-*]` rules, sections X.2a and X.2b, proof manifests, the `--contracts` and `--verify` flags, and the `proven` trust grade all go. Ember follows the same approach as Rust: a rule is enforced by making the bad value unconstructible, not by writing the rule down and checking it. `Option`, `Result`, `.get(i)`, `NonZero[T]` and range types are that mechanism, and they are all retained. Range types (`[RNG-*]`) are unaffected — they are a type, not a contract. | X, XX |
+| 2 | **The trusted-base report survives the removal.** `ember tcb` still lists unsafe blocks, foreign calls, and every foreign fact with its grade. **This row over-claimed and is corrected in 0.8.2b**: the grade set remains four — `asserted`, `checked`, `instrumented`, `proven` — because `[TCB-1]`'s `proven` never meant the contract prover. It means the fact is discharged by analysis of the *generated adapter*, which survives the prover's removal untouched. What went away with the prover is the contract-level `proven` required the prover. This is the audit surface for a C++ migration and never depended on verification. | XX.6a |
+| 3 | **The standard-library mapping is stated and prioritised** (`[FFI-17a]`). `std::span` and `std::string_view` are **P0** because they appear in the signature of almost every modern C++ API: an importer that handles `std::vector` first still cannot import the header. `std::optional` maps to `Option[T]`, `std::variant` to a generated `enum`. `std::shared_ptr`/`std::weak_ptr` map to `CppShared[T]`/`CppWeak[T]` and explicitly **not** to Ember's `Shared[T]`/`Weak[T]`, which use Ember's own reference count — conflating them would double-free. | XVI.7 |
+| 4 | **Templates are importable only as explicit instantiations** (`[FFI-17b]`), so libclang can supply a concrete layout and mangled name. Passing an Ember generic into a C++ template is out of scope (`E5055`). | XVI.7 |
+| 5 | **`[FFI-17]` repaired.** An editorial fragment ("item 3, insert before `std::vector`") had been pasted into the rule text. | XVI.7 |
+| 6 | **`OQ-28`..`OQ-32` are closed** by the removal — every one of them was a question about how contracts behave. | XXIII.1 |
+
+## Change log — 0.6
+
+0.6 adds a verification layer and strengthens the foreign boundary. It removes no
+guarantee and reopens no confirmed ADR. Some changes are deliberate **safety-tightening
+changes** and can reject source that a v0.5 implementation previously accepted; those
+changes are listed below and MUST provide a diagnostic and migration path. Apart from
+those explicitly listed changes, v0.5 source and semantics remain compatible. New v0.6
+features are opt-in and do not appear by accident.
+
+| # | What | Where |
+|---|---|---|
+| 1 | **Range and domain types.** A nominal numeric type carrying its own bounds. `type Roughness = f32 in 0.0 ..= 1.0`, distinct from every other type with the same representation. | IV.2a, `[RNG-1..7]` |
+| 5 | **Trusted-base report with graded claims.** Every foreign fact is *asserted*, *checked*, *instrumented* or *proven*, and every unproven assumption is listed. | XX.6a, `[TCB-1..4]` |
+| 6 | **A standard library that can be built without its allocating half**, plus fixed-capacity containers in `core`. | XV, `[STD-6..7]`, `[BLD-11..12]` |
+| 7 | **`Io` and `Lock` as separate effects**, and `@realtime` as a marker for a configured set. | X.1, `[EFF-18..19]` |
+| 8 | **Foreign references and pointers import unsafe** until a lifetime is written down; `borrowed` becomes the promotion, not the default. | `[FFI-35]` |
+| 9 | **Ownership transfer across the C++ boundary is an explicit `adopt` at the call site.** | `[FFI-36]` |
+| 10 | **Effect claims on foreign functions are checked by instrumentation**, not believed. | `[FFI-37]`, `[CLI-14]` |
+| 11 | **Foreign reachability reporting** — which foreign functions a given function can reach. | `[CLI-13]` |
+
+**Three decisions 0.6 takes, and what they protect:**
+
+2. **A range type is declared with `in`, not a new `range` keyword.** `in` is
+   already reserved; `range` is a plausible variable name. `[RNG-1]` states the
+   nominal/transparent split in one sentence so `type` remains readable.
+
+**What 0.6 does not do:** it does not make verification mandatory, does not add a
+second profile axis (`[PRV-8]` makes verification a flag orthogonal to
+`debug`/`release`/`shipping`), does not weaken any check a proof discharges in a
+build that is not proving, and does not restate the C++ import machinery of
+XVI.2–XVI.11, which is unchanged except where `[FFI-34..38]` amend it by id.
+
 ## Change log — 0.5
 
 0.5 answers every question 0.4 put to the owner. It adds three rules, promotes three reserved
@@ -39,7 +271,7 @@ here is a defect.**
 
 | # | Change | Where |
 |---|---|---|
-| 1 | **All fifteen open questions answered.** Part XXII.1 becomes a decision record; `OQ-1`..`OQ-23` keep their permanent identifiers. No question is left for an implementing agent to decide silently. | XXII.1 |
+| 1 | **All fifteen open questions answered.** Part XXIII.1 becomes a decision record; `OQ-1`..`OQ-23` keep their permanent identifiers. No question is left for an implementing agent to decide silently. | XXIII.1 |
 | 2 | `[EXC-4]` **resolved** (`OQ-18`): `let` freezes the binding, not the value, so a long-term access to a `let` field registers exactly as any other field does and only an instantaneous read is exempt. This closes the aliasing hole the unconditional exemption left open, and `[CLS-9a]` states the mutate-through consequence. | VIII.3, V.5 |
 | 3 | `[LT-7]` **adopted** (`OQ-17`): late-bound callback regions, one level of higher-ranked quantification at callback boundaries, with region variables compiler-internal and absent from source, generic arguments and ABI-visible names. `[THR-5]` and `[JOB-2]` stop being bespoke exceptions, and `[GPU-9]`'s `pass.native` becomes expressible. | VII.5 |
 | 4 | `[TYP-15a]` **added** (`OQ-19`): `BorrowList[T]`/`ViewList[T]` may hold views under one inferred region, which the programmer never writes; arbitrary owning containers at view types stay rejected, and the new containers may not smuggle a view past `[TYP-15]`. | IV.4 |
@@ -48,14 +280,14 @@ here is a defect.**
 | 7 | **Call sites never write a mode** (`OQ-13`, `[FN-2a]`). Part 0 row 3's guarantee is preserved verbatim; the mode is read from the signature and surfaced by `ember inspect` and `[IDE-7]` inlay hints. | V.2 |
 | 8 | `::` **kept** (`OQ-15`) with its purpose written down: the qualified module/type/namespace path separator, distinct from `.` for instance and member access. | III.5 |
 | 9 | **No fixed exclusivity cost is normative** (`OQ-16`). The "~2 ns" figure is withdrawn as a promise and re-derived under `[BEN-1]`–`[BEN-7]`, because `[EXC-3]`, `[EXC-6]` and `[FFI-33]` all add work to that path. ADR-004's decision is unchanged. | VIII.3, I.4 |
-| 10 | `[CLI-10]` `--report=engine` is a **reporting mode, not a profile**: it may not change type checking, acceptance, semantics or optimisation legality. `[PRF-1]` governs profiles and this is not one. | XIX.1 |
-| 11 | The 1.0 promises become **normative rather than intent** (`OQ-22`), and the bundled Clang + `lld` toolchain becomes a **committed deliverable** (`OQ-23`, `[TOOL-2]`). | XIX.2, XIX.1 |
-| 12 | **Rule-ID uniqueness is a hard invariant.** `tools/rule_index.py` fails CI when an id is defined twice in the active index; a reference is not a definition. This is the defect class that reached three drafts of the 0.5 proposal undetected. | XXII.4 |
-| 13 | `[TST-11]` records the **v0.5 regression obligations** for `[EXC-4]`, `[LT-7]`, `[TYP-15]`/`[TYP-15a]`, `[FFI-30c]`, `[EFF-17]` and `[PRF-1]`, so every rule this revision adds or changes has a conformance mapping. | XIX.5 |
-| 17 | `;` is **no longer a statement separator** (`OQ-25`, ERR-003). `simple_stmt` becomes `small_stmt`, `a = 1; b = 2` is `E0105`, and one line carries one statement. `;` stays punctuation only inside `[T; N]` and `[v; N]`. `[LEX-9]` and `[FMT-3]` follow. | III.4, II.2, XIX.7 |
+| 10 | `[CLI-10]` `--report=engine` is a **reporting mode, not a profile**: it may not change type checking, acceptance, semantics or optimisation legality. `[PRF-1]` governs profiles and this is not one. | XX.1 |
+| 11 | The 1.0 promises become **normative rather than intent** (`OQ-22`), and the bundled Clang + `lld` toolchain becomes a **committed deliverable** (`OQ-23`, `[TOOL-2]`). | XX.2, XX.1 |
+| 12 | **Rule-ID uniqueness is a hard invariant.** `tools/rule_index.py` fails CI when an id is defined twice in the active index; a reference is not a definition. This is the defect class that reached three drafts of the 0.5 proposal undetected. | XXIII.4 |
+| 13 | `[TST-11]` records the **v0.5 regression obligations** for `[EXC-4]`, `[LT-7]`, `[TYP-15]`/`[TYP-15a]`, `[FFI-30c]`, `[EFF-17]` and `[PRF-1]`, so every rule this revision adds or changes has a conformance mapping. | XX.5 |
+| 17 | `;` is **no longer a statement separator** (`OQ-25`, ERR-003). `simple_stmt` becomes `small_stmt`, `a = 1; b = 2` is `E0105`, and one line carries one statement. `;` stays punctuation only inside `[T; N]` and `[v; N]`. `[LEX-9]` and `[FMT-3]` follow. | III.4, II.2, XX.7 |
 | 16 | `1f32` is **confirmed legal** (`OQ-24`, ERR-002), alongside `1.0f32`. `1.f32` remains a method/field access on `1`, not a literal. | II.5 |
 | 15 | `let` is **fully reserved** (`OQ-26`, ERR-004): it joins the reserved keyword set, which grows from 47 to 48 entries, and `r#let` is required to use the word as a name. `ember_lexer`'s keyword-count assertion moves from 47 to 48: `type` joins the set under ERR-009 and `from` leaves it under ERR-017. | II.4 |
-| 14 | The **GPU host model is scheduled, not respecified**: Part XVII's `[GPU-*]` and Part XXI's `[RV-*]` remain the sole normative source, their implementation moves to v0.6, and v0.5 carries an explicit compatibility surface it may not break. The MIR interpreter becomes a supported restricted execution mode with mandatory differential testing. | XX.2 |
+| 14 | The **GPU host model is scheduled, not respecified**: Part XVII's `[GPU-*]` and Part XXII's `[RV-*]` remain the sole normative source, their implementation moves to v0.6, and v0.5 carries an explicit compatibility surface it may not break. The MIR interpreter becomes a supported restricted execution mode with mandatory differential testing. | XXI.2 |
 
 ## Change log — 0.4
 
@@ -68,22 +300,22 @@ defect.** 0.3 altered eight sites without a row, which is why the sentence is no
 
 | # | Change | Where |
 |---|---|---|
-| 0 | Carries the owner rulings ERR-001, ERR-005, ERR-006 and ERR-007 recorded in `docs/spec-errata.md`, which 0.3 reverted by being authored from an unpatched copy. The single-file source under `docs/spec-source/` is now stated to be normative and `docs/spec/` generated. | II.3, III.5, III.7, XIX.5, XX.1, XX.3 |
+| 0 | Carries the owner rulings ERR-001, ERR-005, ERR-006 and ERR-007 recorded in `docs/spec-errata.md`, which 0.3 reverted by being authored from an unpatched copy. The single-file source under `docs/spec-source/` is now stated to be normative and `docs/spec/` generated. | II.3, III.5, III.7, XX.5, XXI.1, XXI.3 |
 | 1 | The three still-open errata are written into the grammar: `;` joins the punctuation table (ERR-003), `let` joins the contextual keywords (ERR-004), `1f32` joins `float_lit` (ERR-002). Each is marked "implementation follows, owner ruling pending". | II.4, II.5, II.6 |
-| 2 | Registry hygiene: the attribute table gains every attribute the document uses (`@static_safe`, `@borrows`, `@allow`, `@must_drop`, `@fp`, and the reserved forms); the rule index admits amendment and hyphenated ids and gains six prefixes; `type` becomes a v1 keyword. | III.7, II.4, XXII.4 |
+| 2 | Registry hygiene: the attribute table gains every attribute the document uses (`@static_safe`, `@borrows`, `@allow`, `@must_drop`, `@fp`, and the reserved forms); the rule index admits amendment and hyphenated ids and gains six prefixes; `type` becomes a v1 keyword. | III.7, II.4, XXIII.4 |
 | 3 | Contract effect sets are computed once under a fixed **contract profile** (`[EFF-15]`), so `@static_safe` no longer means one thing in `release` and the opposite in `shipping`. | X.1, X.2 |
 | 4 | `[DSJ-6]` and `[EFF-12]` are made consistent: a check that *establishes* a static fact carries the new reason code `establishes_static_fact` and does not violate `@static_safe`. | IX.8, X.1, X.2 |
-| 5 | `exclusivity = "unchecked"` reaches dynamic **class** exclusivity and nothing else; `[CELL-9]` keeps `RefCell`'s check in every profile, resolving the contradiction with XXII.2's own new non-goal. | VIII.3, IX.7, XIX.4, XXII.2 |
-| 6 | Alias facts are derived, never assumed, and `[CG-C-4]` states how they reach the backend — without which `[SIMD-3]` and `[DSJ-3]` buy nothing. | IX.8, XII.2, XVIII.6 |
+| 5 | `exclusivity = "unchecked"` reaches dynamic **class** exclusivity and nothing else; `[CELL-9]` keeps `RefCell`'s check in every profile, resolving the contradiction with XXIII.2's own new non-goal. | VIII.3, IX.7, XX.4, XXIII.2 |
+| 6 | Alias facts are derived, never assumed, and `[CG-C-4]` states how they reach the backend — without which `[SIMD-3]` and `[DSJ-3]` buy nothing. | IX.8, XII.2, XIX.6 |
 | 7 | Seven memory-safety holes in Safe code are closed: exclusivity elision only over a closed interval (`[EXC-3]`), resurrection during `drop` (`[OBJ-5]`, `[WK-3]`), borrows keeping objects alive (`[RC-5]`), leakable scope guards (`[THR-6]`, `@must_drop`), `@parallel` disjointness as a property of the place (`[PAR-2]`), `ScopedArena` rewind (`[ARN-7]`), and what `let` exempts (`[EXC-4]`, pending `OQ-18`). | VIII, IX.2, XI |
 | 8 | The escape hatches the vision rests on are made usable: `@borrows` is registered and given a position (`[LT-1a]`), `?` can propagate an error of its own type (`[ERR-7]`), type arguments are admitted in expression position (`[GRM-8a]`–`[GRM-8c]`), and once-callable closures are selected by the existing parameter mode (`[CLO-6]`). | III, IV, VI, VII, XIII |
-| 9 | The C backend gets the four things "speed of C" requires: cross-translation-unit inlining (`[CG-C-3]`), loop bounds-check versioning (`[OPT-2]`), guaranteed vectorisable loop shape (`[SIMD-5]`, `[CG-C-6]`), and enforced float control (`[TYP-9a]`–`[TYP-9c]`). | XVIII.6, VIII.6, XII, IV.2 |
-| 10 | Grammar repairs for constructs the document uses and Part III did not define, and a rule that every fenced `ember` block in this specification is compile-checked (`[TST-7]`). | III, XIX.5 |
-| 11 | The errors of the first hour get a mandated catalogue of their own (§XIX.6.2, shapes N1–N12), ownership shapes O5–O9, A1, B12, B13 are added, and `E3060` is split so one code no longer means two things. | XIX.6.1, XIX.6.2 |
-| 12 | The editor becomes an architectural constraint rather than a later rewrite: an owned `Session` replacing the leaked interner, error tolerance past the parser, and item-granular re-checking (`[IDE-3]`, `[IDE-4]`, `[IDE-6]`, `[BLD-7]`–`[BLD-10]`); a new XIX §10 reserves the server itself. | XVIII.1, XIX.10 |
+| 9 | The C backend gets the four things "speed of C" requires: cross-translation-unit inlining (`[CG-C-3]`), loop bounds-check versioning (`[OPT-2]`), guaranteed vectorisable loop shape (`[SIMD-5]`, `[CG-C-6]`), and enforced float control (`[TYP-9a]`–`[TYP-9c]`). | XIX.6, VIII.6, XII, IV.2 |
+| 10 | Grammar repairs for constructs the document uses and Part III did not define, and a rule that every fenced `ember` block in this specification is compile-checked (`[TST-7]`). | III, XX.5 |
+| 11 | The errors of the first hour get a mandated catalogue of their own (§XX.6.2, shapes N1–N12), ownership shapes O5–O9, A1, B12, B13 are added, and `E3060` is split so one code no longer means two things. | XX.6.1, XX.6.2 |
+| 12 | The editor becomes an architectural constraint rather than a later rewrite: an owned `Session` replacing the leaked interner, error tolerance past the parser, and item-granular re-checking (`[IDE-3]`, `[IDE-4]`, `[IDE-6]`, `[BLD-7]`–`[BLD-10]`); a new XX §10 reserves the server itself. | XIX.1, XX.10 |
 | 13 | Phase-5 completeness: the C importer imports what real headers contain (`[FFI-6]`, `[FFI-8]`), a generated shim translation unit handles `static inline` and single-header libraries (`[FFI-29]`), foreign contracts carry a count axis and an `unsafe overlay` boundary (`[FFI-11]`, `[FFI-2a]`, `[TIER-1]`), and imported entities have one identity (`[FFI-30]`). | XVI |
-| 14 | The plan gains instruments that measure the **user** rather than the compiler: a benchmark protocol (`[BEN-1]`), a first-run milestone (`[TOOL-1]`–`[TOOL-4]`), and a corpus written by people who have not read this document (`[TST-8]`–`[TST-10]`). | XIX.1, XX.3, XX.4 |
-| 15 | Part XXII.1 is renumbered once, permanently, under stable `OQ-n` identifiers, and twelve new questions are recorded rather than answered. | XXII.1 |
+| 14 | The plan gains instruments that measure the **user** rather than the compiler: a benchmark protocol (`[BEN-1]`), a first-run milestone (`[TOOL-1]`–`[TOOL-4]`), and a corpus written by people who have not read this document (`[TST-8]`–`[TST-10]`). | XX.1, XXI.3, XXI.4 |
+| 15 | Part XXIII.1 is renumbered once, permanently, under stable `OQ-n` identifiers, and twelve new questions are recorded rather than answered. | XXIII.1 |
 
 ## Change log — 0.3
 
@@ -99,12 +331,12 @@ defect.** 0.3 altered eight sites without a row, which is why the sentence is no
 | 6 | **`@static_safe`**, defined as "no `RuntimeCheck(Aliasing)`" rather than as a bespoke attribute. Deliberately excludes `Bounds`/`Stale`/`Overflow`; `@no_runtime_checks` reserved for v2. Documented as a value-type contract in practice, with a diagnostic that names the specific dynamic access. | X.2 |
 | 7 | **`mem.assert_disjoint`** — verifies two view ranges do not overlap (two comparisons) and returns proof-carrying views the borrow checker and backend treat as disjoint. Paired with `unsafe assume_disjoint` for the unverifiable case. No profile-dependent third form. | IX.8 |
 | 8 | **`ember inspect --safety`** — every check emitted, with reason, and every check elided, with the analysis that removed it. | X.3, `[CLI-3]` |
-| 9 | Diagnostic shapes **B11** (disjointness not provable) and **S1** (`@static_safe` violated), plus `[DIA-11]`: when a check's reason is `not_provable_in_principle`, the suggestion must be to drop the contract or change the data structure, never to restructure. | XIX.6.1 |
-| 10 | Non-goals extended: no profile-dependent assumptions, **no cycle collector** (it is a tracing collector over the RC subgraph and reintroduces what Part 0 removed). | XXII.2 |
+| 9 | Diagnostic shapes **B11** (disjointness not provable) and **S1** (`@static_safe` violated), plus `[DIA-11]`: when a check's reason is `not_provable_in_principle`, the suggestion must be to drop the contract or change the data structure, never to restructure. | XX.6.1 |
+| 10 | Non-goals extended: no profile-dependent assumptions, **no cycle collector** (it is a tracing collector over the RC subgraph and reintroduces what Part 0 removed). | XXIII.2 |
 
 Considered and rejected for 0.3: a fourth safety tier separating "statically proven" from "runtime enforced" — the existing tiers describe what the programmer *writes* (Safe / Contract / Unsafe), while static-vs-runtime describes how the compiler *enforces* within Safe; conflating them would imply a choice the programmer does not make. And limited RC cycle reclamation, per non-goal 10.
 
-Every RageV-class requirement — first-class lifetime domains, borrow ergonomics for renderer code, command-scoped GPU ownership, deferred destruction, temporal history as a resource class, shader-language independence, native islands for backends and platform code, zero-cost FFI facades, transitive performance contracts, and visible allocation/effect decisions — is expressed with these primitives rather than as special cases. Part XXI.6 lists each requirement with the mechanism that satisfies it.
+Every RageV-class requirement — first-class lifetime domains, borrow ergonomics for renderer code, command-scoped GPU ownership, deferred destruction, temporal history as a resource class, shader-language independence, native islands for backends and platform code, zero-cost FFI facades, transitive performance contracts, and visible allocation/effect decisions — is expressed with these primitives rather than as special cases. Part XXII.6 lists each requirement with the mechanism that satisfies it.
 
 ---
 

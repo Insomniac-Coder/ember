@@ -36,7 +36,10 @@ START = re.compile(r"^# Part I\b")
 STOP = re.compile(r"^# Part XVIII\b")
 APPENDIX = re.compile(r"^# Appendix A\b")
 
-PERMITTED_IGNORE_REASONS = ("signature sketch", "foreign", "deliberate error")
+# `[TST-7]` names four: a `std` signature sketch, foreign-language source, a
+# deliberate error example, and overlay-language source until Part III defines
+# `overlay_decl`.
+PERMITTED_IGNORE_REASONS = ("signature sketch", "foreign", "deliberate error", "overlay")
 
 
 def blocks():
