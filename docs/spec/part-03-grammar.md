@@ -108,9 +108,8 @@ array_type      := "[" type ";" expression "]"                          (* fixed
 block           := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
 statement       := {attribute} (simple_stmt NEWLINE | compound_stmt)
 simple_stmt     := small_stmt                                           (* one statement per line; `;` is not a separator *)
-small_stmt      := var_decl | assignment | expression | "pass"
-                 (* `return`, `break` and `continue` are expressions (`[GRM-16]`, `OQ-14`), so a jump
-                    written as a statement is an `expression`; errata ERR-030. `defer` is compound. *)
+small_stmt      := var_decl | assignment | expression | "return" [expression] | "break" [label]
+                 | "continue" [label] | "pass" | "defer" ":" ...      (* defer is compound, see below *)
 var_decl        := pattern ":" type ["=" expression]                    (* typed declaration, may be uninitialised *)
 assignment      := target_list ("=" | augassign) expression
 target_list     := target {"," target}                                  (* tuple destructuring *)

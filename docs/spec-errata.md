@@ -8,6 +8,39 @@ and an entry here. An entry is a **proposal to the owner** unless it is marked
 *decided*; the implementation follows the entry so that work can continue, and
 each entry states exactly what would change if the owner rules the other way.
 
+## The document is never edited (owner, 2026-09-09)
+
+**`docs/spec-source/ember-spec.md` is byte-identical to
+`docs/spec-source/as-received/Ember_v0.8.3_spec.md` and stays that way.** The
+specification is the source of truth and the product design; it is not adjusted
+to fit the compiler, and it is not adjusted to fit a tool either.
+
+This reverses how errata were handled up to this point. Fourteen passages had
+been *edited in place* to carry the reading each erratum records — the document
+and the errata file agreeing at the cost of the document no longer being the
+owner's. Those edits are reverted; the hashes match again.
+
+An erratum therefore now does three things and no more:
+
+1. **quotes** the defective passage as the document actually writes it;
+2. **states the reading** the implementation follows, and what changes if the
+   owner rules otherwise;
+3. **names the exception** a tool carries, if the defect makes a gate fire.
+
+A defect that makes a gate fire goes in that gate's baseline with the erratum
+id beside it, never into the document as an annotation. Two do:
+
+* **`tools/spec_check_baseline.json`** — XVI.4 and XVI.7a fence overlay-language
+  source as `ember`, and Part III defines no `overlay_decl`, so it cannot parse
+  (ERR-032). Previously fenced `ember,ignore` by an edit; now baselined.
+* **`tools/rule_index_baseline.json`** — XX §6's prose names `E4050`, `E4057`,
+  `E4060`, `E4064` and `W4001`, which 0.6.2 removed with the contract and
+  verification layer and which the registry no longer defines (ERR-027).
+  Previously struck from the prose by an edit; now baselined.
+
+Both baselines grew by exactly this, once, for this reason. `[TST-4c]`'s ratchet
+otherwise holds: they may shrink and never grow.
+
 | ID | Rule | Status |
 |---|---|---|
 | ERR-001 | `E0010`, `E0011`, `E0020` | **decided** — renumbered; carried by v0.5 |
@@ -42,11 +75,11 @@ ERR-008) is worth being able to read again.
 
 | ID | Rule | Status |
 |---|---|---|
-| ERR-025 | `[LEX-15b]` with Part II §4's reserved-for-future list | **decided** — `yield` is a v1 keyword; the reserved set is 49 and the future list is 9 |
+| ERR-025 | `[LEX-15b]` with Part II §4's reserved-for-future list | **withdrawn — not a defect** — `[LEX-15b]` resolves it in the document: "this rule supersedes that count". The table is stale, the rule governs, and the compiler's 49 keywords already match it |
 | ERR-026 | `[GRM-23]` with `[ATT-1]`, `[DIA-6a]` | **decided** — `a in b in c` is `E0102`, not `E0104` |
 | ERR-027 | `[UNS-7]`, `[STD-6]`, `[EFF-17]`, `[EFF-18]`, XX §6's registry paragraph | **decided** — four leftovers from the layer 0.6.2 removed, struck |
 | ERR-028 | `[EFF-18]` with Part X §1 and `[DET-2]` | **decided** — the effect set has ten members; `Nondet` was added after `[EFF-18]` was written |
-| ERR-029 | `[BLD-2]`, `[FFI-34]`, `[FFI-38]`, `[FFI-2a]`, `[BLD-11]`, `[TCB-5]`, `[FFI-33b]`, `[TST-13]`, `[RNG-7]`, `[RNG-8]` | **decided** — ten editorial instructions read as carried out; the replacement text is quoted in full at each site |
+| ERR-029 | `[BLD-2]`, `[FFI-34]`, `[FFI-38]`, `[FFI-2a]`, `[BLD-11]`, `[TCB-5]`, `[FFI-33b]`, `[TST-13]`, `[RNG-7]`, `[RNG-8]` | **decided, except `[RNG-8]`** — nine editorial instructions read as carried out. **`[RNG-8]` is open**: its text opens mid-sentence on an ellipsis and the missing opening survives nowhere in the document, so it cannot be restored, only guessed |
 | ERR-030 | `[GRM-16]` with Part III §4's `small_stmt` | **decided** — the rule supersedes the production; already implemented that way |
 | ERR-031 | `[TST-11]` | **decided** — a merge artefact; the obligations read as the surrounding clauses state them |
 | ERR-032 | `[TST-7]` with XVI.4 and XVI.7a's fenced blocks | **decided** — the two overlay blocks are fenced `ember,ignore`, as the rule says they are |

@@ -97,8 +97,7 @@ unsafe extern "C":
 
 An overlay is an Ember file that annotates imported declarations by name. It is the mechanism for third-party headers (Vulkan, GLFW, Jolt's C API, ImGui's cimgui) whose sources cannot be modified.
 
-<!-- overlay-language source; Part III defines no `overlay_decl` ([TST-7], errata ERR-032) -->
-```ember,ignore
+```ember
 ## overlays/vulkan.em
 overlay c "vulkan/vulkan.h":
 
@@ -224,8 +223,7 @@ may say about it. This section is about **how much any of it is worth**: in 0.5 
 fact the importer derived from a header and a promise somebody typed into an
 overlay are written the same way and are indistinguishable afterwards.
 
-<!-- overlay-language source; Part III defines no `overlay_decl` ([TST-7], errata ERR-032) -->
-```ember,ignore
+```ember
 overlay cpp "RageV/VulkanBackend.hpp":
 
     ## a grade per fact; anything ungraded is `asserted`
