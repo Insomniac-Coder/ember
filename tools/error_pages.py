@@ -67,14 +67,27 @@ def load_baseline() -> set[str]:
 
 
 def ember() -> Path:
-    for profile in ("release", "debug"):
-        exe = ROOT / "target" / profile / "ember.exe"
-        if exe.exists():
-            return exe
-        exe = ROOT / "target" / profile / "ember"
-        if exe.exists():
-            return exe
-    sys.exit("build the compiler first: cargo build")
+    """The most recently built compiler.
+
+    It used to prefer `release` and fall back to `debug`, which meant that a
+    `release` binary left over from an earlier session silently outranked the
+    `debug` one `cargo build` had just produced. The gate then checked the
+    error pages against a compiler that no longer existed, and reported a page
+    as broken whose program the current compiler accepts — or worse, would have
+    passed a page the current compiler rejects.
+
+    Newest wins, and the choice is printed, so a surprising result can be traced
+    to the binary that produced it.
+    """
+    candidates = [
+        ROOT / "target" / profile / name
+        for profile in ("release", "debug")
+        for name in ("ember.exe", "ember")
+    ]
+    built = [exe for exe in candidates if exe.exists()]
+    if not built:
+        sys.exit("build the compiler first: cargo build")
+    return max(built, key=lambda exe: exe.stat().st_mtime)
 
 
 def run(source: str, work: Path) -> tuple[int, str]:
