@@ -28,6 +28,80 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
+## Change log — 0.8.3_Hardened_1
+
+A hardening, not a revision. **No rule changed meaning, no feature was added, and
+the language version did not move.** Every entry closes a gap found while building
+the compiler against 0.8.3 — a mechanism a rule states without saying how, a name a
+rule uses and never declares, a production for syntax the document already writes,
+or an editorial instruction pasted in instead of carried out.
+
+Each edit is marked where it sits — *(clarified …)*, *(head recovered verbatim …)*,
+*(editorial instruction carried out …)*, *(0.6.2 leftover removed …)* — so a reader
+can tell the owner's text from an implementer's addition without consulting anything
+else. `docs/spec-amendments.md` records, for every entry, the defect its absence
+caused and three flags: whether Ember's semantics changed (never), whether the
+compiler had to move, and whether the text was found or written.
+
+**Fourteen clarifications.** Each is an addition to an existing rule; none coins a
+rule id, so the index still holds 833 rules.
+
+| # | Rule | What was missing | What its absence cost |
+|---|---|---|---|
+| A1 | `[SPN-1]` | that the coercion **takes a borrow**, and that the borrow must be explicit in an implementation's IR | a use-after-free reachable from Safe Ember: `v: Span[i32] = a` then `a.push(…)` compiled, the push reallocated, and `v` read freed memory |
+| A2 | `[BRW-1]` | that a reference local is not re-seatable — `r = e` writes *through* it | a write through a shared `ref` passed every check and was caught only by the C backend emitting `const` |
+| A3 | `[RNG-3]` | that `RangeError` is a prelude type, resolvable while signatures are collected | the rule's own worked example did not compile |
+| A5 | `[CLO-3]` | that `fn(A) -> R` is a **bound**, not a representation, and MUST NOT be a function pointer | every capturing lambda was rejected |
+| A6 | `[FN-1]` | that a `mut` parameter whose type is itself a borrow takes it by value | Part VII's own example was `E2140` |
+| A7 | `[FFI-17d]` | any definition of `@ffi(no_virtual_dtor)` | an attribute named by a rule, cited to a rule about templates, and defined nowhere |
+| A8 | `fn_header` | `["extern" string_lit]` | XVI.10's `pub extern "C" fn on_update(…)` did not parse |
+| A9 | `extern_class` | the production | `[FFI-39]` rested on syntax Part III did not define |
+| A10 | `item_body` | admitting A9 | — |
+| A11 | `[THR-2]` | what `Sync` claims, as against what it is tested by | a rule that reads as a guarantee about mutation that it does not give |
+| A12 | `[STD-8]` | that `a not in b` is one negation of one call | a second search and a second evaluation of the operands both admissible |
+| A13 | `[CELL-2]` | that `Cell`, `RefCell` and `Arena` are one capability under three policies | three unrelated special cases in any implementation |
+| A15 | `[BLD-3]` | what "flags" covers in the `.embind` cache key, and the test that generates the set | a binding surviving a configuration change that alters its ABI |
+
+**One recovery.** `[RNG-8]` opened mid-sentence, on an ellipsis and a lowercase
+"and", wrapped in quote marks — the only rule in the document with that shape, and
+named in no change-log row, so a truncation rather than a deletion. Both 0.6 sources
+carry it complete and identical, and they overlap the surviving text exactly at *"and
+crosses an FFI boundary as its representation (`[FFI-5]`)"*, which locates the cut.
+The recovered head — *"A range type is `Copy` when its representation is, has the
+layout of its representation,"* — is restored **verbatim**, spliced to 0.8.3's own
+revised tail at the words they already share. No 0.8.3 addition is disturbed.
+
+**Four editorial instructions, carried out and deleted.** `[RNG-7]` (the niche
+restriction, quoted rather than substituted), `[FFI-33b]` (when a foreign box records
+its creating thread), `[FFI-2a]` (a literal *After "…", insert: "…"*), and `[BLD-2]`,
+whose instruction was to add the `[verify]` package-config section to the cache key —
+**not** carried out, because 0.6.2 removed that layer and performing it would have
+resurrected it.
+
+**Four leftovers of the contract and verification layer 0.6.2 removed**, and only
+those: `RuntimeCheck` has the four kinds `[EFF-16]` assigns and `[EFF-22]` permits,
+not five (`[EFF-18]`, `[EFF-17]`); `[STD-6]` loses the `verify` layer; `[UNS-7]`
+loses its recommendation to carry `@requires` beside `@safety`. Ember's *current*
+contracts — `@noalloc`, `@nosync`, `@noblock`, `@nopanic(explicit)` — are untouched.
+Each removal is settled by the document's own closed owner questions, OQ-28..OQ-32.
+
+**One keyword status.** `yield` appeared in both the v1 keyword table and the
+reserved-for-future list. `[LEX-15b]` already makes it a v1 keyword and says its
+count supersedes `[LEX-15]`'s, so the rule governed and the table is brought to
+match: 49 entries.
+
+**Deliberately not done, and recorded instead.** `[EFF-18]` states the effect set
+without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
+table row defining the effect. Two normative statements disagree and neither is
+marked non-normative, so it is an owner decision rather than a hardening.
+`[FFI-17]`'s numbered list contradicts XVI.7a's tables on `std::function` and
+`std::optional<T>`; the list is already `NON-NORMATIVE` under `[CAT-1]` and the
+document asks a future revision to delete the drifted claims — a deletion from owner
+prose, which a hardening may not make. Nine rule ids are cited and defined by no
+rule, the whole `IDE-*` family among them (ERR-042).
+
+---
+
 ## Change log — 0.8.3
 
 0.8.3 is a precision pass. No new language feature; seven items, each closing an
