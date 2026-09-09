@@ -254,6 +254,13 @@ derives from no parameter either and is `E3060`.
 
 ## ADR-012 — `E3064` stays unemitted until a program needs it
 
+> **Reopened by the owner, 2026-09-09.** This ADR is a decision to *defer*,
+> not a finding that `E3064` is unreachable. I had concluded the latter and
+> written it into `[LT-2]` as amendment A4; the owner withdrew both, on the
+> grounds that the evidence does not yet distinguish "the compiler narrows
+> something the rule means to reject" from "the rule is stricter than it needs
+> to be". Neither side is to be changed until it does. See D-011.
+
 **Spec rule:** `[LT-2]`, `[DIA-7a]`, §XIX.6.1 shape B13.
 **Status:** taken 2026-09-09. Revisit when `[TYP-15a]`'s `BorrowList`/`ViewList`
 land, which is where two element regions could first be asked for.

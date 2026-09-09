@@ -22,13 +22,42 @@ never declares, a production for syntax the document already writes. A hardening
 never adds a feature, never relaxes a rule to match a compiler, and never
 replaces owner text — it appends to it, and each addition is marked in place.
 
-**What may not.** A genuine contradiction, or text missing from the document
-altogether (`[RNG-8]`), is not hardened — it is recorded here and taken to the
-owner. Guessing wording and presenting it as the document's own is the specific
-failure this whole file exists to prevent.
+**What may not.** A genuine contradiction is not hardened — it is recorded here
+and taken to the owner. Guessing wording and presenting it as the document's own
+is the specific failure this whole file exists to prevent.
+
+Text missing from the document altogether is the one case that can go either
+way. If an authoritative earlier source carries it, restoring it verbatim is a
+**recovery** and belongs in a hardening (A14 is one). If no source carries it,
+it needs the owner's own words and nothing may be written in their place.
 
 Each hardening gets a section below listing what it added and, for each, the
 defect or difficulty that justified it.
+
+### The four kinds, and what each is allowed to do
+
+The owner set this model on 2026-09-09. Every finding sorts into exactly one
+branch, and the branch decides who moves:
+
+| Found | What happens | Who changes |
+|---|---|---|
+| **Missing or ambiguous documentation** | clarify what implementing it requires | the document |
+| **Compiler deviation** | fix the compiler | the compiler |
+| **Genuine spec defect** | take it to the owner | neither, until ruled |
+| **Recovered historical text** | restore it exactly | the document, verbatim |
+
+The fourth is the one to be careful with, because it looks like the first.
+A recovery is only a recovery when the text is *found*, in an authoritative
+earlier source, and is restored as it was written. The moment it is smoothed,
+modernised or completed by inference it becomes a reconstruction — and a
+reconstruction presented as a recovery is the worst outcome available here,
+because it enters the document wearing the owner's voice.
+
+So each entry below carries three flags:
+
+    Spec semantic change:   did what Ember means change?
+    Implementation change:  did the compiler have to move?
+    Source recovery:        is this text found, or written?
 
 **These are the only permitted edits to the document.** The standing rule is
 that the specification is the contract and is never altered to make the
@@ -51,21 +80,21 @@ one was reverted; the file was byte-identical to as-received again
 The reverted set is listed in the commit *"Revert every edit to the
 specification; the document is the owner's"*.
 
-**2026-09-09, afternoon — ten amendments, below.** Authorised by the owner:
+**2026-09-09, afternoon — thirteen amendments and one recovery, below; one
+since withdrawn.** Authorised by the owner:
 *"update the v0.8.3 spec doc with the missing implementation details, if there
 was ambiguity that led to these or if there was any missing details that would
 have made implementation much straightforward"*, together with the specific
 changes named in the combined fix list (items 1, 3, 6, 7, 8 and 17).
 
-Each amendment **adds** to a rule and removes nothing. No new rule id is
-introduced, so `tools/rule_index.py` reports the same 833 rules and no new
-conformance directory is owed. Each is marked in the text with
-*(clarified 2026-09-09; see `docs/spec-amendments.md`)* so a reader of the
-document can tell owner text from clarification at a glance.
+Each amendment **adds** to a rule and removes nothing — A14 is the exception, and
+what it removes is a truncation. No new rule id is introduced, so
+`tools/rule_index.py` reports the same 833 rules and no new conformance directory
+is owed. Each is marked in the text, *(clarified …)* for a clarification and
+*(head recovered verbatim …)* for the recovery, so a reader can tell owner text
+from mine at a glance.
 
----
-
-## The ten
+## The fourteen
 
 | # | Rule | What was missing | What it cost |
 |---|---|---|---|
@@ -79,6 +108,11 @@ document can tell owner text from clarification at a glance.
 | A8 | `fn_header` | a production for `extern "C" fn` | ERR-036 — XVI.10's example does not parse |
 | A9 | `extern_class` | a production for `extern class` | ERR-037 — `[FFI-39]` rests on syntax that does not exist |
 | A10 | `item_body` | admitting A9's production | — |
+| A11 | `[THR-2]` | what `Sync` claims, as against what it is tested by | a rule that reads as a guarantee it does not give |
+| A12 | `[STD-8]` | what `not in` evaluates to | a second search and a second evaluation both admissible |
+| A13 | `[CELL-2]` | that `Cell`/`RefCell`/`Arena` are one capability | three unrelated special cases in any implementation |
+| **A14** | **`[RNG-8]`** | **its opening, lost to a truncation** | **two facts about `Copy` and layout, stated nowhere** |
+| ~~A4~~ | ~~`[LT-2]`~~ | **withdrawn** — the owner reopened the question | — |
 
 ---
 
@@ -153,7 +187,34 @@ derivable: that it is a prelude type rather than a `std` declaration (because
 depend on an import), and that the name must resolve during signature
 collection.
 
-### A4 — `[LT-2]`: `E3064` is unreachable in v1
+### A4 — WITHDRAWN
+
+    Spec semantic change:   none (reverted)
+    Implementation change:  none
+    Source recovery:        no
+
+`[LT-2]` reads exactly as the owner wrote it. The text this amendment added is
+removed.
+
+**Why.** It wrote a *determination* into the rule — that `E3064` reports a
+program no v1 source can express, so a conforming v1 implementation may leave
+it unemitted. The owner reopened that on 2026-09-09: the evidence does not yet
+distinguish "the compiler narrows something the rule means to reject" from "the
+rule is stricter than it needs to be", and until it does, neither side moves.
+
+That is the right call and the failure is instructive. Fix-list item 6 said
+"determine whether the narrowing is genuinely valid… **do not immediately
+change the rule**". I determined, found the narrowing consistent, and then
+wrote the conclusion into the rule anyway — which converts a reading into
+normative text and removes the very question that was meant to stay open.
+A determination belongs in the ledger. D-011 is open again and holds it.
+
+What *is* established, and is not in doubt, is narrower: the intersection is
+enforced across a call. `pick(p, q)` returning its first argument still borrows
+both, so mutating `q` while the result lives is rejected. That is a test, in
+`tests/conformance/LT-2/`, not a claim about what `E3064` is for.
+
+### A4 (original) — `[LT-2]`: `E3064` is unreachable in v1
 
 **Authorised by** fix-list item 6, which asks for the determination to be made
 and recorded, and says not to change the rule if the narrowing is correct.
@@ -253,23 +314,72 @@ A10 admits A9 in `item_body`.
 
 ---
 
+### A14 — `[RNG-8]` source recovery
+
+    Spec semantic change:   NO
+    Implementation change:  NO
+    Source recovery:        YES
+
+**Approved by the owner, 2026-09-09.** Not a change to `[RNG-8]`: a restoration
+of the part of it that a truncation removed.
+
+**What was wrong.** The rule opened mid-sentence, on an ellipsis and a
+lowercase "and", wrapped in quote marks:
+
+> `[RNG-8]` "…and crosses an FFI boundary as its representation (`[FFI-5]`). …"
+
+It is the **only rule in the document with that shape**, and no change-log row
+mentions `[RNG-8]`, so the loss was an editing accident rather than a deletion.
+
+**Where the text came from.** Both v0.6 sources in this repository — the draft
+and the owner's revision of it — carry the rule complete and **identical**, and
+v0.8.3 descends from 0.6.3 by its own lineage note:
+
+> `[RNG-8]` A range type is `Copy` when its representation is, has the layout of
+> its representation, and crosses an FFI boundary as its representation
+> (`[FFI-5]`); a value arriving from foreign code is **not** assumed in range
+> and needs `[RNG-3]`.
+
+The two texts **overlap exactly** at *"and crosses an FFI boundary as its
+representation (`[FFI-5]`)"*, which locates the cut precisely. Everything before
+those words is what was lost:
+
+> **A range type is `Copy` when its representation is, has the layout of its
+> representation,**
+
+The *tail* was deliberately revised between 0.6 and 0.8.3 — strengthened with
+`[RNG-10b]` and `[RNG-3a]` — and the head was dropped in that same edit. So the
+restoration is the recovered head joined to the newer tail, spliced at the words
+they already share. No 0.8.3 addition is disturbed.
+
+**Why this entry exists at all.** The head had previously been filled in by me,
+with *"A range type erases to its representation at every coercion site
+(`[TYP-5]`) and"*. That was plausible, consistent with the neighbouring rules —
+and **wrong**. The rule's actual opening is about `Copy` and layout, not about
+coercion-site erasure. Had it stayed, the document would have carried my
+sentence in the owner's voice, and the two facts the rule really states would
+have been silently absent. Everything in this file exists because of that.
+
+**The wording is verbatim, including its awkwardness.** The owner prefers
+"`Copy` when its representation is `Copy`" for the canonical text, and that
+clarification is deliberately **not** applied here: modernising a sentence
+inside its own recovery is how provenance is lost. It is a separate amendment
+if it is wanted.
+
+**Nothing in the compiler moved**, and both recovered clauses were checked
+against it: `a: Roughness = 0.5; b = a` uses both, so the type is `Copy` because
+`f32` is; and the emitted C carries no `Roughness` at all — `float em_take(float
+_1)` — so it has its representation's layout.
+
+**On `Copy` and the niche.** The owner confirmed these do not conflict:
+`Roughness` has `f32`'s layout, while `Option[Roughness]` may exploit an invalid
+representation as `None`. `[RNG-7]` already draws that line — a range type
+supplies a niche only where its range does not exhaust its representation — and
+the two statements are at different levels.
+
+---
+
 ## Not amended, and why
-
-**`[RNG-8]` — its opening is missing and only the owner can supply it.** The
-rule begins mid-sentence on an ellipsis:
-
-> `[RNG-8]` "…and crosses an FFI boundary as its representation (`[FFI-5]`).…"
-
-The missing first half survives nowhere in the document. It had been filled in
-with invented wording — *"A range type erases to its representation at every
-coercion site (`[TYP-5]`) and"* — which was reverted. Per fix-list item 9 a
-reconstruction must not be presented as recovered text, so the rule stands as
-the owner wrote it and this is flagged for an owner decision.
-
-The surrounding rules constrain what it must say: `[RNG-10b]` already forbids a
-range type in a foreign signature and requires foreign values to enter at the
-representation type, so the missing clause is most likely about erasure at
-coercion sites — but "most likely" is not a specification.
 
 **The diagnostic-code collisions.** `[GRM-23]` names `E0104` where Part III's
 precedence table names `E0102`, and `[MAN-3]` names `E9010`, which `[TYP-9c]`
