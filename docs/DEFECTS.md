@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-09 — block I, `Cell[T]`
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-035 | **Overwriting a place ran no destructor at all.** `[OWN-5]`: "Overwriting a place that holds a live value drops the old value first (after evaluating the new value)." `[OWN-2]` names three occasions to drop — scope end, overwrite, temporary at statement end. D-027 built the first and D-031 the third; **the second was never built.** `r = R(1)` then `r = R(2)` ran `R(1)`'s `drop` zero times, and `a = Array[i32]()` over a live array emitted one `ember_vec_free` for two allocated buffers, leaking the first. Silent in both directions: no diagnostic, and for the container the program's output is identical either way | `[OWN-5]`, `[OWN-2]` | **fixed** | ADR-020. `lower_assign` in `ember_mir/src/lower.rs`: the new value goes to a temporary, then `Drop`, then the store — the order the rule gives. Which of those drops survives is left to `[OWN-3]`'s existing elaboration, so a first initialisation (local `Moved` after `StorageLive`) deletes it and a conditionally-moved local gets a flag. **Verified:** two cases in `tests/conformance/OWN-5/`, both of which lose their first line of output when `lower_assign` is reverted to `lower_into` — checked by doing exactly that. The buffer case is written observably (a `Bag` whose `drop` prints its length) rather than as `assert-c: contains("ember_vec_free")`, which would have passed on the broken compiler: it emitted one free and `contains` cannot count |
+| — | **Why the specification does not move.** `[OWN-5]` states the requirement and the order in one sentence and admits no other reading; the compiler simply did not implement it. An implementation gap is not a spec defect, so there is no errata entry and `ember-spec.md` is untouched | `[OWN-5]` | n/a | — |
+| — | **Why `tests/conformance/OWN-5/` did not catch it.** The directory's one case, `accept_the_new_value_is_evaluated_first.em`, tests the parenthetical only, and it is built so the main clause cannot fire: `x = grow(x)` **moves** `x` into the call, so nothing is live at the store and the missing drop is unobservable. A rule stated in two clauses needs a case per clause | `[OWN-5]`, `[TST-4a]` | n/a | — |
+
 ## 2026-09-09 — the region work
 
 | # | Defect | Rule | Status | Fixed in |

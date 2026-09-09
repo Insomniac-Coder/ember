@@ -612,3 +612,46 @@ arriving by a longer road. `UnsafeCell`'s semantics remain unwritten and remain
 the owner's, and the existence of `Builtin::CellSet` is not evidence about
 them.
 
+
+## ADR-020 — the overwrite drop is inserted in lowering and left to `[OWN-3]` to elaborate
+
+**Decided 2026-09-09**, fixing D-035. `[OWN-5]` forces the *order* — evaluate
+the new value, drop the old one, store — and says nothing about the mechanism.
+Two parts of the mechanism are decisions, and this records them.
+
+**The new value goes through a temporary.** `x = f(x)` and `x = f()` both
+arrive from a call, and a call writes its result through a `Terminator`, not a
+statement — there is no point "after the call and before the store" to push a
+`Drop` into, because the call *is* the store. Routing every droppable
+assignment through a temporary creates that point. The temporary costs nothing
+in the emitted C: storing it into the place is a move, so `[OWN-3]`'s
+elaboration deletes its own statement-end drop, and the backend's copy is the
+one the assignment was going to make anyway.
+
+The alternative — special-casing call-shaped right-hand sides and pushing the
+drop before the call — was rejected because it puts the drop *before* the new
+value is evaluated, which is the one ordering `[OWN-5]`'s parenthetical exists
+to forbid, and because "call-shaped" is a growing list.
+
+**Which drops survive is not decided here.** The inserted `Drop` is
+unconditional and `drops.rs` then does what it already does for every other
+drop: a local that is `Moved` at that point loses the statement, a `Maybe`
+local gets a drop flag, a `Live` one keeps it. That is what makes a first
+initialisation free — a local is `Moved` immediately after `StorageLive`, so
+the drop at its initialising assignment is deleted — without lowering having to
+know anything about initialisation.
+
+The alternative was to ask, in lowering, whether the place is live. Lowering
+does not know: liveness is a dataflow fact over the whole body, and the answer
+on one path differs from the answer on another. Deciding it early would have
+meant either a second liveness analysis or a conservative guess, and both
+directions of a guess are wrong — dropping an uninitialised place is a crash,
+and not dropping a live one is the leak this fixes.
+
+**What this does not decide.** `[CELL-1]` requires the *opposite* order for
+`Cell.set` and `Cell.replace` — store the new value, **then** drop the old —
+because a drop can re-enter the same cell and observe it uninitialised. That is
+not an exception to `[OWN-5]` granted here; it is a separate rule about a
+separate operation, and it is why `Cell`'s store is its own builtin rather than
+an ordinary assignment. Nothing in this ADR should be read as permission to
+vary `[OWN-5]`'s order anywhere else.

@@ -1026,6 +1026,33 @@ runtime's own allocation counter reports 204 allocations and 204 frees over
 - The drop glue is written straight into the C rather than as a synthesised
   function: a struct drops its fields in reverse, an enum switches on its tag
   and drops the active variant's payload, an array drops its elements.
+- **The overwrite was the third occasion and it was never built** (D-035,
+  found 2026-09-09 while starting block I, fixed the same day). `[OWN-2]` names
+  three moments a value dies: its scope ends, it is **overwritten**, or it is a
+  temporary at the end of its statement. Lowering had `emit_drops_from` for the
+  first and `emit_statement_temps` for the third — nothing at all for the
+  second. `r = R(1)` followed by `r = R(2)` ran `R(1)`'s destructor zero times,
+  and assigning a fresh `Array[i32]` over a live one emitted **one**
+  `ember_vec_free` for two buffers.
+
+  `lower_assign` is the fix, and it is deliberately three lines of policy
+  rather than a new analysis: evaluate the new value into a temporary, push
+  `Drop`, store. Everything about *which* of those drops actually runs is left
+  to the elaboration above — a local is `Moved` immediately after
+  `StorageLive`, so the drop inserted at its initialising assignment is deleted
+  and a first initialisation stays free; a conditionally-moved local gets the
+  same drop flag as anywhere else. ADR-020 records why the temporary is
+  unavoidable (a value arriving from a call is written by a terminator, so
+  there is no point between "evaluated" and "stored" to push a drop into) and
+  why lowering must not try to decide liveness itself.
+
+  **What let it survive this long is worth more than the fix.**
+  `tests/conformance/OWN-5/` existed and passed. Its one case tested the
+  parenthetical — that the new value is evaluated before the store — and was
+  written as `x = grow(x)`, which **moves** `x` into the call, so nothing is
+  ever live at the store and the main clause could not fire. A rule stated in a
+  main clause and a parenthetical needs a case for each; a directory with the
+  rule's name in it is not coverage of the rule.
 
 ### Blocks B and C: generics, bounds, associated types, `for`
 

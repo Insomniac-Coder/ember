@@ -396,7 +396,7 @@ impl<'a> Builder<'a> {
             }
             hir::Stmt::Assign { place, value } => {
                 let place = self.lower_place(place);
-                self.lower_into(place, value);
+                self.lower_assign(place, value);
             }
             hir::Stmt::Expr(expr) => {
                 // The value is discarded, but the effects are not.
@@ -591,6 +591,41 @@ impl<'a> Builder<'a> {
         if matches!(self.blocks[self.current.0 as usize].terminator, Terminator::Unreachable) {
             self.terminate(Terminator::Goto(target));
         }
+    }
+
+    /// `[OWN-5]` — "Overwriting a place that holds a live value drops the old
+    /// value first (after evaluating the new value: `x = f(x)` moves `x` into
+    /// `f`, then stores)."
+    ///
+    /// The third of `[OWN-2]`'s three occasions to drop, and the one that was
+    /// never built: scope end is `emit_drops_from`, statement end is
+    /// `emit_statement_temps`, and an overwrite ran no destructor at all. A
+    /// declared `drop` silently did not run and an `Array[T]` leaked its
+    /// buffer, with the program's output identical either way — which is why
+    /// `tests/conformance/OWN-5/` did not notice: its case moves the old value
+    /// into the call that makes the new one, so nothing is live to drop.
+    ///
+    /// The order the rule gives is why the new value goes through a temporary:
+    /// evaluate, *then* drop, *then* store. It also has to, because a value
+    /// arriving from a call is written by a terminator, and a drop cannot be
+    /// pushed between a terminator and itself.
+    ///
+    /// Which of these drops survives is left to `[OWN-3]`'s existing
+    /// elaboration rather than decided here: a first initialisation finds the
+    /// local `Moved` (`StorageLive` says so) and the drop is deleted, a
+    /// conditionally-moved local gets a flag, and the temporary's own
+    /// statement-end drop goes away because storing it here is a move.
+    fn lower_assign(&mut self, place: Place, expr: &'a hir::Expr) {
+        if !self.types.needs_drop(expr.ty) {
+            self.lower_into(place, expr);
+            return;
+        }
+        let temp = self.temp(expr.ty, expr.span);
+        self.lower_into(Place::local(temp), expr);
+        self.at(expr.span);
+        self.push(StmtKind::Drop { place: place.clone(), flag: None });
+        let value = self.read(Place::local(temp), expr.ty);
+        self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(value) });
     }
 
     // -- expressions ----------------------------------------------------------
