@@ -8,9 +8,11 @@ document and split into `docs/spec/`. The owner's untouched copy is
 errata applied under ERR-025..ERR-040, each of which asserts its replacement
 matched exactly once.
 
-**Read `docs/MIGRATION-0.8.3.md` next.** It is the analysis that decided the
-work: what changed, what the compiler already had, and the ordered route
-through the rest. This section is the short form.
+**Read `docs/SESSION-2026-09-09.md` first**, then `docs/MIGRATION-0.8.3.md`.
+The first is the cold-start record — state of the tree, every open problem
+in the order to pick it up, and the traps that cost time. The second is the
+analysis that decided the work: what changed, what the compiler already had,
+and the ordered route through the rest. This section is the short form.
 
 ### What arrived
 
