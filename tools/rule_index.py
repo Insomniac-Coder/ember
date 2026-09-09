@@ -16,7 +16,21 @@ compiler drift apart. This is that tool. It runs six checks:
    entry cites a rule that exists (`[DIA-6a]`, both directions).
 5. **Every code has an error page** under `docs/errors/` (`[DIA-6]`).
 6. **Every E3xxx code is keyed to a diagnostic shape** (`[DIA-7a]`).
-7. **Every rule reference resolves.** A rule that cites `[FFI-17b]` for
+7. **Every registered code has a conformance test that asserts it**
+   (`[TST-4]`, `[DIA-6a]`). A code the compiler can emit and no test ever names
+   is a code whose meaning nothing holds in place: it can be renumbered,
+   repurposed, or silently stop being emitted, and every suite stays green.
+   Fix-list item 28 asked for this.
+
+   The neighbouring check it asked for — *does the rule the registry cites
+   actually name this code* — is **not** built, and deliberately. Measured both
+   ways it reports 47 and 83 disagreements, and nearly all are legitimate: a
+   rule routinely *uses* a code that another rule *defines* (`[ATT-2]` names
+   `E0104`, which `[ATT-1]` defines), and the document does not mark which is
+   which. A gate at 23% false positives is a gate nobody reads. What is needed
+   first is for the specification to distinguish defining a code from citing
+   one; that is an owner question, recorded in `docs/spec-errata.md`.
+8. **Every rule reference resolves.** A rule that cites `[FFI-17b]` for
    something `[FFI-17b]` does not say is one problem; a rule that cites an id
    no rule defines is a worse one, because a reader cannot even find out. That
    was ERR-034: `[FFI-17d]` pointed at `@ffi(no_virtual_dtor)` "which
@@ -180,6 +194,20 @@ def dangling_references(lines, defined):
     return out
 
 
+def codes_asserted_by_tests():
+    """Every code a conformance or `tests/` case names in a `#$` annotation."""
+    found = set()
+    for root in (CONFORMANCE, ROOT / "tests"):
+        if not root.exists():
+            continue
+        for path in root.rglob("*.em"):
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if "#$" not in line:
+                    continue
+                found.update(f"{k}{n}" for k, n in CODE.findall(line))
+    return found
+
+
 def registry_entries():
     if not REGISTRY_RS.exists():
         return {}
@@ -208,6 +236,7 @@ def load_baseline():
         "codes_without_pages": [],
         "codes_not_in_registry": [],
         "dangling_references": [],
+        "codes_without_tests": [],
     }
 
 
@@ -245,6 +274,10 @@ def main():
             f"`[{rid}]` (line {n}) begins with an ellipsis: an amendment "
             f"appended instead of substituted into the rule it amends"
         )
+
+    # --- 7. a registered code no test asserts ------------------------------
+    asserted = codes_asserted_by_tests()
+    untested = sorted(c for c in registry_entries() if c not in asserted)
 
     # --- 7. every rule reference resolves ----------------------------------
     seen = set()
@@ -289,6 +322,7 @@ def main():
             "codes_without_pages": missing_pages,
             "codes_not_in_registry": not_in_registry,
             "dangling_references": sorted({rid for rid, _ in dangling}),
+            "codes_without_tests": untested,
         }
         grown = {
             key: sorted(set(values) - set(known.get(key, [])))
@@ -328,6 +362,9 @@ def main():
     for c in not_in_registry:
         if c not in known["codes_not_in_registry"]:
             failures.append(f"[DIA-6a] {c} is named in the specification but not in the registry")
+    for c in untested:
+        if c not in known.get("codes_without_tests", []):
+            failures.append(f"[TST-4] {c} is registered and no conformance test asserts it")
     for rid, n in dangling:
         if rid not in known.get("dangling_references", []):
             failures.append(f"`[{rid}]` (line {n}) is cited and defined by no rule")
@@ -337,7 +374,8 @@ def main():
     print(f"known gaps (baseline): {len(known['rules_without_tests'])} rules without tests, "
           f"{len(known['codes_without_pages'])} codes without pages, "
           f"{len(known['codes_not_in_registry'])} codes not in the registry, "
-          f"{len(known.get('dangling_references', []))} dangling references")
+          f"{len(known.get('dangling_references', []))} dangling references, "
+          f"{len(known.get('codes_without_tests', []))} codes without tests")
 
     if args.report:
         print("\n-- rules with no conformance directory --")

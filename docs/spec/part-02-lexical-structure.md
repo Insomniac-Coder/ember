@@ -49,13 +49,19 @@ false      fn         for        if         implements import     in
 interface  is         let        match      mut        not        open
 or         override   owned      pass       pub        ref        return
 self       Self       static     struct     super      true       type
-unsafe     virtual    void       where      while      with
+unsafe     virtual    void       where      while      with       yield
 ```
+
+*(`yield` moved here 2026-09-09 from the list below, which is where it also
+sat. `[LEX-15b]` already makes it a v1 keyword and says its count "supersedes
+that [`[LEX-15]`'s 48]" — so the two lists implied two statuses for one word,
+and the rule was the half that governed. 49 entries. See
+`docs/spec-amendments.md`.)*
 
 **Reserved for future use (lexed as keywords, `E0005` if used):**
 
 ```
-actor  async  await  macro  yield  move  trait  union  loop  unless
+actor  async  await  macro  move  trait  union  loop  unless
 ```
 
 * `[LEX-15]` `abstract`, `final`, `lazy`, `test`, `bench` and `from` are **contextual**: they are keywords only in the positions specified in the grammar and identifiers elsewhere. `from` is a keyword only where it begins an import at item level, which is the one position an import may start; everywhere else it is an ordinary name, so that `interface From[T]` can declare `fn from(…)` as §8 writes it, and so that a user's `extend E implements From[io.Error]:` can too (owner decision, 2026-09-08; errata ERR-017). `let` is **fully reserved** (owner decision `OQ-26`), so it is a keyword everywhere and `r#let` (`[LEX-14]`) is required to use it as a name. `type` is fully reserved for the same reason: `[LEX-15a]` gives it three v1 meanings, so it cannot sit in the reserved-for-future list whose message `[LEX-14a]` requires to name a future version. `r#type` is the escape for the imported C field `[LEX-14]` names. The reserved set therefore has 48 entries.

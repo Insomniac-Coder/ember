@@ -389,3 +389,93 @@ pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
             .join("\n")
     );
 }
+
+#[cfg(test)]
+mod view_invariant_tests {
+    use super::*;
+    use crate::{BasicBlock, LocalDecl, LocalKind, Stmt};
+    use ember_span::{Span, Symbol};
+    use ember_types::{FieldDef, FieldVis, StructDef, TypeTable};
+
+    /// A closure environment is a struct of `[CLO-2]` capture borrows, so
+    /// `is_view` holds of it and `verify_views` governs how it may be built.
+    /// That is the whole of item 30's closure invariant: it needed no new
+    /// machinery, because "an environment is a value carrying borrows" is the
+    /// same statement the view invariant already makes.
+    ///
+    /// Asserted rather than assumed. The first version of this reasoning was
+    /// right and unproven, which is the state D-022 was in.
+    fn env_body(rvalue: Rvalue) -> (Body, TypeTable) {
+        let (mut types, common) = TypeTable::new();
+        let i32_ty = common.i32;
+        let borrow = types.intern(TyKind::Ref { mutable: false, inner: i32_ty });
+        let env = types.add_struct(StructDef {
+            name: Symbol::intern("closure0_env"),
+            fields: vec![FieldDef {
+                name: Symbol::intern("n"),
+                ty: borrow,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            origin: None,
+            declaring_module: 0,
+        });
+        let env_ty = types.intern(TyKind::Struct(env));
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let body = Body {
+            name: "t".to_string(),
+            symbol: ember_branding::mangled("t"),
+            locals: vec![
+                LocalDecl { ty: env_ty, name: None, kind: LocalKind::Return, span: Span::DUMMY },
+                LocalDecl {
+                    ty: common.i32,
+                    name: None,
+                    kind: LocalKind::Temp,
+                    span: Span::DUMMY,
+                },
+            ],
+            blocks: vec![BasicBlock {
+                stmts: vec![Stmt::new(
+                    StmtKind::Assign { place: Place::local(LocalId(0)), rvalue },
+                    span,
+                )],
+                terminator: Terminator::Return,
+                terminator_span: span,
+            }],
+            arg_count: 0,
+            span: Span::DUMMY,
+            borrows: None,
+        };
+        (body, types)
+    }
+
+    #[test]
+    fn an_environment_built_from_its_captures_is_accepted() {
+        let (body, types) = env_body(Rvalue::Aggregate {
+            kind: crate::AggregateKind::Struct(ember_types::StructId(0)),
+            operands: vec![Operand::Copy(Place::local(LocalId(1)))],
+        });
+        assert!(verify_views(&body, &types).is_empty());
+    }
+
+    #[test]
+    fn an_environment_manufactured_by_a_cast_is_refused() {
+        let (body, types) = env_body(Rvalue::Cast {
+            kind: crate::CastKind::Numeric,
+            operand: Operand::Copy(Place::local(LocalId(1))),
+            to: body_ty_placeholder(),
+        });
+        let violations = verify_views(&body, &types);
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("carries no borrow"));
+    }
+
+    fn body_ty_placeholder() -> Ty {
+        TypeTable::new().1.i32
+    }
+}
