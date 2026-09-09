@@ -1484,6 +1484,13 @@ impl<'a> Builder<'a> {
 
         self.at(span);
         let index_op = self.lower_operand(index);
+        // Kept for the projection below; the slot is still built and still
+        // bounds-checked, because a constant index into a dynamically sized
+        // container is still an index that can be out of range.
+        let index_const = match &index_op {
+            Operand::Const(Const::Int { value, .. }) => u64::try_from(*value).ok(),
+            _ => None,
+        };
         let slot = self.temp(self.usize_ty, span);
         self.push(StmtKind::StorageLive(slot));
         self.push(StmtKind::Assign {
@@ -1513,7 +1520,22 @@ impl<'a> Builder<'a> {
         });
         self.current = after;
 
-        base.index(slot)
+        // `[BRW-5]` — "`ref mut a[i]` and `ref mut a[j]` conflict **unless
+        // both indices are constants and different**." That exemption is
+        // decided by `overlaps`, which compares `ConstIndex` projections — and
+        // it was unreachable, because every index went into a runtime slot and
+        // came back as `Index(local)`. Two borrows of `v[0]` and `v[1]` were
+        // rejected as though the indices might be equal, which the rule says
+        // they may not be.
+        //
+        // The bounds check above is emitted either way and is not the question:
+        // for an `Array[T]` the *length* is dynamic even when the index is a
+        // literal, so the check still has to run. What the constant buys is
+        // disjointness, not the elision of a check.
+        match index_const {
+            Some(value) => base.const_index(value),
+            None => base.index(slot),
+        }
     }
 
     /// Lower an expression into a fresh local and read it back, so the result

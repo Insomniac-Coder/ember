@@ -724,8 +724,30 @@ fn overlaps(a: &Place, b: &Place) -> bool {
     }
     for (pa, pb) in a.projection.iter().zip(b.projection.iter()) {
         match (pa, pb) {
+            // `[BRW-4]` — distinct fields of a struct or tuple are distinct
+            // places, "through arbitrary nesting of field projections".
             (Projection::Field(x), Projection::Field(y)) if x != y => return false,
+            // `[BRW-5]` — "unless both indices are constants and different".
             (Projection::ConstIndex(x), Projection::ConstIndex(y)) if x != y => return false,
+            // A field beside an index is the compiler's own header access,
+            // never the programmer's. `Array[T]` and `Span[T]` are `{ptr, len,
+            // cap}` internally, and `lower_index` reads `len` through
+            // `Field(1)` to bounds-check — but Ember has no `v.len` *field*,
+            // only a `len()` method, so this pair can arise no other way.
+            //
+            // Treating it as an overlap made `[BRW-5]`'s exemption unreachable
+            // for the container people actually use: `ref mut v[0]` and
+            // `ref mut v[1]` were rejected because the second one's bounds
+            // check "read `v`" while the first was live.
+            //
+            // This does not weaken anything a user can reach. `push` and the
+            // rest take `mut v` — projection empty — which overlaps every
+            // place under `v`, so a reallocation that would dangle an element
+            // borrow is still caught.
+            (Projection::Field(_), Projection::Index(_) | Projection::ConstIndex(_))
+            | (Projection::Index(_) | Projection::ConstIndex(_), Projection::Field(_)) => {
+                return false
+            }
             _ => {}
         }
     }

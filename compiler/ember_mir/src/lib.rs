@@ -103,6 +103,14 @@ impl Place {
         self
     }
 
+    /// `[BRW-5]` — an index the compiler knows. Kept apart from `index` so
+    /// `overlaps` can tell two constant indices apart, which is the whole of
+    /// that rule's exemption.
+    pub fn const_index(mut self, value: u64) -> Place {
+        self.projection.push(Projection::ConstIndex(value));
+        self
+    }
+
     pub fn index(mut self, local: LocalId) -> Place {
         self.projection.push(Projection::Index(local));
         self
