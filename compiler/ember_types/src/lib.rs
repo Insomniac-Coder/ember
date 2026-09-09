@@ -127,6 +127,18 @@ impl Layout {
     pub const ZERO: Layout = Layout { size: 0, align: 1, field_offsets: Vec::new() };
 }
 
+/// `[MOD-2]`, `[MOD-7]` — how far a field is visible. Kept here rather than
+/// taken from the AST so that `ember_types` does not depend on it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FieldVis {
+    /// The default: readable and writable from the declaring module only.
+    Private,
+    /// `pub(package)`.
+    Package,
+    /// `pub`.
+    Public,
+}
+
 #[derive(Clone, Debug)]
 pub struct FieldDef {
     pub name: Symbol,
@@ -134,6 +146,12 @@ pub struct FieldDef {
     pub span: Span,
     /// `[STR-2]` — whether the declaration supplied a default.
     pub has_default: bool,
+    /// `[MOD-7]` — declared `pub(read)` or `pub(package, read)`: readable
+    /// wherever its visibility allows, writable only from the declaring
+    /// module.
+    pub read_only_outside: bool,
+    /// `[MOD-2]` — "All items are private to their module unless `pub`."
+    pub vis: FieldVis,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +167,9 @@ pub struct StructDef {
     /// generic it came from and the arguments it was built with. That is what
     /// lets `Buffer[T]` unify with `Buffer[i32]`.
     pub origin: Option<(Symbol, Vec<Ty>)>,
+    /// `[MOD-7]` — the module that declared it, so that "outside its module"
+    /// is a comparison rather than a guess at the qualified name's shape.
+    pub declaring_module: usize,
 }
 
 impl StructDef {
@@ -1059,7 +1080,14 @@ mod tests {
     use ember_span::Span;
 
     fn field(name: &str, ty: Ty) -> FieldDef {
-        FieldDef { name: Symbol::intern(name), ty, span: Span::DUMMY, has_default: false }
+        FieldDef {
+            name: Symbol::intern(name),
+            ty,
+            span: Span::DUMMY,
+            has_default: false,
+            read_only_outside: false,
+            vis: FieldVis::Public,
+        }
     }
 
     #[test]
@@ -1092,6 +1120,7 @@ mod tests {
             derives_copy: true,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(id));
         let layout = table.layout(ty);
@@ -1112,6 +1141,7 @@ mod tests {
             derives_copy: true,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(id));
         let layout = table.layout(ty);
@@ -1131,6 +1161,7 @@ mod tests {
             derives_copy: false,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(plain));
         assert!(!table.is_copy(ty), "a struct without @derive(Copy) is not Copy");
@@ -1149,6 +1180,7 @@ mod tests {
             derives_copy: true,
             has_drop: true,
             origin: None,
+            declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(id));
         assert!(!table.is_copy(ty));
@@ -1178,6 +1210,7 @@ mod tests {
             derives_copy: false,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(id));
         assert!(table.is_view(ty));
@@ -1210,6 +1243,7 @@ mod tests {
             derives_copy: true,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let plain_ty = table.intern(TyKind::Struct(plain));
         assert!(table.is_ffi_safe(plain_ty));
@@ -1221,6 +1255,7 @@ mod tests {
             derives_copy: false,
             has_drop: false,
             origin: None,
+            declaring_module: 0,
         });
         let with_str_ty = table.intern(TyKind::Struct(with_str));
         assert!(!table.is_ffi_safe(with_str_ty), "a view is not FFI-safe on its own");

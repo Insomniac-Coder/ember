@@ -25,7 +25,7 @@ use ember_hir::{
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
-    Bound, CommonTypes, EnumDef, EnumId, FieldDef, OverflowPolicy, RangeDef, StructDef,
+    Bound, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis, OverflowPolicy, RangeDef, StructDef,
     StructId, Ty, TyKind, TypeTable, UintTy, VariantDef, int_max,
 };
 
@@ -111,6 +111,9 @@ struct GenericStruct {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     derives_copy: bool,
+    /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
+    /// `Buffer[T]` is read-only outside `Buffer`'s module for every `T`.
+    declaring_module: usize,
     /// `[TYP-16]` — the methods declared in the body, resolved once with the
     /// type parameters left opaque. An instantiation substitutes them, the
     /// same way it substitutes the fields.
@@ -893,6 +896,8 @@ impl<'a> Checker<'a> {
                                 ty: self.resolve_type(&field.ty),
                                 span: member.span,
                                 has_default: field.default.is_some(),
+                                read_only_outside: member.read_only_outside,
+                                vis: field_vis(member.vis.kind),
                             }),
                             _ => None,
                         })
@@ -924,6 +929,7 @@ impl<'a> Checker<'a> {
                     self.generic_structs.insert(
                         name,
                         GenericStruct {
+                            declaring_module: self.current_module,
                             params,
                             fields,
                             derives_copy: has_derive(&item.attrs, "Copy"),
@@ -950,6 +956,7 @@ impl<'a> Checker<'a> {
                         derives_copy: has_derive(&item.attrs, "Copy"),
                         has_drop: false,
                         origin: None,
+                        declaring_module: self.current_module,
                     });
                     let ty = self.types.intern(TyKind::Struct(id));
                     self.struct_ids.insert(name, id);
@@ -1002,6 +1009,8 @@ impl<'a> Checker<'a> {
                                     ty,
                                     span: member.span,
                                     has_default: field.default.is_some(),
+                                    read_only_outside: member.read_only_outside,
+                                    vis: field_vis(member.vis.kind),
                                 });
                             }
                             // `[STR-3]` — a `drop` method makes the type
@@ -1287,6 +1296,11 @@ impl<'a> Checker<'a> {
                     ty: self.resolve_type(&field.ty),
                     span: field.span,
                     has_default: false,
+                    // `[MOD-7]`: "`read` applies to fields of structs and
+                    // classes only" — a variant payload is neither, and a
+                    // variant's payload is as visible as the enum.
+                    read_only_outside: false,
+                    vis: FieldVis::Public,
                 })
                 .collect();
             variants.push(VariantDef {
@@ -2326,6 +2340,7 @@ impl<'a> Checker<'a> {
             derives_copy: decl.derives_copy,
             has_drop: false,
             origin: Some((name, args.to_vec())),
+            declaring_module: decl.declaring_module,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.struct_ids.insert(instance, id);
@@ -2341,6 +2356,8 @@ impl<'a> Checker<'a> {
                 ty: self.substitute_ty(field.ty, args),
                 span: field.span,
                 has_default: field.has_default,
+                read_only_outside: field.read_only_outside,
+                vis: field.vis,
             })
             .collect();
         self.types.struct_def_mut(id).fields = fields;
@@ -2419,6 +2436,8 @@ impl<'a> Checker<'a> {
                         ty,
                         span: Span::DUMMY,
                         has_default: false,
+                        read_only_outside: false,
+                        vis: FieldVis::Public,
                     })
                     .collect(),
                 discriminant: index as i128,
@@ -3010,6 +3029,9 @@ impl<'a> Checker<'a> {
                 }
 
                 let place = self.synth(target);
+                // `[MOD-7]` — assignment and augmented assignment are both
+                // writes.
+                self.reject_readonly_write(&place, target.span);
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
                 // would produce an `R` where a `T` is required and is
@@ -4388,6 +4410,27 @@ impl<'a> Checker<'a> {
                 match self.types.struct_def(id).field(name.name) {
                     Some((index, field)) => {
                         let ty = field.ty;
+                        let (vis, fname) = (field.vis, field.name);
+                        // `[MOD-2]` — "All items are private to their module
+                        // unless `pub`." `pub(package)` is visible everywhere
+                        // in this build, since a build is one package until
+                        // `[MAN-2]`'s dependency graph exists.
+                        if vis == FieldVis::Private
+                            && self.types.struct_def(id).declaring_module != self.current_module
+                        {
+                            let owner = self.types.struct_def(id).name.to_string();
+                            self.sink.emit(
+                                Diagnostic::error(
+                                    codes::E1020,
+                                    name.span,
+                                    format!("`{fname}` is private to `{owner}`'s module"),
+                                )
+                                .help(format!(
+                                    "declare it `pub {fname}: …` to read it anywhere, or                                      `pub(read) {fname}: …` to make it readable and not writable"
+                                ))
+                                .note("a field is private unless it says otherwise [MOD-2]"),
+                            );
+                        }
                         Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                     }
                     None => {
@@ -4707,6 +4750,10 @@ impl<'a> Checker<'a> {
                 let inner = self.synth(place);
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                // `[MOD-7]` — "taking `ref mut h.value`" is a write.
+                if *mutable {
+                    self.reject_readonly_write(&inner, place.span);
                 }
                 if !is_place(&inner.kind) {
                     self.error(
@@ -5268,6 +5315,97 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[STR-1]` — whether the memberwise constructor may be called here.
+    ///
+    /// "It is `pub` iff all fields are `pub` (a `pub(read)` field makes it
+    /// private to the declaring module, since construction is a write)."
+    fn check_memberwise_constructor(&mut self, id: StructId, span: Span) {
+        let def = self.types.struct_def(id);
+        if def.declaring_module == self.current_module {
+            return;
+        }
+        let owner = def.name.to_string();
+        let blocking = def
+            .fields
+            .iter()
+            .find(|f| f.vis != FieldVis::Public || f.read_only_outside)
+            .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
+        let Some((field, vis, read_only)) = blocking else { return };
+        let why = if read_only {
+            format!("`{field}` is `pub(read)`, and construction is a write")
+        } else if vis == FieldVis::Package {
+            format!("`{field}` is `pub(package)`, not `pub`")
+        } else {
+            format!("`{field}` is private")
+        };
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E1020,
+                span,
+                format!("`{owner}`'s memberwise constructor is private to its module"),
+            )
+            .primary_label(why)
+            .help(format!(
+                "call a function `{owner}`'s module exports, or make every field `pub`"
+            ))
+            .note(concat!(
+                "the memberwise constructor is `pub` only when every field is, ",
+                "because constructing writes them all [STR-1]"
+            )),
+        );
+    }
+
+    /// `[MOD-7]` — a `pub(read)` field is writable only from the declaring
+    /// module.
+    ///
+    /// "Outside the declaring module, the following are errors `E1050`:
+    /// assignment (`h.value = x`, augmented assignment), taking
+    /// `ref mut h.value`, passing `h.value` to a `mut` parameter or `mut self`
+    /// method, and destructuring it with a mutable binding."
+    ///
+    /// The whole projection chain is walked, not just its last step: writing
+    /// `h.value.inner` takes a mutable borrow of `h.value`, which the rule
+    /// names.
+    fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
+        let mut current = place;
+        loop {
+            match &current.kind {
+                ExprKind::Field { base, index } => {
+                    if let TyKind::Struct(id) = *self.types.kind(base.ty) {
+                        let def = self.types.struct_def(id);
+                        if let Some(field) = def.fields.get(*index) {
+                            if field.read_only_outside
+                                && def.declaring_module != self.current_module
+                            {
+                                let owner = def.name.to_string();
+                                let field = field.name.to_string();
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E1050,
+                                        span,
+                                        format!("`{owner}.{field}` is read-only outside its module"),
+                                    )
+                                    .primary_label("written here".to_string())
+                                    .help(format!(
+                                        "`{owner}` declares `{field}` as `pub(read)`: anyone may \
+                                         read it, and only `{owner}`'s own module may write it"
+                                    ))
+                                    .note(
+                                        "a method on the declaring type is the way to change it \
+                                         from outside [MOD-7]",
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    current = base;
+                }
+                ExprKind::Index { base, .. } | ExprKind::Deref(base) => current = base,
+                _ => return,
+            }
+        }
+    }
+
     /// `[RNG-3]`, `[RNG-3a]`, `[RNG-10]` — the three named constructors.
     ///
     /// `T.checked(v) -> Result[T, RangeError]` is the fallible form;
@@ -5699,6 +5837,9 @@ impl<'a> Checker<'a> {
             return self.check_expr(arg, param_ty);
         }
         let place = self.check_expr(arg, param_ty);
+        // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`
+        // method" is a write.
+        self.reject_readonly_write(&place, arg.span);
         if !is_place(&place.kind) && place.ty != self.common.error {
             self.error(
                 codes::E2140,
@@ -5719,6 +5860,10 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        // `[STR-1]` — the synthesised memberwise constructor "is `pub` iff all
+        // fields are `pub` (a `pub(read)` field makes it private to the
+        // declaring module, since construction is a write; `[MOD-7]`)".
+        self.check_memberwise_constructor(id, span);
         let field_info: Vec<(Symbol, Ty, bool)> = self
             .types
             .struct_def(id)
@@ -6280,4 +6425,13 @@ enum RangeBinary {
     /// Two distinct range types, or a mismatched representation: no generated
     /// impl matches and the operator is `E2214`.
     Rejected,
+}
+
+/// `[MOD-2]` — the AST's visibility as the type table records it.
+fn field_vis(kind: ast::VisKind) -> FieldVis {
+    match kind {
+        ast::VisKind::Private => FieldVis::Private,
+        ast::VisKind::Package => FieldVis::Package,
+        ast::VisKind::Public => FieldVis::Public,
+    }
 }
