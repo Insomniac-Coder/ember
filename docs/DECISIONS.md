@@ -274,3 +274,88 @@ narrowed instead; the intersection is sound, so it is a precision loss and not
 a soundness one. **The alternative rejected:** writing a diagnostic against a
 guessed trigger, which enforces the rule in a shape nobody asked for and is
 harder to remove later than to add now.
+
+---
+
+## ADR-013 — `@ffi(no_virtual_dtor)` is not adopted; `owner=` alone carries it
+
+**Spec rule:** `[FFI-17d]`, `[FFI-39]`, `E5059`. Errata ERR-034.
+**Status:** provisional, taken 2026-09-09. Phase 7. Flagged for the owner.
+
+**Context.** `[FFI-17d]` says a `@ffi(trampoline)` type whose base has no
+virtual destructor MUST declare `owner=`, and that "`[FFI-17b]`'s
+`@ffi(no_virtual_dtor)` covers the remaining case". `[FFI-17b]` is about
+template instantiations and says nothing about destructors; the attribute is
+named nowhere else, and Part III §7 has no row for it, so `[ATT-1]` makes
+writing it `E0104`. There is no way to tell which rule was meant, because no
+rule defines it.
+
+**Decision.** Read `[FFI-17d]` as requiring `owner=` and nothing else.
+`@ffi(no_virtual_dtor)` is not recognised. `E5059` fires when a
+`@ffi(trampoline)` base has no virtual destructor and no `owner=`, which is
+what its registry title says.
+
+**Consequences.** Under `owner="foreign"` Ember never runs the C++ destructor,
+so a missing virtual destructor is the host's problem and always was. Under
+`owner="ember"` the pair is destroyed through the generated trampoline
+subclass, whose own destructor is the derived one, so the non-virtual base
+destructor is never the one called through a base pointer Ember holds. The
+attribute therefore has no case left to cover. **If the owner rules the other
+way**, Part III §7 gains a row and some `[FFI-*]` id gains the text; nothing
+implemented before Phase 7 depends on the answer.
+
+---
+
+## ADR-014 — `extern "C"` belongs on `fn_header`
+
+**Spec rule:** Part III §2, `[FFI-26]`, `[FFI-28]`, `[FFI-31b]`, `[HR-21]`.
+Errata ERR-036.
+**Status:** provisional, taken 2026-09-09. Phase 5. Flagged for the owner; the
+grammar is **not** changed until the owner rules.
+
+**Context.** XVI.10 writes `pub extern "C" fn on_update(entity: u64, dt: f32)
+-> i32`, and `[FFI-28]`, `[FFI-31b]` and `[HR-21]` all reason about `@export`ed
+functions with the C calling convention. Part III §2's `fn_header` has no
+`extern` prefix; `extern` may precede `fn` only in `fn_type` (a function
+*type*) and `extern_block` (foreign functions Ember calls, not Ember functions
+foreign code calls). The example parses under no production.
+
+**Decision.** Read the prefix as belonging on `fn_header`, after the optional
+`unsafe` and admitted only at item level on a function with no generic
+parameters — a calling convention has no meaning for an uninstantiated generic.
+
+**Consequences.** It is the smallest change; it is what all three examples
+write; it keeps the convention visible at the declaration, which `[PHIL-6]`
+asks for; and it leaves `[FN-6]`'s coercion of a capture-free function to
+`extern "C" fn(A) -> R` untouched, because that is a coercion of a *value* and
+this is a *definition*. **The alternative rejected:** letting `@export("name")`
+alone imply the C ABI. Fewer tokens, but the convention becomes invisible at
+the declaration and `[MNG-2]`'s "`@export` overrides the symbol entirely" would
+have to grow a second meaning.
+
+---
+
+## ADR-015 — `yield` in operand position is `E0100`, not `E0107`
+
+**Spec rule:** `[GRM-22]`, `[GRM-16]`, `[LEX-15b]`.
+**Status:** taken 2026-09-09.
+
+**Context.** `[GRM-22]` gives `yield` "the grammatical position and precedence
+of `return`", which is the lowest there is, so `1 + yield 2` has no parse. But
+`yield` is not a jump — its type is the coroutine's resume type, not `!`, which
+is exactly why `x = yield e` is legal where `x = return e` is not. `E0107`'s
+message is "a jump expression may not be an operand" and `[GRM-16]` defines it
+over `return`, `break` and `continue`. The document names no code for `yield`
+in operand position.
+
+**Decision.** `E0100`, the parser's ordinary "unexpected token", with a
+primary label naming the precedence and a `help` that names the fix
+(`v = yield e`, then use `v`).
+
+**Consequences.** No code is invented, and `E0107` keeps one meaning, which is
+what `[DIA-6a]` requires. The guiding sentence in "How to use this document"
+governs: this is a diagnostic's wording, which the specification leaves
+genuinely open, so the rule is simplest-to-implement-soundly and
+most-predictable. **The alternative rejected:** widening `E0107` to cover
+`yield`. It would make one code mean two things and would tell the programmer
+that `yield` is a jump, which is the one thing about it that is not true.

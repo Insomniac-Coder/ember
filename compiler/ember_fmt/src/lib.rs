@@ -286,7 +286,15 @@ impl Printer<'_> {
             ast::ItemKind::TypeAlias(decl) => {
                 let params = self.generics(&decl.generics);
                 let target = decl.value.as_ref().map(|t| format!(" = {}", self.type_expr(t))).unwrap_or_default();
-                self.line(&format!("{vis}type {}{params}{target}", decl.name.name));
+                // `[RNG-1]` — dropping the `in` clause would turn a nominal
+                // range type into a transparent alias, which is the same
+                // class of defect as D-008 and D-009.
+                let range = decl
+                    .range
+                    .as_ref()
+                    .map(|e| format!(" in {}", self.text(e.span).trim()))
+                    .unwrap_or_default();
+                self.line(&format!("{vis}type {}{params}{target}{range}", decl.name.name));
             }
             // A construct the formatter does not reshape is copied through as
             // it was written, which keeps `parse(fmt(x)) ≡ parse(x)` true even
@@ -464,7 +472,15 @@ impl Printer<'_> {
             ast::MemberKind::TypeAlias(decl) => {
                 let params = self.generics(&decl.generics);
                 let target = decl.value.as_ref().map(|t| format!(" = {}", self.type_expr(t))).unwrap_or_default();
-                self.line(&format!("{vis}type {}{params}{target}", decl.name.name));
+                // `[RNG-1]` — dropping the `in` clause would turn a nominal
+                // range type into a transparent alias, which is the same
+                // class of defect as D-008 and D-009.
+                let range = decl
+                    .range
+                    .as_ref()
+                    .map(|e| format!(" in {}", self.text(e.span).trim()))
+                    .unwrap_or_default();
+                self.line(&format!("{vis}type {}{params}{target}{range}", decl.name.name));
             }
         }
     }

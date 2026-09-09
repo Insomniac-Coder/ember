@@ -126,6 +126,14 @@ def load_baseline():
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write-baseline", action="store_true")
+    ap.add_argument(
+        "--allow-growth",
+        action="store_true",
+        help="permit --write-baseline to record entries the baseline does not "
+        "already hold. `[TST-4c]`: the baseline shrinks and never grows, so "
+        "this is for a new specification revision only, and the reason belongs "
+        "in the commit message.",
+    )
     ap.add_argument("--report", action="store_true")
     args = ap.parse_args()
 
@@ -175,22 +183,42 @@ def main():
                 )
 
     if args.write_baseline:
-        BASELINE.write_text(
-            json.dumps(
-                {
-                    "rules_without_tests": missing_tests,
-                    "codes_without_pages": missing_pages,
-                    "codes_not_in_registry": not_in_registry,
-                },
-                indent=2,
+        # `[TST-4c]` — "The baseline shrinks and never grows: rule_index.py
+        # rejects a commit that adds a rule to it." A gap that was closed and
+        # reopens is a regression, and a baseline that absorbs it silently is
+        # the mechanism by which a suite stops meaning anything. Growth is
+        # permitted only for a new specification revision, explicitly.
+        proposed = {
+            "rules_without_tests": missing_tests,
+            "codes_without_pages": missing_pages,
+            "codes_not_in_registry": not_in_registry,
+        }
+        grown = {
+            key: sorted(set(values) - set(known[key])) for key, values in proposed.items()
+        }
+        if any(grown.values()) and not args.allow_growth:
+            print("\n`[TST-4c]`: the baseline may shrink and never grow.")
+            for key, values in grown.items():
+                for v in values:
+                    print(f"  would add to {key}: {v}")
+            print(
+                "\nEither close the gap, or pass --allow-growth and say in the "
+                "commit message which specification revision opened it."
             )
-            + "\n",
+            return 1
+        BASELINE.write_text(
+            json.dumps(proposed, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )
+        added = sum(len(v) for v in grown.values())
+        removed = sum(
+            len(set(known[key]) - set(values)) for key, values in proposed.items()
+        )
         print(f"baseline written: {len(missing_tests)} rules without tests, "
               f"{len(missing_pages)} codes without pages, "
-              f"{len(not_in_registry)} codes not in the registry")
+              f"{len(not_in_registry)} codes not in the registry "
+              f"({added} added, {removed} closed)")
         return 0
 
     for r in missing_tests:

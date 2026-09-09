@@ -202,11 +202,19 @@ macro_rules! keywords {
     };
 }
 
-// Reserved keywords, v1 (Part II §4). 48 entries.
+// Reserved keywords, v1 (Part II §4 with `[LEX-15b]`). 49 entries.
 //
 // `let` is fully reserved (`OQ-26`, errata ERR-004), `type` is a v1 keyword
 // (`[LEX-15a]`, errata ERR-009), and `from` is contextual (owner, 2026-09-08,
 // errata ERR-017) because `interface From[T]` requires `fn from(…)`.
+//
+// `yield` is here rather than in `Reserved` because `[LEX-15b]` makes it a v1
+// keyword: `[CORO-2]` uses it as an expression, and an expression keyword
+// cannot be contextual without ambiguity at the start of a statement. II.4's
+// future-reserved list still names it, and `[LEX-15b]` says in terms that it
+// supersedes that count — errata ERR-025. A word cannot be both `E0005`
+// ("reserved for a future version", whose message `[LEX-14a]` requires to name
+// that version) and `E2220` ("used outside a `gen fn`").
 keywords! { Kw,
     And => "and", As => "as", Break => "break", Class => "class",
     Comptime => "comptime", Const => "const", Continue => "continue",
@@ -220,13 +228,14 @@ keywords! { Kw,
     SelfValue => "self", SelfType => "Self", Static => "static",
     Struct => "struct", Super => "super", True => "true", Type => "type",
     Unsafe => "unsafe", Virtual => "virtual", Void => "void", Where => "where",
-    While => "while", With => "with",
+    While => "while", With => "with", Yield => "yield",
 }
 
 // Reserved for future use: lexed as keywords, `E0005` if used (Part II §4).
+// Nine, not ten: `yield` moved into `Kw` under `[LEX-15b]` (errata ERR-025).
 keywords! { Reserved,
     Actor => "actor", Async => "async", Await => "await", Macro => "macro",
-    Yield => "yield", Move => "move", Trait => "trait",
+    Move => "move", Trait => "trait",
     Union => "union", Loop => "loop", Unless => "unless",
 }
 
@@ -240,12 +249,11 @@ impl Reserved {
             // Part XIV §3 defers user-defined derives, and macros with them.
             Reserved::Macro => "v2",
             // `trait` is the alternative spelling of `interface`; `union`,
-            // `loop`, `unless` and `yield` have no dated plan beyond v2.
+            // `loop` and `unless` have no dated plan beyond v2.
             Reserved::Trait
             | Reserved::Union
             | Reserved::Loop
             | Reserved::Unless
-            | Reserved::Yield
             | Reserved::Move => "a later version",
         }
     }
@@ -259,8 +267,13 @@ impl Reserved {
 /// and a reserved word cannot be a method name. It is a keyword only where it
 /// begins an import at item level, which is the one position an import may
 /// start (owner, 2026-09-08; errata ERR-017).
+///
+/// `gen` is here under `[LEX-15b]`: a keyword only immediately before `fn`, and
+/// an ordinary identifier everywhere else, so a field or variable named `gen`
+/// is unaffected. Part II §4 lists it in neither table, which is what
+/// "contextual" means.
 pub const CONTEXTUAL_KEYWORDS: &[&str] =
-    &["abstract", "final", "lazy", "test", "bench", "from"];
+    &["abstract", "final", "lazy", "test", "bench", "from", "gen"];
 
 // ---------------------------------------------------------------------------
 // Punctuation
@@ -325,9 +338,18 @@ mod tests {
     #[test]
     fn the_v1_keyword_list_is_the_one_in_the_spec() {
         // Part II §4 lists seven keywords on each of six rows and six on the
-        // seventh: 48. A count that drifts means the table and this enum
-        // disagree.
-        assert_eq!(Kw::ALL.len(), 48);
+        // seventh, and `[LEX-15b]` adds `yield`: 49. A count that drifts means
+        // the table and this enum disagree. `[LEX-15]`'s own sentence says 48
+        // and `[LEX-15b]` says in terms that it supersedes that count and
+        // nothing else in the rule — errata ERR-025.
+        assert_eq!(Kw::ALL.len(), 49);
+        assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
+        assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
+        assert_eq!(Reserved::ALL.len(), 9);
+        // `gen` is contextual: in neither table, a keyword only before `fn`.
+        assert_eq!(Kw::from_str("gen"), None, "[LEX-15b]");
+        assert_eq!(Reserved::from_str("gen"), None, "[LEX-15b]");
+        assert!(CONTEXTUAL_KEYWORDS.contains(&"gen"));
         assert_eq!(Kw::from_str("owned"), Some(Kw::Owned));
         assert_eq!(Kw::from_str("Self"), Some(Kw::SelfType));
         assert_eq!(Kw::from_str("self"), Some(Kw::SelfValue));

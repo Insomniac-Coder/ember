@@ -152,6 +152,45 @@ fn check_file(path: &Path, root: &Path) {
     let source = std::fs::read_to_string(path).expect("the test file is readable");
     let expectations = parse_expectations(&source);
     let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+
+    // `parse-pass` / `parse-fail` run `ember check --syntax-only` (`[CLI-9]`),
+    // which reports only `E00xx` and `E01xx`. They are how a rule whose
+    // *grammar* has landed ahead of its semantics gets a real `[TST-4a]`
+    // accept-and-reject pair instead of a directory holding an aspiration.
+    // The file may name types the compiler cannot yet resolve, because
+    // `--syntax-only` does not resolve names.
+    match expectations.kind.as_deref() {
+        Some("parse-pass") => {
+            let checked = ember(&["check", "--syntax-only", &relative], root);
+            assert_eq!(
+                checked.exit, 0,
+                "{relative}: expected it to parse\nstderr:\n{}",
+                checked.stderr
+            );
+            return;
+        }
+        Some("parse-fail") => {
+            let checked = ember(&["check", "--syntax-only", &relative], root);
+            assert_ne!(
+                checked.exit, 0,
+                "{relative}: expected a parse error, but it parsed"
+            );
+            for (code, message) in &expectations.errors {
+                assert!(
+                    checked.stderr.contains(code.as_str()),
+                    "{relative}: expected {code}\nstderr:\n{}",
+                    checked.stderr
+                );
+                assert!(
+                    checked.stderr.contains(message.as_str()),
+                    "{relative}: expected a message containing {message:?}\nstderr:\n{}",
+                    checked.stderr
+                );
+            }
+            return;
+        }
+        _ => {}
+    }
     let out_dir = std::env::temp_dir().join("ember-tests").join(
         path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
     );
@@ -408,4 +447,56 @@ struct S:
     assert_eq!(parsed.stdout.as_deref(), Some("5"));
     assert_eq!(parsed.exit, Some(0));
     assert_eq!(parsed.assert_c, vec![(false, "ember_alloc".to_string())]);
+}
+
+/// `[TST-4]`/`[TST-4a]` — every rule directory under `tests/conformance/` is
+/// run, and every file in one carries its expectations. A directory that
+/// exists but is never executed is what `[TST-4a]` calls "not coverage".
+#[test]
+fn the_conformance_suite_runs() {
+    let root = workspace_root();
+    let dir = root.join("tests").join("conformance");
+    if !dir.is_dir() {
+        return;
+    }
+    let mut rules: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("tests/conformance is readable")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    rules.sort();
+    assert!(!rules.is_empty(), "tests/conformance holds no rule directories");
+
+    for rule_dir in rules {
+        let rule = rule_dir.file_name().unwrap().to_string_lossy().into_owned();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&rule_dir)
+            .expect("a rule directory is readable")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "tests/conformance/{rule}/ holds no programs");
+
+        // `[TST-4a]` — an accept case always, and a reject case for a rule
+        // that can reject source. Which rules need one is `[TST-4b]`'s
+        // mechanical question, answered from the rule→code map; here the
+        // file name carries the answer, and a directory with neither is a
+        // directory that tests nothing.
+        let names: Vec<String> =
+            files.iter().map(|p| p.file_stem().unwrap().to_string_lossy().into_owned()).collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("accept_")),
+            "tests/conformance/{rule}/ has no accept_* case ([TST-4a])"
+        );
+
+        for path in &files {
+            let source = std::fs::read_to_string(path).expect("readable");
+            assert!(
+                source.contains("#$ rules:"),
+                "{}: no `#$ rules:` annotation",
+                path.display()
+            );
+            check_file(path, &root);
+        }
+    }
 }

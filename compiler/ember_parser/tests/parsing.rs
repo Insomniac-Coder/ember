@@ -525,3 +525,89 @@ fn a_doc_comment_at_the_end_of_a_block_documents_the_next_item() {
     let f = out.find("Fn f()").unwrap();
     assert!(doc < f, "{out}");
 }
+
+// -- v0.8.3: range clauses, coroutines -----------------------------------------
+
+#[test]
+fn a_type_alias_may_carry_a_range_clause() {
+    // `[RNG-1]` — the `in` clause makes the alias a nominal range type.
+    let out = dump("type Roughness = f32 in 0.0 ..= 1.0\n");
+    assert!(out.contains("TypeAlias Roughness"), "{out}");
+    assert!(out.contains("Range"), "the `in` clause is an expression: {out}");
+}
+
+#[test]
+fn a_range_clause_takes_a_half_open_range_too() {
+    // `[RNG-1]` — "a `..` or `..=` range expression".
+    let out = dump("type Percent = u8 in 0 .. 101\n");
+    assert!(out.contains("TypeAlias Percent"), "{out}");
+}
+
+#[test]
+fn a_range_clause_does_not_disturb_a_for_header() {
+    // `[GRM-8d]` — the production is LL(2) and a parser commits on the
+    // enclosing construct, never on the token `in` (`[GRM-23]`).
+    let out = dump("fn f(xs: Array[i32]):\n    for x in xs: pass\n");
+    assert!(out.contains("For"), "{out}");
+}
+
+#[test]
+fn a_range_clause_on_an_associated_type_is_rejected() {
+    // `[GRM-8d]` — admitted only where `type_alias` appears as an `item`.
+    let out = run("interface I:\n    type Item = f32 in 0.0 ..= 1.0\n");
+    assert!(out.codes.contains(&"E2213".to_string()), "{}", out.messages);
+}
+
+#[test]
+fn a_generic_range_type_is_rejected() {
+    // `[GRM-8d]` — "a range type is over a concrete representation".
+    let out = run("type Bad[T] = T in 0 ..= 1\n");
+    assert!(out.codes.contains(&"E2213".to_string()), "{}", out.messages);
+}
+
+#[test]
+fn gen_fn_declares_a_coroutine() {
+    // `[GRM-21]` — `gen_fn := "gen" fn_decl`.
+    let out = dump("gen fn ticks() -> Coroutine[void]:\n    yield 1\n");
+    assert!(out.contains("Fn ticks"), "{out}");
+    assert!(out.contains("Yield"), "{out}");
+}
+
+#[test]
+fn gen_is_contextual_so_a_variable_may_be_named_gen() {
+    // `[LEX-15b]` — `gen` is a keyword only immediately before `fn`.
+    let out = dump("fn f():\n    gen = 1\n    gen = gen + 1\n");
+    assert!(out.contains("Assign"), "{out}");
+}
+
+#[test]
+fn a_bare_yield_is_permitted() {
+    // `[GRM-22]` — "A bare `yield` is `yield ()`".
+    let out = dump("gen fn f() -> Coroutine[void]:\n    yield\n");
+    assert!(out.contains("Yield"), "{out}");
+}
+
+#[test]
+fn yield_may_be_bound() {
+    // `[GRM-22]` — unlike a jump, `yield` has the resume type, so it may be
+    // the right-hand side of a binding.
+    let out = dump("gen fn f() -> Coroutine[void]:\n    v = yield 1\n    pass\n");
+    assert!(out.contains("Yield"), "{out}");
+}
+
+#[test]
+fn yield_may_not_be_an_operand() {
+    // `[GRM-22]` gives `yield` `return`'s precedence, the lowest there is.
+    let out = run("gen fn f() -> Coroutine[void]:\n    x = 1 + yield 2\n");
+    assert!(!out.codes.is_empty(), "expected a diagnostic:\n{}", out.dump);
+}
+
+#[test]
+fn yield_is_a_keyword_and_needs_a_raw_identifier_as_a_name() {
+    // `[LEX-15b]`, errata ERR-025 — `yield` is fully reserved in v1, so it is
+    // no longer `E0005` ("reserved for a later version") but a keyword.
+    let out = run("fn f():\n    yield = 1\n");
+    assert!(!out.codes.contains(&"E0005".to_string()), "{}", out.messages);
+    let ok = dump("fn f():\n    r#yield = 1\n");
+    assert!(ok.contains("Assign"), "{ok}");
+}

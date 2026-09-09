@@ -157,6 +157,11 @@ pub struct ImportItem {
 pub struct FnDecl {
     pub name: Ident,
     pub is_unsafe: bool,
+    /// `[GRM-21]` — `gen_fn := "gen" fn_decl`. A `gen fn` is a coroutine
+    /// (`[CORO-1]`): calling it executes no part of the body and returns a
+    /// `Coroutine[R]` holding the suspended frame. `gen` is contextual
+    /// (`[LEX-15b]`) — a keyword only immediately before `fn`.
+    pub is_gen: bool,
     pub dispatch: Dispatch,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
@@ -317,6 +322,12 @@ pub struct TypeAlias {
     /// `None` for an associated type declaration inside an interface.
     pub value: Option<TypeExpr>,
     pub bounds: Vec<TypeExpr>,
+    /// `[RNG-1]` — the `in` clause that makes this alias a **nominal** range
+    /// type over `value` rather than a transparent alias for it. The
+    /// expression is a `..` or `..=` range whose endpoints are constants of
+    /// the representation type; `[GRM-8d]` admits it only where the alias is
+    /// an item, and only where the alias carries no generic parameters.
+    pub range: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -542,6 +553,12 @@ pub enum ExprKind {
     /// the scrutinee of a `match`, where it consumes `e` (`[CTL-1]`,
     /// `[GRM-13]`). Anywhere else in expression position is `E0109`.
     Owned(Box<Expr>),
+    /// `[GRM-22]` — `yield_expr := "yield" [ expression ]`. It occupies
+    /// `return`'s grammatical position and precedence, but unlike a `Jump` its
+    /// type is the coroutine's **resume type** (`void` unless the coroutine
+    /// declares one), so it may be the right-hand side of a binding. A bare
+    /// `yield` is `yield ()`.
+    Yield(Option<Box<Expr>>),
     /// A node the parser could not build. Keeps later stages from cascading.
     Error,
 }

@@ -55,6 +55,9 @@ ERR-008) is worth being able to read again.
 | ERR-035 | Section placement in Parts XV, XVI, XX, XXI | **decided** — recorded, not moved; the split follows the source |
 | ERR-036 | Part III §2 `fn_header` with XVI.10, `[FFI-26]`, `[FFI-31b]` | **open — reported to the owner** — no production admits `pub extern "C" fn` |
 | ERR-037 | Part III §2 with `[FFI-39]` | **open — reported to the owner** — no production admits `extern class` |
+| ERR-038 | `E2213` in IV.2a and `[GRM-8d]` | **decided** — one title covers both conditions; `[RNG-1]` is the defining rule |
+| ERR-039 | `E9010` in `[TYP-9c]` and `[MAN-3]` | **decided** — `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012` |
+| ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |
 
 ---
 
@@ -1557,3 +1560,114 @@ the C++ inheritance surface silently, which Part XXI §1 ground rule 3 forbids.
 
 `[FFI-39]`'s block sits in `[TST-7]`'s baseline. This is Phase 7 work and
 nothing before it depends on the answer.
+
+---
+
+## ERR-038 — `E2213` is defined by two rules
+
+**Status: decided. One title covers both.**
+
+**Where.** IV.2a's diagnostic list:
+
+> `E2213` an `in` clause on a non-numeric representation.
+
+`[GRM-8d]`:
+
+> a `range_clause` on an `interface_member` associated type or on an
+> `extern_item` opaque type is `E2213`. A `type_alias` carrying both
+> `generic_params` and a `range_clause` is `E2213`.
+
+`[DIA-6a]`: "**A code MUST be defined by exactly one rule.**
+`tools/rule_index.py` MUST fail CI when two rules name the same code with
+different titles."
+
+**Decision.** Neither site states a *title*; both state a condition, and the
+registry supplies the title. The three conditions are one thing — the `in`
+clause is not admissible here — differing only in why: the representation is
+not numeric, the position admits no range clause, or the alias is generic and a
+range is over a concrete representation. The registry entry is
+
+> `E2213` — invalid `in` clause on a type alias — `[RNG-1]`
+
+and `[RNG-1]` is cited as the defining rule, because it is `[RNG-1]` that says
+what an `in` clause is and what it may be written over; `[GRM-8d]` constrains
+where it may appear, which is a constraint on the same rule's construct.
+
+**Why not split it.** Allocating a second code would be inventing a number the
+document does not name, and `[DIA-6a]`'s check is satisfied by one title. The
+three conditions are distinguished in the message, which is where a programmer
+reads them.
+
+---
+
+## ERR-039 — `E9010` is defined by two rules
+
+**Status: decided. `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012`.**
+
+**Where.** `[TYP-9c]`:
+
+> If the host toolchain cannot honour `@fastmath` or `@fp(…)` at function
+> granularity, the compiler MUST report `E9010` naming the toolchain and the
+> attribute.
+
+`[MAN-3]`:
+
+> Every key in `[lints]` MUST name a lint the compiler defines (`E9010`
+> otherwise).
+
+Two unrelated errors, one number — the same class `[BLD-11]`'s `E1020`/`E1021`
+was fixed for in 0.6, and the one `[DIA-6a]` polices.
+
+**Decision.** `[TYP-9c]` keeps `E9010`. It is the older claim, it is stated in
+Part IV where the float-control rules live, and `E9011` beside it is
+`[TYP-9a]`'s companion, so the pair reads as one subject.
+
+`[MAN-3]` takes **`E9012`**. XX §6 allocates `E9012`/`E9013` to 0.6 and
+describes them only as "(manifest sections)", assigning neither a rule nor a
+meaning. `[lints]` is a manifest section and `[MAN-3]` is a rule about one, so
+the code is put to the use its own description names rather than a new number
+being invented.
+
+`E9013`, the other half of that pair, is assigned to `[MAN-5]`'s `[ffi]`
+section — the only other manifest section 0.6 and 0.6.1 introduced — as
+"invalid `[ffi]` manifest section".
+
+**If the owner rules otherwise**, the two registry entries change and nothing
+else does: neither code is emitted by any code path yet, and both are manifest
+diagnostics, which `[CAT-1]` categorises `TOOLCHAIN-NORMATIVE` rather than
+language-normative.
+---
+
+## ERR-040 — `--syntax-only`'s code ranges no longer describe what the parser emits
+
+**Status: decided. The stages are the constraint, not the ranges.**
+
+**Where.** `[CLI-9]`:
+
+> `ember check --syntax-only <file>` lexes and parses the file and reports only
+> `E00xx` and `E01xx` diagnostics. It does not resolve names, so an example
+> naming undeclared types still passes.
+
+`[GRM-8d]`, added by 0.6:
+
+> a `range_clause` on an `interface_member` associated type or on an
+> `extern_item` opaque type is `E2213`. A `type_alias` carrying both
+> `generic_params` and a `range_clause` is `E2213`.
+
+Both conditions are decidable from the parse tree alone, and `E2213` is in
+neither range `[CLI-9]` names. Reading `[CLI-9]` as a filter would make
+`--syntax-only` accept `type Bad[T] = T in 0 ..= 1`, which `[GRM-8d]` refuses,
+and `[TST-7]` — which runs every fenced block through exactly this command —
+would then be unable to see the class of error `[GRM-8d]` exists to catch.
+
+**Decision.** `--syntax-only` runs the lexer and the parser and reports
+everything those two stages produce. `[CLI-9]`'s second sentence is the
+operative constraint and is unaffected: no names are resolved, so an example
+naming undeclared types still passes. The code ranges were a shorthand for
+"what the front end produces", written before `[GRM-8d]` gave the parser an
+`E2xxx` code to emit.
+
+**Consequence for the test harness.** `tests/conformance/` gains the annotation
+kinds `parse-pass` and `parse-fail`, which run this command. They are how a
+rule whose *grammar* has landed ahead of its semantics gets a real `[TST-4a]`
+accept-and-reject pair rather than a directory holding an aspiration.

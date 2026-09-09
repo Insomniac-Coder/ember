@@ -148,7 +148,14 @@ impl Printer {
                     p.expr(&s.value);
                 })
             }
-            ItemKind::TypeAlias(t) => self.line(&format!("TypeAlias {}", t.name.name)),
+            ItemKind::TypeAlias(t) => self.nest(&format!("TypeAlias {}", t.name.name), |p| {
+                // `[RNG-1]` — the `in` clause is what makes the alias
+                // nominal rather than transparent, so it must be visible
+                // in the dump. D-010 records what an invisible node costs.
+                if let Some(range) = &t.range {
+                    p.nest("In", |p| p.expr(range));
+                }
+            }),
             ItemKind::ExternBlock(b) => self.nest(&format!("Extern {:?}", b.abi), |p| {
                 for i in &b.items {
                     p.item(i);
@@ -211,7 +218,14 @@ impl Printer {
             }
             MemberKind::Fn(f) => self.fn_decl(f, member.vis),
             MemberKind::Const(c) => self.line(&format!("Const {}", c.name.name)),
-            MemberKind::TypeAlias(t) => self.line(&format!("TypeAlias {}", t.name.name)),
+            MemberKind::TypeAlias(t) => self.nest(&format!("TypeAlias {}", t.name.name), |p| {
+                // `[RNG-1]` — the `in` clause is what makes the alias
+                // nominal rather than transparent, so it must be visible
+                // in the dump. D-010 records what an invisible node costs.
+                if let Some(range) = &t.range {
+                    p.nest("In", |p| p.expr(range));
+                }
+            }),
         }
     }
 
@@ -441,6 +455,11 @@ impl Printer {
                 Jump::Break { label } => self.line(&format!("Break{}", label_str(label))),
                 Jump::Continue { label } => self.line(&format!("Continue{}", label_str(label))),
             },
+            ExprKind::Yield(value) => self.nest("Yield", |p| {
+                if let Some(value) = value {
+                    p.expr(value);
+                }
+            }),
             ExprKind::Error => self.line("Error"),
         }
     }

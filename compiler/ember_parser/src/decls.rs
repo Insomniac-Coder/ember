@@ -228,6 +228,8 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
                 Some(ItemKind::Fn(self.parse_fn()))
             }
+            // `[GRM-21]` — a `gen fn` is admitted wherever `fn_decl` is.
+            TokenKind::Ident(_) if self.at_gen_fn() => Some(ItemKind::Fn(self.parse_fn())),
             TokenKind::Keyword(Kw::Struct) => Some(ItemKind::Struct(self.parse_struct())),
             TokenKind::Keyword(Kw::Class | Kw::Open) => Some(ItemKind::Class(self.parse_class())),
             TokenKind::Keyword(Kw::Enum) => Some(ItemKind::Enum(self.parse_enum())),
@@ -245,7 +247,7 @@ impl Parser<'_> {
             // `[LEX-15a]` — `type` introduces a type alias at item level and an
             // opaque foreign type inside an `extern` block, where it carries no
             // `= T`. Both are `type_alias` nodes; the value distinguishes them.
-            TokenKind::Keyword(Kw::Type) => Some(ItemKind::TypeAlias(self.parse_type_alias())),
+            TokenKind::Keyword(Kw::Type) => Some(ItemKind::TypeAlias(self.parse_type_alias(true))),
             // `abstract class` — `abstract` is contextual (`[LEX-15]`).
             TokenKind::Ident(s) if s.is("abstract") && self.at_kw_at(1, Kw::Class) => {
                 Some(ItemKind::Class(self.parse_class()))
@@ -290,7 +292,14 @@ impl Parser<'_> {
     /// type in an interface), `type Name` (opaque foreign type in an `extern`
     /// block). One production serves all three (`[LEX-15a]`); the caller knows
     /// which context it is in, and `value` distinguishes an alias from the rest.
-    fn parse_type_alias(&mut self) -> TypeAlias {
+    /// `type_alias := "type" identifier [generic_params] "=" type [range_clause] NEWLINE`
+    ///
+    /// `at_item_level` decides whether the `range_clause` is admitted:
+    /// `[GRM-8d]` allows it only where the alias appears as an `item`, so an
+    /// associated type in an `interface` and an opaque type in an `extern`
+    /// block are `E2213`. The clause is parsed either way, because a rejection
+    /// that names the clause reads better than one that stops at `in`.
+    fn parse_type_alias(&mut self, at_item_level: bool) -> TypeAlias {
         self.expect_kw(Kw::Type);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
@@ -302,8 +311,64 @@ impl Parser<'_> {
             }
         }
         let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
+        let range = self.parse_range_clause(&name, at_item_level, &generics);
         self.expect_newline();
-        TypeAlias { name, generics, value, bounds }
+        TypeAlias { name, generics, value, bounds, range }
+    }
+
+    /// `range_clause := "in" expression` — `[RNG-1]`.
+    ///
+    /// `[GRM-8d]` makes the production LL(2): no other `type_alias` may be
+    /// followed by `in`, and a `type_alias` never appears where a `for_stmt`
+    /// may begin, so `for x in …` is untouched. The parser therefore commits
+    /// on the enclosing construct and never on the token, which is what
+    /// `[GRM-23]` requires of every use of `in`.
+    fn parse_range_clause(
+        &mut self,
+        name: &Ident,
+        at_item_level: bool,
+        generics: &[GenericParam],
+    ) -> Option<Expr> {
+        if !self.at_kw(Kw::In) {
+            return None;
+        }
+        let clause_start = self.span();
+        self.bump();
+        let expr = self.parse_expr_no_block();
+        let span = clause_start.to(self.prev_span());
+
+        if !at_item_level {
+            self.report(
+                Diagnostic::error(
+                    codes::E2213,
+                    span,
+                    "a range type may only be declared at item level",
+                )
+                .help(
+                    "declare it as a module-level `type`, and name that type here"
+                        .to_string(),
+                ),
+            );
+            return None;
+        }
+        // `[GRM-8d]` — "a range type is over a concrete representation", so an
+        // alias carrying generic parameters cannot carry a range.
+        if !generics.is_empty() {
+            self.report(
+                Diagnostic::error(
+                    codes::E2213,
+                    name.span.to(span),
+                    "a range type may not be generic",
+                )
+                .help(
+                    "a range is over one concrete representation; declare one \
+                     `type` per representation"
+                        .to_string(),
+                ),
+            );
+            return None;
+        }
+        Some(expr)
     }
 
     fn parse_extern_block(&mut self, is_unsafe: bool) -> ExternBlock {
@@ -342,7 +407,22 @@ impl Parser<'_> {
         ExternBlock { is_unsafe, abi, items }
     }
 
+    /// True where a `gen fn` begins. `[LEX-15b]` makes `gen` contextual — a
+    /// keyword only immediately before `fn` — so the lookahead is exactly one
+    /// token and a variable or field named `gen` is unaffected.
+    pub(crate) fn at_gen_fn(&self) -> bool {
+        matches!(self.peek(), TokenKind::Ident(s) if s.is("gen"))
+            && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn))
+    }
+
     pub(crate) fn parse_fn(&mut self) -> FnDecl {
+        // `[GRM-21]` — `gen_fn := "gen" fn_decl`. `gen` precedes everything,
+        // including `unsafe`: `[CORO-*]` gives no `unsafe gen fn` example, and
+        // accepting both orders would make two spellings of one declaration.
+        let is_gen = self.at_gen_fn();
+        if is_gen {
+            self.bump();
+        }
         let is_unsafe = self.eat_kw(Kw::Unsafe);
         let dispatch = if self.eat_kw(Kw::Virtual) {
             Dispatch::Virtual
@@ -374,7 +454,7 @@ impl Parser<'_> {
             self.expect_newline();
         }
 
-        FnDecl { name, is_unsafe, dispatch, generics, params, ret, where_clause, body }
+        FnDecl { name, is_unsafe, is_gen, dispatch, generics, params, ret, where_clause, body }
     }
 
     fn parse_param(&mut self) -> Param {
@@ -734,8 +814,9 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
                 MemberKind::Fn(self.parse_fn())
             }
+            TokenKind::Ident(_) if self.at_gen_fn() => MemberKind::Fn(self.parse_fn()),
             TokenKind::Keyword(Kw::Const) => MemberKind::Const(self.parse_const()),
-            TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias()),
+            TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias(false)),
             _ => {
                 // `name: T [= default]` or `let name: T`. `let` is a keyword
                 // in every position since `OQ-26` (errata ERR-004).

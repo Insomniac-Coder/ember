@@ -152,6 +152,8 @@ codes! {
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
 
+    E1021 = (Error, 1021, Resolve, "[BLD-11]", "name is not linked in this build");
+
     // --- types, inference, interfaces, generics, patterns -------------------
     E2010 = (Error, 2010, Types, "[LEX-16]", "literal does not fit its type");
     E2020 = (Error, 2020, Types, "[TYP-4]", "mismatched types");
@@ -182,6 +184,28 @@ codes! {
     E2170 = (Error, 2170, Types, "[IX.5]", "cannot take a reference to a field of a packed struct");
     E2180 = (Error, 2180, Types, "[ERR-2]", "`?` outside a function returning `Option` or `Result`");
     E2200 = (Error, 2200, Types, "[XVIII.4.4]", "type has infinite size");
+
+    // --- range and domain types (`[RNG-*]`, 0.6) ------------------------------
+    E2210 = (Error, 2210, Types, "[RNG-2]", "a value of one range type where another was expected");
+    E2211 = (Error, 2211, Types, "[RNG-3]", "constant outside the target range type");
+    E2212 = (Error, 2212, Types, "[RNG-1]", "range endpoints are not constants of the representation, or are inverted");
+    // Two sites name `E2213`: IV.2a's diagnostic list ("an `in` clause on a
+    // non-numeric representation") and `[GRM-8d]` (an `in` clause in a
+    // position or on an alias shape that admits none). One title covers both,
+    // which is what `[DIA-6a]`'s one-code-one-rule check needs — errata ERR-038.
+    E2213 = (Error, 2213, Types, "[RNG-1]", "invalid `in` clause on a type alias");
+    E2214 = (Error, 2214, Types, "[RNG-5]", "arithmetic between two distinct range types");
+    E2215 = (Error, 2215, Types, "[RNG-10]", "range-typed value constructed outside the permitted set");
+
+    // --- coroutines, monomorphisation, migration, membership (0.6.3, 0.7.x) ---
+    E2220 = (Error, 2220, Types, "[CORO-2]", "`yield` outside a `gen fn`");
+    E2221 = (Error, 2221, Types, "[CORO-6]", "borrow held across a `yield`");
+    E2222 = (Error, 2222, Types, "[CORO-10]", "coroutine where an ordinary function is required");
+    E2223 = (Error, 2223, Types, "[MONO-7]", "`@never_specialize` on a generic that is not shareable");
+    E2224 = (Error, 2224, Types, "[HR-16]", "`migrate_from` may not take a `mut` receiver");
+    E2225 = (Error, 2225, Types, "[HR-35]", "`migrate_from` may not panic");
+    E2226 = (Error, 2226, Types, "[STD-8]", "`in` on a type that does not implement `Contains`");
+    E2227 = (Error, 2227, Types, "[HR-39]", "a `noexcept` foreign call in `migrate_from` may terminate the process");
 
     // --- ownership, borrows, regions, exclusivity, drops --------------------
     E3010 = (Error, 3010, Ownership, "[EXP-6]", "cannot move out of a field of a type with `drop`");
@@ -228,6 +252,17 @@ codes! {
     E4010 = (Error, 4010, Effects, "[EFF-2]", "implementation does not satisfy the interface's contract");
     E4020 = (Error, 4020, Effects, "[SIMD-2]", "`@simd(assert)` loop did not vectorise");
 
+    // --- I/O, locking and determinism (0.6, 0.6.3) ----------------------------
+    E4041 = (Error, 4041, Effects, "[EFF-20]", "`@noio` function reaches I/O");
+    E4042 = (Error, 4042, Effects, "[EFF-21]", "`@nolock` function acquires a lock");
+    E4070 = (Error, 4070, Effects, "[DET-1]", "`@deterministic` function reaches a nondeterministic operation");
+    // Registered and never emitted, so the number is not reused: the case it
+    // named is reported as `E4070` with the foreign frame named (XX §6).
+    E4071 = (Error, 4071, Effects, "[DET-8]", "reserved: `@deterministic` reaching an undeclared `extern`");
+    E4072 = (Error, 4072, Effects, "[DET-5]", "`@fastmath` or `@fp(contract)` inside `@deterministic`");
+    // Registered and never emitted: `[CORO-5]` makes it unreachable in v1.
+    E4073 = (Error, 4073, Effects, "[CORO-5]", "reserved: a coroutine frame that allocates in `@noalloc`");
+
     // --- FFI -----------------------------------------------------------------
     E5001 = (Error, 5001, Ffi, "[FFI-5]", "imported type layout does not match");
     E5010 = (Error, 5010, Ffi, "[FFI-12]", "overlay does not match the C declaration");
@@ -248,6 +283,25 @@ codes! {
     W5002 = (Warning, 5002, Ffi, "[FFI-9]", "unsupported calling convention; declaration skipped");
     E5090 = (Error, 5090, Ffi, "[UNS-6]", "inline assembly is not supported by the C backend");
 
+    // --- grades, adoption, C++ boundary, text (0.6, 0.7.x) --------------------
+    E5034 = (Error, 5034, Ffi, "[FFI-48]", "unsupported C++ construct");
+    E5050 = (Error, 5050, Ffi, "[FFI-34]", "a foreign fact claims a grade whose evidence is absent or stale");
+    E5051 = (Error, 5051, Ffi, "[FFI-35]", "a foreign callee retains a pointer the contract does not declare `retained`");
+    E5052 = (Error, 5052, Ffi, "[FFI-36b]", "`adopt` on a handle whose overlay declares `adopt = false`");
+    E5053 = (Error, 5053, Ffi, "[FFI-37]", "an instrumented run contradicted a declared foreign effect");
+    E5054 = (Error, 5054, Ffi, "[RNG-10b]", "range type in a foreign signature");
+    E5055 = (Error, 5055, Ffi, "[FFI-17b]", "an Ember generic may not instantiate a C++ template");
+    E5056 = (Error, 5056, Ffi, "[FFI-39]", "override of a virtual not named in `virtuals`");
+    E5057 = (Error, 5057, Ffi, "[FFI-39]", "`virtuals` names a method that is not virtual in the header");
+    E5058 = (Error, 5058, Ffi, "[FFI-39b]", "foreign base has no default constructor and no declared `init`");
+    E5059 = (Error, 5059, Ffi, "[FFI-17d]", "`@ffi(trampoline)` base has no virtual destructor and no `owner`");
+    E5060 = (Error, 5060, Ffi, "[FFI-39c]", "upcast in a context that cannot hold the `Retained` token");
+    E5061 = (Error, 5061, Ffi, "[FFI-43]", "imported C++ function has no exception policy");
+    E5062 = (Error, 5062, Ffi, "[FFI-43a]", "contradictory C++ exception policies");
+    E5063 = (Error, 5063, Ffi, "[TXT-2]", "foreign bytes reach `str` without validation");
+    E5064 = (Error, 5064, Ffi, "[TXT-3]", "interior null in a value converted to `CStr`");
+    E5065 = (Error, 5065, Ffi, "[SEL-2]", "`Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert");
+
     // --- comptime -------------------------------------------------------------
     E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits");
     E6002 = (Error, 6002, Comptime, "[CT-4]", "comptime evaluation is not deterministic");
@@ -260,16 +314,32 @@ codes! {
     E7020 = (Error, 7020, Concurrency, "[ECS-4]", "systems in one parallel run have conflicting access sets");
 
     // --- layout ---------------------------------------------------------------
-    E8001 = (Error, 8001, Layout, "[IX.5]", "GPU layout does not match the CPU layout");
+    E8001 = (Error, 8001, Layout, "[GPU-10]", "GPU layout does not match the CPU layout");
 
     // --- build, manifest, toolchain -------------------------------------------
     E9010 = (Error, 9010, Build, "[TYP-9c]", "toolchain cannot honour a float-control attribute");
     E9011 = (Error, 9011, Build, "[TYP-9a]", "toolchain cannot disable FP contraction");
-    E9020 = (Error, 9020, Build, "[FFI-33]", "translation units of one target disagree on an inherited flag");
-    E9021 = (Error, 9021, Build, "[FFI-33]", "C++ standard library and CRT heap could not be determined");
+    E9020 = (Error, 9020, Build, "[BLD-FFI-1a]", "translation units of one target disagree on an inherited flag");
+    E9021 = (Error, 9021, Build, "[BLD-FFI-1b]", "C++ standard library and CRT heap could not be determined");
     E9001 = (Error, 9001, Build, "[MAN-1]", "invalid manifest");
     E9002 = (Error, 9002, Build, "[BLD-4]", "the C toolchain could not be found or failed");
     E9003 = (Error, 9003, Build, "[CLI-1]", "invalid command line");
+
+    // `[MAN-3]` also names `E9010`, which `[TYP-9c]` already owns; `[DIA-6a]`
+    // requires one code per rule, and XX §6 leaves `E9012`/`E9013` described
+    // only as "manifest sections". They are allocated here — errata ERR-039.
+    E9012 = (Error, 9012, Build, "[MAN-3]", "`[lints]` names a lint the compiler does not define");
+    E9013 = (Error, 9013, Build, "[MAN-5]", "invalid `[ffi]` manifest section");
+    E9030 = (Error, 9030, Build, "[HR-18]", "hot reload refused");
+    E9031 = (Error, 9031, Build, "[MAN-7]", "invalid `reload` value");
+    // Registered and never emitted: `[HR-6]`'s permanent thunks make a
+    // reloadable function's address stable, so it cannot be stranded.
+    E9032 = (Error, 9032, Build, "[HR-6]", "reserved: a reloadable function's address escaping to foreign code");
+    E9033 = (Error, 9033, Build, "[PRF-2]", "`reload` is forbidden in `shipping`");
+    E9034 = (Error, 9034, Build, "[MONO-3]", "invalid `max_instantiations` value");
+    E9035 = (Error, 9035, Build, "[HR-12a]", "packages in one process disagree about the object-header layout");
+    E9036 = (Error, 9036, Build, "[HR-29]", "a reloadable package may not link the runtime statically");
+    E9037 = (Error, 9037, Build, "[ABI-2]", "reload ABI mismatch on image load");
 
     // --- warnings --------------------------------------------------------------
     W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");
@@ -281,22 +351,38 @@ codes! {
     W5001 = (Warning, 5001, Ffi, "[FFI-6]", "function-like macro ignored");
     W5031 = (Warning, 5031, Ffi, "[FFI-19]", "declaration skipped: the header could not be parsed");
 
+    W2220 = (Warning, 2220, Types, "[MONO-3]", "instantiation ceiling exceeded");
+    W3012 = (Warning, 3012, Ownership, "[UNS-8]", "unsafe block with no SAFETY note");
+    W5033 = (Warning, 5033, Ffi, "[FFI-40]", "`&&`-qualified member skipped");
+    W5034 = (Warning, 5034, Ffi, "[FFI-41]", "anonymous-namespace entity skipped");
+    W5050 = (Warning, 5050, Ffi, "[FFI-34]", "unbacked or stale grade");
+    W5054 = (Warning, 5054, Ffi, "[FFI-37b]", "unexercised foreign fact");
+    W9030 = (Warning, 9030, Build, "[HR-18]", "reload requires a restart");
+
     // --- lints ------------------------------------------------------------------
     L1001 = (Lint, 1001, Resolve, "[LNT-1]", "unused binding");
     L1002 = (Lint, 1002, Resolve, "[LNT-2]", "assignment declares a new binding");
     L3011 = (Lint, 3011, Ownership, "[CELL-7]", "`RefCell` guard held across a call");
     L3013 = (Lint, 3013, Ownership, "[EXC-7]", "long-term access held across a call");
     L3014 = (Lint, 3014, Ownership, "[LT-1b]", "return region is the intersection of N parameters");
-    L2001 = (Lint, 2001, Types, "[XIX.8]", "unnecessary clone");
-    L2002 = (Lint, 2002, Types, "[XIX.8]", "large Copy value passed by value");
+    L2001 = (Lint, 2001, Types, "[XX.8]", "unnecessary clone");
+    L2002 = (Lint, 2002, Types, "[XX.8]", "large Copy value passed by value");
     L3001 = (Lint, 3001, Ownership, "[WK-1]", "potential reference cycle");
-    L3002 = (Lint, 3002, Ownership, "[XIX.8]", "borrow held longer than necessary");
+    L3002 = (Lint, 3002, Ownership, "[XX.8]", "borrow held longer than necessary");
     L3010 = (Lint, 3010, Ownership, "[UNS-3]", "unsafe block larger than necessary");
-    L4001 = (Lint, 4001, Effects, "[XIX.8]", "allocation in a hot loop");
-    L4002 = (Lint, 4002, Effects, "[XIX.8]", "dynamic dispatch on a final type");
-    L5001 = (Lint, 5001, Ffi, "[XIX.8]", "unsafe extern without a contract");
-    L5002 = (Lint, 5002, Ffi, "[XIX.8]", "conversion at the FFI boundary copies");
-    L7001 = (Lint, 7001, Concurrency, "[XIX.8]", "lock held across a call that may block");
+    L4001 = (Lint, 4001, Effects, "[XX.8]", "allocation in a hot loop");
+    L4002 = (Lint, 4002, Effects, "[XX.8]", "dynamic dispatch on a final type");
+    L5001 = (Lint, 5001, Ffi, "[XX.8]", "unsafe extern without a contract");
+    L5002 = (Lint, 5002, Ffi, "[XX.8]", "conversion at the FFI boundary copies");
+    L7001 = (Lint, 7001, Concurrency, "[XX.8]", "lock held across a call that may block");
+
+    L2003 = (Lint, 2003, Types, "[RNG-5a]", "fallible construction where a total one exists");
+    L2004 = (Lint, 2004, Types, "[LNT-4]", "`gen fn` with no `yield`");
+    L2005 = (Lint, 2005, Types, "[LNT-5]", "`@noreload` function calls a reloadable one inside a loop");
+    L3015 = (Lint, 3015, Ownership, "[UNS-7]", "undocumented unsafe obligation");
+    L3016 = (Lint, 3016, Ownership, "[UNS-7]", "`@safety` text still reads `TODO`");
+    L3017 = (Lint, 3017, Ownership, "[WK-4]", "reference cycle detected");
+    L3018 = (Lint, 3018, Ownership, "[UNS-9]", "`unsafe` block with no reason category");
 }
 
 /// Look a code up by its rendered form, e.g. `"E3040"`. Used by `ember explain`.

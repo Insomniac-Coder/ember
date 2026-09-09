@@ -4250,7 +4250,7 @@ large_copy = { level = "warn", threshold = 256 }
 ```
 
 `[MAN-1]` Unknown keys are errors. `[MAN-2]` `ember.lock` records the resolved dependency graph with content hashes; `ember build --locked` fails if the lock would change.
-* `[MAN-3]` Every key in `[lints]` MUST name a lint the compiler defines (`E9010` otherwise). XX §2's `unused` key is `L1001`.
+* `[MAN-3]` Every key in `[lints]` MUST name a lint the compiler defines (`E9012` otherwise; `E9010` is `[TYP-9c]`'s and a code is defined by exactly one rule per `[DIA-6a]` — errata ERR-039). XX §2's `unused` key is `L1001`.
 * `[MAN-4]` The manifest file name, the source extension and the `.embind` extension are constants of the same `branding` module; the test harness and the build system discover them rather than spelling them.
 * `[MAN-5]` `ember.toml` gains `[ffi] evidence = "<path>"`, default `".ember/ffi-evidence"`. It is part of `[BLD-2]`'s package config.
 
