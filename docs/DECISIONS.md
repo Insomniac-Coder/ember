@@ -254,6 +254,13 @@ derives from no parameter either and is `E3060`.
 
 ## ADR-012 — `E3064` stays unemitted until a program needs it
 
+> **Superseded, 2026-09-09.** The question is answered: `E3064` is reachable,
+> and the programs it is for were being reported as B3. `[LT-2]`'s one-region
+> model is what makes them reachable — a view struct bundling two views holds
+> both loans while any part of it is live. The compiler was rejecting the right
+> programs under the wrong shape, so neither the rule nor the narrowing was
+> wrong; the classifier was. See D-011.
+>
 > **Reopened by the owner, 2026-09-09.** This ADR is a decision to *defer*,
 > not a finding that `E3064` is unreachable. I had concluded the latter and
 > written it into `[LT-2]` as amendment A4; the owner withdrew both, on the

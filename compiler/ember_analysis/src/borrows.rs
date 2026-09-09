@@ -557,7 +557,19 @@ fn check_point(
             // `[DIA-2]` — never name a temporary at the user. When the
             // borrow lives in one, the advice is about the expression, not
             // about a local they cannot see.
-            let (borrower, later) = keeper(body, regions, reads, loan, span);
+            let (borrower, later, holder) = keeper(body, regions, reads, loan, span);
+            // `[LT-2]` — when a view struct bundling two views is what holds
+            // the loan, this is shape B13 and not B3, and `[DIA-7a]` keys it
+            // to `E3064`.
+            let bundled = bundles_two_views(body, types, holder);
+            let (code, message) = if bundled {
+                (
+                    codes::E3064,
+                    format!("`{name}` is borrowed through a view struct that bundles two views"),
+                )
+            } else {
+                (code, message)
+            };
             let kind = if loan_mutable { "mutable " } else { "" };
             let mut diagnostic = Diagnostic::error(code, span, message)
                 .primary_label("conflicting access here")
@@ -567,18 +579,29 @@ fn check_point(
             }
             sink.emit_classified(
                 diagnostic
-                    .help(match &borrower {
-                        Some(name) => format!(
+                    .help(match (&borrower, bundled) {
+                        // `[DIA-7a]` shape B13's help, which is a different fix
+                        // from B3's: the use keeping the loan alive may be of
+                        // the *other* field, so shortening it is no answer.
+                        (_, true) => String::from(
+                            "pass the two views as separate parameters rather than bundling \
+                             them; or copy the shorter-lived data into an owned field",
+                        ),
+                        (Some(name), _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        None => format!(
+                        (None, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
                         ),
                     })
-                    .note("a borrow lasts until its last use, not to the end of the scope (BRW-2)"),
+                    .note(if bundled {
+                        "a view struct has one region: the intersection of its fields' (LT-2)"
+                    } else {
+                        "a borrow lasts until its last use, not to the end of the scope (BRW-2)"
+                    }),
             );
         }
     }
@@ -597,7 +620,7 @@ fn keeper(
     reads: &HashMap<LocalId, Vec<Span>>,
     loan: &Loan,
     conflict: Span,
-) -> (Option<String>, Option<Span>) {
+) -> (Option<String>, Option<Span>, Option<LocalId>) {
     let mut best: Option<(LocalId, Span)> = None;
     for holder in regions.holders(loan.region) {
         if body.local(*holder).name.is_none() {
@@ -614,12 +637,35 @@ fn keeper(
         }
     }
     match best {
-        Some((holder, span)) => (body.local(holder).name.clone(), Some(span)),
+        Some((holder, span)) => (body.local(holder).name.clone(), Some(span), Some(holder)),
         // No later read: the borrow is kept alive by something else — a loop
         // back edge, or the return slot — and the local it was written into is
         // still the honest thing to name.
-        None => (body.local(loan.borrower).name.clone(), None),
+        None => (body.local(loan.borrower).name.clone(), None, Some(loan.borrower)),
     }
+}
+
+/// `[LT-2]`, shape B13 — whether the thing keeping this loan alive is a view
+/// struct bundling **more than one** view.
+///
+/// That is the whole of `[LT-2]`'s one-region model made visible: "constructing
+/// a view struct from several references gives it the intersection of their
+/// regions", and "multiple independent regions inside one struct are not
+/// expressible in v1". So a struct holding two views holds *both* loans for as
+/// long as any part of it is live, and touching the struct at all keeps the
+/// shorter one alive — even where only the longer-lived field is ever read.
+///
+/// The rejection is right either way; what changes is the advice. `[DIA-7a]`
+/// keys `E3064` to this shape, whose help is to stop bundling, and that is the
+/// fix — where B3's "shorten its last use" is not, because the use that keeps
+/// the loan alive may be of the *other* field entirely.
+///
+/// D-011 recorded `E3064` as "registered and emitted by nothing". It was
+/// reachable all along: these programs were being rejected as B3.
+fn bundles_two_views(body: &Body, types: &TypeTable, holder: Option<LocalId>) -> bool {
+    let Some(holder) = holder else { return false };
+    let TyKind::Struct(id) = *types.kind(body.local(holder).ty) else { return false };
+    types.struct_def(id).fields.iter().filter(|f| types.is_view(f.ty)).count() >= 2
 }
 
 /// Every point at which a local's value is read, by the span of the statement
