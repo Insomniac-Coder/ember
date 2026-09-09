@@ -16,6 +16,13 @@ compiler drift apart. This is that tool. It runs six checks:
    entry cites a rule that exists (`[DIA-6a]`, both directions).
 5. **Every code has an error page** under `docs/errors/` (`[DIA-6]`).
 6. **Every E3xxx code is keyed to a diagnostic shape** (`[DIA-7a]`).
+7. **Every rule reference resolves.** A rule that cites `[FFI-17b]` for
+   something `[FFI-17b]` does not say is one problem; a rule that cites an id
+   no rule defines is a worse one, because a reader cannot even find out. That
+   was ERR-034: `[FFI-17d]` pointed at `@ffi(no_virtual_dtor)` "which
+   `[FFI-17b]` covers", and no rule anywhere defined the attribute. This check
+   cannot tell whether a citation is *apt*, but it catches every citation with
+   nothing on the other end.
 
 Checks 3, 5 and 6 cannot pass before the phases that create their artefacts, so
 they run against a recorded baseline: a violation already in the baseline is
@@ -52,6 +59,12 @@ REGISTRY_ENTRY = re.compile(
 # A definition states a rule: the id opens a bullet, or follows a short label
 # at the head of one, and normative prose follows. Everything else is a
 # reference — `[XXII.4]`: "a reference is not a definition".
+# Words that announce a citation rather than a definition, when they appear
+# before the first rule id on a line.
+REFERENCE_LEAD = re.compile(
+    r"(?:see|per|under|from|by|cites?|citing|named in|listed in|which|that|and)\s*$",
+    re.I,
+)
 REFERENCE_TAIL = re.compile(r"^(?:'s|,|\)|\.|;|:|\s+and\b|\s+applies|\s+is unaffected)")
 DEFINITION_TAIL = re.compile(r"^\s+(?:MUST|SHOULD|MAY|\*\*|…|\.\.\.|[A-Z`])")
 
@@ -97,6 +110,76 @@ def all_rule_ids(text):
     return sorted(set(RULE_ID.findall(text)))
 
 
+def stated_anywhere(lines):
+    """Every id the document *states* a rule for, wherever on the line it sits.
+
+    Laxer than `rule_definitions` on purpose. That one answers `[XXII.4]`'s
+    question — is this id defined *twice* — and so counts only the first id on
+    a bullet, because "`[MAN-1]` Unknown keys are errors. `[MAN-2]` ..." must
+    not read as `[MAN-2]` being defined by `[MAN-1]`'s bullet.
+
+    The dangling-reference check asks a different question — is this id defined
+    *at all* — and for that the second rule on such a line is plainly defined.
+    Using the strict set here reported thirty rules as undefined that the
+    document defines perfectly well, just not at the start of a bullet.
+    """
+    stated = set()
+    for line in lines:
+        # The first id on a line is what that line is about, whatever
+        # punctuation follows it, unless the words before it announce a
+        # citation. The document states a rule in at least four shapes —
+        #
+        #     * `[SPN-1]` `Array[T]` coerces …          a bullet
+        #     * Parameter modes `[FN-1]`:               a labelled bullet
+        #     **Integer overflow** `[TYP-8]`: in the …  a bold label, no bullet
+        #     `[MAN-1]` … errors. `[MAN-2]` `ember.lock` …   two on one line
+        #
+        # — and a test tight enough to reject every citation rejected three of
+        # these too, reporting thirty rules as undefined that the document
+        # defines. Over-counting here is the safer error: it costs a missed
+        # dangling reference, where under-counting costs a gate nobody trusts.
+        first = QUOTED_RULE_ID.search(line)
+        if first and not REFERENCE_LEAD.search(line[: first.start()]):
+            stated.add(first.group(1))
+        # And a later id on any line, where normative prose follows it —
+        # "`[MAN-1]` Unknown keys are errors. `[MAN-2]` `ember.lock` records…"
+        for m in QUOTED_RULE_ID.finditer(line):
+            tail = line[m.end():]
+            if not REFERENCE_TAIL.match(tail) and DEFINITION_TAIL.match(tail):
+                stated.add(m.group(1))
+    return stated
+
+
+def dangling_references(lines, defined):
+    """Rule ids the document mentions and never defines.
+
+    A definition is `rule_definitions`' structural test; everything else that
+    looks like a rule id is a reference. Some are deliberate and are not
+    defects, so three kinds are excluded:
+
+    * ids inside a `## Change log` section for an earlier revision, which
+      `[XXII.4]` already says to ignore — they record what a past revision did
+      and may name rules since removed (`[CTR-*]`, `[PRV-*]`, `[HOT-*]`);
+    * prefix wildcards written as a family (`[SPN-*]`), which are prose;
+    * ids the index itself lists as prefixes rather than rules.
+    """
+    out = []
+    in_old_changelog = False
+    for number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("## Change log"):
+            in_old_changelog = "0.8.3" not in stripped
+            continue
+        if stripped.startswith("## ") and not stripped.startswith("## Change log"):
+            in_old_changelog = False
+        if in_old_changelog:
+            continue
+        for rid in RULE_ID.findall(line):
+            if rid not in defined:
+                out.append((rid, number))
+    return out
+
+
 def registry_entries():
     if not REGISTRY_RS.exists():
         return {}
@@ -120,7 +203,12 @@ def codes_named_in_spec(text):
 def load_baseline():
     if BASELINE.exists():
         return json.loads(BASELINE.read_text(encoding="utf-8"))
-    return {"rules_without_tests": [], "codes_without_pages": [], "codes_not_in_registry": []}
+    return {
+        "rules_without_tests": [],
+        "codes_without_pages": [],
+        "codes_not_in_registry": [],
+        "dangling_references": [],
+    }
 
 
 def main():
@@ -158,6 +246,14 @@ def main():
             f"appended instead of substituted into the rule it amends"
         )
 
+    # --- 7. every rule reference resolves ----------------------------------
+    seen = set()
+    dangling = []
+    for rid, n in dangling_references(lines, stated_anywhere(lines)):
+        if rid not in seen:
+            seen.add(rid)
+            dangling.append((rid, n))
+
     # --- 3. every rule has a conformance directory (`[TST-4]`) -------------
     rules = all_rule_ids(text)
     have = {p.name for p in CONFORMANCE.iterdir()} if CONFORMANCE.exists() else set()
@@ -192,9 +288,11 @@ def main():
             "rules_without_tests": missing_tests,
             "codes_without_pages": missing_pages,
             "codes_not_in_registry": not_in_registry,
+            "dangling_references": sorted({rid for rid, _ in dangling}),
         }
         grown = {
-            key: sorted(set(values) - set(known[key])) for key, values in proposed.items()
+            key: sorted(set(values) - set(known.get(key, [])))
+            for key, values in proposed.items()
         }
         if any(grown.values()) and not args.allow_growth:
             print("\n`[TST-4c]`: the baseline may shrink and never grow.")
@@ -213,7 +311,7 @@ def main():
         )
         added = sum(len(v) for v in grown.values())
         removed = sum(
-            len(set(known[key]) - set(values)) for key, values in proposed.items()
+            len(set(known.get(key, [])) - set(values)) for key, values in proposed.items()
         )
         print(f"baseline written: {len(missing_tests)} rules without tests, "
               f"{len(missing_pages)} codes without pages, "
@@ -230,12 +328,16 @@ def main():
     for c in not_in_registry:
         if c not in known["codes_not_in_registry"]:
             failures.append(f"[DIA-6a] {c} is named in the specification but not in the registry")
+    for rid, n in dangling:
+        if rid not in known.get("dangling_references", []):
+            failures.append(f"`[{rid}]` (line {n}) is cited and defined by no rule")
 
     print(f"rules: {len(rules)}   stated: {len(defs)}   codes named: {len(named)}   "
           f"registry: {len(registry)}")
     print(f"known gaps (baseline): {len(known['rules_without_tests'])} rules without tests, "
           f"{len(known['codes_without_pages'])} codes without pages, "
-          f"{len(known['codes_not_in_registry'])} codes not in the registry")
+          f"{len(known['codes_not_in_registry'])} codes not in the registry, "
+          f"{len(known.get('dangling_references', []))} dangling references")
 
     if args.report:
         print("\n-- rules with no conformance directory --")

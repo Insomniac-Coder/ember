@@ -92,6 +92,7 @@ ERR-008) is worth being able to read again.
 | ERR-039 | `E9010` in `[TYP-9c]` and `[MAN-3]` | **decided** — `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012` |
 | ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |
 | ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
+| ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
 
 ---
 
@@ -1754,3 +1755,60 @@ and `columns_mut`'s, all three of which Part VII §7 and `[BRW-5]` name.
 view parameter takes a `ref mut MutSpan[T]` — then Part VII §7's three example
 lines change, `split_at` grows a binding before every use, and the fix is one
 line in `mut_param_ty`.
+
+---
+
+## ERR-042 — Nine rule ids are cited and defined by no rule
+
+**Status: open. Reported to the owner.** Found mechanically, by the check
+fix-list item 17 asked for.
+
+**How it was found.** ERR-034 was one instance of this: `[FFI-17d]` cited
+`@ffi(no_virtual_dtor)` as something "`[FFI-17b]` covers", and `[FFI-17b]` is
+about template instantiation and covers no such thing — following the citation
+to the right rule was impossible, because **no rule defined the attribute at
+all**. That is a defect a reader cannot even diagnose: the trail simply ends.
+
+`tools/rule_index.py` now checks that every rule id the document mentions is
+also stated somewhere, and reports the ones that are not. Nine survive as
+genuine.
+
+**The nine.** Each appears **exactly once** in the whole document, in a
+citation, and nowhere as a rule:
+
+| Cited | At | Cited for |
+|---|---|---|
+| `[TYP-26]` | Part IV, the parameter-mode list | the no-overloading rule that `function_value` depends on |
+| `[IFC-2]` | Part IV §8 | the orphan rule for interface impls |
+| `[HND-2]` | Part IX | the index/generation split of a `Pool` handle |
+| `[GPU-7]` | Part XVII | resource state after a full wait-idle |
+| `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | Part XX | **the entire IDE surface** |
+
+The `IDE-*` family is the one to look at first. Part XXIII's rule-index
+paragraph lists `IDE` among the prefixes and says where it is specified —
+Part XX — and Part XX cites five of its rules in a single line and defines
+none of them. So the language-server contract is referenced, budgeted for and
+never written.
+
+`[TYP-26]` is the one that already cost something: `function_value`'s comment
+reasons from "`[TYP-26]`'s no-overloading rule" to justify giving a named
+function the `fn(A) -> R` type directly rather than a unique zero-sized one.
+That reasoning may well be right, and the rule it rests on cannot be read.
+
+**What is not in the list, and why.** Three shapes look like this and are not
+defects, so the check excludes them: a range written `[RC-2a]`..`[RC-2d]`,
+where only the endpoints are written out; a deliberate historical mention
+(`[HOT-1]`..`[HOT-10]`, which Part XXIII says to ignore precisely because they
+were replaced); and an id defined in a shape the detector reads as a citation.
+That last one took three passes to get right — a test tight enough to reject
+every citation also rejected `**Integer overflow** `[TYP-8]`:` and
+`* Parameter modes `[FN-1]`:`, reporting thirty rules as undefined that the
+document defines perfectly well. The detector now over-counts definitions on
+purpose: a missed dangling reference costs less than a gate nobody trusts.
+
+**What this needs from the owner.** Either the nine rules, or a note that the
+citation is to a rule the document no longer carries. Nothing in the compiler
+turns on any of them today, so this blocks nothing — but `[IDE-*]` is a
+Part XX deliverable with no text behind it, and `[TYP-26]` is load-bearing for
+a decision already taken.
+
