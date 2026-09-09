@@ -314,7 +314,19 @@ pub struct CommonTypes {
     pub int_lit: Ty,
     pub float_lit: Ty,
     pub error: Ty,
+    /// `Self` inside an `interface` declaration, where the implementing type
+    /// is not yet known (Part IV §8: `interface Clone: fn clone(self) -> Self`).
+    ///
+    /// A `Param` rather than a kind of its own, because that is exactly what
+    /// it is — a type the body may not look inside, substituted when the
+    /// interface is used. `SELF_PARAM` keeps it out of any real parameter
+    /// list's index space.
+    pub self_ty: Ty,
 }
+
+/// The index `CommonTypes::self_ty` occupies. No generic parameter list
+/// reaches it, so a substitution over one cannot collide with `Self`.
+pub const SELF_PARAM: u32 = u32::MAX;
 
 impl TypeTable {
     pub fn new() -> (TypeTable, CommonTypes) {
@@ -348,6 +360,10 @@ impl TypeTable {
             void: table.intern(TyKind::Void),
             never: table.intern(TyKind::Never),
             str_: table.intern(TyKind::Str),
+            self_ty: table.intern(TyKind::Param {
+                index: SELF_PARAM,
+                name: Symbol::intern("Self"),
+            }),
             int_lit: table.intern(TyKind::IntLit),
             float_lit: table.intern(TyKind::FloatLit),
             error: table.intern(TyKind::Error),
@@ -386,6 +402,48 @@ impl TypeTable {
 
     /// `[TYP-16]` — replace each parameter with the type it was instantiated
     /// with. `args` is indexed by the parameter's position.
+    /// Replace `Self` (`CommonTypes::self_ty`) with a concrete type.
+    ///
+    /// Part IV §8's interfaces are declared over `Self`; a use of one — a
+    /// method call through a bound, a default body copied into an impl —
+    /// substitutes the implementing type for it. Kept apart from
+    /// `substitute`, which maps by parameter *index*: `SELF_PARAM` is
+    /// `u32::MAX` precisely so no real index list reaches it, and indexing an
+    /// argument vector with it would be a bug rather than a lookup.
+    pub fn substitute_self(&mut self, ty: Ty, concrete: Ty) -> Ty {
+        match self.kind(ty).clone() {
+            TyKind::Param { index, .. } if index == SELF_PARAM => concrete,
+            TyKind::Ref { mutable, inner } => {
+                let inner = self.substitute_self(inner, concrete);
+                self.intern(TyKind::Ref { mutable, inner })
+            }
+            TyKind::Ptr { mutable, inner } => {
+                let inner = self.substitute_self(inner, concrete);
+                self.intern(TyKind::Ptr { mutable, inner })
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.substitute_self(elem, concrete);
+                self.intern(TyKind::Array { elem, len })
+            }
+            TyKind::Vec { elem } => {
+                let elem = self.substitute_self(elem, concrete);
+                self.intern(TyKind::Vec { elem })
+            }
+            TyKind::Tuple(items) => {
+                let items: Vec<Ty> =
+                    items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
+                self.intern(TyKind::Tuple(items))
+            }
+            TyKind::Fn { params, ret } => {
+                let params: Vec<Ty> =
+                    params.iter().map(|&t| self.substitute_self(t, concrete)).collect();
+                let ret = self.substitute_self(ret, concrete);
+                self.intern(TyKind::Fn { params, ret })
+            }
+            _ => ty,
+        }
+    }
+
     pub fn substitute(&mut self, ty: Ty, args: &[Ty]) -> Ty {
         match self.kind(ty).clone() {
             TyKind::Param { index, .. } => {

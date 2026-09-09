@@ -14,12 +14,21 @@ mod decls;
 mod body;
 
 /// `[MOD-6]`, `[VER-1]` — the language versions whose source this compiler
-/// accepts. The set MUST include every version still accepted, so that pinning
-/// an older one stays valid; it holds one entry because v0.5 changed the
-/// grammar under `let`, `type`, `;` and the jump expressions, and no earlier
-/// source survives those changes. It grows when `[VER-2]`'s compatibility
-/// promise comes into force at 1.0.
-pub const LANGUAGE_VERSIONS: &[&str] = &["0.5"];
+/// accepts. "The compiler's supported set MUST include every language version
+/// whose source it still accepts, so pinning an older version stays valid."
+///
+/// Nothing earlier than 0.5 is here because 0.5 changed the grammar under
+/// `let`, `type`, `;` and the jump expressions and no earlier source survives
+/// those changes. Everything from 0.5 forward is, because each revision after
+/// it rejects source the previous one accepted in exactly one documented way
+/// — 0.6.3's `yield`, which its own change log requires `E0104` to name
+/// `r#yield` for — and a program that avoids that one word is accepted under
+/// every version in this list. `[VER-2]`'s compatibility promise comes into
+/// force at 1.0 and makes the list's growth a rule rather than a courtesy.
+pub const LANGUAGE_VERSIONS: &[&str] = &[
+    "0.5", "0.6", "0.6.2", "0.6.3", "0.7.1", "0.7.2", "0.8", "0.8.1", "0.8.2b", "0.8.2c",
+    "0.8.3",
+];
 
 /// Parse one file's token stream into a [`Module`].
 ///
@@ -355,6 +364,21 @@ impl<'a> Parser<'a> {
 
     // -- entry point --------------------------------------------------------
 
+    /// Whether the run of doc comments at the cursor is followed by an import
+    /// rather than by a declaration. `[LEX-11]` ignores blank lines between a
+    /// doc comment and what it attaches to, so newlines are skipped here too.
+    fn import_follows_doc_comment(&self) -> bool {
+        let mut index = self.pos;
+        loop {
+            match self.tokens.get(index).map(|t| &t.kind) {
+                Some(TokenKind::DocComment(_)) | Some(TokenKind::Newline) => index += 1,
+                Some(TokenKind::Keyword(Kw::Import)) => return true,
+                Some(TokenKind::Ident(s)) => return s.is("from"),
+                _ => return false,
+            }
+        }
+    }
+
     fn parse_module(&mut self) -> Module {
         let start = self.span();
         let directive = self.parse_directive();
@@ -367,6 +391,19 @@ impl<'a> Parser<'a> {
             self.eat_newlines();
             if self.at_eof() {
                 break;
+            }
+            // `[LEX-11]` — "A `##` comment that is not followed by a
+            // declaration documents nothing and is **discarded in silence**".
+            // An import is not a declaration, so a doc comment above one
+            // documents nothing. It reported `E0100 expected a declaration`
+            // until 2026-09-09, which is a comment affecting compilation —
+            // the one thing `[LEX-11]` says can never happen.
+            if matches!(self.peek(), TokenKind::DocComment(_))
+                && self.import_follows_doc_comment()
+            {
+                let doc = self.take_doc();
+                self.discard_dangling_doc(doc);
+                continue;
             }
             if self.at_kw(Kw::Import) || self.at_contextual("from") {
                 if let Some(import) = self.parse_import() {

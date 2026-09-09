@@ -62,6 +62,10 @@ pub fn check(
     }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
+        checker.collect_interfaces(&loaded.module);
+    }
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
     let mut functions = Vec::new();
@@ -210,6 +214,11 @@ struct Checker<'a> {
     /// The generic parameters of the function being checked, so a method call
     /// on one can find its bounds (`[TYP-17]`).
     current_generics: Vec<GenericParam>,
+    /// What `Self` names right now: the concrete type inside a `struct`,
+    /// `class`, `enum` or `extend` body, and `CommonTypes::self_ty` inside an
+    /// `interface`, where the implementing type is not yet known. `None` where
+    /// `Self` has no meaning, which is `E2020`.
+    self_ty: Option<Ty>,
     /// `[IFC-4]` — the associated type names in scope while an interface
     /// declaration is read.
     assoc_scope: std::collections::BTreeSet<Symbol>,
@@ -267,6 +276,7 @@ impl<'a> Checker<'a> {
             current_module: 0,
             type_params: HashMap::new(),
             current_generics: Vec::new(),
+            self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
@@ -700,7 +710,17 @@ impl<'a> Checker<'a> {
                 .types
                 .intern(TyKind::Param { index: index as u32, name: param.name.name });
             self.type_params.insert(param.name.name, ty);
-            let bounds = param.bounds.iter().filter_map(interface_name).collect();
+            // The bound is recorded under the name the interface is
+            // registered by, so `T: Ord` finds `std.core.Ord` when `Ord` was
+            // imported. Storing what was written made an imported bound
+            // resolve to nothing and report `[TYP-17]`'s "its bounds do not
+            // provide one" about a bound that did.
+            let bounds = param
+                .bounds
+                .iter()
+                .filter_map(interface_name)
+                .map(|name| self.resolve_name(name))
+                .collect();
             declared.push(GenericParam { name: param.name.name, bounds });
         }
         declared
@@ -777,12 +797,15 @@ impl<'a> Checker<'a> {
                     .map(|s| s.name.to_string())
                     .collect::<Vec<_>>()
                     .join(".");
-                if key.starts_with("std") {
-                    // `[MOD-5]` — the prelude is implicit; its names are
-                    // already built in.
-                    continue;
-                }
                 let Some(&target) = by_path.get(&key) else {
+                    // `[MOD-5]` — the prelude's names are compiler-known until
+                    // the library can supply each one, so an import naming a
+                    // `std` module with no file yet binds nothing rather than
+                    // failing. A `std` module that *does* exist is resolved
+                    // like any other, above.
+                    if key == "std" || key.starts_with("std.") {
+                        continue;
+                    }
                     self.error(
                         codes::E1010,
                         import.span,
@@ -1305,14 +1328,26 @@ impl<'a> Checker<'a> {
 
     // -- interfaces and methods (block D) ------------------------------------
 
-    /// A third collection pass: interfaces first, so that `implements` can
-    /// name them, then every method on a type.
-    fn collect_methods(&mut self, module: &ast::Module) {
+    /// Interfaces, across every module, before any `implements` is read.
+    ///
+    /// This ran per module beside the methods until 2026-09-09, so a module
+    /// checked before the one declaring an interface could not `implement` it:
+    /// `from lib import Eq` then `extend V implements Eq:` was "cannot find
+    /// interface `Eq`", and which module won depended on the load order.
+    /// `[MOD-4]` allows import cycles inside a package, so there is no order
+    /// that would have made it work — the pass has to be whole-program, as the
+    /// name pass above it already is.
+    fn collect_interfaces(&mut self, module: &ast::Module) {
         for item in &module.items {
             if let ast::ItemKind::Interface(decl) = &item.kind {
                 self.collect_interface(decl, item.span);
             }
         }
+    }
+
+    /// A third collection pass: every method on a type, with every interface
+    /// already collected so that `implements` can name one.
+    fn collect_methods(&mut self, module: &ast::Module) {
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
@@ -1419,6 +1454,16 @@ impl<'a> Checker<'a> {
     }
 
     fn collect_interface(&mut self, decl: &ast::InterfaceDecl, span: Span) {
+        // Part IV §8 — `Self` inside an `interface` is the implementing type,
+        // which is unknown here, so it is a parameter until the interface is
+        // used. `[TYP-22]` is what says a method returning it by value is not
+        // `dyn`-compatible; statically it resolves like any other parameter.
+        let outer_self = self.self_ty.replace(self.common.self_ty);
+        self.collect_interface_inner(decl, span);
+        self.self_ty = outer_self;
+    }
+
+    fn collect_interface_inner(&mut self, decl: &ast::InterfaceDecl, span: Span) {
         let name = self.qualified(decl.name.name);
         if self.interfaces.contains_key(&name) || self.named_types.contains_key(&name) {
             self.error(
@@ -1456,7 +1501,15 @@ impl<'a> Checker<'a> {
             self.signatures.push(signature);
             methods.push((f.name.name, def, receiver, f.body.is_some()));
         }
-        let supertraits = decl.supertraits.iter().filter_map(interface_name).collect();
+        // Resolved for the same reason the bounds and the implementation
+        // record are: `interface Ord: Eq` in one module and
+        // `implements Eq` in another name the same interface.
+        let supertraits = decl
+            .supertraits
+            .iter()
+            .filter_map(interface_name)
+            .map(|name| self.resolve_name(name))
+            .collect();
         let _ = span;
         self.assoc_scope = saved_assoc;
         // `[IFC-4]` — the associated names were in scope while the
@@ -1515,6 +1568,19 @@ impl<'a> Checker<'a> {
 
     /// Register every method in a type body or `extend` block.
     fn collect_members(
+        &mut self,
+        ty: Ty,
+        members: &[ast::Member],
+        from_interface: Option<Symbol>,
+        span: Span,
+    ) {
+        // `Self` inside a type body or an `extend` block is that type.
+        let outer_self = self.self_ty.replace(ty);
+        self.collect_members_inner(ty, members, from_interface, span);
+        self.self_ty = outer_self;
+    }
+
+    fn collect_members_inner(
         &mut self,
         ty: Ty,
         members: &[ast::Member],
@@ -1593,15 +1659,19 @@ impl<'a> Checker<'a> {
         span: Span,
     ) {
         for entry in implements {
-            let Some(name) = interface_name(entry) else {
+            let Some(written) = interface_name(entry) else {
                 self.error(codes::E1010, entry.span, "expected an interface name");
                 continue;
             };
-            if !self.interfaces.contains_key(&self.resolve_name(name)) {
+            // Recorded under the name the interface is registered by, so that
+            // a bound written `T: Ord` on an imported `Ord` matches the
+            // implementation written `implements Ord` in another module.
+            let name = self.resolve_name(written);
+            if !self.interfaces.contains_key(&name) {
                 self.error(
                     codes::E1010,
                     entry.span,
-                    format!("cannot find interface `{name}` in this scope"),
+                    format!("cannot find interface `{written}` in this scope"),
                 );
                 continue;
             }
@@ -1611,7 +1681,7 @@ impl<'a> Checker<'a> {
                 self.error(
                     codes::E2041,
                     entry.span,
-                    format!("`{shown}` already implements `{name}`"),
+                    format!("`{shown}` already implements `{written}`"),
                 );
                 continue;
             }
@@ -1627,6 +1697,21 @@ impl<'a> Checker<'a> {
         match &ty.kind {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
+            // Part IV §8 — `interface Clone: fn clone(self) -> Self`. Inside a
+            // type body or an `extend` block `Self` is that type; inside an
+            // interface it is the implementing type, which is not known until
+            // the interface is used, so it is a parameter until then.
+            ast::TypeKind::SelfType => match self.self_ty {
+                Some(ty) => ty,
+                None => {
+                    self.error(
+                        codes::E2020,
+                        ty.span,
+                        "`Self` names the type being declared, and there is none here",
+                    );
+                    self.common.error
+                }
+            },
             ast::TypeKind::Ref { mutable, inner } => {
                 let inner = self.resolve_type(inner);
                 self.types.intern(TyKind::Ref { mutable: *mutable, inner })
@@ -5500,9 +5585,20 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
-        let signature: Vec<(Ty, Mode)> =
-            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        // Part IV §8 — the interface was declared over `Self`; here the
+        // implementing type is the receiver's, so `Self` becomes it. Without
+        // this, `fn less(self, other: Self) -> bool` asks a `T` for a `Self`.
+        let concrete = receiver.ty;
+        let signature: Vec<(Ty, Mode)> = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .map(|(_, t, m, _)| (*t, *m))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(t, m)| (self.types.substitute_self(t, concrete), m))
+            .collect();
         let ret = self.signatures[def.0 as usize].ret;
+        let ret = self.types.substitute_self(ret, concrete);
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {

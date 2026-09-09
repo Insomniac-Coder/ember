@@ -1,0 +1,9 @@
+[package]
+name = "std"
+version = "0.1.0"
+language = "0.8.3"
+kind = "lib"
+
+# No `[build] entry`: `[MOD-1]` already makes `src/lib.em` the library root
+# module, and naming it here would hard-code the source extension, which
+# `[RT-5]` forbids outside the `branding` module.

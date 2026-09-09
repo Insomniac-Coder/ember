@@ -611,3 +611,24 @@ fn yield_is_a_keyword_and_needs_a_raw_identifier_as_a_name() {
     let ok = dump("fn f():\n    r#yield = 1\n");
     assert!(ok.contains("Assign"), "{ok}");
 }
+
+#[test]
+fn a_doc_comment_above_an_import_is_silent() {
+    // `[LEX-11]` — "A `##` comment that is not followed by a declaration
+    // documents nothing and is **discarded in silence**: a comment never
+    // affects compilation, and that includes producing a warning." An import
+    // is not a declaration, and this reported `E0100` until 2026-09-09.
+    let out = run("## documents nothing\nfrom a.b import x\n\nfn main(): pass\n");
+    assert!(out.codes.is_empty(), "a comment must never affect compilation:\n{}", out.messages);
+    assert!(out.dump.contains("From a.b import x"), "{}", out.dump);
+}
+
+#[test]
+fn a_doc_comment_above_an_import_does_not_swallow_a_later_one() {
+    // The doc comment above the import is discarded; the one above the item
+    // still attaches to it.
+    let out = run("## discarded\nimport a.b\n\n## kept\nfn main(): pass\n");
+    assert!(out.codes.is_empty(), "{}", out.messages);
+    assert!(out.dump.contains("Doc \"kept\""), "{}", out.dump);
+    assert!(!out.dump.contains("discarded"), "{}", out.dump);
+}

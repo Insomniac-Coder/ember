@@ -97,9 +97,62 @@ pub fn source_file(stem: &str) -> String {
     format!("{stem}.{SOURCE_EXT}")
 }
 
+/// `[MOD-5]`, `[STD-1]` — the standard library's package name.
+pub const STD_PACKAGE: &str = "std";
+
+/// The environment variable that overrides where `std`'s sources are found.
+/// `[TOOL-1]`'s toolchain archive ships them, so an installed compiler finds
+/// them beside itself; this is for a compiler run out of its build tree.
+pub fn std_path_var() -> String {
+    format!("{}_STD", SYMBOL_PREFIX.to_uppercase())
+}
+
+/// Where `std`'s sources live, or `None` where they cannot be found.
+///
+/// The order is: the environment variable; then `std/src` beside the running
+/// executable, which is where `[TOOL-1]`'s archive puts it; then `std/src`
+/// found by walking up from the executable and from the working directory,
+/// which is what makes a compiler run out of `target/debug/` work.
+pub fn std_root() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var(std_path_var()) {
+        let path = std::path::PathBuf::from(path);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let mut starts: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            starts.push(dir.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        starts.push(cwd);
+    }
+    for start in starts {
+        let mut dir = start.as_path();
+        loop {
+            let candidate = dir.join(STD_PACKAGE).join("src");
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_std_path_variable_is_derived_too() {
+        assert_eq!(std_path_var(), "EMBER_STD");
+    }
 
     #[test]
     fn the_mangled_prefix_is_derived_not_written() {

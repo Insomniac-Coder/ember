@@ -263,10 +263,6 @@ fn load_modules(
                 ember_ast::ImportKind::Foreign { .. } => continue,
             };
             let names: Vec<String> = segments.iter().map(|s| s.name.to_string()).collect();
-            // `[MOD-5]` — `std.prelude` is implicit and has no file yet.
-            if names.first().is_some_and(|first| first == "std") {
-                continue;
-            }
             wanted.push((names, import.span));
         }
 
@@ -278,7 +274,14 @@ fn load_modules(
                 continue;
             }
             seen.insert(key.clone());
-            let Some(file_path) = module_file(root_dir, &names) else {
+            let Some(file_path) = resolve_module(root_dir, &names) else {
+                // `[MOD-5]`'s prelude names are compiler-known until the
+                // library can supply each one, so an import of a `std` module
+                // that has no file yet is not an error — it is a module this
+                // phase has not written.
+                if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE) {
+                    continue;
+                }
                 sink.emit(ember_diag::Diagnostic::error(
                     ember_diag::codes::E1010,
                     span,
@@ -304,6 +307,27 @@ fn load_modules(
         }
     }
     loaded
+}
+
+/// `[MOD-1]`, `[MOD-3]` — where a module path's file is.
+///
+/// A path beginning `std` names the standard library package, whose sources
+/// are found by `ember_branding::std_root`; anything else is a module of the
+/// package being built and is found relative to its root. The two are
+/// separate roots because `[MOD-1]` makes a module path "package name + path
+/// from `src/`", so `std.span` is `span.em` under `std`'s own `src/` and not
+/// `std/span.em` under this package's.
+fn resolve_module(root_dir: &Path, names: &[String]) -> Option<std::path::PathBuf> {
+    if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE) {
+        let std_root = ember_branding::std_root()?;
+        // `import std` alone names the package root module.
+        if names.len() == 1 {
+            let root = std_root.join(ember_branding::source_file("lib"));
+            return root.is_file().then_some(root);
+        }
+        return module_file(&std_root, &names[1..]);
+    }
+    module_file(root_dir, names)
 }
 
 /// `[MOD-1]` — a module path maps to `a/b/c.em`, or to `a/b/c/mod.em` when

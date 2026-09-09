@@ -46,6 +46,16 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 | D-010 | The AST printer showed a variant as its bare name, so `[FMT-1]`'s round-trip test could not see D-009 | `[FMT-1]`, `[TST-1]` | **fixed** | `28aa05d` |
 | D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]` | **open — no case found** | ADR-012 |
 
+## 2026-09-09 — v0.8.3, the standard library and range types
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-014 | A `##` doc comment above an `import` was `E0100 expected a declaration`. `[LEX-11]` says such a comment "documents nothing and is **discarded in silence**: a comment never affects compilation, and that includes producing a warning" — and an import is not a declaration | `[LEX-11]` | **fixed** | the parser skips a doc-comment run followed by an import; two parser tests and `tests/conformance/LEX-11/` |
+| D-015 | Interfaces were collected per module, immediately before that module's `implements`, so a module checked before the one declaring an interface could not implement it. `[MOD-4]` allows import cycles inside a package, so **no** load order would have worked | `[IFC-1]`, `[MOD-4]` | **fixed** | interface collection is whole-program, like the name pass above it; `tests/conformance/TYP-17/` |
+| D-016 | A generic bound, an `implements` clause and a supertrait each recorded the name **as written**, so an imported `Ord` did not match an implementation of the same interface | `[TYP-17]`, `[IFC-3]` | **fixed** | all three record the resolved name |
+| D-017 | `Self` did not resolve in any signature: `interface Clone: fn clone(self) -> Self` was "this type is not supported yet". Part IV §8 declares nine interfaces over `Self`, so `std.core` could not be written at all | Part IV §8, `[TYP-22]` | **fixed** | `Self` is the concrete type in a body and a parameter in an interface, substituted at each use |
+| D-018 | `[RNG-4]`'s range tracking derives a range for constants only. `[RNG-10]`(d) — "a value whose `[RNG-4]` range is contained in the target's" — therefore admits a constant and nothing else, and `[RNG-5a]`'s range-preserving clamp family has no `min`/`max`/`clamp` to preserve through | `[RNG-4]`, `[RNG-4a]`, `[RNG-5a]` | **open — precision, not soundness** | the emitted checks are correct and complete; what is missing is the analysis that removes some of them, and half of it waits for `std.math` |
+
 ## 2026-09-09 — the v0.6 draft
 
 Defects in a **proposed** document, not in the compiler. Re-check both against the
