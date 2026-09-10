@@ -90,7 +90,22 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | ERR-039 |
 | **Target** | — |
 
-## D5 — a `mut` parameter whose type is itself a borrow
+## D5 — a `mut` parameter whose type is itself a borrow — **CLOSED 2026-09-10**
+
+> **Closed: the compiler was right and nothing moved.** The owner ruled on
+> ERR-041 that Part VII §7's worked example governs — `normalize(buf.as_mut_span())`
+> is valid and must stay valid — and that the mutable-place requirement applies
+> to the place the view was taken of, not to the final expression. That is
+> exactly what `mut_param_ty` already did. Amendment **S4** puts it in the
+> document as `[FN-1a]`, `tests/conformance/FN-1a/` pins it, and the behaviour
+> no longer rests on a deviation entry.
+>
+> This entry was open for the right reason and for the right length of time.
+> Amendment A6 wrote the reading into `[FN-1]` and the owner withdrew it,
+> because a hardening may not answer what Ember means; after that neither side
+> moved for two revisions. The rule held: the compiler kept behaving one way,
+> the document kept saying another, and the disagreement stayed visible in this
+> file until the owner settled it. Nobody guessed.
 
 | | |
 |---|---|

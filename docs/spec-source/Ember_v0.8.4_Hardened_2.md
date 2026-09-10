@@ -1,8 +1,8 @@
 # Ember Programming Language — Design & Implementation Specification
 
-**Version:** 0.8.5_Hardened_1 (supersedes 0.8.4; see the change log at the end of Part 0)
+**Version:** 0.8.4_Hardened_2 (supersedes 0.8.3; see the change log at the end of Part 0)
 **Versioning:** two numbers move independently. The **language version** moves when the set of accepted programs changes — 0.8.4 exists because of one such change, S1, the owner's resolution of ERR-044, which admits a static-region view into storage that has no bounding region. The **hardening number** moves when the document gains implementation detail and no rule changes meaning; it resets to 1 with each language version. A hardening may never carry a semantic change: that is what forces the language number instead, and is why this file is 0.8.4_Hardened_1 rather than 0.8.3_Hardened_2.
-**Compatibility:** 0.8.5 is additive over 0.8.4, which is additive over 0.8.3. No program valid under either becomes invalid, and a source file may still declare `#! language "0.8.3"` or `"0.8.4"`.
+**Compatibility:** 0.8.4 is additive over 0.8.3. No program valid under 0.8.3 becomes invalid, and a source file may still declare `#! language "0.8.3"`.
 **Hardening:** A hardening adds implementation detail that the revision left out and changes no rule's meaning. It never moves the language version — a change that does is not a hardening, which is why S1 made this 0.8.4 rather than 0.8.3_Hardened_2. Source files may still declare `#! language "0.8.3"` for source compatibility; `#! language "0.8.4"` selects the 0.8.4 revision, and both are accepted (`[MOD-6]`). What Hardened_1 contains is the last change-log section; every edit is marked in place and recorded with its justification in `docs/spec-amendments.md`. The owner's file is preserved untouched at `docs/spec-source/as-received/`.
 **Lineage:** authored from **0.8.2c**, which was authored from 0.8.2b, which was authored from 0.8.1, which was authored from 0.8, which was authored from 0.7.2, which was authored from 0.7.1, which was authored from 0.6.3 taking the design — not the text — of the 0.7 draft for hot reload, the compile-time budget and the C++ boundary. The 0.7 draft was itself authored from 0.3 and silently reverted 239 rules settled in 0.4 through 0.6.2; every one of those is retained here. **A revision of this document MUST be authored from the immediately preceding revision.**
 **Authority:** This document is the sole normative source for Ember. It supersedes all earlier drafts, which are not required to implement anything described here.
@@ -58,54 +58,6 @@ The concrete decisions, each paired with the alternative it replaces:
 | 15 | Thread-safety of `shared` decided per-object at runtime ("upgrade the control block"). | Reference counts are **atomic iff the class is `Sync`**; a non-`Sync` class is thread-confined and uses plain counters. Decided per type at compile time. | No runtime upgrade machinery; the count is atomic exactly when handles can cross threads. |
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
-
-## Change log — 0.8.5_Hardened_1
-
-**0.8.5 carries three owner rulings of 2026-09-10. All three are additive: no
-program valid under 0.8.4 becomes invalid.**
-
-**`[UNS-10]`, `[UNS-10a]`, `[UNS-10b]` — `UnsafeCell[T]` becomes a real
-primitive.** ERR-043 recorded that `UnsafeCell` was named exactly once, in
-`[CELL-9]`, and defined by no rule — so `std` could be given interior
-mutability the compiler knows about while no third-party package could build
-its own. The owner ruled that the distinction is not acceptable and that
-`UnsafeCell` is retained as the language's lowest-level interior-mutability
-primitive, in `std.mem`, with deliberately narrow semantics: it permits
-mutation through shared access **only from `unsafe` code**, hands out no safe
-reference, checks nothing at run time, synchronises nothing, suspends neither
-`[BRW-1]` nor lifetime, region, type or bounds checking, and creates no further
-safety tier. It completes a hierarchy rather than opening a hole — `Cell`,
-`RefCell`, `Mutex`/`RwLock`, `UnsafeCell` — and the author of an abstraction
-built on it carries `[UNS-4]`'s obligations. This is the change that forced the
-language number rather than a hardening.
-
-**`[CELL-12]` — `RefCell[T]` is never `Copy`.** `[CELL-4]` derives `Cell`'s
-`Copy`-ness from its field, and read mechanically the same derivation would
-make a `RefCell` `Copy` whenever `T` is. The owner ruled that it must not:
-a `RefCell` carries mutable runtime borrow state, and duplicating it would give
-two cells inconsistent knowledge of one storage, which is exactly the invariant
-`[CELL-5]`..`[CELL-8]` rest on. `RefCell` is an explicit exception to
-`[CELL-4]`, and the rule now says so rather than leaving it to be inferred.
-
-**`[FN-1a]` — a `mut` parameter at a view type accepts a view value.** ERR-041
-recorded that `[FN-1]`'s "the argument MUST be a mutable place", read literally,
-rejects Part VII §7's own worked example `normalize(buf.as_mut_span())`. The
-owner ruled that the example governs: where the parameter's declared type is
-itself a view, the mutable-place requirement applies to the place the view was
-**taken of**. This admits no arbitrary temporary and bypasses no mutability
-check — the borrow relationship of the view-producing expression is preserved
-and checked. The compiler already behaved this way, so deviation D5 closes with
-no code moving and `tests/conformance/FN-1a/` pins it.
-
-**What has no tests yet, and why.** `[CELL-12]`, `[UNS-10]`, `[UNS-10a]` and
-`[UNS-10b]` describe types the compiler does not implement — `RefCell` and
-`UnsafeCell` are both unbuilt. They are in `tools/rule_index_baseline.json`
-under `[TST-4c]`'s one permitted reason: a new specification revision opened
-the gap. `E3105` is registered in `ember_diag` ahead of its emitter so that
-`[DIA-6a]` holds. `[FN-1a]` has its case today because the behaviour already
-existed.
-
----
 
 ## Change log — 0.8.4_Hardened_2
 
@@ -1435,8 +1387,7 @@ pub fn name[T: Bound](a: A, mut b: B, owned c: C, d: D = default) -> R where T: 
 
 * Parameter modes `[FN-1]`:
   * `a: A` — **borrowed** (shared). The callee reads through a `ref A`. For `Copy` types smaller than 2 pointers the compiler passes by value in registers (ABI detail; semantics identical). The callee cannot mutate or move `a`.
-  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place, **or a mutable view value derived from one** (`[FN-1a]`); the callee may mutate; no move out (except by `mem.replace`/`take`).
-  * `[FN-1a]` **A `mut` parameter whose declared type is itself a view accepts the view value.** Where `B` is a view type — `MutSpan[T]` and the rest of Part IV §1's View category — the argument may be the result of an expression that *produces* such a view, and the mutable-place requirement applies to the place that view was **taken of**, not to the final expression. This is what makes Part VII §7's own worked example `normalize(buf.as_mut_span())` valid, and it is valid. The distinction is between passing a mutable borrow **derived from a mutable place** and passing an arbitrary value merely because its type looks mutable: the borrow relationship of the view-producing expression is preserved and checked, so this admits no arbitrary temporary and bypasses no mutability check. `[SPN-3]` makes `MutSpan[T]` move-only, so there is exactly one live writable view either way. *(Owner ruling 2026-09-10 on ERR-041; see `docs/spec-amendments.md`)*
+  * `mut b: B` — **inout** (mutable borrow). The argument MUST be a mutable place; the callee may mutate; no move out (except by `mem.replace`/`take`).
   * `owned c: C` — **consumed**. The argument is moved (or copied if `Copy`; retained if a handle). The callee owns it and will drop it or move it on.
   * `[FN-2]` Missing mode is `borrowed`. There is no by-value-copy mode; if the callee wants its own copy it writes `owned` and the caller writes `f(x.clone())` or `f(x)` for `Copy` types.
 * `[FN-3]` Return values are moved out; returning a `ref`/view requires that the region be tied to a parameter by elision (Part VII §5).
@@ -1997,9 +1948,6 @@ fn parse(data: Span[u8]) -> Option[u32]:
 * `[UNS-6]` Inline assembly: `unsafe asm("…", inputs, outputs, clobbers)` following LLVM's constraint syntax; the C backend rejects it (`E5090`) except on Clang/GCC where it emits `__asm__ volatile`. Prefer `std.cpu` intrinsics.
 * `[UNS-7]` **`@safety("…")` on an `unsafe fn`.** Every `pub unsafe fn` SHOULD carry at least one `@safety("<obligation>")` attribute stating in one sentence, per obligation, what the caller must guarantee. The text is normative documentation, not a checked expression; *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)* **`std` MUST carry a `@safety` on every `unsafe fn` it exports.** A `pub unsafe fn` outside `std` with no `@safety` is `L3015 undocumented unsafe obligation`, at **warn**, whose fix-it inserts `@safety("TODO: state the caller's obligation")`; `L3016` reports a `@safety` text still reading `TODO`.
 * `[UNS-8]` **An `unsafe` block records the obligations it discharges.** The compiler MUST record, per `unsafe:` block, the `unsafe fn`s called within it together with their `[UNS-7]` obligations, and MUST emit `W3012 unsafe block with no SAFETY note` at `warn` when the block is not preceded by a `## SAFETY:` doc comment. This is a reporting rule and introduces **no fourth tier**: `[TIER-1]`'s three boundaries are unchanged and neither attribute licenses any operation.
-* `[UNS-10]` **`UnsafeCell[T]`** is the lowest-level interior-mutability primitive and lives in `std.mem` beside `[UNS-5]`'s facilities. It permits mutation of its contained storage through **shared** access, and **only from `unsafe` code**. Its API is `UnsafeCell(owned v: T)`, `get(self) -> *mut T` — which needs an `unsafe` context, being a raw pointer under `[UNS-1]` — and `into_inner(owned self) -> T`, which is safe because the cell is consumed and nothing is shared. It hands out **no** safe `ref T` or `ref mut T`, performs **no** runtime borrow check, and provides **no** synchronisation. `UnsafeCell[T]` is **never `Copy`**, is always `!Sync` (`[THR-1]`), and is `Send` when `T: Send`. It exists so that expert library code can implement an abstraction whose invariant cannot be expressed with ordinary borrowing, `Cell`, `RefCell` or a synchronisation primitive. `Cell` (exposes no reference), `RefCell` (runtime borrow check), `Mutex`/`RwLock` (synchronisation) and `UnsafeCell` (the author establishes the invariant) are one hierarchy, and this is its floor — which is what `[CELL-9]`'s sentence about a package needing an unchecked primitive refers to. It does **not** change the semantics of `Cell`, `RefCell`, `Mutex` or `RwLock`, and `exclusivity = "unchecked"` (`[EXC-1]`) does not change its semantics either.
-* `[UNS-10a]` **`UnsafeCell` suspends nothing globally.** It does not disable `[BRW-1]`, lifetime or region checking, type checking or bounds checking, and it introduces no further safety tier: `[UNS-2]` applies to it unchanged. Unsafe code MAY temporarily violate the static aliasing proof **inside** the abstraction, and MUST NOT allow a conflicting or otherwise invalid reference to escape into Safe Ember. A safe abstraction may be built on `UnsafeCell`, but hiding an unsafe operation behind a safe signature does not make that abstraction sound: the implementation MUST establish the invariant before it exposes a safe value. The obligations are `[UNS-4]`'s, and the author is responsible for each as it applies — validity, initialisation, type correctness, alignment and non-nullness for raw access, aliasing, lifetime and region validity, correct destruction, and thread-safety. `@safety` (`[UNS-7]`) and `[UNS-8]`'s obligation record are the machinery; no separate documentation or safety system is introduced for it.
-* `[UNS-10b]` **`UnsafeCell` is an expert facility and diagnostics MUST NOT suggest it.** No `[DIA-*]` shape may name it as a fix, in the spirit of `[CELL-10]`'s restraint about `RefCell`. It is **not permitted in `@static_safe` code** (`E3105`): `@static_safe` requires safety to be established statically, and `UnsafeCell` delegates it to an unsafe implementation. It introduces no representation or ABI behaviour of its own — foreign use follows the ordinary explicit representation contract — no special hot-reload semantics, and no inherent `Nondet` effect; any effect arises from the abstraction built over it.
 
 ## IX.5 Layout attributes
 
@@ -2068,7 +2016,6 @@ fn add(s: Scene, e: Entity):
 * `[CELL-6]` `try_borrow`/`try_borrow_mut` return `Option[Ref[T]]`/`Option[RefMut[T]]` for code that must handle contention rather than panic.
 * `[CELL-7]` `Ref[T]`/`RefMut[T]` are **view types** (`[TYP-15]` applies) whose region borrows the `RefCell`; their `drop` releases the borrow state. They MUST be bound by `with` or a local — the lint `L3011 RefCell guard held across a call` fires when a guard is live across a function call that could re-enter the same cell.
 * `[CELL-8]` `RefCell[T]` is `!Sync`. The `Sync` equivalents are `Mutex[T]` and `RwLock[T]`, whose API is deliberately the same shape (`with g = m.lock():`) so that promoting single-threaded code to shared code is a type change and nothing else.
-* `[CELL-12]` **`RefCell[T]` is never `Copy`, whatever `T` is.** A `RefCell` carries mutable runtime borrow state, and copying the value would duplicate that state: two cells would then hold independent and inconsistent knowledge of the same storage, and the runtime borrow invariant `[CELL-5]`..`[CELL-8]` rests on would be unsound. Moving a `RefCell[T]` transfers the whole cell, borrow state included. Copying the contained `T` is a separate question and is unaffected. `[CELL-4]`'s field-derived `Copy` rule is stated for `Cell` and does **not** extend here: `RefCell` is an explicit exception, because its borrow state is semantically coupled to its storage in a way `Cell`'s payload is not.
 * `[CELL-9]` The borrow-state counter is one machine word and the check is present in **every** profile. `exclusivity = "unchecked"` (`[EXC-1]`, ADR-004) governs dynamic **class** exclusivity only; it MUST NOT affect `RefCell`, `Ref`, `RefMut`, `Cell`, `Mutex` or `RwLock`. A package that requires an interior-mutability primitive with no check uses `unsafe` (`UnsafeCell`, `[UNS-*]`), which is visible in review and in `grep`.
 * `[CELL-10]` `RefCell` is not a synchronisation primitive and not a substitute for restructuring. The diagnostic for a borrow error (`[DIA-7]`, shape B4) suggests `RefCell` **only** when the conflicting accesses are provably not simultaneous in the same expression — never as a first suggestion.
 * `[CELL-6a]` `try_borrow` and `try_borrow_mut` MUST return `None` on contention in every profile. No profile setting may make them infallible; doing so would change which branch of a `match` executes, which `[PRF-1]` forbids.

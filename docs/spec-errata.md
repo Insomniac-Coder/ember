@@ -91,9 +91,9 @@ ERR-008) is worth being able to read again.
 | ERR-038 | `E2213` in IV.2a and `[GRM-8d]` | **decided** — one title covers both conditions; `[RNG-1]` is the defining rule |
 | ERR-039 | `E9010` in `[TYP-9c]` and `[MAN-3]` | **decided** — `[TYP-9c]` keeps `E9010`; `[MAN-3]` takes `E9012` |
 | ERR-040 | `[CLI-9]` with `[GRM-8d]` | **decided** — `--syntax-only` reports what the front end produces; the code ranges describe the stages, not a filter |
-| ERR-041 | `[FN-1]` with Part VII §7's worked example | **decided** — a `mut` view parameter takes the view by value; the place requirement applies to what it was taken of (ADR-017) |
-| ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`, `[IDE-10]` | **open — reported to the owner** — nine rule ids are cited and defined by no rule; the whole `IDE-*` family is one of them |
-| ERR-043 | `[CELL-9]` with `[UNS-5]` | **open — reported to the owner** — `UnsafeCell` is named as *the* primitive a package uses for unchecked interior mutability, and no rule defines it |
+| ERR-041 | `[FN-1]` with Part VII §7's worked example | **DECIDED by the owner 2026-09-10** — the worked example governs; the place requirement applies to what the view was taken of. Amendment S4, `[FN-1a]` in 0.8.5. Deviation D5 closes: the compiler was right and no code moved |
+| ERR-042 | `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[IDE-*]` | **WITHDRAWN 2026-09-10 — the entry was wrong.** The owner ordered an inventory; it found **zero** genuine gaps. Every id is defined, deliberately reserved, or a historical citation. The list was also stale. See the entry |
+| ERR-043 | `[CELL-9]` with `[UNS-5]` | **DECIDED by the owner 2026-09-10** — `UnsafeCell` is retained and becomes the language's lowest-level interior-mutability primitive, in `std.mem`. Amendment S2; `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]` in 0.8.5 |
 | ERR-044 | `[TYP-15]` with `[LT-3]` | **decided by the owner, 2026-09-09** — `[LT-3]`'s semantics govern: a view may be stored where its region outlives the destination, so a static-region view is admitted and every other stays refused. Amendment S1 |
 | ERR-045 | `[LT-1]`'s example with `[LT-1a]` and Part III §2 | **decided** — `[LT-1a]` and the grammar govern; `[LT-1]`'s trailing-suffix example does not parse |
 
@@ -1761,7 +1761,64 @@ line in `mut_param_ty`.
 
 ---
 
-## ERR-042 — Nine rule ids are cited and defined by no rule
+## ERR-042 — Nine rule ids are cited and defined by no rule — **WITHDRAWN**
+
+**Status: withdrawn 2026-09-10. The entry was wrong, and this says so rather
+than quietly restating a different outcome.** The owner ordered an inventory
+(ruling 5, 2026-09-10): classify each id as a genuinely missing rule, a stale
+reference, or an accidental citation, repair where the semantics are already
+established, and flag anything needing a new semantic decision as an owner
+question.
+
+**The inventory found no genuine gap, and the entry's own list was stale.** The
+tool's live `dangling_references` set is **twelve**, not nine: it does not
+contain `[IDE-1]` or `[IDE-7]` (both since resolved), and it does contain
+`[CTL-3a]`, `[HOT-10]`, `[RC-2a]`, `[RC-2d]` and `[VER-7]`, which the entry
+never mentioned. All twelve:
+
+| ids | what they actually are | repair |
+|---|---|---|
+| `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]` | **defined**, as the *second* rule stated on a line it shares with its predecessor (`[TYP-25]`, `[IFC-1]`, `[HND-1]`, `[GPU-6]`), after a semicolon | none — the rule is stated in full |
+| `[VER-7]`, `[CTL-3a]` | **defined** inline in a paragraph and in a parenthetical respectively, with no bullet of their own | none |
+| `[RC-2a]`, `[RC-2d]` | **defined collectively.** `[RC-2]` says in as many words: *"Its lettered clauses are individually citable as `[RC-2a]`..`[RC-2d]` in the order written."* The document grants the ids explicitly | none |
+| `[IDE-2]`, `[IDE-5]`, `[IDE-10]` | **deliberately reserved.** Part XXI: *"`[IDE-1]`, `[IDE-2]`, `[IDE-5]`, `[IDE-7]`..`[IDE-10]` are **reserved** for the language server itself, a named milestone before 1.0"* | none, ever — reserving an id is not failing to define it |
+| `[HOT-10]` | a **historical citation** in Part 0's change history, naming `[HOT-1]`..`[HOT-10]` from a revision that "replaced them entirely". Part XVIII defines no `HOT-*` rule because the family was renamed `HR-*` | none — a change log that names superseded rules is doing its job |
+
+**Why the checker reports them, and why that is not a defect either.**
+`rule_index.py`'s `rule_definitions` recognises a definition structurally: the
+id must open a bullet, and **only the first id on a bullet counts**. Its own
+comment says why — *"A later one is cited by it, even when the citation reads
+like a rule. This is `[XXII.4]`'s 'a reference is not a definition' made
+mechanical."* That strictness is deliberate and correct: loosening it would
+admit false negatives, and a genuinely undefined rule slipping through is worse
+than a known-good one sitting in a baseline.
+
+**So neither side moves.** The document states these rules; the checker cannot
+see the forms they are stated in; the twelve are baselined and the ratchet
+records them. Nothing here required an edit to the specification, and none was
+made.
+
+**The one thing left for the owner**, raised as a question rather than acted on:
+six of the twelve (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`,
+`[CTL-3a]`) *could* be made structurally findable by splitting each onto its own
+bullet with its text verbatim — an `EDITORIAL REPAIR` that changes no meaning.
+That is a layout edit to the owner's prose for a tool's benefit, which is the
+wrong direction by this project's cardinal rule, so it was **not** done. If the
+owner wants the checker to find them, that is the cheapest route; the
+alternative is teaching the detector the inline and granting-sentence forms and
+accepting the false-negative risk.
+
+**What the entry got wrong, kept for the pattern.** It asserted "defined by no
+rule" for nine ids without reading the lines they appear on. Four are defined in
+the very sentence that cites them. This is the ERR-014 / ERR-019 / ERR-022
+family — a claimed contradiction that dissolves on reading both halves — and it
+is the fourth time. `feedback-implementation-gap-is-not-a-spec-defect`'s test
+applies verbatim: *if the entry cannot quote the two sentences side by side and
+say why they cannot both hold, there is no defect.* ERR-042 quoted none.
+
+---
+
+## ERR-042 — the original entry, kept for the record
 
 **Status: open. Reported to the owner.** Found mechanically, by the check
 fix-list item 17 asked for.

@@ -28,6 +28,83 @@ The concrete decisions, each paired with the alternative it replaces:
 | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
 | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
 
+## Change log — 0.8.5_Hardened_1
+
+**0.8.5 carries three owner rulings of 2026-09-10. All three are additive: no
+program valid under 0.8.4 becomes invalid.**
+
+**`[UNS-10]`, `[UNS-10a]`, `[UNS-10b]` — `UnsafeCell[T]` becomes a real
+primitive.** ERR-043 recorded that `UnsafeCell` was named exactly once, in
+`[CELL-9]`, and defined by no rule — so `std` could be given interior
+mutability the compiler knows about while no third-party package could build
+its own. The owner ruled that the distinction is not acceptable and that
+`UnsafeCell` is retained as the language's lowest-level interior-mutability
+primitive, in `std.mem`, with deliberately narrow semantics: it permits
+mutation through shared access **only from `unsafe` code**, hands out no safe
+reference, checks nothing at run time, synchronises nothing, suspends neither
+`[BRW-1]` nor lifetime, region, type or bounds checking, and creates no further
+safety tier. It completes a hierarchy rather than opening a hole — `Cell`,
+`RefCell`, `Mutex`/`RwLock`, `UnsafeCell` — and the author of an abstraction
+built on it carries `[UNS-4]`'s obligations. This is the change that forced the
+language number rather than a hardening.
+
+**`[CELL-12]` — `RefCell[T]` is never `Copy`.** `[CELL-4]` derives `Cell`'s
+`Copy`-ness from its field, and read mechanically the same derivation would
+make a `RefCell` `Copy` whenever `T` is. The owner ruled that it must not:
+a `RefCell` carries mutable runtime borrow state, and duplicating it would give
+two cells inconsistent knowledge of one storage, which is exactly the invariant
+`[CELL-5]`..`[CELL-8]` rest on. `RefCell` is an explicit exception to
+`[CELL-4]`, and the rule now says so rather than leaving it to be inferred.
+
+**`[FN-1a]` — a `mut` parameter at a view type accepts a view value.** ERR-041
+recorded that `[FN-1]`'s "the argument MUST be a mutable place", read literally,
+rejects Part VII §7's own worked example `normalize(buf.as_mut_span())`. The
+owner ruled that the example governs: where the parameter's declared type is
+itself a view, the mutable-place requirement applies to the place the view was
+**taken of**. This admits no arbitrary temporary and bypasses no mutability
+check — the borrow relationship of the view-producing expression is preserved
+and checked. The compiler already behaved this way, so deviation D5 closes with
+no code moving and `tests/conformance/FN-1a/` pins it.
+
+**What has no tests yet, and why.** `[CELL-12]`, `[UNS-10]`, `[UNS-10a]` and
+`[UNS-10b]` describe types the compiler does not implement — `RefCell` and
+`UnsafeCell` are both unbuilt. They are in `tools/rule_index_baseline.json`
+under `[TST-4c]`'s one permitted reason: a new specification revision opened
+the gap. `E3105` is registered in `ember_diag` ahead of its emitter so that
+`[DIA-6a]` holds. `[FN-1a]` has its case today because the behaviour already
+existed.
+
+---
+
+## Change log — 0.8.4_Hardened_2
+
+**Hardened_2 is one editorial repair on Hardened_1. No rule changes meaning and
+the accepted program set is identical.**
+
+**E5 — `[EFF-18]`'s effect set gains `Nondet`.** Part X §1 defines the set with
+ten members and carries a table row for the effect; `[DET-1]` contracts over it
+and `[DET-2]` enumerates its sources exhaustively. `[EFF-18]` was written for
+0.6, which added `Io` and `Lock`; `Nondet` arrived in 0.6.3 with `[DET-*]`,
+which added it to X.1 without revisiting `[EFF-18]`'s parenthetical list. That
+list is not exclusive by its own sentence — it "does not remove an effect
+previously attached to any operation; it refines the effect model" — so adding
+the missing member brings a stale enumeration in line with the section that
+defines the set. It admits no new program and forbids no old one. ERR-028
+recorded the decision; `docs/spec-amendments.md` E5 carries the reasoning.
+
+**Why a hardening and not a revision.** The owner ruled explicitly: E5 is an
+editorial repair, so the hardening number moves and the language version does
+not. Between Hardened_1 and this cut the file carried the provisional header
+`0.8.4_Hardened_1 + E5, pending a version decision` — the `207c69f` shape,
+stating what the file was rather than claiming to be a cut it no longer
+matched. That wording is now gone: the file is Hardened_2 and says so.
+
+**Nothing else moved.** ERR-042 was inventoried in the same pass and produced
+no edit to this document — see `docs/spec-errata.md`, where the entry is
+withdrawn.
+
+---
+
 ## Change log — 0.8.4_Hardened_1
 
 **0.8.4 is one semantic change; Hardened_1 is everything else.**

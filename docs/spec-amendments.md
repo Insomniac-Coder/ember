@@ -6,7 +6,7 @@ and `docs/spec-source/ember-spec.md`, with the reason for it.
 ## The hardening protocol (owner, 2026-09-09)
 
 The normative document carries **two numbers that move independently**:
-`v0.8.4_Hardened_1`, and so on.
+`v0.8.4_Hardened_1`, `v0.8.4_Hardened_2`, and so on.
 
 * The **language version** moves when the set of accepted programs changes.
   When it moves, the hardening number **resets to 1**.
@@ -14,7 +14,7 @@ The normative document carries **two numbers that move independently**:
   and no rule changes meaning.
 
 A hardening may never carry a semantic change; that is precisely what forces the
-language number instead. The current file is `0.8.4_Hardened_1` and not
+language number instead. The current file is `0.8.4_Hardened_2` and not
 `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts, so
 0.8.3 could not absorb it and the hardening count started again.
 
@@ -721,12 +721,133 @@ and `@nosync` remain independent, which is what the rule is for. The front
 matter's "Deliberately not done" paragraph now records the prior disagreement
 in the past tense rather than asserting a live contradiction.
 
-**Version standing.** The working source header reads *0.8.4_Hardened_1 **+ E5,
-pending a version decision*** rather than claiming to be the frozen cut,
-following 207c69f (which did the same for S1): a header claiming to be an
-artifact the file no longer matches is a defect in its own right. E5 itself
-forces nothing — no meaning changed — so whether it folds into the next
-hardening pass or cuts **Hardened_2** is the owner's call.
+**Version standing — settled 2026-09-10.** The owner ruled: *"cut
+`0.8.4_Hardened_2`. E5 is an editorial/hardening repair and does not change the
+accepted program set. Therefore it belongs in the hardening-number bump rather
+than a language revision."* The provisional header is gone and the file is
+`0.8.4_Hardened_2`.
+
+For the interval between, the header read *0.8.4_Hardened_1 **+ E5, pending a
+version decision***, following 207c69f (which did the same for S1): a header
+claiming to be an artifact the file no longer matches is a defect in its own
+right, and guessing the number is not the implementer's to do — 8101389 records
+the last one as "the owner's call". Both halves of that discipline held.
+
+`docs/spec-source/Ember_v0.8.4_Hardened_1.md` stays as the previous frozen
+baseline; `Ember_v0.8.4_Hardened_2.md` is the new one, and is what the next
+hardening diffs against.
+
+## S2 — `[UNS-10]`, `[UNS-10a]`, `[UNS-10b]`: `UnsafeCell[T]` becomes a real primitive
+
+    Class: OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  yes — a new std.mem type; unbuilt as of this cut
+
+**Owner ruling, 2026-09-10, resolving ERR-043.** The errata recorded that
+`UnsafeCell` was named exactly once in 5,526 lines — in `[CELL-9]`, as *the*
+primitive a package uses for unchecked interior mutability — and defined by no
+rule. ADR-019 routed `std`'s own `Cell` around it, which left the language in
+the position the owner named as unacceptable: *"if `RefCell` is implemented
+using an internal primitive that ordinary packages cannot reproduce, then the
+language would have an unexplained distinction between `std` and user
+libraries."*
+
+**The ruling, in the owner's terms.** `UnsafeCell[T]` is retained and becomes
+the lowest-level interior-mutability primitive. It permits mutation through
+shared access **only from `unsafe` code**; it does not globally disable
+`[BRW-1]`, lifetime or region checking, type checking or bounds checking; it
+gives no safe `ref`/`ref mut`, no runtime borrow check, no synchronisation, and
+no further safety tier; it is never `Copy`, always `!Sync`, and `Send` when
+`T: Send`. Unsafe code may temporarily violate the static aliasing proof inside
+the abstraction and must not let a conflicting or invalid reference escape into
+Safe Ember. `@safety` and the existing `[UNS-*]` machinery remain authoritative
+and nothing new is introduced beside them. It is not permitted in
+`@static_safe` code, and diagnostics must not suggest it.
+
+**What was decided here rather than by the owner, and it was asked first.** The
+ruling fixed the semantics and not the spelling. The API surface and the module
+were put to the owner as a question, because both change the accepted program
+set; the owner chose `std.mem` with a raw-pointer accessor. So:
+`UnsafeCell(owned v: T)`, `get(self) -> *mut T` (needs `unsafe` under
+`[UNS-1]`, being a raw pointer), `into_inner(owned self) -> T` (safe — the cell
+is consumed). Nothing else was inferred.
+
+**Why this is a language revision and not a hardening.** It adds a type and a
+capability that no 0.8.4 program could express. The owner said so explicitly,
+and contrasted it with E5 in the same message. `[UNS-10]` is why the file is
+0.8.5.
+
+**`E3105`** is registered in `ember_diag` for `[UNS-10b]`'s `@static_safe`
+refusal, ahead of its emitter, so `[DIA-6a]` holds. It joins `E3100` in
+`shapes.rs`'s named exemption: both sit in the ownership range and are neither
+ownership nor borrow errors.
+
+## S3 — `[CELL-12]`: `RefCell[T]` is never `Copy`
+
+    Class: OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  yes, when RefCell is built — it must NOT inherit
+                            [CELL-4]'s field-derived Copy
+
+**Owner ruling, 2026-09-10.** `[CELL-4]` derives `Cell`'s `Copy`-ness from its
+field, and `Cell[T]` gets it free because a struct's `is_copy` already reduces
+to its fields'. Read mechanically, the same derivation makes a `RefCell` `Copy`
+whenever `T` is — and the owner ruled that it must not, on semantic grounds:
+*"copying the value would duplicate that state and therefore create two
+logically independent cells with inconsistent knowledge of the same
+storage/borrow state. That would make the runtime borrow invariant unsound."*
+
+So `RefCell[T]` is move-only whatever `T` is; moving one transfers the whole
+cell including its borrow state; copying the contained `T` is a separate and
+unaffected question; and `[CELL-4]` does **not** extend to it. The rule now
+states the exception rather than leaving an implementer to derive it.
+
+**Provenance worth keeping.** This was raised as an owner question precisely
+because an earlier revision of `docs/HANDOFF.md` asserted "`RefCell` is never
+`Copy`" as though the document said so, when Part IX said nothing about it.
+The reasoning was sound and the sourcing was not — the shape of both withdrawn
+amendments. It was withdrawn, escalated, and is now normative because the owner
+ruled, which is the only route that was ever available.
+
+## S4 — `[FN-1a]`: a `mut` parameter at a view type accepts a view value
+
+    Class: OWNER-APPROVED SEMANTIC CHANGE
+    Implementation change:  none — the compiler already behaved this way
+
+**Owner ruling, 2026-09-10, resolving ERR-041 and closing deviation D5.**
+`[FN-1]` says a `mut` argument "MUST be a mutable place". Read literally that
+rejects Part VII §7's own worked example, `normalize(buf.as_mut_span())`, whose
+argument is a call result — the document forbidding the program it uses to
+explain itself. Amendment A6 wrote a reading into `[FN-1]` and the owner
+withdrew it, because a hardening may not answer what Ember means; neither side
+moved after that.
+
+**The ruling.** The example governs. Where a `mut` parameter's declared type is
+itself a view, the argument may be an expression that produces such a view, and
+the mutable-place requirement applies to the place the view was **taken of**.
+The owner drew the line explicitly: this is *"passing a mutable borrow/view
+value produced from a mutable place"*, not *"passing an arbitrary immutable
+value merely because it happens to have a mutable-looking type"* — it admits no
+arbitrary temporary and bypasses no mutability check.
+
+**No code moved.** D5's fix plan said "one line in `mut_param_ty` if the owner
+rules for the literal text; nothing if the example governs". The example
+governs, so D5 closes as *the compiler was right*, and
+`tests/conformance/FN-1a/` pins the behaviour that previously rested on a
+deviation entry.
+
+**Attribution anchor: `[MOD-7]`, and it is a misattribution — stated rather
+than worked around.** The edit is inside `[FN-1]`'s parameter-mode list: the
+`mut b: B` bullet gains "or a mutable view value derived from one", and
+`[FN-1a]` is inserted beneath it. That bullet carries no rule id of its own —
+`[FN-1]` is named on the list's *heading* line, not at the start of the mode
+bullets — so `hardening_check.py` walks back to the nearest line that opens a
+rule and finds `[MOD-7]` at line 1416, which is a different rule about
+`pub(read)` fields and has nothing to do with this. COLD-START §8 records this
+class of behaviour: *"a checker that knows one shape of a rule reports thirty
+false positives … each time it named a real rule and the wrong one."*
+`[MOD-7]` is named here because the gate reads its anchor set from this file
+and the edit must be declared. **What was actually amended is `[FN-1]` and the
+new `[FN-1a]`; `[MOD-7]` is untouched.** Anyone auditing this divergence should
+read it that way.
 
 ---
 

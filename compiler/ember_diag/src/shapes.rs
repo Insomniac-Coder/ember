@@ -166,7 +166,13 @@ pub fn shape_for(code: codes::Code) -> Option<Shape> {
 /// no shape describes it and none should. The exception is named rather than
 /// omitted so that a genuinely unclassified borrow error still fails the build.
 /// See errata ERR-022; the specification needed no change.
-const NOT_OWNERSHIP_ERRORS: &[u16] = &[3100];
+/// `E3105`, `[UNS-10b]`'s "`UnsafeCell` is not permitted in `@static_safe`
+/// code", is the same case as `E3100` and exempt for the same reason: it sits
+/// in the range and is neither an ownership nor a borrow error, so the
+/// classifier has nothing to say about it. `[UNS-10b]` also forbids any
+/// `[DIA-*]` shape naming `UnsafeCell` as a fix, which is a second reason no
+/// shape may describe it.
+const NOT_OWNERSHIP_ERRORS: &[u16] = &[3100, 3105];
 
 /// Every code in the ownership range that the compiler may emit and the
 /// classifier cannot place. `[DIA-7a]` forbids emitting one, so this is worth

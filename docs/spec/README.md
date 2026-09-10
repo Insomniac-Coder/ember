@@ -1,4 +1,4 @@
-# Ember specification (v0.8.4), by part
+# Ember specification (v0.8.5), by part
 
 **Generated** by `tools/split_spec.py` from `docs/spec-source/ember-spec.md`, which is the normative document. Do not hand-edit these files: apply the ruling to the source, record it in `docs/spec-errata.md`, and regenerate.
 

@@ -655,3 +655,90 @@ not an exception to `[OWN-5]` granted here; it is a separate rule about a
 separate operation, and it is why `Cell`'s store is its own builtin rather than
 an ordinary assignment. Nothing in this ADR should be read as permission to
 vary `[OWN-5]`'s order anywhere else.
+
+## ADR-021 — `RefCell[T]` is move-only, and `[CELL-4]` does not reach it
+
+**Owner ruling, 2026-09-10.** Recorded as an ADR as well as amendment S3
+because the *shape* of the decision matters more than its content, and the next
+person to build a compiler-known container will meet it again.
+
+**How it came up.** `Cell[T]` was built as a transparent one-field struct
+precisely so `[CELL-4]` would need no code: `is_copy` on a struct already asks
+whether every field is `Copy`, so the answer falls out. That was the right
+design and it is why `Cell` cost almost nothing. Applied mechanically to
+`RefCell`, the same derivation makes the cell `Copy` whenever `T` is.
+
+**Why that is wrong, in the owner's words.** *"Copying the value would
+duplicate that state and therefore create two logically independent cells with
+inconsistent knowledge of the same storage/borrow state. That would make the
+runtime borrow invariant unsound."* `Cell`'s payload is inert; `RefCell`'s
+counter is *coupled to the storage it guards*, so duplicating the value forks
+the guarantee.
+
+**The decision.** `RefCell[T]` is never `Copy`, whatever `T` is. Moving one
+transfers the whole cell, borrow state included. Copying the contained `T` is a
+separate question and unaffected. `[CELL-12]` states the exception in the
+document rather than leaving an implementer to derive it.
+
+**What this ADR is really about.** A derivation that is free and correct for one
+type is not thereby correct for the next one that reuses its machinery. The
+`Cell` implementation is a template for `RefCell`'s *shape* and explicitly not
+for its `Copy` answer, and `docs/HANDOFF.md` says so at the point where the
+template is recommended.
+
+**Provenance, kept deliberately.** An earlier revision of `HANDOFF.md` asserted
+"`RefCell` is never `Copy`" as settled, when Part IX said nothing about it. The
+reasoning was sound; the sourcing was invented — the shape of both withdrawn
+amendments, committed by the agent that had just written the section warning
+against it. It was corrected to an open question, escalated, and is normative
+now only because the owner ruled. **The correct answer arrived at incorrectly is
+still incorrect**, and the route mattered more than the destination.
+
+## ADR-022 — `UnsafeCell[T]` is a real primitive, and `Builtin::CellSet` never was evidence about it
+
+**Owner ruling, 2026-09-10**, resolving ERR-043. Amendment S2 carries the
+normative text; this records why the question could not be answered any other
+way, and what it retires.
+
+**The hole.** `UnsafeCell` appeared exactly once in 5,526 lines — `[CELL-9]`,
+naming it as *the* primitive a package uses for unchecked interior mutability —
+and no rule defined it. ADR-019 therefore made `Cell` compiler-known rather than
+building it on `UnsafeCell`, "because 1 is not available". That was right for
+`std` and left the language somewhere the owner named as unacceptable: `std`
+would have interior mutability the compiler knows about, and no third-party
+package could reproduce it.
+
+**The decision.** `UnsafeCell[T]` is retained as the lowest-level
+interior-mutability primitive, in `std.mem`, with narrow semantics: mutation
+through shared access **only from `unsafe` code**; no safe reference handed
+out; no runtime check; no synchronisation; `[BRW-1]`, lifetime, region, type and
+bounds checking all still in force; no further safety tier; never `Copy`,
+always `!Sync`, `Send` when `T: Send`. It completes a hierarchy — `Cell`,
+`RefCell`, `Mutex`/`RwLock`, `UnsafeCell` — rather than opening a hole in one.
+
+**What ADR-019 warned about, now discharged.** ADR-019 closed with a specific
+prediction: that someone would reach ERR-043, observe that the compiler already
+mutates through a shared borrow for `Cell`, and conclude that the language
+therefore permits it — *"turning an implementation mechanism into the
+justification for a language rule ... the same compiler-justifies-specification
+move this project spent a session unlearning, arriving by a longer road."*
+
+That did not happen, and the record should show why: the question went to the
+owner as a question. `Builtin::CellSet` was never offered as evidence, and it is
+not evidence now. The language permits `UnsafeCell` because the owner said so,
+in a ruling that spells out what it does and does not suspend — not because the
+compiler was already doing something adjacent.
+
+**What was decided here rather than by the owner.** The ruling fixed the
+semantics and not the spelling. The API surface and module were put to the owner
+as a question, because both change the accepted program set; `std.mem` with a
+raw-pointer accessor was chosen. `get(self) -> *mut T` needs `unsafe` under
+`[UNS-1]` because it is a raw pointer, not because of a rule invented for
+`UnsafeCell` — which is the property that keeps it inside the existing machinery
+instead of beside it.
+
+**What is not built.** All of it. `[UNS-10]`, `[UNS-10a]` and `[UNS-10b]` are
+0.8.5 specification with no implementation, baselined under `[TST-4c]`'s one
+permitted reason. `E3105` is registered ahead of its emitter so `[DIA-6a]`
+holds. Building it is not part of `RefCell`, and `RefCell` must not be built on
+it: ADR-019's route stands until interface generics can express these in Ember.
