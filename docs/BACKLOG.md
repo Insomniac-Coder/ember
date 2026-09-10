@@ -17,7 +17,7 @@ cannot go in `std` at all, because `[STD-1]` holds `std.core`, `std.mem`,
 
 | | |
 |---|---|
-| Total | 34 tasks — 20 must-have, 12 nice-to-have, plus compiler debt |
+| Total | 35 tasks — 20 must-have, 12 nice-to-have, plus compiler debt |
 | Started | none |
 | Blocked on phases | all |
 
@@ -82,6 +82,7 @@ do yet, found while applying v0.5.
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |
 | **CELL-DEF-1** | `Cell[T].take()`, and `update`'s `T: Default` arm | 2 | `[CELL-1]` gives `take(self) -> T where T: Default` and lets `update` take `T: Default` **or** `T: Copy`. There is no `Default` interface in the compiler at all, so only the `Copy` arm of `update` is built and `take` reports the gap by name rather than reading as a missing method (`tests/conformance/CELL-1/reject_take_needs_default.em` pins the message). Done when `Default` exists and both are written as the rule states them. **The rule is not softened**: what is missing is the interface, not the requirement |
 | **CELL-SYNC-1** | `[CELL-3]`'s `!Sync` on `Cell[T]` | 4 | "`Cell[T]` is `!Sync` (`[THR-1]`): it may be moved between threads if `T: Send`, but never shared." There is no `Send`, no `Sync` and no thread in the compiler, so there is nothing for the marker to mean yet and nothing that could violate it — the restriction is unenforceable rather than unenforced. Done when `[THR-1]` exists and a program sharing a `Cell` across threads is refused |
+| **RIDX-1** | Rule extraction: teach `rule_index.py` the forms the document already uses | 0 | Owner resolution of ODR-002, 2026-09-10: *"if a tool cannot correctly recognize a valid normative rule, the tool is the defective component."* Six rules (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) are fully stated in forms the extractor's structural test does not recognise, so they sit in `dangling_references`. **The specification must not be rewritten to satisfy the extractor, and the extractor must not be weakened to accept ambiguous definitions.** Design in `docs/RFC-rule-extraction.md`. Done when the six leave the baseline **and** no id currently classified as a reference has become a definition — the second half is the one to test hardest |
 | **SPN-API-1** | Span/MutSpan view-method surface (`split_at`, `chunks`, `iter_mut`, `reborrow`, `as_ptr`, …) | 2 | `[SPN-3]` names `s.reborrow()`, `[BRW-5]` names the sanctioned ways and Part VII §7 works `split_at`, but only `len`, `get`, `get_unchecked`, `is_empty`, `as_span`, `as_mut_span` exist — the rest are refused by name (`E2020` "no method in this phase", pinned by `tests/conformance/SPN-3/reject_split_at_reports_not_in_this_phase.em`). Done when the rule-named surface exists and the sanctioned-ways accept case compiles |
 
 ---

@@ -11,7 +11,7 @@ plan (its own "Start here" is marked superseded — ignore it) and
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
 | `docs/DECISIONS.md` | ADR-001..022 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001 **closed** (S2/ADR-022); ODR-002 (P2, tooling) and ODR-003 (P3, editorial) open. **Nothing in it blocks anything** |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** All three ruled 2026-09-10: ODR-001 **closed**; ODR-002 → tooling (`RIDX-1`); ODR-003 → deferred editorial. **Nothing in it blocks anything and none needs a further owner decision** |
 
 ---
 
@@ -224,13 +224,17 @@ ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
 withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
-**The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001 (`UnsafeCell`'s API
-surface) is **closed** — the owner ruling of 2026-09-10 stands, `[UNS-10]` is
-authoritative, and the feed wording that appeared to conflict with it was
-stale. **Two open, neither blocking and neither semantic:** ODR-002 (P2, six
-rules the extraction tool cannot recognise — *not* undefined rules; ERR-042 was
-withdrawn for reading them that way) and ODR-003 (P3, the `[FFI-17]` prose
-duplication, already neutralised by its `NON-NORMATIVE` marking).
+**The queue lives in `docs/OWNER-QUEUE.md`, and the owner ruled on all three on
+2026-09-10.** None needs a further owner decision.
+
+* **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
+* **ODR-002 — tooling work, not spec work.** The six rules stay untouched; the
+  extractor is the defective component. `RIDX-1` in `BACKLOG.md`, designed in
+  `docs/RFC-rule-extraction.md`. **Do not restructure the rules and do not
+  weaken the extractor.**
+* **ODR-003 — deferred editorial cleanup.** No semantic change for 0.8.5; the
+  next suitable revision classifies each `[FFI-17]` item A/B/C/D against its
+  authoritative rule.
 
 * **One question raised and deliberately not acted on.** Six rule ids
   (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) are
