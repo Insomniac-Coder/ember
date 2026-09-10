@@ -14,11 +14,11 @@ COLD-START govern.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| HEAD | `5b6f307` — task 2 (sweep: 3 compiler fixes, 13 cases, D-036–D-040). Below it: `5628a73` (task 1, D6), `9468602`, `a38aa59`, `c4fa15c`, `a2c0032`, `365122d` (`Cell[T]`), `8459a1f` (D-035) |
+| HEAD | `23b2d8e` — prologue (D6 withdrawal, header honesty, gate de-hardcode). Below it: `5b6f307` (task 2), `5628a73` (task 1, D6), `9468602`, `a38aa59`, `c4fa15c`, `a2c0032`, `365122d` (`Cell[T]`), `8459a1f` (D-035) |
 | Last commit touching compiler sources | `5b6f307` (task 2 fixes in five crates) |
-| Working tree | this prologue (D6 withdrawal, header honesty, gate de-hardcode); committed herein, clean after push |
+| Working tree | B+D integration (D-030/D-040 closures) + D-041 filing; compiler: `borrows.rs`, `drops.rs`; committed herein, clean after push |
 | Against `origin/main` | 0 ahead, 0 behind after push — everything committed is pushed |
-| `cargo build` | **0 warnings** (no compiler sources changed since the verified state) |
+| `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures |
 | Gates | **all green** (six, run individually below) |
 
@@ -490,13 +490,14 @@ splitting it across agents would have cost more than it saved.
 
 ### 0.12 Open issues carried forward — verified against the repository
 
-**Open defects — three.**
+**Open defects — two.**
 
 | # | What | Rule | Status |
 |---|---|---|---|
-| **D-030** | a `drop` body may move a field out of `mut self`, which the rule forbids; the field is then dropped again after `drop` returns | `[DRP-5]`, `[EXP-6]` | **open.** Filed rather than fixed: reaching it needs a `drop` body that moves, and nothing in the corpus does |
 | **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
-| **D-040** | a method call defeating disjoint-field access reports `E3022`, where `[DIA-7a]` keys shape B8 to `E3025` — registered, shape-mapped, emitted by nothing | `[BRW-4]`, `[DIA-7a]` | **open.** Needs call provenance threaded to the reporter. Found by task 2 |
+| **D-041** | moves out of borrowed places are unchecked (shared-`ref` field moves; field moves out of borrowed call parameters) — each value drops twice; `E3013` names it and has no emitter outside drop bodies | `[EXP-6]`, `[BRW-1]`, `[OWN-3]` | **open.** Needs borrowed-ness threaded to move sites. Found by task 2 follow-up probing (not ERR-041) |
+
+**Closed this turn:** **D-030** (`check_drop_moves` rejects drop-body moves; DRP-5 cases red-checked) and **D-040** (reporter threads call provenance; E3025 with B8 help; case + page, red-checked).
 
 **Open deviations — five, in `docs/DEVIATIONS.md`.** (D6 was withdrawn to Closed:
 unbuilt machinery is a gap, not a deviation — see below.)
@@ -781,9 +782,9 @@ was already green; the one `non_snake_case` test-target warning
 Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
 ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
-restored by guessing); **D-030** (`[DRP-5]` move out of `drop`); **D-038**
-(implicit `String`→`str` coercion rejected); **D-040** (method conflicts lack
-B8/`E3025`); **D1–D5**
+restored by guessing); **D-038**
+(implicit `String`→`str` coercion rejected); **D-041** (moves out of borrowed
+places unchecked); **D1–D5**
 (D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D1, D3, D4 as
 ledgered; D6 withdrawn to Closed — unbuilt machinery is a gap, not a
 deviation); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
@@ -958,10 +959,16 @@ note). Found two live defects and fixed both; filed two more; added 13 cases:
 * **D-038 (open): implicit `String`→`str` coercion rejected** — fails closed;
   no case pins the rejection since the rule admits the program.
 * **D-039 (fixed) / D-040 (open): reservation windows opened for user-local
-  borrows** (two `ref mut` borrows reported B3/`E3021` instead of B1/`E3022`;
-  now temp-only, with a case red-checked both ways). Method-call conflicts
-  still lack B8/`E3025` — registered, shape-mapped, emitted by nothing — which
-  needs call provenance at the reporter; no case pins that shape.
+borrows** (two `ref mut` borrows reported B3/`E3021` instead of B1/`E3022`;
+now temp-only, with a case red-checked both ways). Method-call conflicts
+still lack B8/`E3025` — registered, shape-mapped, emitted by nothing — which
+needs call provenance at the reporter; no case pins that shape.
+* **D-041 (open, found in follow-up probing): moves out of borrowed places are
+unchecked** — a field move out of a shared `ref`, and a field move out of a
+borrowed call parameter (which arrives as a bitwise copy with no loan or
+marker), both compile and double-destroy; `[EXP-6]`'s `E3013` names it.
+Needs borrowed-ness threaded to move sites. Adjacent lost-write-only symptom
+noted in the entry, unfiled pending a spec reading.
 * **SPN-API-1 (debt): the span view-method surface** (`split_at`, `reborrow`,
   …) is refused by name and untracked until now; one case pins the message.
 * **Nine more clause cases**, each probed first: DRP-2 tuple order, DRP-2 enum
@@ -1004,15 +1011,49 @@ all become load-bearing in a way `Cell` never touched.
 allocator, and what it must prove is a region rather than an alias, statically.
 Do not build it by generalising either of the other two.
 
+**Recon done (read-only pass, no code).** Normative surface, quoted in short:
+`[ARN-1]` move-only struct, `alloc*` on shared `self`, views carry the arena's
+region, `reset()`/drop on `mut self` so `[BRW-1]` excludes live views;
+`[ARN-2]` no per-value drops; `[ARN-3]` `needs_drop` types need `alloc_nodrop`
+or `E3090`; `[ARN-4]` bump+align, `Alloc` on growth, `FixedArena` /
+`Arena.fixed` for `@noalloc`; `[ARN-5]` `ArenaArray`/`ArenaMap` are `@view`
+under `[TYP-15]`; `[ARN-6]` `ScopedArena` holds the parent's mutable borrow,
+`E3096` while scoped; `[ARN-7]` no rewind except through `mut self` —
+`[BRW-1]` enforces. `[LT-4]`: results borrow the arena, `E3061` past it.
+(`E3061`/`E3090`/`E3096` all registered; rule texts verified in
+`docs/spec/part-09-memory-facilities.md` IX.2.)
+
+Plan skeleton: compiler-known structs on the `cell_of` pattern (side table +
+`Private` fields); views reuse `TyKind::Ref`/`Span` (zero new type kinds, full
+region/`[TYP-15]` inheritance); elision ties per rule (same table as
+`SpanFrom`); `needs_drop` gate at `alloc`; drop elaboration handles scope-guard
+release (same machinery as guard drop after task 3); C runtime bump allocator;
+per-rule conformance incl. `E3061`/`E3090`/`E3096` rejects. Effects
+(`Alloc`/`@noalloc`) ship as debt like `[DRP-4]` (Phase-4-gated), never
+softened.
+
+**HALT unless task 3 lands sound:** guard-drop + region-escape machinery is
+Arena's foundation (scope guards are guard drops by another name).
+
+**Escalations (questions, not decisions):** E1 `Arena`/`ScopedArena`/
+`FixedArena` `Copy`-ness (`[ARN-1]` says move-only for `Arena` only — copying
+a bump pointer forks the allocator); E2 `needs_drop` under generics for
+`[ARN-3]` (monomorphised vs signature verdicts differ); E3 `alloc_array` init
+without `Default` (refuse-by-name like `take`, or `alloc_uninit`-only); E4
+`reset()` over `alloc_nodrop` resources vs `[THR-6]`'s must-drop (`E3015`
+exists); E5 scope-escape diagnostic shape (`E3061` vs `E3063`) for containers
+built from a scope.
+
 ### Not yet, and why
 
 * **`[DIA-7..10]` + `tests/ui/` snapshots** — a Phase 2 *exit* criterion at
   0/5, so it must happen, but after block I: three past defects were the
   compiler rejecting the right program under the wrong *shape*, and `RefCell`
   will add shapes. Writing the snapshots first means writing them twice.
-* **`D-030`** — small and open, but it needs a `drop` body that moves and
+* ~~**`D-030`** — small and open, but it needs a `drop` body that moves and
   nothing in the corpus has one. Fold it into task 2, which is already reading
-  the drop rules.
+  the drop rules.~~ **Done** — closed by subagent D as `E3010` (DRP-5 cases
+  red-checked, `E3010.md` page written).
 * **`CELL-DEF-1` / `CELL-SYNC-1`** — blocked on `Default` and on
   `Send`/`Sync`/threads. Not startable.
 

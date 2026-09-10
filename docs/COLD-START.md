@@ -28,9 +28,9 @@ plan (its own "Start here" is marked superseded — ignore it) and
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
-60 conformance rule directories, 150 cases. 54 defects recorded, **3 open**
-(D-030, D-038, D-040). 5 deviations. 2 errata awaiting the owner. Task 2
-details are in `HANDOFF.md`. Ratchets in
+61 conformance rule directories, 154 cases. 55 defects recorded, **2 open**
+(D-038, D-041). 5 deviations. 2 errata awaiting the owner. See `HANDOFF.md`.
+Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
 reason in the commit message.
 
@@ -116,8 +116,9 @@ left is coverage:
                  emitted C), BRW-9
     LT    5/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
                  LT-2a, LT-4 (Arena), LT-5, LT-7 (callback regions)
-    DRP   3/6    missing DRP-4 (needs effects, Phase 4), DRP-5 (= D-030, open),
-                 DRP-6 (Box/handle/Shared — Phase 3)
+    DRP   4/6    missing DRP-4 (needs effects, Phase 4),
+                 DRP-6 (Box/handle/Shared — Phase 3). DRP-5 has cases since D-030
+                 was fixed (drop-body moves rejected)
     SPN   3/3    done
     OWN-5        both clauses now, after D-035 — see the note below
     CELL  4/12   Cell is built (CELL-1, 2, 4, 11). RefCell is CELL-5..8,
@@ -216,9 +217,6 @@ snapshot per shape is what stops the next one.
   blocks nothing in `std` (ADR-019 takes the other route).
 * **ERR-042** — nine rule ids cited and defined nowhere, the whole `IDE-*` family
   among them. Part XX cites five IDE rules on one line and defines none.
-* **D-030** — a `drop` body may move a field out of `mut self`, which `[DRP-5]`
-  forbids. Filed rather than fixed: reaching it needs a `drop` that moves, and
-  nothing in the corpus does.
 
 ## 8. Traps paid for
 

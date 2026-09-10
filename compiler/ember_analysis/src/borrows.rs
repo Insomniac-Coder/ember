@@ -82,6 +82,15 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
     for body in bodies {
         signatures.insert(body.symbol.as_str(), elision_of(body, types));
     }
+    // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
+    // direct call to one of these bodies is a method call. Read once here
+    // because the conflict is reported while checking the *caller's* body.
+    let mut methods: HashSet<&str> = HashSet::new();
+    for body in bodies {
+        if is_method_body(body) {
+            methods.insert(body.symbol.as_str());
+        }
+    }
     let elision = |func: &FuncRef| match func {
         FuncRef::Direct { symbol } => {
             signatures.get(symbol.as_str()).cloned().unwrap_or(Elision::Everything)
@@ -111,8 +120,12 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         // and the result is treated as borrowing every view argument.
         FuncRef::Indirect(_) => Elision::Everything,
     };
+    let is_method = |func: &FuncRef| match func {
+        FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
+        _ => false,
+    };
     for body in bodies {
-        check_body(body, types, &elision, sink);
+        check_body(body, types, &elision, &is_method, sink);
     }
 }
 
@@ -139,6 +152,13 @@ fn elision_of(body: &Body, types: &TypeTable) -> Elision {
         return Elision::Named(vec![0]);
     }
     Elision::Everything
+}
+
+/// `[BRW-4]` — whether this body is a method: its first parameter is the
+/// `self` receiver. MIR keeps parameter names, so a caller recognises a
+/// method call by its callee without trusting the mangled symbol.
+fn is_method_body(body: &Body) -> bool {
+    body.arg_count > 0 && body.local(LocalId(1)).name.as_deref() == Some("self")
 }
 
 /// `[LT-1]` rule 1 — a `self`/`mut self` receiver that is itself a borrow.
@@ -238,13 +258,18 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
 }
 
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
-    check_body(body, types, &|_| Elision::Everything, sink);
+    let is_method = |func: &FuncRef| match func {
+        FuncRef::Direct { symbol } => symbol.as_str() == body.symbol.as_str() && is_method_body(body),
+        _ => false,
+    };
+    check_body(body, types, &|_| Elision::Everything, &is_method, sink);
 }
 
 fn check_body(
     body: &Body,
     types: &TypeTable,
     elision: &dyn Fn(&FuncRef) -> Elision,
+    is_method: &dyn Fn(&FuncRef) -> bool,
     sink: &mut Sink,
 ) {
     let live = liveness(body);
@@ -293,6 +318,7 @@ fn check_body(
                 point,
                 &accesses,
                 stmt.span,
+                is_method,
                 sink,
                 &mut reported,
             );
@@ -320,6 +346,7 @@ fn check_body(
             point,
             &accesses,
             block.terminator_span,
+            is_method,
             sink,
             &mut reported,
         );
@@ -493,6 +520,106 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
     HashSet::new()
 }
 
+/// `[BRW-4]`, shape B8 — the place a method call takes, when the conflict at
+/// `point` is its receiver autoref.
+///
+/// A `mut self` call lowers to `tmp = &mut place` (borrower: a temporary the
+/// lowering created) with the consuming call later whenever other arguments
+/// need evaluating first. The walk below is `reservation_window`'s forward
+/// search answering provenance instead of a window: the temporary's first use
+/// must be a call's receiver, and the callee must be a method body. Anything
+/// else — reassigned, read by another statement, fed to a free function or a
+/// builtin — is not B8, and the conflict keeps its ordinary code.
+fn method_autoref_target(
+    body: &Body,
+    point: Point,
+    is_method: &dyn Fn(&FuncRef) -> bool,
+) -> Option<Place> {
+    let stmt = body.blocks.get(point.block)?.stmts.get(point.index)?;
+    let StmtKind::Assign { place: borrower, rvalue: Rvalue::Ref { place: borrowed, mutable: true } } =
+        &stmt.kind
+    else {
+        return None;
+    };
+    if !borrower.projection.is_empty() || body.local(borrower.local).kind != LocalKind::Temp {
+        return None;
+    }
+    let borrower = borrower.local;
+    let borrowed = borrowed.clone();
+    let mut block_index = point.block;
+    let mut start = point.index + 1;
+
+    // Bounded like `reservation_window`: argument evaluation is a chain, and
+    // a loop back would mean the temporary is used more than once anyway.
+    for _ in 0..body.blocks.len() {
+        let block = body.blocks.get(block_index)?;
+
+        for stmt in block.stmts.iter().skip(start) {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    if place.local == borrower {
+                        return None;
+                    }
+                    let mut reads = Vec::new();
+                    rvalue_reads(rvalue, &mut reads);
+                    if reads.iter().any(|(p, _)| p.local == borrower) {
+                        return None;
+                    }
+                }
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    let mut reads = Vec::new();
+                    operand_read(lhs, &mut reads);
+                    operand_read(rhs, &mut reads);
+                    if reads.iter().any(|(p, _)| p.local == borrower) {
+                        return None;
+                    }
+                }
+                StmtKind::Drop { place, .. } => {
+                    if place.local == borrower {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        match &block.terminator {
+            Terminator::Call { func, args, next, .. } => {
+                let receiver = args.first().and_then(|arg| match arg {
+                    Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+                    Operand::Const(_) => None,
+                });
+                if receiver == Some(borrower) {
+                    // The temporary is this call's receiver: B8 exactly when
+                    // the callee is a method.
+                    return if is_method(func) { Some(borrowed) } else { None };
+                }
+                if args.iter().any(|arg| match arg {
+                    Operand::Copy(p) | Operand::Move(p) => p.local == borrower,
+                    Operand::Const(_) => false,
+                }) {
+                    // Consumed somewhere other than the receiver: not B8.
+                    return None;
+                }
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            Terminator::Assert { next, .. } => {
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            Terminator::Goto(next) => {
+                block_index = next.0 as usize;
+                start = 0;
+            }
+            // A branch (or return) means the temporary outlives argument
+            // evaluation: not the autoref shape, so keep the ordinary code.
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
 /// borrower still live. Liveness *is* the region, for a borrow held in a local.
 fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
@@ -509,6 +636,7 @@ fn check_point(
     point: Point,
     accesses: &[(Place, Access)],
     span: Span,
+    is_method: &dyn Fn(&FuncRef) -> bool,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
@@ -575,10 +703,27 @@ fn check_point(
             // the loan, this is shape B13 and not B3, and `[DIA-7a]` keys it
             // to `E3064`.
             let bundled = bundles_two_views(body, types, holder);
+            // `[BRW-4]` — when the conflicting access is a method call's
+            // receiver autoref, disjoint-field access is defeated by the call:
+            // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
+            // function's `mut` argument lowers through the same temporary, so
+            // the consuming call must be to a method body — otherwise a
+            // whole-place `mut` argument misreports as B8 rather than B1.
+            let method_root = if !bundled && loan_mutable && matches!(access, Access::Borrow { mutable: true }) {
+                method_autoref_target(body, point, is_method)
+                    .map(|taken| place_name(body, types, &taken))
+            } else {
+                None
+            };
             let (code, message) = if bundled {
                 (
                     codes::E3064,
                     format!("`{name}` is borrowed through a view struct that bundles two views"),
+                )
+            } else if let Some(taken) = method_root.as_deref() {
+                (
+                    codes::E3025,
+                    format!("cannot call a method on `{taken}` while `{name}` is mutably borrowed"),
                 )
             } else {
                 (code, message)
@@ -592,19 +737,25 @@ fn check_point(
             }
             sink.emit_classified(
                 diagnostic
-                    .help(match (&borrower, bundled) {
+                    .help(match (&borrower, bundled, method_root.as_deref()) {
                         // `[DIA-7a]` shape B13's help, which is a different fix
                         // from B3's: the use keeping the loan alive may be of
                         // the *other* field, so shortening it is no answer.
-                        (_, true) => String::from(
+                        (_, true, _) => String::from(
                             "pass the two views as separate parameters rather than bundling \
                              them; or copy the shorter-lived data into an owned field",
                         ),
-                        (Some(name), _) => format!(
+                        // `[DIA-7a]` shape B8's help: the call takes all of
+                        // `self`, so the fix is structural, not a shorter borrow.
+                        (_, _, Some(_)) => String::from(
+                            "inline the field access, take the two fields as separate \
+                             parameters, or split the method",
+                        ),
+                        (Some(name), _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _) => format!(
+                        (None, _, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
@@ -612,6 +763,8 @@ fn check_point(
                     })
                     .note(if bundled {
                         "a view struct has one region: the intersection of its fields' (LT-2)"
+                    } else if method_root.is_some() {
+                        "a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)"
                     } else {
                         "a borrow lasts until its last use, not to the end of the scope (BRW-2)"
                     }),

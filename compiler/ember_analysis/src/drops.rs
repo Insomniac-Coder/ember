@@ -28,10 +28,11 @@ use std::collections::BTreeMap;
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    Body, LocalDecl, LocalId, LocalKind, Operand, Place, Rvalue, Stmt, StmtKind, Terminator,
+    Body, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue, Stmt, StmtKind,
+    Terminator,
 };
 use ember_span::Span;
-use ember_types::{Ty, TypeTable};
+use ember_types::{Ty, TypeTable, TyKind};
 
 /// Where a local stands on one path.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -53,6 +54,8 @@ impl Owned {
 /// Rewrite one body so that every value is dropped exactly once, and report
 /// every use of a moved value. Returns the number of errors.
 pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
+    // `[DRP-5]` — a `drop` body may not move fields out of `mut self`.
+    let mut errors = check_drop_moves(body, types, sink);
     let entry = initial(body);
     let mut block_entry: Vec<Option<Vec<Owned>>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
@@ -105,7 +108,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
             step_terminator(body, index, &mut state, Some(&mut reporter));
         }
     }
-    let errors = reporter.errors;
+    errors += reporter.errors;
 
     // `[OWN-3]` — a local that is `Maybe` at any drop needs a flag.
     let needs_flag: Vec<LocalId> = plan
@@ -130,6 +133,141 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     }
     if !flags.is_empty() {
         write_flag_updates(body, &flags);
+    }
+    errors
+}
+
+/// `[DRP-5]` — the `self` of a `drop` body, when this body is one.
+///
+/// A `drop` method's `mut self` is a `ref mut Owner` where `Owner` declares
+/// `drop` (or the `Owner` itself for an owned-self spelling). Any other body,
+/// including a free function named `drop`, is not a destructor.
+fn drop_self(body: &Body, types: &TypeTable) -> Option<LocalId> {
+    if body.name != "drop" {
+        return None;
+    }
+    if body.arg_count != 1 {
+        return None;
+    }
+    let decl = body.locals.get(1)?;
+    if decl.kind != LocalKind::Arg {
+        return None;
+    }
+    // A free function can also be named `drop` with one droppable parameter;
+    // only a method receiver named `self` is a destructor (same test as
+    // `receiver_is_a_view` in borrows.rs).
+    if decl.name.as_deref() != Some("self") {
+        return None;
+    }
+    let inner = match types.kind(decl.ty) {
+        TyKind::Ref { inner, .. } => *inner,
+        _ => decl.ty,
+    };
+    let has_drop = match types.kind(inner) {
+        TyKind::Struct(id) => types.struct_def(*id).has_drop,
+        TyKind::Enum(id) => types.enum_def(*id).has_drop,
+        _ => false,
+    };
+    has_drop.then_some(LocalId(1))
+}
+
+/// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
+fn is_self_interior(place: &Place, self_local: LocalId) -> bool {
+    place.local == self_local && !place.projection.is_empty()
+}
+
+/// `[DRP-5]`, `[EXP-6]` — a `drop` body may not move out through `mut self`.
+///
+/// A field move (`E3010`) double-destroys: the moved value drops with its new
+/// owner at the end of the `drop` body, then drops again as a field after
+/// `drop` returns. A whole-value move through the borrow (`E3013`) is the same
+/// shape through `[EXP-6]` and would also launder `self` into an owned local
+/// for a second field move. Only `Move` matters: `Copy` fields stay `Copy`.
+fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
+    let Some(self_local) = drop_self(body, types) else {
+        return 0;
+    };
+    let mut errors = 0;
+    let mut report = |place: &Place, span: Span| {
+        let field_move =
+            place.projection.iter().any(|p| !matches!(p, Projection::Deref));
+        if field_move {
+            sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3010,
+                    span,
+                    "cannot move a field out of `drop`'s `mut self`",
+                )
+                .primary_label("moved out here")
+                .note("a `drop` method's `mut self` may not move fields out [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
+                .help("use `mem.take`, `mem.replace` or `swap` to leave a value in its place"),
+            );
+        } else {
+            sink.emit_classified(
+                Diagnostic::error(codes::E3013, span, "cannot move out of `drop`'s `mut self`")
+                    .primary_label("moved out here")
+                    .note("a `drop` method's `mut self` may not be moved out of [DRP-5]; the value is dropped again after `drop` returns [EXP-6]")
+                    .help("borrow it instead of moving it; use `mem.take`, `mem.replace` or `swap` to leave a value in a field's place"),
+            );
+        }
+        errors += 1;
+    };
+    let check_operand = |operand: &Operand, span: Span, report: &mut dyn FnMut(&Place, Span)| {
+        if let Operand::Move(place) = operand {
+            if is_self_interior(place, self_local) {
+                report(place, span);
+            }
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { rvalue, .. } => match rvalue {
+                    Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
+                        check_operand(o, stmt.span, &mut report);
+                    }
+                    Rvalue::Cast { operand, .. } => {
+                        check_operand(operand, stmt.span, &mut report);
+                    }
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        check_operand(lhs, stmt.span, &mut report);
+                        check_operand(rhs, stmt.span, &mut report);
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        for operand in operands {
+                            check_operand(operand, stmt.span, &mut report);
+                        }
+                    }
+                    Rvalue::Repeat { value, .. } => {
+                        check_operand(value, stmt.span, &mut report);
+                    }
+                    Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+                },
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    check_operand(lhs, stmt.span, &mut report);
+                    check_operand(rhs, stmt.span, &mut report);
+                }
+                _ => {}
+            }
+        }
+        let span = block.terminator_span;
+        match &block.terminator {
+            Terminator::Call { func, args, .. } => {
+                if let ember_mir::FuncRef::Indirect(operand) = func {
+                    check_operand(operand, span, &mut report);
+                }
+                for arg in args {
+                    check_operand(arg, span, &mut report);
+                }
+            }
+            Terminator::SwitchInt { discr, .. } => {
+                check_operand(discr, span, &mut report);
+            }
+            Terminator::Assert { cond, .. } => {
+                check_operand(cond, span, &mut report);
+            }
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+        }
     }
     errors
 }
