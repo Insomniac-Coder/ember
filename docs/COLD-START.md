@@ -10,7 +10,8 @@ plan (its own "Start here" is marked superseded — ignore it) and
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..020 |
+| `docs/DECISIONS.md` | ADR-001..022 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer**, in the `SPEC-FEED` §28 format. ODR-001..003 open |
 
 ---
 
@@ -222,6 +223,11 @@ snapshot per shape is what stops the next one.
 ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
 withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
+
+**The queue now lives in `docs/OWNER-QUEUE.md`** — ODR-001 (`UnsafeCell`'s API
+surface: the 0.8.5 feed's §8 and the 2026-09-10 ruling describe different
+documents), ODR-002 (the six structurally-undetectable definitions), ODR-003
+(the `[FFI-17]` numbered list). Summarised below.
 
 * **One question raised and deliberately not acted on.** Six rule ids
   (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) are
