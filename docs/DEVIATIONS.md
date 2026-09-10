@@ -115,10 +115,10 @@ that would expose it lands, and the entry says which feature that is.
 | **Soundness impact** | none. A `MutSpan[T]` already carries the exclusivity a `ref mut` would add: it holds the pointer, and `[SPN-3]` makes it move-only so there is exactly one |
 | **Observable today** | **yes** — the literal reading would reject `normalize(buf.as_mut_span())` |
 | **Why the compiler does not simply comply** | complying makes the *document's own worked example* uncompilable. Part VII §7 writes `normalize(buf.as_mut_span())`, and `split_at` — which `[SPN-*]` names as the sanctioned way to obtain two mutable borrows into one container — could not be called on its own result either |
-| **Status** | **unratified.** This reading was written into `[FN-1]` as amendment A6 and the owner withdrew it: a hardening may not answer what Ember means. So neither side moves — the rule stands as written, the compiler stands as built, and the difference is recorded here instead of being hidden in either |
+| **Status** | **CLOSED 2026-09-10.** The owner ruled the worked example governs; amendment S4 puts it in the document as `[FN-1a]`. Before that it was unratified for two revisions: A6 wrote the reading into `[FN-1]` and the owner withdrew it, because a hardening may not answer what Ember means — so neither side moved, and nobody guessed |
 | **Fix plan** | one line in `mut_param_ty` if the owner rules for the literal text; nothing if the example governs |
 | **Owner** | ERR-041, ADR-017 |
-| **Target** | owner decision |
+| **Target** | **done** — closed by owner ruling, no code moved (`tests/conformance/FN-1a/`) |
 
 ---
 
@@ -129,6 +129,7 @@ one might last.
 
 | | Rule | Closed by |
 |---|---|---|
+| **D5** | `[FN-1]` | **closed 2026-09-10 by owner ruling on ERR-041.** Part VII §7's worked example governs: a `mut` parameter at a view type takes the view value, and the place requirement applies to what the view was taken of. Amendment S4, `[FN-1a]`. No code moved — the compiler was right — and `tests/conformance/FN-1a/` now pins it. The full entry is above, kept because it was open for two revisions and nobody guessed |
 | **ADR-018** | `[CLO-3]` | `fn(A) -> R` in parameter position is now an implicit generic bounded by `Callable`, monomorphised per argument type; a capturing lambda is an anonymous struct of its `[CLO-2]` captures. It had been a C function pointer, which erases the environment, so every capturing lambda was rejected |
 | **ADR-012** | `[LT-2]` | superseded. `E3064` was reachable all along and the programs it is for were being reported as shape B3; the classifier was wrong, not the narrowing |
 | **ERR-026** | `[GRM-23]` | the compiler emits `E0104` as the rule says, and `E0102` stays with ordinary chained comparison |

@@ -28,11 +28,18 @@ plan (its own "Start here" is marked superseded — ignore it) and
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
-61 conformance rule directories, 154 cases. 55 defects recorded, **2 open**
-(D-038, D-041). 5 deviations. 2 errata awaiting the owner. See `HANDOFF.md`.
+62 conformance rule directories, 155 cases. 55 defects recorded, **2 open**
+(D-038, D-041). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
+**No errata awaiting the owner** — ERR-041 and ERR-043 were decided on
+2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
 Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
 reason in the commit message.
+
+**The working process is `docs/HANDOFF.md` §0.0** — authority, versions, the
+five-way sort, the four-document write path, probe-first, test discipline,
+claim discipline, escalation, scope reporting, and the pre-commit checklist.
+Read it before starting a task, not after.
 
 ## 2. The rules. Read these before touching `docs/spec-source/`
 
@@ -79,22 +86,27 @@ the caveat.*
 
 ## 3. Versioning
 
-The document is **v0.8.4_Hardened_1**. Two numbers move independently:
+The document is **v0.8.5_Hardened_1**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
-  the owner's resolution of ERR-044.
+  the owner's resolution of ERR-044. **0.8.5 exists for three** — S2
+  (`UnsafeCell` becomes a real primitive), S3 (`RefCell` is never `Copy`), S4
+  (`[FN-1a]`) — all owner rulings of 2026-09-10, all additive.
 * **hardening number** — moves when the document gains implementation detail and
-  no rule changes meaning.
+  no rule changes meaning. **The number itself is the owner's call**: `8101389`
+  records the last one that way, and `207c69f` is the shape to follow when the
+  file has outrun its header and the decision has not been made.
 
-`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts `"0.8.3"` and
-`"0.8.4"`; 0.8.4 is additive, so no 0.8.3 program became invalid.
-`docs/spec-source/Ember_v0.8.4_Hardened_1.md` is the frozen snapshot — the next
-hardening diffs against **that**, not against as-received. The working source
-`docs/spec-source/ember-spec.md` currently runs one declared editorial repair
-(E5, `[EFF-18]` gains `Nondet`) ahead of the frozen snapshot; for
-implementation the working source governs — see `docs/HANDOFF.md` §0.17, which
-is the authoritative statement of which artifact is normative for what.
+`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts `"0.8.3"`,
+`"0.8.4"` and `"0.8.5"`; each is additive, so nothing valid became invalid.
+`docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the current frozen snapshot —
+the next revision diffs against **that**, not against as-received.
+`Ember_v0.8.4_Hardened_1.md` and `Ember_v0.8.4_Hardened_2.md` are kept as prior
+baselines. The working source and the current snapshot are **identical** right
+now; where they ever differ, the working source governs for implementation and
+`docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
+normative for what.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -206,17 +218,30 @@ snapshot per shape is what stops the next one.
 
 ## 7. Open, and the owner's to answer
 
-* **D5** — `[FN-1]` says a `mut` argument "MUST be a mutable place"; Part
-  VII §7 passes `buf.as_mut_span()`, a call result. **ERR-041 is decided**
-  (Part VII §7's example governs; ADR-017 records the reading). What holds
-  open is **D5**: the compiler passes a `MutSpan` by value and says so in
-  `mut_param_ty`'s comment, unratified and awaiting an owner decision.
-  Complying with the letter makes the document's own example uncompilable.
-* **ERR-043** — `UnsafeCell` appears once in 5,526 lines and no rule defines it.
-  Blocks a *third-party* package writing its own interior-mutability primitive;
-  blocks nothing in `std` (ADR-019 takes the other route).
-* **ERR-042** — nine rule ids cited and defined nowhere, the whole `IDE-*` family
-  among them. Part XX cites five IDE rules on one line and defines none.
+**Everything that stood here on 2026-09-09 has been ruled on or closed.**
+ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
+withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
+remains:
+
+* **One question raised and deliberately not acted on.** Six rule ids
+  (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) are
+  properly defined but stated in positions `rule_index.py` cannot recognise —
+  second on a shared line, or inline in a paragraph. They could be made findable
+  by splitting each onto its own bullet with its text verbatim, an
+  `EDITORIAL REPAIR` changing no meaning. That is a layout edit to the owner's
+  prose for a tool's benefit, which is the wrong direction by this project's
+  cardinal rule, so it was **not** done. The alternative is teaching the
+  detector the inline and granting-sentence forms and accepting the
+  false-negative risk. Withdrawn ERR-042 carries the full inventory.
+* **Two open defects**, neither an owner question: **D-038** (`String`→`str`
+  coercion is listed by `[SPN-1]` and rejected by the checker; fails closed) and
+  **D-041** (moves out of borrowed places are unchecked outside `drop` bodies —
+  `x = r.inner` compiles and the value drops twice; `[EXP-6]` names `E3013` and
+  it had no emitter). **D-041 is the serious one.**
+* **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
+  (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
+  (`extern class` parses and is refused), D4 (`E9012` registered and never
+  emitted). D5 and D6 are closed.
 
 ## 8. Traps paid for
 
