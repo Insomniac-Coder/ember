@@ -108,11 +108,32 @@ def check_page(path: Path, work: Path) -> list[str]:
     blocks = {kind: body for kind, body in FENCE.findall(text)}
     problems = []
 
+    # A lint is not an error: the program that trips it **compiles**, and that
+    # is the whole difference. Checking a lint page the way an error page is
+    # checked demands that its `fails` program be rejected, which no correct
+    # `L`-page can satisfy — so the gate would be asking for a page that cannot
+    # exist. `L3011` (`[CELL-7]`, a `RefCell` guard held across a call) is the
+    # first one the compiler actually emits and is what surfaced this.
+    is_lint = code.startswith("L")
+
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
         status, output = run(blocks["fails"], work)
-        if status == 0:
+        if is_lint:
+            # It must compile — a lint does not reject — and it must actually
+            # emit the lint. The second half is the one that matters: without
+            # it a page could show any compiling program at all.
+            if status != 0:
+                problems.append(
+                    f"{code}: the ```ember,fails program does not compile, but a lint does not reject:\n"
+                    + "\n".join("      " + line for line in output.splitlines()[:6])
+                )
+            elif code not in output:
+                problems.append(
+                    f"{code}: the ```ember,fails program compiled without emitting {code}"
+                )
+        elif status == 0:
             problems.append(f"{code}: the ```ember,fails program compiled")
         elif code not in output:
             problems.append(

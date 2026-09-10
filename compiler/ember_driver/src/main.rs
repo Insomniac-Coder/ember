@@ -403,7 +403,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
-    let mut bodies = ember_mir::lower(&program, &types, &common);
+    let mut bodies = ember_mir::lower(&program, &types, &common, &map);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }

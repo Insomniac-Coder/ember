@@ -167,6 +167,10 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(len, &at);
                     v.operand(index, &at);
                 }
+                if let crate::AssertKind::RefCellBorrow { file, line } = msg {
+                    v.operand(file, &at);
+                    v.operand(line, &at);
+                }
                 v.target(*next, &at);
             }
             Terminator::Return | Terminator::Unreachable => {}
@@ -201,6 +205,7 @@ mod tests {
             arg_count: 0,
             span: Span::DUMMY,
             borrows: None,
+            borrowed_params: Vec::new(),
         }
     }
 
@@ -458,6 +463,7 @@ mod view_invariant_tests {
             arg_count: 0,
             span: Span::DUMMY,
             borrows: None,
+            borrowed_params: Vec::new(),
         };
         (body, types)
     }

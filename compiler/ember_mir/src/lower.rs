@@ -9,6 +9,7 @@
 //! drops, Phase 3 for reference counting.
 
 use ember_hir as hir;
+use ember_span::SourceMap;
 use ember_types::{
     CommonTypes, EnumId, OverflowPolicy, Ty, TyKind, TypeTable, bit_width, is_signed,
 };
@@ -19,8 +20,13 @@ use crate::{
     StmtKind, Terminator,
 };
 
-pub fn lower(program: &hir::Program, types: &TypeTable, common: &CommonTypes) -> Vec<Body> {
-    program.functions.iter().map(|f| lower_function(f, program, types, common)).collect()
+pub fn lower(
+    program: &hir::Program,
+    types: &TypeTable,
+    common: &CommonTypes,
+    map: &SourceMap,
+) -> Vec<Body> {
+    program.functions.iter().map(|f| lower_function(f, program, types, common, map)).collect()
 }
 
 fn lower_function(
@@ -28,8 +34,9 @@ fn lower_function(
     program: &hir::Program,
     types: &TypeTable,
     common: &CommonTypes,
+    map: &SourceMap,
 ) -> Body {
-    let mut builder = Builder::new(function, program, types, common);
+    let mut builder = Builder::new(function, program, types, common, map);
     builder.build();
     let mut body = builder.finish();
     prune_unreachable(&mut body);
@@ -137,6 +144,9 @@ struct Builder<'a> {
     function: &'a hir::Function,
     program: &'a hir::Program,
     types: &'a TypeTable,
+    /// `[CELL-5]` — source locations for the conflicting-borrow panic.
+    /// Lowering needs file paths and line numbers, which live in the map.
+    map: &'a SourceMap,
     locals: Vec<LocalDecl>,
     blocks: Vec<BasicBlock>,
     /// Maps a HIR local to the MIR local that holds it.
@@ -174,6 +184,7 @@ impl<'a> Builder<'a> {
         program: &'a hir::Program,
         types: &'a TypeTable,
         common: &CommonTypes,
+        map: &'a SourceMap,
     ) -> Builder<'a> {
         // Local 0 is the return slot; locals 1..=arg_count are the parameters.
         let mut locals = vec![LocalDecl {
@@ -220,6 +231,7 @@ impl<'a> Builder<'a> {
             function,
             program,
             types,
+            map,
             locals,
             blocks,
             local_map,
@@ -238,6 +250,21 @@ impl<'a> Builder<'a> {
     }
 
     fn finish(self) -> Body {
+        // `[FN-1]` — thread borrowed-ness to the move sites (D-041). A
+        // borrowed parameter is a bitwise copy with no loan behind it, so the
+        // move checker needs the mode written down: without it the callee
+        // cannot tell borrowed data apart from owned data. Only `Borrow` is
+        // listed (`Owned` takes ownership; `Mut` arrives as `ref mut`, whose
+        // moves already carry `Deref`). Parameters occupy locals
+        // `1..=arg_count` in order, so the HIR position maps directly.
+        let borrowed_params: Vec<LocalId> = self
+            .function
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.mode == hir::Mode::Borrow)
+            .map(|(i, _)| LocalId((i + 1) as u32))
+            .collect();
         Body {
             name: self.function.name.to_string(),
             symbol: self.function.symbol.clone(),
@@ -246,6 +273,7 @@ impl<'a> Builder<'a> {
             arg_count: self.arg_count,
             span: self.function.span,
             borrows: self.function.borrows.clone(),
+            borrowed_params,
         }
     }
 
@@ -750,6 +778,318 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::Assign { place: field, rvalue: Rvalue::Use(produced) });
     }
 
+    /// `[CELL-5]`, `[CELL-7]`, `[CELL-9]` — `c.borrow()` / `c.borrow_mut()`.
+    ///
+    /// The `borrowed` argument is typeck's shared borrow of the cell (`&cell`),
+    /// written down so `collect_loans` sees it: the guard's region borrows the
+    /// cell, and `[TYP-15]` applies to the guard. Overlapping guards are
+    /// allowed statically (all loans here are of the cell, all shared at this
+    /// level); the counter refuses them at run time in every profile, and
+    /// `exclusivity = "unchecked"` never reaches this path (there is no
+    /// profile input to this function at all).
+    ///
+    /// Layout (see `refcell_of`): 0 `value: T`, 1 `borrow: isize` (`0`
+    /// unborrowed, `>0` shared count, `-1` mutably borrowed), 2
+    /// `borrow_file: *u8`, 3 `borrow_line: u32`.
+    ///
+    /// `borrow` fails iff the counter is `-1`; `borrow_mut` fails iff it is
+    /// non-zero. Failure panics with the *stored* conflicting location via
+    /// `AssertKind::RefCellBorrow`; success increments (`borrow`) or sets to
+    /// `-1` (`borrow_mut`), stores the *current* location, and builds the
+    /// guard (`Ref`/`RefMut` struct) from a borrow of `value`.
+    fn lower_refcell_borrow(
+        &mut self,
+        place: Place,
+        borrowed: &'a hir::Expr,
+        mutable: bool,
+        guard_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let hir::ExprKind::Ref { place: cell_hir, .. } = &borrowed.kind else {
+            return;
+        };
+        self.at(span);
+        let cell_place = self.lower_place(cell_hir);
+        let value_place = cell_place.clone().field(0);
+        let borrow_place = cell_place.clone().field(1);
+        let file_place = cell_place.clone().field(2);
+        let line_place = cell_place.clone().field(3);
+
+        let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
+            return;
+        };
+        let ref_field_ty = self.types.struct_def(guard_id).fields[0].ty;
+
+        // The loan the region graph sees: a borrow of the cell's value. For
+        // `borrow_mut` this is a *mutable* loan, and overlapping mutable loans
+        // from `RefCell`s are deliberately allowed statically — the counter
+        // refuses them at run time. See `borrows.rs` (`is_refcell_loan` skips
+        // Borrow conflicts for these but still rejects moves of the cell).
+        let ref_temp = self.temp(ref_field_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(ref_temp),
+            rvalue: Rvalue::Ref { place: value_place.clone(), mutable },
+        });
+        let guard_operand = self.read(Place::local(ref_temp), ref_field_ty);
+
+        let panic_bb = self.new_block();
+        let success_bb = self.new_block();
+        let counter = Operand::Copy(borrow_place.clone());
+        if mutable {
+            // `borrow_mut`: `0` succeeds, anything else panics.
+            self.terminate(Terminator::SwitchInt {
+                discr: counter,
+                targets: vec![(0, success_bb)],
+                otherwise: panic_bb,
+            });
+        } else {
+            // `borrow`: `-1` (mutably borrowed) panics, anything else succeeds.
+            self.terminate(Terminator::SwitchInt {
+                discr: counter,
+                targets: vec![(-1, panic_bb)],
+                otherwise: success_bb,
+            });
+        }
+
+        // Failure: panic with the stored conflicting location. The current
+        // location travels as the assert's span (the backend renders it).
+        self.current = panic_bb;
+        self.at(span);
+        let file_op = Operand::Copy(file_place.clone());
+        let line_op = Operand::Copy(line_place.clone());
+        let unreachable_bb = self.new_block();
+        self.terminate(Terminator::Assert {
+            cond: Operand::Const(Const::Bool(false)),
+            expected: true,
+            msg: AssertKind::RefCellBorrow { file: file_op, line: line_op },
+            next: unreachable_bb,
+            span,
+        });
+        self.current = unreachable_bb;
+        self.terminate(Terminator::Unreachable);
+
+        // Success: update the counter, store this borrow's location, build the
+        // guard. The counter write targets field 1 while the loan is of field
+        // 0 — distinct fields are disjoint (`[BRW-4]`), so the update never
+        // conflicts with the loan that keeps the cell alive.
+        self.current = success_bb;
+        self.at(span);
+        if mutable {
+            // `-1` via `-(1)`: `Const::Int` holds a `u128` bit pattern, and a
+            // huge positive would render as one in C. Negation is exact.
+            let one_isize = {
+                // The counter's own type, from the cell (field 1).
+                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                    return;
+                };
+                self.types.struct_def(cell_id).fields[1].ty
+            };
+            let neg_one = Rvalue::UnaryOp {
+                op: crate::UnOp::Neg,
+                operand: Operand::Const(Const::Int { value: 1, ty: one_isize }),
+            };
+            self.push(StmtKind::Assign { place: borrow_place.clone(), rvalue: neg_one });
+        } else {
+            let counter_ty = {
+                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                    return;
+                };
+                self.types.struct_def(cell_id).fields[1].ty
+            };
+            let one = Operand::Const(Const::Int { value: 1, ty: counter_ty });
+            self.push(StmtKind::Assign {
+                place: borrow_place.clone(),
+                rvalue: Rvalue::BinaryOp {
+                    op: BinOp::Add,
+                    lhs: Operand::Copy(borrow_place.clone()),
+                    rhs: one,
+                },
+            });
+        }
+        let (path, line) = self.borrow_location(span);
+        self.push(StmtKind::Assign {
+            place: file_place,
+            rvalue: Rvalue::Use(Operand::Const(Const::CStr(path))),
+        });
+        let line_ty = {
+            let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                return;
+            };
+            self.types.struct_def(cell_id).fields[3].ty
+        };
+        self.push(StmtKind::Assign {
+            place: line_place,
+            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: line as u128, ty: line_ty })),
+        });
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Struct(guard_id),
+                operands: vec![guard_operand],
+            },
+        });
+        let join_bb = self.new_block();
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    /// `[CELL-6]`, `[CELL-6a]` — `c.try_borrow()` / `c.try_borrow_mut()`.
+    ///
+    /// As above, except contention builds `None` rather than panicking. There
+    /// is no profile input here either, so no profile can make these
+    /// infallible (`[PRF-1]` forbids changing which `match` arm runs).
+    fn lower_refcell_try_borrow(
+        &mut self,
+        place: Place,
+        borrowed: &'a hir::Expr,
+        mutable: bool,
+        opt_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let hir::ExprKind::Ref { place: cell_hir, .. } = &borrowed.kind else {
+            return;
+        };
+        self.at(span);
+        let cell_place = self.lower_place(cell_hir);
+        let value_place = cell_place.clone().field(0);
+        let borrow_place = cell_place.clone().field(1);
+        let file_place = cell_place.clone().field(2);
+        let line_place = cell_place.clone().field(3);
+
+        let TyKind::Enum(opt_id) = *self.types.kind(opt_ty) else {
+            return;
+        };
+        let none_index = self
+            .types
+            .enum_def(opt_id)
+            .variants
+            .iter()
+            .position(|v| v.fields.is_empty())
+            .unwrap_or(0);
+        let some_index = 1 - none_index;
+        let guard_ty = self.types.enum_def(opt_id).variants[some_index].fields[0].ty;
+        let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
+            return;
+        };
+        let ref_field_ty = self.types.struct_def(guard_id).fields[0].ty;
+
+        let ref_temp = self.temp(ref_field_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(ref_temp),
+            rvalue: Rvalue::Ref { place: value_place.clone(), mutable },
+        });
+        let guard_operand = self.read(Place::local(ref_temp), ref_field_ty);
+
+        let success_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join_bb = self.new_block();
+        let counter = Operand::Copy(borrow_place.clone());
+        if mutable {
+            self.terminate(Terminator::SwitchInt {
+                discr: counter,
+                targets: vec![(0, success_bb)],
+                otherwise: none_bb,
+            });
+        } else {
+            self.terminate(Terminator::SwitchInt {
+                discr: counter,
+                targets: vec![(-1, none_bb)],
+                otherwise: success_bb,
+            });
+        }
+
+        self.current = none_bb;
+        self.at(span);
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(opt_id, none_index),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = success_bb;
+        self.at(span);
+        if mutable {
+            let one_isize = {
+                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                    return;
+                };
+                self.types.struct_def(cell_id).fields[1].ty
+            };
+            let neg_one = Rvalue::UnaryOp {
+                op: crate::UnOp::Neg,
+                operand: Operand::Const(Const::Int { value: 1, ty: one_isize }),
+            };
+            self.push(StmtKind::Assign { place: borrow_place.clone(), rvalue: neg_one });
+        } else {
+            let counter_ty = {
+                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                    return;
+                };
+                self.types.struct_def(cell_id).fields[1].ty
+            };
+            let one = Operand::Const(Const::Int { value: 1, ty: counter_ty });
+            self.push(StmtKind::Assign {
+                place: borrow_place.clone(),
+                rvalue: Rvalue::BinaryOp {
+                    op: BinOp::Add,
+                    lhs: Operand::Copy(borrow_place.clone()),
+                    rhs: one,
+                },
+            });
+        }
+        let (path, line) = self.borrow_location(span);
+        self.push(StmtKind::Assign {
+            place: file_place,
+            rvalue: Rvalue::Use(Operand::Const(Const::CStr(path))),
+        });
+        let line_ty = {
+            let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
+                return;
+            };
+            self.types.struct_def(cell_id).fields[3].ty
+        };
+        self.push(StmtKind::Assign {
+            place: line_place,
+            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: line as u128, ty: line_ty })),
+        });
+        let guard_temp = self.temp_unowned(guard_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(guard_temp),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Struct(guard_id),
+                operands: vec![guard_operand],
+            },
+        });
+        let some_operand = self.read(Place::local(guard_temp), guard_ty);
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(opt_id, some_index),
+                operands: vec![some_operand],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    /// The current borrow's source location for the cell's location fields:
+    /// `(path, line)`. Paths use `/` separators so the panic reads the same
+    /// on every host. A dummy span (synthesised nodes) stores no location.
+    fn borrow_location(&self, span: ember_span::Span) -> (String, u32) {
+        if span.is_dummy() {
+            return (String::new(), 0);
+        }
+        let Some(file) = self.map.get(span.file) else {
+            return (String::new(), 0);
+        };
+        let path = file.path.display().to_string().replace('\\', "/");
+        let line = file.line_col(span.start).line;
+        (path, line)
+    }
+
     // -- expressions ----------------------------------------------------------
 
     /// Lower `expr` so that its value ends up in `place`.
@@ -819,6 +1159,18 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Builtin { which: hir::Builtin::CellUpdate, args } => {
                 self.lower_cell_update(&args[0], &args[1]);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::RefCellBorrow, args } => {
+                self.lower_refcell_borrow(place, &args[0], false, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::RefCellBorrowMut, args } => {
+                self.lower_refcell_borrow(place, &args[0], true, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrow, args } => {
+                self.lower_refcell_try_borrow(place, &args[0], false, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrowMut, args } => {
+                self.lower_refcell_try_borrow(place, &args[0], true, expr.ty, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RangeChecked(id), args } => {
                 self.lower_range_checked(place, *id, &args[0], expr.ty, expr.span);

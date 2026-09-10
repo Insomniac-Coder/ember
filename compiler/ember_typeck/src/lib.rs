@@ -298,6 +298,19 @@ struct Checker<'a> {
     /// what tells method dispatch that `set` on it is a builtin rather than a
     /// missing method.
     cells: HashMap<StructId, Ty>,
+    /// `[CELL-5]` — every `RefCell[T]` built so far, and the `T` it holds.
+    /// A transparent struct with a second field for the one-word borrow
+    /// counter plus location fields for the conflicting borrow's source
+    /// location (named in the panic in debug and release). Like `cells`, this
+    /// is what tells method dispatch that `borrow` on it is a builtin.
+    refcells: HashMap<StructId, Ty>,
+    /// `[CELL-7]` — every `Ref[T]`/`RefMut[T]` guard built so far, and the
+    /// `T` plus mutability it views. A transparent one-field struct holding a
+    /// `ref`/`ref mut`, so `[TYP-15]` applies via `is_view` and the region
+    /// borrows the cell. `has_drop` is set so the guard's `drop` releases the
+    /// borrow state; `derives_copy` is clear so guards are move-only
+    /// (`[CELL-12]`'s reasoning for the cell applies to the guard's borrow).
+    ref_guards: HashMap<StructId, (Ty, bool)>,
     /// Instantiations still to have their bodies checked.
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
@@ -355,6 +368,8 @@ impl<'a> Checker<'a> {
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
             cells: HashMap::new(),
+            refcells: HashMap::new(),
+            ref_guards: HashMap::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
             locals: Vec::new(),
@@ -2042,6 +2057,46 @@ impl<'a> Checker<'a> {
                     self.reject_stored_view(inner, t.span, "a cell's contents");
                     return self.cell_of(inner);
                 }
+                // `[CELL-5]`, `[CELL-11]` — `RefCell[T]`. In the prelude by
+                // `OQ-10` like `Cell` (the name resolves with no import).
+                // `[TYP-15]` applies to the contents as for `Cell`: a view
+                // may not be put in storage.
+                if name.is("RefCell") {
+                    if args.len() != 1 {
+                        self.error(codes::E2020, ty.span, "`RefCell` takes one type argument");
+                        return self.common.error;
+                    }
+                    let ast::GenericArg::Type(t) = &args[0] else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    let inner = self.resolve_type(t);
+                    self.reject_stored_view(inner, t.span, "a cell's contents");
+                    return self.refcell_of(inner);
+                }
+                // `[CELL-7]` — `Ref[T]`/`RefMut[T]` guards. They live in
+                // `std.cell`; `std.cell` has no file yet, so like `Cell` they
+                // resolve without an import until the library can supply them
+                // (`[CELL-11]` names only `Cell`/`RefCell` for the prelude, and
+                // says nothing forbidding this route for the guards they hand
+                // out — without it no program could name a returned guard).
+                if name.is("Ref") || name.is("RefMut") {
+                    if args.len() != 1 {
+                        self.error(
+                            codes::E2020,
+                            ty.span,
+                            format!("`{name}` takes one type argument"),
+                        );
+                        return self.common.error;
+                    }
+                    let ast::GenericArg::Type(t) = &args[0] else {
+                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        return self.common.error;
+                    };
+                    let inner = self.resolve_type(t);
+                    let mutable = name.is("RefMut");
+                    return self.ref_guard_of(inner, mutable);
+                }
                 // `[TYP-16]` — a user generic struct, instantiated on demand:
                 // `Pair[i32, f32]` is its own struct with its own layout.
                 if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
@@ -2742,6 +2797,141 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[CELL-5]`, `[CELL-9]`, `[CELL-12]` — `RefCell[T]`, as a transparent
+    /// struct built once per `T`.
+    ///
+    /// The shape carries over from `Cell` (see `cell_of`): a `StructDef`
+    /// interned per `T`, a side table on the checker, privacy as the mechanism
+    /// (`declaring_module: usize::MAX` + private fields refuse read/write/ref
+    /// everywhere with `E1020`), and ordinary identifiers (never `$`, which
+    /// `[CG-C-1]` forbids in emitted C — the backend writes field names
+    /// verbatim and `$` needs `-pedantic` to be noticed).
+    ///
+    /// Fields, in order: `value: T` (at offset 0, so a guard's pointer to the
+    /// value is also a pointer to the cell for the release), `borrow: isize`
+    /// (the one-word counter: `0` unborrowed, `>0` shared count, `-1`
+    /// mutably borrowed), `borrow_file: *u8` + `borrow_line: u32` (the
+    /// conflicting borrow's source location, recorded in debug and release
+    /// for `[CELL-5]`'s panic).
+    ///
+    /// `[CELL-12]` (S3/ADR-021, owner ruling — do not re-derive): `RefCell[T]`
+    /// is never `Copy` whatever `T` is. `derives_copy` is therefore `false`
+    /// here, deliberately overriding the field-derived `Copy` that came free
+    /// for `Cell` (`[CELL-4]` explicitly does not reach here). Moving a
+    /// `RefCell` transfers the whole cell, borrow state included, via the
+    /// ordinary struct move. `needs_drop` stays field-derived (`has_drop`
+    /// clear), so a `RefCell` needs drop iff `T` does.
+    fn refcell_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!("RefCell_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let u8_ty = self.common.u8;
+        let file_ty = self.types.intern(TyKind::Ptr { mutable: false, inner: u8_ty });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![
+                FieldDef {
+                    name: Symbol::intern("value"),
+                    ty: inner,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("borrow"),
+                    ty: self.common.isize,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("borrow_file"),
+                    ty: file_ty,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("borrow_line"),
+                    ty: self.common.u32,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+            ],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.refcells.insert(id, inner);
+        ty
+    }
+
+    /// The payload type, if this is a `RefCell`.
+    fn refcell_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.refcells.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `[CELL-7]` — `Ref[T]`/`RefMut[T]` guards, as transparent one-field
+    /// structs built once per `T`.
+    ///
+    /// One field holding a `ref T`/`ref mut T` into the cell's `value`, so
+    /// `is_view` holds (a struct carrying a borrow is a view) and `[TYP-15]`
+    /// applies, and the region borrows the cell via the loan the builtin
+    /// lowering writes down. `derives_copy` is clear (guards are move-only:
+    /// copying one without incrementing the counter would double-release),
+    /// `has_drop` is set so the guard is owned and its `drop` releases the
+    /// borrow state — the backend special-cases these drops to a counter
+    /// update rather than a `drop` method call.
+    fn ref_guard_of(&mut self, inner: Ty, mutable: bool) -> Ty {
+        let prefix = if mutable { "RefMut" } else { "Ref" };
+        let name = Symbol::intern(&format!("{prefix}_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let ref_ty = self.types.intern(TyKind::Ref { mutable, inner });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: ref_ty,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: true,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.ref_guards.insert(id, (inner, mutable));
+        ty
+    }
+
+    /// The viewed type and mutability, if this is a `Ref`/`RefMut` guard.
+    fn ref_guard_inner(&self, ty: Ty) -> Option<(Ty, bool)> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.ref_guards.get(id).copied(),
+            _ => None,
+        }
+    }
+
     /// `Result[T, E]`, likewise.
     fn result_of(&mut self, ok: Ty, err: Ty) -> Ty {
         let name = Symbol::intern(&format!(
@@ -3338,6 +3528,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Expr {
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
+        // `[CELL-7]` — a guard local reads through like a reference, unless
+        // the context wants the guard itself: returning or passing on the
+        // guard names it, every other mention names its contents while keeping
+        // the guard alive (the unwrapped place derefs through it).
+        if self.ref_guard_inner(ty).is_some() {
+            if let Some(expected) = expected {
+                if expected == ty {
+                    return read;
+                }
+            }
+            return self.read_guard_through(read);
+        }
         let TyKind::Ref { inner, .. } = *self.types.kind(ty) else { return read };
         if let Some(expected) = expected {
             if expected == ty || matches!(self.types.kind(expected), TyKind::Ref { .. }) {
@@ -3357,9 +3559,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// emitted C. `println(f(ref n))` printed a `ref i32` as if it were a
     /// string until this existed.
     fn read_through(&mut self, expr: Expr) -> Expr {
+        if self.ref_guard_inner(expr.ty).is_some() {
+            return self.read_guard_through(expr);
+        }
         let TyKind::Ref { inner, .. } = *self.types.kind(expr.ty) else { return expr };
         let span = expr.span;
         Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span }
+    }
+
+    /// `[CELL-7]` — reading through a `Ref[T]`/`RefMut[T]` guard to its
+    /// contents. The guard holds a single private `ref` field; projecting to
+    /// it and dereferencing yields `T` while keeping the guard alive (the
+    /// resulting place derefs through the guard's local, so liveness and the
+    /// region graph still see it).
+    fn read_guard_through(&mut self, guard: Expr) -> Expr {
+        let Some((inner, _)) = self.ref_guard_inner(guard.ty) else { return guard };
+        let span = guard.span;
+        let field_ty = self.types.struct_def(match self.types.kind(guard.ty) {
+            TyKind::Struct(id) => *id,
+            _ => unreachable!("guard is a struct"),
+        }).fields[0].ty;
+        let field = Expr { ty: field_ty, kind: ExprKind::Field { base: Box::new(guard), index: 0 }, span };
+        Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span }
     }
 
     fn lookup(&self, name: Symbol) -> Option<LocalId> {
@@ -4573,6 +4794,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span };
             }
         }
+        // `[CELL-7]` — a guard used where its contents are wanted reads
+        // through (e.g. `x: i32 = g` where `g: Ref[i32]`). The unwrapped place
+        // keeps the guard alive.
+        if let Some((inner, _)) = self.ref_guard_inner(expr.ty) {
+            if inner == expected {
+                return self.read_guard_through(expr);
+            }
+        }
         // `[RNG-2]` — "two range types are distinct types even when
         // representation and range are identical". This is checked before
         // erasure, so the message names the two types rather than the one
@@ -4976,6 +5205,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
             ast::ExprKind::Field { base, name } => {
                 let base = self.synth(base);
+                // `[CELL-7]` — a temporary guard (e.g. `c.borrow().x`) reads
+                // through like a local one does via `read_local_expecting`.
+                let base = match self.ref_guard_inner(base.ty) {
+                    Some(_) => self.read_guard_through(base),
+                    None => base,
+                };
                 let TyKind::Struct(id) = *self.types.kind(base.ty) else {
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
@@ -5592,6 +5827,58 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr {
                 ty,
                 kind: ExprKind::StructLit { struct_id: id, fields: vec![value] },
+                span,
+            };
+        }
+
+        // `[CELL-5]` — `RefCell(v)`, or `RefCell[T](v)`. As `Cell(v)`, a plain
+        // struct literal, not a builtin: the borrow counter starts at `0`
+        // (unborrowed) with no conflicting location, so the literal carries
+        // the value plus three zero fields. `[CELL-9]`'s one-word counter is
+        // field 1; fields 2–3 are its source location for `[CELL-5]`'s panic.
+        if name.is("RefCell") {
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`RefCell` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let hint = explicit
+                .first()
+                .copied()
+                .or_else(|| expected.and_then(|e| self.refcell_inner(e)));
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => {
+                    let synthesised = self.synth_committed(&args[0].value);
+                    self.read_through(synthesised)
+                }
+            };
+            if value.ty == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = value.ty;
+            self.reject_stored_view(inner, args[0].value.span, "a cell's contents");
+            let ty = self.refcell_of(inner);
+            let TyKind::Struct(id) = *self.types.kind(ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let def = self.types.struct_def(id).clone();
+            // Fields 1–3 are the borrow state: `0`, null file, `0` line.
+            let zero_isize = Expr { ty: def.fields[1].ty, kind: ExprKind::Int(0), span };
+            // A null `*u8` as integer zero with the pointer type: C renders a
+            // plain `0`, which is the null pointer constant (no cast, no
+            // `-Wall` noise).
+            let null_file = Expr { ty: def.fields[2].ty, kind: ExprKind::Int(0), span };
+            let zero_u32 = Expr { ty: def.fields[3].ty, kind: ExprKind::Int(0), span };
+            return Expr {
+                ty,
+                kind: ExprKind::StructLit {
+                    struct_id: id,
+                    fields: vec![value, zero_isize, null_file, zero_u32],
+                },
                 span,
             };
         }
@@ -6479,6 +6766,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if receiver.ty == self.common.error {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        // `[CELL-7]` — a guard reads through to its contents, so a method on
+        // `T` is found through `Ref[T]`/`RefMut[T]`. Unwrap first; the
+        // unwrapped receiver derefs through the guard's field, keeping the
+        // guard alive for the borrow checker and the region graph.
+        // Guards hold `ref`s (never guards: a view may not be put in a cell),
+        // so one step suffices.
+        let receiver = match self.ref_guard_inner(receiver.ty) {
+            Some(_) => self.read_guard_through(receiver),
+            None => receiver,
+        };
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
@@ -6491,6 +6788,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // compiler, so its methods are found here rather than in `self.methods`.
         if let Some(inner) = self.cell_inner(receiver.ty) {
             return self.synth_cell_method(receiver, inner, name, args, span);
+        }
+        // `[CELL-5]` — a `RefCell` is likewise an ordinary struct here; its
+        // `borrow` family are builtins (ADR-019).
+        if let Some(inner) = self.refcell_inner(receiver.ty) {
+            return self.synth_refcell_method(receiver, inner, name, args, span);
         }
         // `[TYP-17]` — on a generic parameter, only what its bounds provide
         // is permitted, and that is exactly what is looked up.
@@ -7212,6 +7514,115 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     kind: ExprKind::Builtin {
                         which: Builtin::CellUpdate,
                         args: vec![receiver, f],
+                    },
+                    span,
+                }
+            }
+        }
+    }
+
+    /// `[CELL-5]`, `[CELL-6]` — the methods on `RefCell[T]`.
+    ///
+    /// All take `self`, a shared borrow, and `borrow`/`borrow_mut` mutate the
+    /// borrow state (the counter plus the conflicting location). Like `Cell`,
+    /// the cell is an ordinary struct here, so its methods are found by the
+    /// side table rather than in `self.methods` (ADR-019: compiler-known, not
+    /// built on `UnsafeCell`, which is specified but unbuilt per ADR-022).
+    ///
+    /// `borrow(self) -> Ref[T]` succeeds unless a mutable borrow is active;
+    /// `borrow_mut(self) -> RefMut[T]` succeeds unless any borrow is active;
+    /// both panic with the conflicting borrow's location (`[CELL-5]`).
+    /// `try_borrow`/`try_borrow_mut` return `Option` instead (`[CELL-6]`), and
+    /// no profile may make them infallible (`[CELL-6a]`, `[PRF-1]` — the
+    /// lowering below has no profile input at all).
+    ///
+    /// Borrowing needs a cell to point at, so like `Cell.set` a temporary is
+    /// `E2140`.
+    fn synth_refcell_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let shown = self.types.display(inner);
+        let method = name.name.as_str();
+        if !matches!(method, "borrow" | "borrow_mut" | "try_borrow" | "try_borrow_mut") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`RefCell[{shown}]` has no method named `{}`", name.name),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{method}` takes 0 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(
+                codes::E2140,
+                span,
+                format!("`{method}` needs a cell to borrow from, not a temporary"),
+            );
+            return error;
+        }
+        // The shared borrow of the cell the guard's region rests on
+        // (`[CELL-7]`). Lowering writes this down as an `Rvalue::Ref` so
+        // `collect_loans` sees it; the counter (not the borrow checker) is
+        // what refuses overlapping guards at run time.
+        let cell_ref_ty = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr {
+            ty: cell_ref_ty,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        };
+        match method {
+            "borrow" => {
+                let guard = self.ref_guard_of(inner, false);
+                Expr {
+                    ty: guard,
+                    kind: ExprKind::Builtin { which: Builtin::RefCellBorrow, args: vec![borrowed] },
+                    span,
+                }
+            }
+            "borrow_mut" => {
+                let guard = self.ref_guard_of(inner, true);
+                Expr {
+                    ty: guard,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::RefCellBorrowMut,
+                        args: vec![borrowed],
+                    },
+                    span,
+                }
+            }
+            "try_borrow" => {
+                let guard = self.ref_guard_of(inner, false);
+                let opt = self.option_of(guard);
+                Expr {
+                    ty: opt,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::RefCellTryBorrow,
+                        args: vec![borrowed],
+                    },
+                    span,
+                }
+            }
+            _ => {
+                let guard = self.ref_guard_of(inner, true);
+                let opt = self.option_of(guard);
+                Expr {
+                    ty: opt,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::RefCellTryBorrowMut,
+                        args: vec![borrowed],
                     },
                     span,
                 }

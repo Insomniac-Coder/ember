@@ -56,6 +56,15 @@ pub struct Body {
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names. `None` means
     /// `[LT-1]`'s elision decides which parameters the return may point into.
     pub borrows: Option<Vec<usize>>,
+    /// `[FN-1]` — the parameters this body borrows rather than owns, as MIR
+    /// locals. A borrowed parameter arrives as a bitwise copy of the caller's
+    /// value with no loan behind it, so no borrow analysis can see that the
+    /// caller still owns (and drops) it: a `Move` out of one of these places
+    /// double-destroys across the call boundary, which `[EXP-6]` reports as
+    /// `E3013` (D-041). Populated from the HIR parameter modes at lowering.
+    /// Only `Borrow` is listed: `Owned` takes ownership, and `Mut` arrives as
+    /// `ref mut`, whose moves already carry a `Deref` projection.
+    pub borrowed_params: Vec<LocalId>,
 }
 
 impl Body {
@@ -158,6 +167,13 @@ pub enum Const {
     Bool(bool),
     /// A string literal with static region (`[LEX-20]`).
     Str(String),
+    /// `[CELL-5]` — a C string literal for a `RefCell` conflicting-borrow
+    /// location. Renders as `"path"` (a `const char*`), stored into the cell's
+    /// `borrow_file` field (a `*u8`, via a cast in the backend) so the panic
+    /// names the conflicting borrow's source location in debug and release.
+    /// Kept apart from `Str` (which is an `ember_str` view with a region)
+    /// because the file field must not make the cell a view type (`[TYP-15]`).
+    CStr(String),
     /// `[FN-6]` — a named function as a value: its mangled symbol, which in C
     /// is the function's address.
     Fn(String),
@@ -309,6 +325,12 @@ pub enum AssertKind {
     /// Bounds. Phase 2 emits these; the shape is here so the backend needs no
     /// change then.
     Bounds { len: Operand, index: Operand },
+    /// `[CELL-5]` — a `RefCell` borrow found contention. `file`/`line` are the
+    /// conflicting borrow's source location, loaded from the cell's location
+    /// fields; the panic names them in debug and release (`[CELL-9]`). Like
+    /// `Bounds`, the operands travel here so the backend needs no new call
+    /// shape for them.
+    RefCellBorrow { file: Operand, line: Operand },
 }
 
 impl AssertKind {
@@ -321,6 +343,7 @@ impl AssertKind {
             AssertKind::SignedDivisionOverflow => "panic_overflow",
             AssertKind::ShiftTooLarge => "panic_overflow",
             AssertKind::Bounds { .. } => "panic_bounds",
+            AssertKind::RefCellBorrow { .. } => "panic_refcell",
         };
         ember_branding::runtime(name)
     }
@@ -410,6 +433,7 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
             Const::Float { value, ty } => format!("const {value:?}_{}", types.display(*ty)),
             Const::Bool(b) => format!("const {b}"),
             Const::Str(s) => format!("const {s:?}"),
+            Const::CStr(s) => format!("const cstr {s:?}"),
             Const::Fn(symbol) => format!("const fn {symbol}"),
             Const::Void => "const ()".to_string(),
         },

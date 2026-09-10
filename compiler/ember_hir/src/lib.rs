@@ -348,6 +348,20 @@ pub enum Builtin {
     /// the function travel here as a pair and lowering, which holds a `Place`,
     /// uses it for both the read and the store.
     CellUpdate,
+    /// `[CELL-5]` — `c.borrow() -> Ref[T]`. A shared borrow of the cell plus
+    /// a runtime check against the borrow counter; panics with the conflicting
+    /// borrow's source location when a mutable borrow is active. Lowered in
+    /// MIR to a counter check, a location store and a guard, so the check is
+    /// visible to every analysis rather than hidden in the backend.
+    RefCellBorrow,
+    /// `[CELL-5]` — `c.borrow_mut() -> RefMut[T]`. As `borrow`, except it
+    /// succeeds only when no borrow is active.
+    RefCellBorrowMut,
+    /// `[CELL-6]` — `c.try_borrow() -> Option[Ref[T]]`. The non-panicking
+    /// form: `None` on contention in every profile (`[CELL-6a]`, `[PRF-1]`).
+    RefCellTryBorrow,
+    /// `[CELL-6]` — `c.try_borrow_mut() -> Option[RefMut[T]]`.
+    RefCellTryBorrowMut,
 }
 
 impl Builtin {
@@ -391,6 +405,10 @@ impl Builtin {
             Builtin::CellReplace => "replace",
             Builtin::CellIntoInner => "into_inner",
             Builtin::CellUpdate => "update",
+            Builtin::RefCellBorrow => "borrow",
+            Builtin::RefCellBorrowMut => "borrow_mut",
+            Builtin::RefCellTryBorrow => "try_borrow",
+            Builtin::RefCellTryBorrowMut => "try_borrow_mut",
         }
     }
 }

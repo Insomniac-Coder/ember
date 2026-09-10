@@ -29,8 +29,8 @@ plan (its own "Start here" is marked superseded — ignore it) and
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
-62 conformance rule directories, 155 cases. 55 defects recorded, **2 open**
-(D-038, D-041). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
+ 67 conformance rule directories, 180 cases. 56 defects recorded, **2 open**
+ (D-038, D-042). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **No errata awaiting the owner** — ERR-041 and ERR-043 were decided on
 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
 Ratchets in
@@ -156,54 +156,37 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: `RefCell[T]`, then `Arena` (block I, the rest)
+## 5. Next task: `[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage, then `Arena`
 
-**`Cell[T]` is done, 2026-09-09.** `Cell()`, `set`, `replace`, `into_inner`,
-`get` (`T: Copy`) and `update`'s `T: Copy` arm; `[CELL-1]`, `[CELL-2]`,
-`[CELL-4]` and `[CELL-11]` have conformance cases. `take` and `[CELL-3]`'s
-`!Sync` are filed as `CELL-DEF-1` and `CELL-SYNC-1` in `docs/BACKLOG.md` —
-`Default`, `Send`, `Sync` and threads do not exist yet, and neither rule was
-softened to fit. The reasoning is in `docs/HANDOFF.md`'s **Block I** section;
-read it before starting `RefCell`, because three of its findings apply directly.
+**`Cell[T]` and `RefCell[T]` are both built** (2026-09-10). `RefCell` has
+`[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]` and `[CELL-12]` with 20
+conformance cases, guards as view types through `regions.rs`, the one-word
+counter, `ember_panic_refcell` naming the conflicting borrow's location, and
+`L3011` emitted with a page. `docs/HANDOFF.md` §0.20 is the record.
 
-ADR-019 still governs: `[CELL-9]` names `UnsafeCell` as the primitive and the
-document defines it nowhere (ERR-043), so all three of these are
-**compiler-known**, as `Array`, `Span`, `Option` and `Result` are under
-Part XX.1. Amendment A13 records that the three share the implementation
-concern and **not** the concept — do not build `RefCell` by generalising
-`Cell`.
+**What is left of block I, in order:**
 
-**What carries over from `Cell`:**
+1. **`[CELL-6a]`, `[CELL-9]`, `[CELL-10]` conformance cases.** All buildable,
+   none blocked. `[CELL-10]` is the one with teeth — `compiler/ember_diag/src/shapes.rs`
+   still contains no mention of `RefCell`, so the rule ("shape B4 may suggest
+   `RefCell` **only** when the accesses are provably not simultaneous, never
+   first") is vacuously satisfied and becomes real work now that `RefCell`
+   exists.
+2. **`Arena` (`[ARN-*]`).** Not started. **Not a third interior-mutability
+   primitive** — it is a region allocator, and amendment A13 records that the
+   three share the implementation concern and *not* the concept. Do not build
+   it by generalising `Cell` or `RefCell`.
 
-* The **transparent-struct shape**. `cell_of` interns a `StructDef` per `T` and
-  records it in `cells` on the `Checker`; `RefCell` wants the same, with a
-  second field for `[CELL-5]`'s one-word borrow counter. `[CELL-4]`'s `Copy`
-  and `Drop` questions answered themselves off the field for `Cell`, and the
-  same machinery will answer them for `RefCell` — but whether `RefCell[T]` may
-  be `Copy` is an **open question to escalate, not a settled rule**: copying
-  the counter would fork the borrow state (sound inference), and Part IX
-  states `[CELL-4]` for `Cell` only. See `HANDOFF.md` §0.14.
-* **Privacy is the mechanism**, not an unspellable name. `declaring_module:
-  usize::MAX` plus a private field refuses read, write and `ref` everywhere with
-  `E1020`. A `$`-prefixed name breaks `[CG-C-1]` — the backend writes field
-  names into the C verbatim and `$` in an identifier is a compiler extension,
-  which only `-pedantic` reports.
-* **Order rules need `assert-c-order`**, added to the harness for this.
-  `assert-c` matches one line and cannot express "a before b"; a drop that
-  re-enters the value being replaced is unobservable in output, and no safe
-  program can build the back-pointer that would make it observable. Anchor the
-  needles on text that survives MIR renumbering, and remember that a bare
-  function name matches its own prototype at the top of the file.
+**Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`;
+`Cell.take` on `CELL-DEF-1`. Neither rule was softened to fit.
 
-**What `RefCell` adds, and it is the hard half:** `[CELL-5]`'s `borrow` and
-`borrow_mut` hand out `Ref[T]`/`RefMut[T]`, which `[CELL-7]` makes **view
-types** whose region borrows the cell and whose `drop` releases the borrow
-state. So unlike `Cell`, something *does* escape, `[TYP-15]` applies to it, and
-the region work in `regions.rs` is load-bearing. `[CELL-9]` puts the check in
-**every** profile and `[CELL-6a]` forbids any profile making `try_borrow`
-infallible. `[CELL-7]`'s `L3011` (`RefCell` guard held across a call) fires per
-the rule — registered, emitted by nothing, and part of this task's work, not
-blocked and not opt-in (`LNT-CFG-1` is about `[LT-1b]`'s `L3014`).
+**Open defects:** D-038 (`String`→`str` coercion, fails closed) and **D-042**
+(partial moves out of owned places double-destroy at scope end — the serious
+one; needs per-field movedness in drop elaboration, and until it exists no
+conformance case can pin it in either direction).
+
+**`UnsafeCell` is specified and unbuilt** — `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]`,
+0.8.5. **Do not build `RefCell` on it**; ADR-019's compiler-known route stands.
 
 ## 6. After that: `[DIA-7..10]` and `tests/ui/`
 
@@ -248,9 +231,11 @@ remains:
   false-negative risk. Withdrawn ERR-042 carries the full inventory.
 * **Two open defects**, neither an owner question: **D-038** (`String`→`str`
   coercion is listed by `[SPN-1]` and rejected by the checker; fails closed) and
-  **D-041** (moves out of borrowed places are unchecked outside `drop` bodies —
-  `x = r.inner` compiles and the value drops twice; `[EXP-6]` names `E3013` and
-  it had no emitter). **D-041 is the serious one.**
+  **D-042** (partial moves out of owned places double-destroy at scope end;
+  needs per-field movedness in drop elaboration). **D-041** (moves out of
+  borrowed places unchecked — `x = r.inner` compiled and the value dropped
+  twice) was the serious one and is **fixed** this turn: borrowed-ness is
+  threaded HIR→MIR and owning moves out of borrows are `E3013`.
 * **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
   (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
   (`extern class` parses and is refused), D4 (`E9012` registered and never

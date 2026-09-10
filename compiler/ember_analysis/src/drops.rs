@@ -56,6 +56,8 @@ impl Owned {
 pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     // `[DRP-5]` — a `drop` body may not move fields out of `mut self`.
     let mut errors = check_drop_moves(body, types, sink);
+    // `[EXP-6]`/`[FN-1]` — moves out of borrowed places outside `drop` (D-041).
+    errors += check_borrowed_moves(body, types, sink);
     let entry = initial(body);
     let mut block_entry: Vec<Option<Vec<Owned>>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
@@ -248,6 +250,209 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
                     check_operand(rhs, stmt.span, &mut report);
                 }
                 _ => {}
+            }
+        }
+        let span = block.terminator_span;
+        match &block.terminator {
+            Terminator::Call { func, args, .. } => {
+                if let ember_mir::FuncRef::Indirect(operand) = func {
+                    check_operand(operand, span, &mut report);
+                }
+                for arg in args {
+                    check_operand(arg, span, &mut report);
+                }
+            }
+            Terminator::SwitchInt { discr, .. } => {
+                check_operand(discr, span, &mut report);
+            }
+            Terminator::Assert { cond, .. } => {
+                check_operand(cond, span, &mut report);
+            }
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+        }
+    }
+    errors
+}
+
+/// The type a place denotes, following its projections (cf. `place_ty` in
+/// `verify.rs`). A projection that does not apply leaves the type alone: the
+/// type checker has already rejected such a program.
+fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant else { continue };
+                let fields = &types.enum_def(*id).variants[v].fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+                variant = None;
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                let fields = &types.struct_def(*id).fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => {
+                ty = items.get(*i).copied().unwrap_or(ty);
+            }
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
+                ty = *inner
+            }
+            _ => {}
+        }
+    }
+    ty
+}
+
+/// Whether a `Move` place goes through a safe reference (`ref`/`ref mut`).
+///
+/// `[EXP-6]` names `E3013` for moves out of a `ref`/`ref mut`. A deref of a
+/// raw pointer is `unsafe` territory and is left to `[UNS-*]`: this answers
+/// which one the first `Deref` in the chain goes through, walking the type
+/// alongside the projections the way `place_ty` in `verify.rs` does.
+fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Deref, TyKind::Ref { .. }) => return true,
+            (Projection::Deref, TyKind::Ptr { .. }) => return false,
+            // Unreachable in verified MIR: only references and raw pointers
+            // deref. Fail closed — a deref in safe code is a borrow.
+            (Projection::Deref, _) => return true,
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant else { continue };
+                let fields = &types.enum_def(*id).variants[v].fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+                variant = None;
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                let fields = &types.struct_def(*id).fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => {
+                ty = items.get(*i).copied().unwrap_or(ty);
+            }
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `[EXP-6]`, `[FN-1]` — moves out of borrowed places, outside `drop` bodies.
+///
+/// Two shapes, one code (`E3013`, shape O2):
+///
+/// * a `Move` through a `Deref` — `x = r.inner` where `r: ref Outer`. The
+///   referent still owns the value and drops it, so the new owner drops it a
+///   second time. `[BRW-1]` forbids moving while shared borrows are live;
+///   `[EXP-6]` forbids moving out of a reference unconditionally, which is
+///   what is checked here rather than loan liveness.
+/// * a `Move` out of a borrowed (`[FN-1]`) parameter — whole (`x = o`) or
+///   field (`x = o.inner`). "The callee reads through a `ref A` … The
+///   callee cannot mutate or move `a`." A borrowed parameter arrives as a
+///   bitwise copy with no loan behind it, so no other analysis can see that
+///   the caller still owns (and drops) the value; the move double-destroys
+///   across the call boundary.
+///
+/// Only owning `Move`s matter: a `Copy` leaves the source intact, which is
+/// why reads and copies through a shared borrow stay legal — and a move of a
+/// value that owns nothing (`needs_drop` false) is a bitwise copy with no
+/// second destruction to happen, so it stays legal too. Only `Ref` derefs: a
+/// raw pointer is `unsafe` territory. A move of a `ref`/`ref mut` local itself
+/// (no projection) transfers the borrow and stays legal, as does a move of a
+/// borrowed view-typed parameter (`ref`, `Span`, `str` are `Copy`;
+/// `ref mut`/`MutSpan[T]` reborrows travel as whole-local moves). `drop`'s
+/// own `self` keeps `check_drop_moves`' specific messages and is skipped
+/// here, so one move is never two errors.
+fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
+    let drop_self_local = drop_self(body, types);
+    let mut errors = 0;
+    let mut report = |place: &Place, span: Span| {
+        if drop_self_local == Some(place.local) {
+            return;
+        }
+        // Only ownership moves are rejected: a move of a value that owns
+        // nothing is a bitwise copy the analyses already treat as one (D-041
+        // is the double-destroy, and a `Panel` of `i32`s has nothing to
+        // destroy twice — `retitle` in `tests/conformance/MOD-2/` moves a
+        // borrowed one on every run). `Copy` types never reach here at all:
+        // lowering emits `Copy` for them.
+        if !types.needs_drop(moved_place_ty(place, body, types)) {
+            return;
+        }
+        let through_ref = place
+            .projection
+            .iter()
+            .any(|p| matches!(p, Projection::Deref))
+            && deref_through_ref(place, body, types);
+        let borrowed = body.borrowed_params.contains(&place.local)
+            && !types.is_view(body.local(place.local).ty);
+        if through_ref {
+            sink.emit_classified(
+                Diagnostic::error(codes::E3013, span, "cannot move out of a reference")
+                    .primary_label("moved out here")
+                    .note("moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it")
+                    .help("borrow it instead of moving it; if the function needs ownership, take an `owned` parameter"),
+            );
+            errors += 1;
+        } else if borrowed {
+            sink.emit_classified(
+                Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
+                    .primary_label("moved out here")
+                    .note("a borrowed parameter is owned by its caller [FN-1]; moving it out destroys the value twice — once here, once with the caller")
+                    .help("take an `owned` parameter if the function needs ownership, or borrow the value instead of moving it"),
+            );
+            errors += 1;
+        }
+    };
+    let check_operand = |operand: &Operand, span: Span, report: &mut dyn FnMut(&Place, Span)| {
+        if let Operand::Move(place) = operand {
+            report(place, span);
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { rvalue, .. } => match rvalue {
+                    Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
+                        check_operand(o, stmt.span, &mut report);
+                    }
+                    Rvalue::Cast { operand, .. } => {
+                        check_operand(operand, stmt.span, &mut report);
+                    }
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        check_operand(lhs, stmt.span, &mut report);
+                        check_operand(rhs, stmt.span, &mut report);
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        for operand in operands {
+                            check_operand(operand, stmt.span, &mut report);
+                        }
+                    }
+                    Rvalue::Repeat { value, .. } => {
+                        check_operand(value, stmt.span, &mut report);
+                    }
+                    Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+                },
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    check_operand(lhs, stmt.span, &mut report);
+                    check_operand(rhs, stmt.span, &mut report);
+                }
+                StmtKind::StorageLive(_)
+                | StmtKind::StorageDead(_)
+                | StmtKind::Drop { .. }
+                | StmtKind::Nop => {}
             }
         }
         let span = block.terminator_span;

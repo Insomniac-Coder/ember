@@ -82,6 +82,45 @@ REFERENCE_LEAD = re.compile(
 REFERENCE_TAIL = re.compile(r"^(?:'s|,|\)|\.|;|:|\s+and\b|\s+applies|\s+is unaffected)")
 DEFINITION_TAIL = re.compile(r"^\s+(?:MUST|SHOULD|MAY|\*\*|…|\.\.\.|[A-Z`])")
 
+# RIDX-1 (ODR-002, design in `docs/RFC-rule-extraction.md`): the document
+# states rules in four forms, and only Form A opens a bullet. Forms B/C/D put
+# the id somewhere else — second on a shared line, inline in a paragraph, in a
+# parenthetical, or granted by name — so no position test can see them. The
+# definition/reference distinction still holds there and is still decided by
+# the surrounding text, never by the position: each predicate below recognises
+# a clause that *states rule content*, and a passing mention in the same
+# position ("`[ATT-2]` is unchanged", "`[HOT-1]`..`[HOT-10]` are replaced",
+# "`[FAKE]`-style tests") matches none of them. See
+# `tools/test_rule_index.py`, which pins both directions.
+DEFINITION_PREDICATES = (
+    # "`[TYP-26]` two functions with the same name in one scope is `E1030`":
+    # the clause states which error code the rule raises.
+    re.compile(r"^\s+[^.;(),]*\bis\s+`E\d{4}`"),
+    # "`[VER-7]` 1.0 means ...": a bare subject with the definitional copula.
+    # The subject is one token on purpose: "`[HR-36]` ... so "fails" never
+    # means "aborts"" is a citation about wording, and the comma before its
+    # "means" keeps it out either way.
+    re.compile(r"^\s+[\w.]+\s+means\b"),
+    # "`[HND-2]` the index/generation split is configurable per `Pool`":
+    # the clause states configurability against a named surface.
+    re.compile(r"^\s+[^.;(),]*\bis\s+configurable\b"),
+    # "`[GPU-7]` device drop ... logs each leaked handle ...": the clause
+    # states a reporting duty. The comma exclusion matters: a subordinate
+    # "..., logs Z" after a citation never reaches the verb.
+    re.compile(r"^\s+[^.;(),]*\blogs\b"),
+    # "`[CTL-3a]` conformance test checks the C output ...": the clause
+    # states what a conformance test enforces.
+    re.compile(r"^\s+[^.;(),]*\bconformance test\s+checks\b"),
+)
+
+# Form D, granted by name: "`[RC-2]` ... Its lettered clauses are individually
+# citable as `[RC-2a]`..`[RC-2d]` in the order written." A bare range without
+# the granting words ("`[HOT-1]`..`[HOT-10]` are replaced", "`[VER-1]`..`[VER-7]`",
+# "Like `[RC-2a]`..`[RC-2d]`, this elision ...") grants nothing.
+GRANT_RANGE = re.compile(
+    r"individually citable as `\[([A-Z][A-Z0-9-]*)-([0-9]+)([a-z])\]`\.\.`\[([A-Z][A-Z0-9-]*)-([0-9]+)([a-z])\]"
+)
+
 
 def spec_lines():
     if not SPEC.exists():
@@ -139,6 +178,18 @@ def stated_anywhere(lines):
     """
     stated = set()
     for line in lines:
+        # A grant names its ids outright ("individually citable as
+        # `[RC-2a]`..`[RC-2d]`"), so every id in the range is stated even
+        # though only the endpoints are written out.
+        grant = GRANT_RANGE.search(line)
+        if (
+            grant
+            and grant.group(1) == grant.group(4)
+            and grant.group(2) == grant.group(5)
+            and grant.group(3) < grant.group(6)
+        ):
+            for letter in range(ord(grant.group(3)), ord(grant.group(6)) + 1):
+                stated.add(f"{grant.group(1)}-{grant.group(2)}{chr(letter)}")
         # The first id on a line is what that line is about, whatever
         # punctuation follows it, unless the words before it announce a
         # citation. The document states a rule in at least four shapes —
@@ -157,9 +208,18 @@ def stated_anywhere(lines):
             stated.add(first.group(1))
         # And a later id on any line, where normative prose follows it —
         # "`[MAN-1]` Unknown keys are errors. `[MAN-2]` `ember.lock` records…"
+        # RIDX-1 extends this to Forms B/C/D: a later id whose clause states
+        # rule content (`DEFINITION_PREDICATES`) counts, whatever position the
+        # id sits in. `REFERENCE_TAIL` still runs first, so a citation in the
+        # same position ("`[ATT-2]` is unchanged", "`[X]`-style tests") stays
+        # a reference.
         for m in QUOTED_RULE_ID.finditer(line):
             tail = line[m.end():]
-            if not REFERENCE_TAIL.match(tail) and DEFINITION_TAIL.match(tail):
+            if REFERENCE_TAIL.match(tail):
+                continue
+            if DEFINITION_TAIL.match(tail):
+                stated.add(m.group(1))
+            elif any(p.match(tail) for p in DEFINITION_PREDICATES):
                 stated.add(m.group(1))
     return stated
 

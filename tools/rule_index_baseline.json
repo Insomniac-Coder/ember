@@ -986,18 +986,10 @@
     "W4001"
   ],
   "dangling_references": [
-    "CTL-3a",
-    "GPU-7",
-    "HND-2",
     "HOT-10",
     "IDE-10",
     "IDE-2",
-    "IDE-5",
-    "IFC-2",
-    "RC-2a",
-    "RC-2d",
-    "TYP-26",
-    "VER-7"
+    "IDE-5"
   ],
   "codes_without_tests": [
     "E0001",

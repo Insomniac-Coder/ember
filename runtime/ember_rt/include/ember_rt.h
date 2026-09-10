@@ -315,6 +315,10 @@ EMBER_NORETURN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
 EMBER_NORETURN void ember_panic_overflow(const char* op, ember_loc loc);
 EMBER_NORETURN void ember_panic_div_zero(ember_loc loc);
 EMBER_NORETURN void ember_panic_unwrap(const char* what, ember_loc loc);
+/* `[CELL-5]` — `RefCell` contention panics with the conflicting borrow's
+ * location, recorded in debug and release (`[CELL-9]`). `file`/`line` are the
+ * conflicting borrow's, `loc` the failing borrow's. */
+EMBER_NORETURN void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc);
 void ember_backtrace_print(void);
 
 /* -- printing -------------------------------------------------------------- */

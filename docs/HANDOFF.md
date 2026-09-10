@@ -281,8 +281,8 @@ work.
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
-| Conformance | 62 rule directories, 155 cases |
-| Ledgers | 55 defects, **2 open** (D-038, D-041). **4 open deviations** (D1–D4). **No errata awaiting the owner** |
+| Conformance | 63 rule directories, 161 cases |
+| Ledgers | 56 defects, **2 open** (D-038, D-042). **4 open deviations** (D1–D4). **No errata awaiting the owner** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -758,9 +758,9 @@ splitting it across agents would have cost more than it saved.
 | # | What | Rule | Status |
 |---|---|---|---|
 | **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
-| **D-041** | moves out of borrowed places are unchecked (shared-`ref` field moves; field moves out of borrowed call parameters) — each value drops twice; `E3013` names it and has no emitter outside drop bodies | `[EXP-6]`, `[BRW-1]`, `[OWN-3]` | **open.** Needs borrowed-ness threaded to move sites. Found by task 2 follow-up probing (not ERR-041) |
+| **D-042** | partial moves out of *owned* places double-destroy at scope end (`x = o.inner` emits two `em_Inner_drop` calls for one value); drop elaboration tracks whole-local movedness only | `[EXP-6]`, `[OWN-2]`, `[OWN-3]` | **open.** Needs per-field movedness in drop elaboration. Found while building D-041's accept case; left open |
 
-**Closed this turn:** **D-030** (`check_drop_moves` rejects drop-body moves; DRP-5 cases red-checked) and **D-040** (reporter threads call provenance; E3025 with B8 help; case + page, red-checked).
+**Closed this turn:** **D-041** (borrowed-ness threaded HIR→MIR; `check_borrowed_moves` reports owning moves through `Deref` and out of borrowed value parameters as `E3013`; EXP-6 cases + page, red-checked — see the task-2 block below). Previously closed: **D-030** (`check_drop_moves` rejects drop-body moves; DRP-5 cases red-checked) and **D-040** (reporter threads call provenance; E3025 with B8 help; case + page, red-checked).
 
 **Open deviations — five, in `docs/DEVIATIONS.md`.** (D6 was withdrawn to Closed:
 unbuilt machinery is a gap, not a deviation — see below.)
@@ -1047,8 +1047,8 @@ Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
 ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
 restored by guessing); **D-038**
-(implicit `String`→`str` coercion rejected); **D-041** (moves out of borrowed
-places unchecked); **D1–D5**
+(implicit `String`→`str` coercion rejected); **D-042** (partial moves out of
+owned places double-destroy at scope end; D-041 fixed this turn); **D1–D5**
 (D5 unratified/awaiting owner; D2 `[CLO-6]` owned-`fn` refusal; D1, D3, D4 as
 ledgered; D6 withdrawn to Closed — unbuilt machinery is a gap, not a
 deviation); compiler-debt `RT-GEN-1`, `LNT-CFG-1`, `TST-6-1`, `CELL-DEF-1`,
@@ -1279,6 +1279,161 @@ nobody decided.
 
 ---
 
+### 0.20 `RefCell[T]` landed 2026-09-10 — built by the implementation agent, wrapped up here
+
+**The implementation agent stopped on usage limits mid-task.** This section is a
+factual assessment of what is in the working tree, written by the reviewing
+agent from the tree itself rather than from the agent's notes — because two of
+those notes were overtaken by the work that followed them (see §0.19's own
+lesson about inherited claims).
+
+**Their work is committed as they left it, plus the one gate it had left
+red.** The implementation agent ran out of budget after building `RefCell[T]`,
+fixing D-041, filing D-042 and closing `RIDX-1`, with 18 files modified and 8
+new paths uncommitted. Everything below was verified from the tree rather than
+from their notes — two of which had been overtaken by the work that followed
+them, which is §0.19's lesson about inherited claims applying to an agent's own
+notes.
+
+---
+
+#### Verified green
+
+    cargo build                 0 warnings
+    cargo test --workspace      178 passing, 0 failures
+    hardening_check.py          OK
+    split_spec.py --check       OK
+    rule_index.py               OK
+    check_branding.py           OK
+    spec_check.py               OK
+    tools/test_rule_index.py    23 tests, OK          <- new
+
+The conformance runner walks the directory tree, so all **180 cases across 67
+directories** pass, including every new one below. The test *count* does not
+move when cases are added — one `#[test]` walks the whole directory.
+
+#### The one red gate, and how it was closed
+
+`error_pages.py` failed on arrival:
+
+    [DIA-6] L3011 is emitted by the compiler and has no docs/errors/L3011.md
+
+This was a *consequence of progress*. `L3011` had been registered-and-unemitted
+— the thing D6 was wrongly filed about — and `RefCell`'s guard-liveness
+tracking now emits it from `ember_analysis/src/borrows.rs`. `[DIA-6]` then
+requires a page.
+
+**It could not be closed by writing a page in the old format.** The validator
+required a page's ```` ```ember,fails ```` program to *fail to compile* — but a
+lint is not an error: the program that trips it **compiles**, and that is the
+whole difference. Every correct `L`-page would have failed the gate. The tool
+was asking for a page that cannot exist.
+
+**Resolved by teaching the tool, not by growing the ratchet.** Two shapes were
+priced. Adding `L3011` to `error_pages_baseline.json` is one line, but it is
+baseline *growth* — which the ratchet forbids without a stated reason, and the
+usual reason (a new specification revision) does not apply — and it buys
+nothing reusable. Teaching `error_pages.py` lint semantics is about fifteen
+lines and serves every future lint page; **twenty of the twenty-two registered
+lints are still unemitted** and will each need one. It is also the direction
+ODR-002 established: when a tool cannot read a valid artefact, the tool is the
+defective component.
+
+A `Lint` code's `fails` block must now **compile** and must **emit the lint**.
+The second half is the one that matters — without it a page could show any
+compiling program at all. Verified the only way that counts: the block was
+altered to compile without tripping the lint, and the gate reported *"the
+```ember,fails program compiled without emitting L3011"*. Then restored.
+
+`docs/errors/L3011.md` is written and validates. The baseline **did not grow** —
+59 codes without a page before and after, and `E3013` had already come out of it
+in the same session because its page was written.
+
+---
+
+#### What was built
+
+**`RefCell[T]` — substantially complete.** `refcell_of` and
+`synth_refcell_method` in typeck; `RefCellBorrow`, `RefCellBorrowMut`,
+`RefCellTryBorrow` builtins; `ember_panic_refcell` in the runtime for
+`[CELL-5]`'s panic naming the conflicting borrow's location; guard types
+carrying the region, so `[CELL-7]`'s escape rules fall out of the existing view
+machinery. Confirmed by running cases, not by reading the ledger: an accept case
+runs, and `reject_returned_guard_borrowing_by_value_param.em` correctly reports
+`E3060` — a guard outliving its source, which is exactly `[CELL-7]` working
+through `regions.rs`.
+
+| Rule | Cases | |
+|---|---|---|
+| `[CELL-5]` | 4 | counter, `borrow`/`borrow_mut`, panic with location |
+| `[CELL-6]` | 3 | `try_borrow`/`try_borrow_mut` returning `Option` |
+| `[CELL-7]` | 9 | guards as view types, `with` binding, drop releasing, early return, nested scopes, stored-guard refusal, `L3011` |
+| `[CELL-11]` | 2 | `RefCell` in the prelude |
+| `[CELL-12]` | 2 | never `Copy` |
+
+**D-041 fixed** — moves out of borrowed places are checked; `E3013` has a page
+and `tests/conformance/EXP-6/` has 6 cases.
+
+**D-042 filed, open** — *partial moves out of owned places double-destroy at
+scope end.* `[EXP-6]` permits moving a field out of a plain struct, leaving it
+partially moved; drop elaboration then destroys the whole struct at scope end.
+Found while building D-041's accept case. **It needs per-field movedness in
+drop elaboration**, and until then no case can pin it: a reject case cannot fail
+to compile (that *is* the defect) and an accept case would enshrine the double
+drop.
+
+**`RIDX-1` closed, and closed correctly.** `dangling_references` went **12 → 4**.
+The eight resolved are exactly the right ones — the six from ODR-002 plus
+`[RC-2a]`/`[RC-2d]`, which `[RC-2]` grants by name. The four remaining are
+`HOT-10` (a historical citation) and `IDE-2`/`IDE-5`/`IDE-10` (reserved by Part
+XXI) — none of which *is* a definition, so none should resolve.
+
+**The acceptance criterion's hard half held.** Nothing became newly dangling,
+and `tools/test_rule_index.py` includes a `FalseDefinitionsRefused` class
+testing that citations in the newly recognised positions stay references. That
+was the half flagged as needing the hardest testing, and it was done.
+
+---
+
+#### Coverage still missing, and it is not blocked
+
+| Rule | | |
+|---|---|---|
+| `[CELL-6a]` | **0 cases** | `try_borrow` MUST return `None` on contention in every profile; no profile may make it infallible (`[PRF-1]`). **Buildable now** — `try_borrow` exists |
+| `[CELL-9]` | **0 cases** | counter is one machine word; check in every profile; `exclusivity = "unchecked"` MUST NOT reach it. **Buildable now** |
+| `[CELL-10]` | **0 cases** | shape B4 may suggest `RefCell` **only** when the conflicting accesses are provably not simultaneous, never first. `shapes.rs` still contains no mention of `RefCell`, so the rule is vacuously satisfied and becomes real work now that `RefCell` exists |
+| `[CELL-3]`, `[CELL-8]` | 0 cases | `!Sync`. **Correctly absent** — blocked on `Send`/`Sync`/threads, `CELL-SYNC-1` |
+
+---
+
+#### The scope report they did write, and it was right
+
+The agent filed a §0.0 I scope report for the D-041 work: approved D-041 alone,
+worked D-041 plus filing D-042, justified as ledger discipline for a live
+double-free found by the brief's own probe-first method, blocking nothing. That
+is the format ruling 6 asks for, produced without prompting.
+
+**What is missing is the second one.** No scope report covers `RefCell` or
+`RIDX-1`, both of which followed — and the note saying *"No `RefCell`/`Arena`/DIA
+work started"* was left standing while both were built. That is not a
+reinterpretation of scope; it is a report overtaken by events and never
+refreshed. It is why §0.19's rule about re-checking inherited claims applies to
+an agent's own notes as much as to someone else's.
+
+---
+
+#### If you are picking this up
+
+1. **`[CELL-6a]`, `[CELL-9]`, `[CELL-10]` conformance cases** — all buildable
+   now, none blocked. `[CELL-10]` is the one with teeth: `shapes.rs` still
+   contains no mention of `RefCell`, so the rule is vacuously satisfied and
+   becomes real work now that `RefCell` exists.
+2. **`Arena` (`[ARN-*]`)** — the next milestone, not started. Not a third
+   interior-mutability primitive: it is a region allocator, and A13 says the
+   three share the implementation concern and not the concept.
+3. **D-042 and D-038 remain open.** D-042 is the more serious — a live
+   double-destroy — and needs per-field movedness in drop elaboration.
+
 ## The task list — where to begin
 
 `RefCell[T]` remains the next milestone (§0.14). These are ordered so that the
@@ -1294,10 +1449,12 @@ starting the next.**
 Task 1 filed `L3011` as deviation D6; D6 was then withdrawn to Closed, because
 the premise this list gave it was false — see §0.19. `L3011` stays in task 3's
 scope. Task 2 ran and **found two live memory-safety holes**, D-036 and D-037,
-plus D-039; it filed D-038 and D-041. **D-041 is open and is the serious one:
-moves out of borrowed places are unchecked outside `drop` bodies, so
-`x = r.inner` compiles and the value drops twice.** `[EXP-6]` names `E3013` for
-exactly this and it had no emitter.
+plus D-039; it filed D-038 and D-041. **D-041 was open and was the serious one:
+moves out of borrowed places were unchecked outside `drop` bodies, so
+`x = r.inner` compiled and the value dropped twice.** `[EXP-6]` names `E3013`
+for exactly this and it had no emitter. **D-041 is now fixed** — see the
+follow-up note below. What remains open from that sweep is D-038, plus D-042
+(filed during the fix, not the sweep).
 
 #### What task 2 covered, kept for the method
 
@@ -1340,12 +1497,86 @@ borrows** (two `ref mut` borrows reported B3/`E3021` instead of B1/`E3022`;
 now temp-only, with a case red-checked both ways). Method-call conflicts
 still lack B8/`E3025` — registered, shape-mapped, emitted by nothing — which
 needs call provenance at the reporter; no case pins that shape.
-* **D-041 (open, found in follow-up probing): moves out of borrowed places are
-unchecked** — a field move out of a shared `ref`, and a field move out of a
-borrowed call parameter (which arrives as a bitwise copy with no loan or
-marker), both compile and double-destroy; `[EXP-6]`'s `E3013` names it.
-Needs borrowed-ness threaded to move sites. Adjacent lost-write-only symptom
-noted in the entry, unfiled pending a spec reading.
+* **D-041 (fixed 2026-09-10, found in follow-up probing): moves out of borrowed
+places were unchecked** — a field move out of a shared `ref`, and a field move
+out of a borrowed call parameter (which arrives as a bitwise copy with no loan
+or marker), both compiled and double-destroyed; `[EXP-6]`'s `E3013` named it
+with no emitter outside `drop` bodies.
+*
+  Five-way sort: compiler defect — `[EXP-6]` ("moving out of a `ref`/`ref mut`
+  is `E3013"`), `[FN-1]` ("The callee reads through a `ref A` … The callee
+  cannot mutate or move `a`") and `[BRW-1]` ("while shared borrows are live
+  the owner may … not … move") are clear and the compiler violated all three.
+  The specification was left alone (cf. D-035).
+*
+  Fix, in `compiler/ember_analysis/src/drops.rs` (`check_borrowed_moves`,
+  called from `elaborate` beside `check_drop_moves`): borrowed-ness is
+  threaded HIR→MIR as `borrowed_params` on `Body` (only `Borrow` is listed —
+  `Owned` takes ownership, `Mut` arrives as `ref mut` whose moves already
+  carry `Deref`). Every owning `Move` through a safe-reference `Deref` and
+  every owning `Move` out of a borrowed value parameter (whole or field, in
+  assignments and in call-argument/return positions) is `E3013`/O2. Three
+  deliberate non-rejections: raw-pointer derefs (exempt — `[UNS-*]`
+  territory); `drop`'s own `self` (keeps D-030's messages — skipped, so one
+  move is never two errors); moves of values that own nothing
+  (`needs_drop`-gated — `q = p` over a `Panel` of `i32`s is a bitwise copy
+  with no second destruction, and `tests/conformance/MOD-2/` does it on every
+  run; the suite caught the first version that rejected it). No ADR: the code
+  choice is forced — a borrowed parameter *is* the `ref` `[FN-1]` says the
+  callee reads through, so `[EXP-6]` already names it.
+*
+  Analyses audit for the change (no new MIR form is introduced, so this is a
+  reader, not a producer): `drops.rs` — the check is pure reporting beside
+  the existing one and moves stay moves for the dataflow; `borrows.rs` —
+  unconditional on loan liveness, which is correct because `[EXP-6]` forbids
+  the move whether or not a loan is live; `regions.rs` — untouched, and
+  whole-local borrow transfers (`s = r` for `ref mut`, borrowed views) stay
+  legal; `verify.rs` — no new construct. Rvalue/terminator variants are
+  enumerated explicitly (a new one breaks compilation at the match, by
+  design).
+*
+  Probes first (all minimal `.em` programs, before any implementation edit):
+  `x = r.inner` compiled and printed `1, 99, 1, 1` (double drop); `x =
+  o.inner` in `fn steal(o: Outer)` compiled and printed `7, 7, 99, 7`
+  (callee `x` plus caller `o`); `x = o` whole-param the same. After the fix
+  all three are `E3013`. `ref mut` and call-argument/return paths probed too
+  (same code paths, same code).
+*
+  Cases, all under `tests/conformance/EXP-6/` (new directory): five rejects
+  (shared-`ref` field, borrowed-param field, borrowed-param whole, borrowed
+  field into an `owned` call and borrowed whole to `return` — the terminator
+  and return positions `[EXP-6]` lists beside assignment RHS) plus one
+  run-pass accept (copies through a shared borrow, borrowed reads, dropless
+  borrowed whole-moves). Every new case broken red once: the rejects each
+  compile with the check reverted (exit 0; the suite fails "expected
+  compilation to fail, but it succeeded"), the return-path case additionally
+  fails on a deliberately wrong code (pinning `E3013` specifically), and the
+  accept's stdout mutation fails the suite — checked by doing exactly that,
+  then restored.
+  `docs/errors/E3013.md` is the page (baseline shrinks by one).
+*
+  Adjacent lost-write-only symptom noted in the entry, unfiled pending a spec
+  reading (per brief — not ERR-041, do not file).
+* **D-042 (open, filed during the D-041 fix — scope report below): partial
+moves out of *owned* places double-destroy at scope end.** Building D-041's
+accept case showed `x = o.inner` over an owned `o` emitting both
+`em_Inner_drop(&_3)` and `em_Inner_drop(&_1.inner)` for one value (asserted
+on the emitted C). `[EXP-6]` allows the move; drop elaboration tracks
+whole-local movedness only. Needs per-field movedness; left open and unfixed
+here, with no conformance case (a reject cannot fail to compile — that is the
+defect — and an accept would enshrine the double drop). The D-041 accept
+case therefore covers owned reads and dropless moves only, and says so.
+*
+  Scope report (§0.0 I): approved — D-041 alone. Actually worked — D-041
+  fixed as briefed, plus D-042 filed (not fixed). The filing is
+  technically-justified ledger discipline for a live double-free found by the
+  brief's own probe-first method; it blocks nothing (D-041's fix and cases
+  avoid the shape) and D-042 remains outstanding.
+
+  **That sentence was true when written and is no longer.** After filing
+  D-042 the same session went on to build `RefCell[T]` and to close
+  `RIDX-1`, then stopped on usage limits before updating this note or
+  committing. §0.20 records what is actually in the tree.
 * **SPN-API-1 (debt): the span view-method surface** (`split_at`, `reborrow`,
   …) is refused by name and untracked until now; one case pins the message.
 * **Nine more clause cases**, each probed first: DRP-2 tuple order, DRP-2 enum
@@ -1362,27 +1593,15 @@ LT-1a `E2031`/`E3062`, BRW-6 suspend/resume and the OWN-3 drop-flag path all
 live in `run-pass/`/`compile-fail/` with tags — the D-035 lesson cuts both
 ways, and the sweep mapped clauses to cases wherever they live.
 
-### 3. `RefCell[T]` — the milestone
+### ~~3. `RefCell[T]`~~ — **done 2026-09-10.** §0.20 has the detail
 
-Scope, each tied to its rule id: `[CELL-5]` the one-word borrow counter,
-`borrow`/`borrow_mut`, and the panic naming **the conflicting borrow's source
-location in debug *and* release**; `[CELL-6]` `try_borrow`/`try_borrow_mut`
-returning `Option`; `[CELL-6a]` — no profile may make them infallible, because
-that changes which `match` arm runs, which `[PRF-1]` forbids; `[CELL-7]`
-`Ref`/`RefMut` as **view types** with `[TYP-15]` applying and `drop` releasing
-the state; `[CELL-8]` `!Sync` (blocked with `Cell`'s — `CELL-SYNC-1`);
-`[CELL-9]` the check in **every** profile, and `exclusivity = "unchecked"` MUST
-NOT reach it; `[CELL-10]` shape B4 may suggest `RefCell` **only** when the
-accesses are provably not simultaneous, never first; `[CELL-11]` prelude.
-
-**The `Copy` question is answered — do not re-derive it.** `RefCell[T]` is **never `Copy`**, whatever `T` is: `[CELL-12]`, owner ruling of 2026-09-10, amendment S3, ADR-021. `[CELL-4]`'s field-derived rule is stated for `Cell` and explicitly does not reach `RefCell`, so the derivation that came free for `Cell` must be deliberately overridden.
-
-**And `UnsafeCell` is now specified but unbuilt.** `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]` in 0.8.5, amendment S2, ADR-022: `std.mem`, `UnsafeCell(owned v)`, `get(self) -> *mut T` needing `unsafe`, `into_inner(owned self) -> T`. **Do not build `RefCell` on it** — ADR-019's compiler-known route stands until interface generics can express these in Ember, and ADR-022 says why the existence of a builtin is not evidence about what the language permits.
-
-§0.14 has the read-first list, what carries over from `Cell`, and the
-conformance expectations. **`[CELL-7]` is why this is the real milestone** —
-guards escape, so `regions.rs`, `[TYP-15]`, borrow checking and guard lifetime
-all become load-bearing in a way `Cell` never touched.
+`[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]`, `[CELL-12]` built with 20
+conformance cases; `L3011` now emitted from guard-liveness tracking, with a
+page. **What is left of block I's `RefCell` half is coverage, not
+implementation:** `[CELL-6a]`, `[CELL-9]` and `[CELL-10]` have no cases and all
+three are buildable now. `[CELL-3]`/`[CELL-8]` (`!Sync`) stay blocked on
+`CELL-SYNC-1`. The `Copy` question was answered by the owner — `[CELL-12]`,
+never `Copy` — and must not be re-derived.
 
 ### 4. `Arena` — after `RefCell`
 

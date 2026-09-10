@@ -334,7 +334,13 @@ fn check_body(
                 }
                 accesses.push((dest.clone(), Access::Write));
             }
-            Terminator::Assert { cond, .. } => operand_read(cond, &mut accesses),
+            Terminator::Assert { cond, msg, .. } => {
+                operand_read(cond, &mut accesses);
+                if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                    operand_read(file, &mut accesses);
+                    operand_read(line, &mut accesses);
+                }
+            }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
         check_point(
@@ -350,6 +356,13 @@ fn check_body(
             sink,
             &mut reported,
         );
+
+        // `[CELL-7]` — `L3011` fires when a `RefCell` guard is live across a
+        // call that could re-enter the same cell. Conservative: any call while
+        // a guard loan is live lints (a lint, never an error, and not opt-in).
+        if let Terminator::Call { .. } = &block.terminator {
+            check_refcell_call(body, types, &loans, &regions, point, block.terminator_span, sink);
+        }
 
         // §4.7 step 6 — a loan still live where the borrowed place's storage
         // ends. Returning is the case that matters: the reference leaves the
@@ -407,6 +420,58 @@ fn check_escapes(
             .note("a returned reference must derive from a parameter (LT-1)"),
         );
     }
+}
+
+/// `[CELL-7]` — `L3011 RefCell guard held across a call`.
+///
+/// Fires when a `RefCell` guard loan is live across a function call that could
+/// re-enter the same cell. Conservative and fail-closed: any call while a
+/// guard is live lints, since the callee could reach the cell through a
+/// parameter, a captured view, or recursion. A lint, never an error, and not
+/// opt-in (`LNT-CFG-1` is about `[LT-1b]`'s `L3014`, a different lint).
+fn check_refcell_call(
+    body: &Body,
+    types: &TypeTable,
+    loans: &[Loan],
+    regions: &Regions,
+    point: Point,
+    span: Span,
+    sink: &mut Sink,
+) {
+    // One lint per call, naming the first live guard loan (by creation order
+    // for determinism). `in_scope` is already live-loan-filtered via regions.
+    // Only guard loans (borrows of a `RefCell`'s `value`) count: a whole-cell
+    // borrow taken for the call's own `mut` argument is not a guard live
+    // across the call.
+    let mut live: Vec<&Loan> = in_scope(loans, regions, point)
+        .into_iter()
+        .filter(|loan| is_guard_loan(body, types, &loan.place))
+        .collect();
+    live.sort_by_key(|loan| (loan.created_at.block, loan.created_at.index));
+    let Some(loan) = live.first() else {
+        return;
+    };
+    // Name the cell, not its private `value` field: the loan is of field 0,
+    // which no source ever writes. Strip one trailing `Field(0)` where the
+    // parent is the cell for the display; the loan itself is unchanged.
+    let mut display = loan.place.clone();
+    if let Some(Projection::Field(0)) = display.projection.last() {
+        let mut parent = display.clone();
+        parent.projection.pop();
+        if is_refcell_ty(types, place_ty(body, types, &parent)) {
+            display = parent;
+        }
+    }
+    let cell = place_name(body, types, &display);
+    sink.emit(Diagnostic::lint(
+        codes::L3011,
+        span,
+        format!("a `RefCell` guard for `{cell}` is live across this call"),
+    )
+    .primary_label("call happens here")
+    .secondary(loan.span, "guard borrowed here")
+    .help("drop the guard before the call, or put the call in a block of its own")
+    .note("a guard live across a call that re-enters the same cell panics at run time [CELL-7]"));
 }
 
 /// Every `Rvalue::Ref` in the body, with the region inference gave it.
@@ -653,13 +718,42 @@ fn check_point(
             if place.local == loan.borrower {
                 continue;
             }
+            // `[CELL-5]` — a guard's loan (a borrow of a `RefCell`'s `value`
+            // field) never conflicts statically with another guard's borrow:
+            // overlapping `borrow`/`borrow_mut` are allowed here and refused
+            // by the counter at run time in every profile (`[CELL-9]`). Only
+            // guard-vs-guard borrows are skipped: a whole-cell borrow (e.g. a
+            // `mut` argument taking the cell for a call) must still conflict,
+            // since moving the cell while a guard is live dangles it. Reads
+            // and writes still conflict (see below). See `is_guard_loan`.
+            if is_guard_loan(body, types, &loan.place) {
+                if let Access::Borrow { .. } = access {
+                    if is_guard_loan(body, types, place) {
+                        continue;
+                    }
+                }
+                // A shared guard loan still forbids moving the cell: an
+                // ordinary shared loan allows `Read` (a move is a read), but
+                // moving inline storage out from under a guard dangles it, so
+                // reads conflict here too. (A mutable guard loan already
+                // forbids reads.) Writes already conflict for every loan.
+                if matches!(access, Access::Read) && !loan.mutable {
+                    // Fall through to report below (via `refcell` flag).
+                } else if matches!(access, Access::Read) {
+                    // Mutable case already conflicts via `loan_mutable` below;
+                    // keep the same path for the message.
+                }
+            }
             // `[BRW-3]` — inside the reservation window the borrow is not yet
             // mutable, so shared borrows and reads of the same place pass.
             let reserved = loan.mutable && loan.reserved_at.contains(&point);
             let loan_mutable = loan.mutable && !reserved;
+            let refcell = is_guard_loan(body, types, &loan.place);
             let conflict = match access {
-                // While a mutable borrow is live the owner may not read.
-                Access::Read => loan_mutable,
+                // While a mutable borrow is live the owner may not read. A
+                // shared `RefCell` loan also forbids reads: a move is a read,
+                // and moving inline storage out from under a guard dangles it.
+                Access::Read => loan_mutable || refcell,
                 // While any borrow is live the owner may not write.
                 Access::Write => true,
                 // Two mutable, or one of each, conflict; two shared do not.
@@ -873,7 +967,13 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
                     operand_read(arg, &mut accesses);
                 }
             }
-            Terminator::Assert { cond, .. } => operand_read(cond, &mut accesses),
+            Terminator::Assert { cond, msg, .. } => {
+                operand_read(cond, &mut accesses);
+                if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                    operand_read(file, &mut accesses);
+                    operand_read(line, &mut accesses);
+                }
+            }
             _ => {}
         }
         record(accesses, block.terminator_span, &mut reads);
@@ -983,6 +1083,63 @@ fn pointee_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
         TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => Some(*inner),
         _ => None,
     }
+}
+
+/// The type of a place, following its projections. A projection that does not
+/// apply leaves the type alone (the type checker has already rejected such a
+/// program; the borrow checker only has to stay on its feet).
+fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant else { continue };
+                let fields = &types.enum_def(*id).variants[v].fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+                variant = None;
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                let fields = &types.struct_def(*id).fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => {
+                ty = items.get(*i).copied().unwrap_or(ty);
+            }
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            (Projection::Deref, TyKind::Ref { inner, .. }) => ty = *inner,
+            (Projection::Deref, TyKind::Ptr { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    ty
+}
+
+/// Whether a struct type is a compiler-known `RefCell[T]` (by name prefix,
+/// like `is_option`'s `Option_` check in typeck).
+fn is_refcell_ty(types: &TypeTable, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Struct(id) => types.struct_def(*id).name.as_str().starts_with("RefCell_"),
+        _ => false,
+    }
+}
+
+/// Whether this loan is a guard's loan: a borrow of a `RefCell`'s `value`
+/// field (parent is a `RefCell`). Whole-cell borrows (e.g. a `mut` argument
+/// taking the cell for a call) are `RefCell` loans but not guard loans: they
+/// must still conflict statically (moving the cell while a guard is live
+/// dangles it), and they must not trigger `L3011` on their own call.
+fn is_guard_loan(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    if place.projection.is_empty() {
+        return false;
+    }
+    let mut parent = place.clone();
+    parent.projection.pop();
+    is_refcell_ty(types, place_ty(body, types, &parent))
 }
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {
@@ -1129,9 +1286,13 @@ fn terminator_transfer(terminator: &Terminator, live: &mut HashSet<LocalId>) {
                 }
             }
         }
-        Terminator::Assert { cond, .. } => {
+        Terminator::Assert { cond, msg, .. } => {
             let mut reads = Vec::new();
             operand_read(cond, &mut reads);
+            if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                operand_read(file, &mut reads);
+                operand_read(line, &mut reads);
+            }
             for (p, _) in reads {
                 live.insert(p.local);
             }

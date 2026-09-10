@@ -268,6 +268,42 @@ impl Emitter<'_> {
     /// through a synthesised function: what has to run for the value at
     /// `access` to release everything it owns.
     ///
+    /// `[CELL-7]` — find the `RefCell[T]` for a `Ref[T]`/`RefMut[T]` guard's
+    /// `T`, for the release in `drop_lines`. Guards and cells are ordinary
+    /// structs here (ADR-019), so the link is structural: the cell is the
+    /// `RefCell_…` struct whose field 0 holds this guard's `T`. Name-checked
+    /// first (like `is_option`'s `Option_` prefix) so a user struct with the
+    /// same shape does not capture the release.
+    fn refcell_for_guard(&self, guard_ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
+            return None;
+        };
+        let guard_def = self.types.struct_def(guard_id);
+        if guard_def.fields.len() != 1 {
+            return None;
+        }
+        let inner = match self.types.kind(guard_def.fields[0].ty) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => return None,
+        };
+        for (ty, kind) in self.types.all() {
+            let TyKind::Struct(cell_id) = kind else {
+                continue;
+            };
+            let def = self.types.struct_def(*cell_id);
+            if !def.name.as_str().starts_with("RefCell_") {
+                continue;
+            }
+            if def.fields.len() != 4 {
+                continue;
+            }
+            if def.fields[0].ty == inner {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
     /// `[DRP-2]` — a struct's fields drop after the struct's own `drop`, in
     /// reverse declaration order; an enum drops the active variant's payload;
     /// a tuple drops in reverse; an array drops its elements in index order.
@@ -293,6 +329,33 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                // `[CELL-7]` — a `Ref`/`RefMut` guard's `drop` releases the
+                // borrow state. The guard holds a pointer to the cell's `value`
+                // (at offset 0, so the value pointer is also the cell pointer);
+                // a shared guard decrements the counter, a mutable one resets
+                // it to `0`. This is the only `has_drop` struct with no
+                // `drop` method: the release is the drop glue, and there is no
+                // `drop_symbol` to call.
+                let guard_name = def.name.as_str();
+                if guard_name.starts_with("RefMut_") || guard_name.starts_with("Ref_") {
+                    if let Some(cell_ty) = self.refcell_for_guard(ty) {
+                        let cell_c = self.c_type(cell_ty);
+                        if guard_name.starts_with("RefMut_") {
+                            out.push(format!(
+                                "((({cell_c}*){access}.value)->borrow = 0);"
+                            ));
+                        } else {
+                            out.push(format!(
+                                "((({cell_c}*){access}.value)->borrow--);"
+                            ));
+                        }
+                        return;
+                    }
+                    // If the cell cannot be found (user struct coincidentally
+                    // named `Ref_…`), fall through to ordinary glue rather
+                    // than emitting nothing: failing closed means rejecting a
+                    // correct program is preferable to leaking a borrow.
+                }
                 // `[OWN-2]` — "its `drop` method (if any) runs, **then** its
                 // fields are dropped in reverse declaration order". Both
                 // halves, and in that order: the destructor still sees a whole
@@ -686,6 +749,16 @@ impl Emitter<'_> {
                         self.operand(at, body),
                         self.operand(len, body)
                     ),
+                    // `[CELL-5]` — contention panics with the conflicting
+                    // borrow's location, recorded in debug and release
+                    // (`[CELL-9]`). `file` is the cell's `borrow_file`
+                    // (`const uint8_t*`, cast back for the call) and `line`
+                    // its `borrow_line`; `location` is the failing borrow.
+                    AssertKind::RefCellBorrow { file, line } => format!(
+                        "{RT}panic_refcell((const char*){}, {}, {location})",
+                        self.operand(file, body),
+                        self.operand(line, body)
+                    ),
                 };
                 self.line(&format!("    if ({negate}{cond}) {{ {call}; }}"));
                 if next.0 as usize == index + 1 {
@@ -784,7 +857,11 @@ impl Emitter<'_> {
                     Builtin::CellSet
                     | Builtin::CellReplace
                     | Builtin::CellIntoInner
-                    | Builtin::CellUpdate => {
+                    | Builtin::CellUpdate
+                    | Builtin::RefCellBorrow
+                    | Builtin::RefCellBorrowMut
+                    | Builtin::RefCellTryBorrow
+                    | Builtin::RefCellTryBorrowMut => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
                             which.name()
@@ -1095,6 +1172,14 @@ impl Emitter<'_> {
             Const::Bool(v) => if *v { "true" } else { "false" }.to_string(),
             Const::Str(text) => {
                 format!("{RT}str_lit({}, {})", c_string_literal(text), text.len())
+            }
+            // `[CELL-5]` — a conflicting-borrow file path, stored into the
+            // cell's `borrow_file` (`*u8`) field. The cast keeps
+            // `-Wall -Wextra` quiet about the `char*` to `uint8_t*`
+            // signedness difference; the pointer round-trips through the
+            // field for the panic to name.
+            Const::CStr(text) => {
+                format!("((const uint8_t*){})", c_string_literal(text))
             }
             // `[FN-6]` — a function value is its C symbol, which is its
             // address.
@@ -1531,6 +1616,10 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                 if let AssertKind::Bounds { len, index } = msg {
                     read_operand(len, &mut read);
                     read_operand(index, &mut read);
+                }
+                if let AssertKind::RefCellBorrow { file, line } = msg {
+                    read_operand(file, &mut read);
+                    read_operand(line, &mut read);
                 }
             }
             Terminator::Return => read[RETURN_LOCAL.0 as usize] = true,

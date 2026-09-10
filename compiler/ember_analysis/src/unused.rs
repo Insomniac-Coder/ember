@@ -71,6 +71,10 @@ pub fn check(body: &Body, sink: &mut Sink) {
                     mark_operand(len, &mut read);
                     mark_operand(index, &mut read);
                 }
+                if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                    mark_operand(file, &mut read);
+                    mark_operand(line, &mut read);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }

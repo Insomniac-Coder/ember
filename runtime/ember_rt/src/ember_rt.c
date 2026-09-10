@@ -237,6 +237,20 @@ void ember_panic_overflow(const char* op, ember_loc loc) {
 
 void ember_panic_div_zero(ember_loc loc) { panic_with("division by zero", 16, loc); }
 
+void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc) {
+    char buffer[512];
+    int written;
+    if (file != NULL) {
+        written = snprintf(buffer, sizeof buffer,
+                           "RefCell already mutably borrowed (borrowed at %s:%u)",
+                           file, (unsigned)line);
+    } else {
+        written = snprintf(buffer, sizeof buffer,
+                           "RefCell already mutably borrowed (borrowed at unknown:0)");
+    }
+    panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
 void ember_panic_unwrap(const char* what, ember_loc loc) {
     char buffer[128];
     int written = snprintf(buffer, sizeof buffer, "unwrap on %s", what);
