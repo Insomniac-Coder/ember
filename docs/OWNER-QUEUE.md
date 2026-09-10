@@ -1,139 +1,202 @@
 # Owner decision queue
 
 Questions an agent may not answer, in the format `SPEC-FEED-0.8.5-H1` §28 asks
-for. **Nothing here has been resolved silently.** Each entry says why it cannot
-be settled without choosing between competing semantics or reversing an owner
-ruling.
+for. **Nothing here is resolved silently.**
 
-Closed entries stay, with the ruling, because a closed question is evidence
-about what kind of question this project generates.
+**This queue is not a second specification.** `docs/spec-source/ember-spec.md`
+remains the sole normative language contract; an entry here describes a
+*question*, and where it quotes the specification the specification governs.
+
+Closed entries stay, with the authority that resolved them, because a closed
+question is evidence about what kind of question this project generates — and
+because a future agent who cannot find where a decision was made will reopen it.
+
+*(Referred to as `OWNERQUEUE.md` in owner feedback; the file is
+`docs/OWNER-QUEUE.md`.)*
 
 ---
 
-## ODR-001 — `UnsafeCell`'s API surface: the feed and a prior ruling disagree
+## Queue summary
+
+| ID | Status | Category | Priority | Semantic decision required |
+|---|---|---|---|---|
+| ODR-001 | **CLOSED** | Language / API | — | **No** — already ruled |
+| ODR-002 | OPEN | Tooling / document structure | **P2** | **No** |
+| ODR-003 | OPEN | Editorial / documentation | **P3** | **No** |
+
+**Nothing in this queue blocks anything.** No open entry blocks implementation,
+conformance, a specification freeze, or requires an owner semantic decision.
+
+Priorities: **P1** blocks a language or implementation decision · **P2** changes
+no language semantics but affects conformance or tooling confidence · **P3**
+editorial cleanup that can safely wait.
+
+---
+
+## ODR-001 — `UnsafeCell`'s API surface — **CLOSED**
 
     ID:        ODR-001
+    Status:    CLOSED — superseded by owner ruling S2 / ADR-022
+    Category:  Language / API
     Location:  [UNS-10], Part IX §4; docs/spec-amendments.md S2; ADR-022
-    Status:    OPEN
 
-**Existing wording.** `[UNS-10]` names the API: *"`UnsafeCell(owned v: T)`,
-`get(self) -> *mut T` — which needs an `unsafe` context, being a raw pointer
-under `[UNS-1]` — and `into_inner(owned self) -> T`, which is safe because the
-cell is consumed and nothing is shared."*
+    Resolution: Owner-approved UnsafeCell API surface
+    Authority:  Owner ruling 2026-09-10; amendment S2; ADR-022
+    Revision:   Ember 0.8.5_Hardened_1
+    ADR:        ADR-022
+    Result:     Closed. `[UNS-10]` is authoritative and needs no further
+                owner decision.
 
-**Conflict.** `SPEC-FEED-0.8.5-H1` §8 states that *"the current specification
-deliberately leaves exact raw-pointer API naming for a later specification
-revision"* and instructs: *"Do NOT invent API names during this feed."* The
-document does name them. It is not an invention — the API surface and the module
-were put to the owner as an explicit question on 2026-09-10, precisely because
-both change the accepted program set, and the owner chose **`std.mem` with a
-raw-pointer accessor**. So the feed's premise and the prior ruling describe
-different documents.
+    Blocks implementation:            NO
+    Blocks conformance:               NO
+    Blocks specification freeze:      NO
+    Requires owner semantic decision: NO
 
-**Possible interpretations.**
+**What the specification says, and it is settled.** `[UNS-10]` defines the
+surface: `UnsafeCell(owned v: T)`, `get(self) -> *mut T` — which needs an
+`unsafe` context, being a raw pointer under `[UNS-1]` — and
+`into_inner(owned self) -> T`, which is safe because the cell is consumed and
+nothing is shared. It lives in `std.mem`, and it is the language's lowest-level
+interior-mutability primitive with the safety boundary `[UNS-10a]` and
+`[UNS-10b]` state.
 
-1. **The 2026-09-10 ruling stands and §8's premise is stale.** The names are
-   owner-chosen, `[UNS-10]` is normative as written, and nothing moves.
-2. **The names are illustrative, not normative.** `[UNS-10]` keeps the semantics
-   as normative and marks the specific spellings non-normative until a later
-   revision fixes them.
-3. **The names are withdrawn** and `[UNS-10]` states semantics only, with the
-   surface deferred.
+**None of the following is an open question, and this entry must not be read as
+though any of them were:** whether `UnsafeCell` exists; whether it lives in
+`std.mem`; whether it has a raw-pointer accessor; whether that accessor requires
+`unsafe`; whether `into_inner` exists; whether it is the lowest-level primitive.
+All six are decided and normative in 0.8.5.
 
-**Semantic impact.** Real under 2 and 3. The API surface determines which
-programs compile; withdrawing or demoting it makes `UnsafeCell` unimplementable
-until a later revision, which affects `[TST-4]` coverage and any package
-planning to build on it.
+### Historical context — kept because the conflict is instructive
 
-**Recommended.** Interpretation **1**. The ruling was explicit, recent, and was
-obtained by asking rather than inferring — which is the route this project
-requires. §8 appears to have been written without that exchange in view.
+This entry was opened because `SPEC-FEED-0.8.5-H1` §8 stated that *"the current
+specification deliberately leaves exact raw-pointer API naming for a later
+specification revision"* and instructed *"Do NOT invent API names during this
+feed."* The document did name them, which looked like a contradiction.
 
-**Why an agent may not settle it.** Choosing 2 or 3 would reverse a decision the
-owner made four hours earlier; choosing 1 would dismiss a written instruction in
-the feed. Either way an agent would be picking between two owner statements.
+It was not one, and the sequence is the point:
+
+1. **The feed's wording was stale.** It described the specification as it stood
+   before the API surface was settled.
+2. **The owner ruled.** The surface and the module were put to the owner as an
+   explicit question on 2026-09-10 — asked precisely *because* both change the
+   accepted program set — and the owner chose `std.mem` with a raw-pointer
+   accessor. The names were never invented.
+3. **The current specification incorporates that ruling** as `[UNS-10]`,
+   declared as amendment S2, class `OWNER-APPROVED SEMANTIC CHANGE`, which is
+   what made the language version 0.8.5.
+4. **No further owner decision is required.**
+
+The entry was raised rather than resolved because settling it either way would
+have meant overriding one owner statement with another — the feed or the ruling.
+That was the correct call at the time, and the owner has since confirmed the
+ruling stands.
 
 ---
 
-## ODR-002 — six rule definitions the checker cannot see
+## ODR-002 — six rule definitions the extraction tool cannot see
 
     ID:        ODR-002
-    Location:  [TYP-26], [IFC-2], [HND-2], [GPU-7] (each the second rule on a
-               line shared with its predecessor); [VER-7] (inline in a
-               paragraph); [CTL-3a] (inline in a parenthetical)
     Status:    OPEN — raised 2026-09-10, deliberately not acted on
+    Category:  TOOLING / DOCUMENT STRUCTURE
+    Priority:  P2
+    Location:  [TYP-26], [IFC-2], [HND-2], [GPU-7] — each the second rule on a
+               line shared with its predecessor
+               [VER-7]  — stated inline in a paragraph
+               [CTL-3a] — stated inline in a parenthetical
 
-**Existing wording.** Each of the six states its rule in full. `[TYP-26]`, for
-example: *"two functions with the same name in one scope is `E1030` — except
-operator interface impls and `extend` blocks for distinct types."*
+    Semantic impact:                  NONE
+    Blocks implementation:            NO
+    Blocks conformance:               NO
+    Blocks specification freeze:      NO
+    Requires owner semantic decision: NO
 
-**Conflict.** `rule_index.py` recognises a definition structurally: the id must
-open a bullet, and **only the first id on a bullet counts**. Its own comment
-says why — *"a later one is cited by it, even when the citation reads like a
-rule. This is `[XXII.4]`'s 'a reference is not a definition' made mechanical."*
-So six properly-stated rules read to the tool as dangling references and sit in
-a baseline.
+> **These are not believed to be undefined language rules. They are rules whose
+> current document structure is not recognised as a definition by the extraction
+> tool.**
 
-**Possible interpretations.**
+That distinction is the whole entry. **ERR-042 investigated this as an
+undefined-rule problem and was withdrawn as wrong**; the inventory it produced
+is what established that all six are fully stated. Do not resurrect it. Reading
+this entry as "six rules are missing" would repeat the exact error that entry
+was withdrawn for.
 
-1. **Split each onto its own bullet, text verbatim.** `EDITORIAL REPAIR`,
-   changes no meaning, and the six leave the baseline.
-2. **Teach the detector the inline and granting-sentence forms.** No document
-   edit, but it admits false negatives — a genuinely undefined rule could then
-   pass, which is worse than a known-good one sitting in a baseline.
-3. **Leave both.** The inventory in withdrawn ERR-042 records what they are, and
-   the baseline entries stay.
+**What is actually true.** Each of the six states its rule in full. `[TYP-26]`,
+for example: *"two functions with the same name in one scope is `E1030` — except
+operator interface impls and `extend` blocks for distinct types."* That is a
+complete rule. `rule_index.py` does not see it because it recognises a
+definition structurally — the id must open a bullet, and **only the first id on
+a bullet counts** — and its own comment says why: *"a later one is cited by it,
+even when the citation reads like a rule. This is `[XXII.4]`'s 'a reference is
+not a definition' made mechanical."* All six sit in `rule_index_baseline.json`.
 
-**Semantic impact.** None under any option. This is discoverability.
+### Neither of these is permitted without a separate tooling review
 
-**Recommended.** **1** if the owner is willing to have prose relaid out; **3**
-otherwise. Not **2** — the strictness is deliberate and correct.
+1. **Changing the six rules' wording or layout merely to satisfy the
+   extractor.** The specification is authoritative; a tool that cannot read it
+   is the thing that is wrong. Relaying out owner prose for a tool's benefit is
+   the wrong direction by this project's cardinal rule.
+2. **Weakening the extractor so that it accepts ambiguous rule definitions.**
+   The strictness is deliberate. Loosening it admits false negatives, and a
+   genuinely undefined rule slipping through is worse than a known-good one
+   sitting in a baseline.
 
-**Why an agent may not settle it.** Option 1 is a layout edit to the owner's own
-prose for a tool's benefit, which is the wrong direction by this project's
-cardinal rule that the tool moves and the document does not.
+**The preferred long-term direction is likely to improve the extractor** — to
+teach it the inline and granting-sentence forms without loosening what counts as
+a definition — but that is a tooling decision to be taken on its own terms, with
+the false-negative risk priced, and not a side effect of a documentation pass.
 
 ---
 
 ## ODR-003 — the `[FFI-17]` numbered list: keep in step, or delete the duplicates
 
     ID:        ODR-003
-    Location:  Part XVI §7a, the numbered list under `[FFI-17]`
     Status:    OPEN — the document raises it against itself
+    Category:  EDITORIAL / DOCUMENTATION
+    Priority:  P3
+    Location:  Part XVI §7a, the numbered list under [FFI-17]
 
-**Existing wording.** The list is already marked *"`NON-NORMATIVE` under
-`[CAT-1]`: where it and a rule disagree, the rule governs, and the rule is named
-in each item"*, and it records that it *"has been the site of four
-contradictions with the rules beside it (`std::function`, `std::string_view`,
-C++ inheritance, and the CRT device attributed to `[FFI-30]`), because a prose
-restatement of a rule drifts from it and nothing detects that."* It then says:
-*"A future revision should delete from the list every claim a rule already makes
-rather than keep two copies in step."*
+    Semantic impact:                  NONE
+    Blocks implementation:            NO
+    Blocks conformance:               NO
+    Blocks specification freeze:      NO
+    Requires owner semantic decision: NO
 
-**Conflict.** None outstanding — the drift is neutralised by the demotion, so
-`SPEC-FEED-0.8.5-H1` §14's requirement ("the tables and explicit FFI rules are
-authoritative") is already met. The open question is the document's own
-recommendation to delete the duplicated prose.
+**There is no current semantic contradiction.** The list is already marked
+*"`NON-NORMATIVE` under `[CAT-1]`: where it and a rule disagree, the rule
+governs, and the rule is named in each item"*. So the normative FFI tables and
+rules are authoritative today, and `SPEC-FEED-0.8.5-H1` §14's requirement is met
+as the document stands.
 
-**Semantic impact.** None if done correctly; the risk is losing explanatory
-material that is not duplicated, which is only visible item by item.
+**What remains is the document's own recommendation.** It records that the list
+*"has been the site of four contradictions with the rules beside it
+(`std::function`, `std::string_view`, C++ inheritance, and the CRT device
+attributed to `[FFI-30]`), because a prose restatement of a rule drifts from it
+and nothing detects that"*, and concludes: *"A future revision should delete from
+the list every claim a rule already makes rather than keep two copies in step."*
 
-**Recommended.** Defer to a revision that can do it item by item with the tables
-open beside it. It is not a consistency fix, it is an editorial project.
+**Explicitly not blocking:** compiler implementation, FFI conformance, ABI
+implementation, RageV migration, or a language-version freeze. It is a future
+cleanup opportunity and nothing more.
 
-**Why an agent may not settle it.** Deleting normative-adjacent prose in a pass
-whose first constraint is "do not silently redesign" trades a known-safe state
-for an information-loss risk, on roughly thirty judgement calls.
+**Why it was not done in the 0.8.5 pass.** It is roughly thirty judgement calls
+about which prose duplicates a rule and which carries explanation found nowhere
+else. Deleting normative-adjacent prose in a pass whose first constraint is *do
+not silently redesign* trades a known-safe state for an information-loss risk.
+It wants a revision that can work item by item with the tables open beside it.
 
 ---
 
-## Closed
+## Closed — the audit trail
 
-| ID | Question | Ruling |
-|---|---|---|
-| — | `RefCell[T]` and `Copy` | **Not `Copy`, move-only**, 2026-09-10. `[CELL-12]`, S3, ADR-021 |
-| — | Cut `Hardened_2` or defer E5 | **Cut it**, 2026-09-10. Then superseded by 0.8.5 |
-| — | ERR-043, `UnsafeCell` | **Retained as the lowest-level primitive**, 2026-09-10. S2, ADR-022 |
-| — | ERR-041 / D5, `[FN-1]` | **The worked example governs**, 2026-09-10. `[FN-1a]`, S4. D5 closed, no code moved |
-| — | ERR-042, nine undefined rule ids | **Inventory ordered**; it found zero gaps and the entry was withdrawn |
-| — | Scope changes | **Permitted when justified, must be reported**, 2026-09-10. HANDOFF §0.0 I |
+Kept so that a future agent can find where each decision was made rather than
+reopening it.
+
+| Question | Resolution | Authority | Revision | Result |
+|---|---|---|---|---|
+| **ODR-001** — `UnsafeCell`'s API surface | Owner-approved: `std.mem`, raw-pointer accessor | Owner ruling 2026-09-10; **S2 / ADR-022** | 0.8.5_Hardened_1 | Closed; `[UNS-10]` is authoritative |
+| `RefCell[T]` and `Copy` | Not `Copy`; move-only whatever `T` is | Owner ruling 2026-09-10; **S3 / ADR-021** | 0.8.5_Hardened_1 | `[CELL-12]` normative; `[CELL-4]` explicitly does not reach `RefCell` |
+| Cut `Hardened_2`, or defer E5 | Cut it — E5 is editorial repair, not a revision | Owner ruling 2026-09-10 | 0.8.4_Hardened_2 | Cut, then superseded by 0.8.5 |
+| ERR-043 — `UnsafeCell` undefined | Retained as the lowest-level interior-mutability primitive | Owner ruling 2026-09-10; **S2 / ADR-022** | 0.8.5_Hardened_1 | `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]`; specified, unbuilt |
+| ERR-041 / deviation D5 — `[FN-1]` | Part VII §7's worked example governs | Owner ruling 2026-09-10; **S4** | 0.8.5_Hardened_1 | `[FN-1a]`; D5 closed, **no code moved** |
+| ERR-042 — nine "undefined" rule ids | Inventory ordered; it found **zero** gaps | Owner ruling 2026-09-10 | — | Entry **withdrawn as wrong**; see ODR-002 for what is actually true |
+| Scope changes by an implementation agent | Permitted when justified; **must be reported** | Owner ruling 2026-09-10 | — | `docs/HANDOFF.md` §0.0 I |
