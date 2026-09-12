@@ -324,14 +324,20 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
         }
 
         if let Terminator::Call { func, args, .. } = &block.terminator {
-            // `StringAsStr` rides the same shape: a `str` points into its
-            // `String`, so its argument must be the borrow too (D-037).
+            // `StringAsStr` and `ArenaAlloc` ride the same shape: the returned
+            // view points into storage owned by the first argument, so that
+            // argument must be an explicit borrow too (D-037, `[LT-4]`).
             let FuncRef::Builtin { which, .. } = func else {
                 continue;
             };
             if !matches!(
                 which,
-                Builtin::SpanFrom { .. } | Builtin::StringAsStr
+                Builtin::SpanFrom { .. }
+                    | Builtin::StringAsStr
+                    | Builtin::ArenaAlloc { .. }
+                    | Builtin::FixedArenaAlloc { .. }
+                    | Builtin::ScopedArenaAlloc { .. }
+                    | Builtin::ArenaScope { .. }
             ) {
                 continue;
             };
@@ -343,8 +349,8 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
             };
             if !borrowed {
                 fail(format!(
-                    "bb{index}: `SpanFrom` is applied to something that is not a \
-                     reference — the borrow a view is built from must be explicit \
+                    "bb{index}: a view-producing builtin is applied to something that is not a \
+                     reference — the borrow the view is built from must be explicit \
                      in the IR, or `collect_loans` cannot see it (see D-022)"
                 ));
             }

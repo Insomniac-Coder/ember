@@ -337,6 +337,21 @@ impl Emitter<'_> {
                 // `drop` method: the release is the drop glue, and there is no
                 // `drop_symbol` to call.
                 let guard_name = def.name.as_str();
+                // `[ARN-1]`/`[ARN-2]` — Arena owns its chunks, but never
+                // drops the values inside them individually. It has no
+                // source-level destructor; this compiler-provided glue
+                // releases only the opaque arena state.
+                if guard_name == "Arena" {
+                    out.push(format!("{RT}arena_free({access}.state);"));
+                    return;
+                }
+                // `[ARN-6]` — a scope guard owns no values and no chunks. Its
+                // destructor rewinds the shared arena to the captured mark;
+                // the held parent borrow is compile-time state only.
+                if guard_name == "ScopedArena" {
+                    out.push(format!("{RT}arena_rewind({access}.state, {access}.mark);"));
+                    return;
+                }
                 if guard_name.starts_with("RefMut_") || guard_name.starts_with("Ref_") {
                     if let Some(cell_ty) = self.refcell_for_guard(ty) {
                         let cell_c = self.c_type(cell_ty);
@@ -865,6 +880,48 @@ impl Emitter<'_> {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
                             which.name()
+                        );
+                    }
+                    Builtin::ArenaWithCapacity => {
+                        let arena = self.c_type(*arg_ty);
+                        return format!("({arena}){{ {RT}arena_new({}), 0 }}", rendered[0]);
+                    }
+                    Builtin::ArenaAlloc { elem } => {
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({elem_c}*){RT}arena_alloc_copy(({})->state, sizeof({elem_c}), _Alignof({elem_c}), &{})",
+                            rendered[0], rendered[1]
+                        );
+                    }
+                    Builtin::ArenaReset => {
+                        return format!("{RT}arena_reset(({})->state)", rendered[0]);
+                    }
+                    Builtin::FixedArenaAlloc { elem } => {
+                        let fixed = self.c_type(self.element_of(*arg_ty));
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({elem_c}*){RT}fixed_arena_alloc_copy((void*)(({fixed}*){})->buffer.ptr, (({fixed}*){})->buffer.len, &(({fixed}*){})->used, sizeof({elem_c}), _Alignof({elem_c}), &{})",
+                            rendered[0], rendered[0], rendered[0], rendered[1]
+                        );
+                    }
+                    Builtin::FixedArenaReset => {
+                        let fixed = self.c_type(self.element_of(*arg_ty));
+                        return format!("((({fixed}*){})->used = 0)", rendered[0]);
+                    }
+                    Builtin::ArenaScope { scoped } => {
+                        let parent = self.c_type(self.element_of(*arg_ty));
+                        let scoped = self.c_type(*scoped);
+                        return format!(
+                            "({scoped}){{ &(({parent}*){})->token, (({parent}*){})->state, {RT}arena_mark((({parent}*){})->state), 0 }}",
+                            rendered[0], rendered[0], rendered[0]
+                        );
+                    }
+                    Builtin::ScopedArenaAlloc { elem } => {
+                        let scoped = self.c_type(self.element_of(*arg_ty));
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({elem_c}*){RT}arena_alloc_copy((({scoped}*){})->state, sizeof({elem_c}), _Alignof({elem_c}), &{})",
+                            rendered[0], rendered[1]
                         );
                     }
                     Builtin::ArrayNew | Builtin::StringNew => {

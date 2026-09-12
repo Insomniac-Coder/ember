@@ -901,3 +901,40 @@ next unused numeric rule ID without changing substance.
 requires `0.9.5_Hardened_8`. H8 becomes the frozen development target. It is
 not the adopted repository specification and makes no compiler implementation
 or conformance claim.
+
+## ADR-028 — `Arena` is a narrow `@borrows` provenance source
+
+**Owner ruling, 2026-09-12, resolving ODR-008 / ERR-049.** Implementing
+`[LT-4]` exposed a real public-signature boundary. An arena allocation carries
+the arena borrow, but `[LT-1a]` previously allowed `@borrows` to name only a
+view-typed parameter. A wrapper such as `fn allocate(arena: Arena) -> ref mut
+T` therefore had no way to express its valid return provenance even though
+the caller's arena owns the returned storage.
+
+**The decision.** A function returning a view backed by a growing `Arena`
+parameter may, and must, write `@borrows(arena)`. The named Arena contributes
+its borrow region to the return. This exception is provenance-only: `Arena`
+does not become a view type, its lifetime is not extended, ownership is not
+transferred, and ordinary borrow/reset/drop conflicts remain enforced.
+
+The exception is deliberately exact. It does not include arbitrary non-view
+parameters, owned returns, or a view derived from another source. A wrapper
+without the annotation is E3061; an annotation that lies about the returned
+view remains E3062; an unrelated non-view parameter remains E2031. Nested
+wrappers repeat the annotation in each public signature.
+
+**Implementation boundary.** H9 records `[LT-4a]`, `[LT-4b]`, and `[TST-22]`.
+The compiler retains the existing by-value ABI representation for ordinary
+default-mode value parameters but creates a semantic shared loan at a direct
+call whose returned view is tied to an Arena argument. This keeps reset, drop,
+and caller-local escape checks load-bearing without making Arena a view.
+
+**Terminology/API normalization.** The ruling's examples named otherwise
+undefined `alloc_span` and `alloc_mut_span` helpers. H9 demonstrates the same
+decision with the already-specified `alloc` and `alloc_array` APIs, and
+normalizes `[TST-LT-ARENA-RETURN]` to the next numeric rule ID `[TST-22]`.
+
+**Version treatment.** H8 was frozen, so ADR-023 requires
+`0.9.5_Hardened_9`. H9 is the new frozen development target. The adopted
+0.8.5 specification remains unchanged pending the separate 0.9.5 adoption
+gates.

@@ -27,6 +27,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-005 | **CLOSED** — explicit all-mutable `_mut` helpers | Language / standard-library API | — | **No** — ruled 2026-09-12 |
 | ODR-006 | **CLOSED** — mutable helper inputs are `mut` reborrows | Language / callable API | — | **No** — ruled 2026-09-12 |
 | ODR-007 | **CLOSED** — mode vector is compiler-known `Callable` metadata | Language / callable abstraction | — | **No** — ruled 2026-09-12 |
+| ODR-008 | **CLOSED** — `Arena` is a narrow `@borrows` provenance source | Language / region provenance | — | **No** — ruled 2026-09-12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -34,10 +35,12 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-007 are closed; ODR-003 is deferred
+ODR-001, ODR-002, and ODR-004 through ODR-008 are closed; ODR-003 is deferred
 editorial work with no semantic impact. **No owner semantic decision is
 currently open.** H8 records the complete helper-mode and callable-abstraction
-ruling. Implementation and conformance remain outstanding, but they are not
+ruling; H9 records the Arena-backed return-provenance ruling. Full H8/H9
+implementation and conformance remain outstanding, although the Arena core and
+H9 wrapper-provenance path now have executable evidence. Those gaps are not
 owner questions and did not block the now-closed D-042 compiler work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
@@ -552,6 +555,46 @@ runtime bookkeeping nor a second ownership system. `[FN-6a]`, `[LT-8a]`, and
 
 ---
 
+## ODR-008 — Arena-backed return provenance — **CLOSED**
+
+    ID:        ODR-008
+    Status:    CLOSED — `Arena` is a narrow `@borrows` provenance source
+    Category:  LANGUAGE / REGION PROVENANCE
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_9.md [LT-1a], [LT-4], [LT-4a], [LT-4b]
+
+    Resolution: Permit @borrows(arena) only for Arena-backed returned views
+    Authority:  Owner ruling, 2026-09-12; ADR-028
+    Revision:   Ember 0.9.5_Hardened_9
+    Result:     Closed. H9 [LT-4a]/[LT-4b] are authoritative within the
+                development target.
+
+    Semantic impact:                  YES — wrapper signatures and accepted programs
+    Blocks implementation:            NO — ruling received and implementation started
+    Blocks conformance:               NO — TST-22 evidence can now be built
+    Blocks H9 identity freeze:         NO
+    Blocks normative specification adoption: NO
+    Requires owner semantic decision: NO
+
+**Historical conflict.** `[LT-4]` tied every arena allocation to the Arena
+borrow, while `[LT-1a]` rejected an Arena parameter in the only public
+return-provenance annotation because Arena is not a view type. A safe wrapper
+could therefore neither express the relationship nor omit it soundly.
+
+**Owner resolution.** A function whose returned view is proven to derive from
+storage owned by a growing `Arena` parameter writes `@borrows(arena)`. This is
+a provenance-only exception. Arena stays non-view; arbitrary non-view
+parameters, unrelated views, owned results, lifetime extension, ownership
+transfer, and borrow-checker bypass remain forbidden. Nested wrappers repeat
+the annotation. Omitted provenance is E3061; false provenance remains E3062;
+an unrelated non-view parameter remains E2031.
+
+**Normalization.** H9 uses the existing `alloc`/`alloc_array` API rather than
+the ruling's otherwise-undefined illustrative `alloc_span` names, and records
+the mnemonic conformance request as numeric `[TST-22]`.
+
+---
+
 ## Closed — the audit trail
 
 Kept so that a future agent can find where each decision was made rather than
@@ -570,3 +613,4 @@ reopening it.
 | **ODR-005** — mutable `with_views` API | Explicit all-mutable `_mut` helper family using `MutSpan[T]` | Owner ruling 2026-09-12; **ADR-025** | 0.9.5_Hardened_6 | Closed; no mixed-mutability overloads are implied |
 | **ODR-006** — helper/callback modes | Mutable helper inputs are `mut` reborrows; callback modes remain explicit | Owner ruling 2026-09-12; **ADR-026 / ADR-027** | 0.9.5_Hardened_8 | Closed; no helper consumes an input view |
 | **ODR-007** — `fn`/`Callable` mode bridge | Preserve the complete mode vector as compiler-known canonical type metadata | Owner ruling 2026-09-12; **ADR-027** | 0.9.5_Hardened_8 | Closed; no runtime mode bookkeeping or second ownership system |
+| **ODR-008** — Arena-backed return provenance | Permit narrow `@borrows(arena)` only for a view backed by that Arena | Owner ruling 2026-09-12; **ADR-028** | 0.9.5_Hardened_9 | Closed; Arena remains non-view and arbitrary non-view parameters remain forbidden |

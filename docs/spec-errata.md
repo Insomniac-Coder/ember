@@ -99,6 +99,7 @@ ERR-008) is worth being able to read again.
 | ERR-046 | 0.9.5 H5 `[LT-8]` with `[LT-11]` / `[TST-16]` | **DECIDED by the owner 2026-09-12.** H6 adds explicit all-mutable `_mut` helpers using canonical `MutSpan[T]`; no mixed overloads are implied. ODR-005 closed |
 | ERR-047 | H6/H7 `[LT-8]` with `fn_type`, `[FN-1]`, `[FN-2a]` | **DECIDED by the owner 2026-09-12.** H7 adds callable modes; H8 makes mutable helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed |
 | ERR-048 | H7 `[FN-6]` with `[CLO-3]` / `Callable[Args, R]` | **DECIDED by the owner 2026-09-12.** H8 preserves the full mode vector as compiler-known canonical metadata through the existing abstraction. ODR-007 closed |
+| ERR-049 | H8 `[LT-4]` with `[LT-1a]` | **DECIDED by the owner 2026-09-12.** H9 permits the narrow `@borrows(arena)` provenance contract for Arena-backed returned views. `Arena` remains a non-view; arbitrary non-view parameters remain forbidden. ODR-008 closed |
 
 ---
 
@@ -2166,3 +2167,40 @@ erase the internal signature. `[FN-6a]`, `[CLO-3]`, and `[CLO-6]` require the
 metadata to survive generic bounds, checking, overload resolution, and
 monomorphisation, while remaining absent at runtime. No second ownership model,
 runtime dispatch, or new public mode-vector generic is introduced.
+
+---
+
+## ERR-049 — an Arena-backed wrapper could not express return provenance
+
+**Status: decided by the owner, 2026-09-12; resolved in
+0.9.5_Hardened_9. ODR-008 closed.**
+
+**Where.** `[LT-4]` says an Arena allocation's returned view carries the
+arena's borrow region. `[LT-1a]` made `@borrows` the public mechanism for tying
+a returned view to a parameter, but also made naming every non-view parameter
+E2031. Since `Arena` is intentionally not a view type, the minimal valid
+wrapper had no expressible signature:
+
+```ember
+fn allocate_one(arena: Arena) -> ref mut i32:
+    return arena.alloc(1)
+```
+
+**The conflict.** Rejecting every such wrapper makes the Arena borrow
+relationship impossible to preserve across an ordinary function boundary;
+accepting it with no signature contract lets a caller reset or drop the arena
+while retaining the returned reference. Neither is a faithful implementation
+of `[LT-4]`.
+
+**Owner resolution.** A growing `Arena` parameter is one narrow exception to
+`[LT-1a]`'s view-typed-parameter requirement. A wrapper returning storage
+owned by that arena writes `@borrows(arena)`. H9 adds `[LT-4a]`, `[LT-4b]`, and
+`[TST-22]`. The annotation records provenance only and does not make Arena a
+view, extend a lifetime, transfer ownership, or weaken normal borrow checking.
+Omitted provenance is E3061, false provenance is E3062, and arbitrary non-view
+parameters remain E2031.
+
+**Normalization.** The ruling's examples used undefined `alloc_span` and
+`alloc_mut_span` names. H9 uses the existing `alloc` and `alloc_array` API to
+state the same provenance rule and normalizes `[TST-LT-ARENA-RETURN]` to the
+numeric `[TST-22]`. No extra Arena method is inferred.

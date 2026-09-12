@@ -143,6 +143,209 @@ void ember_debug_alloc_stats(ember_alloc_stats* out) {
     }
 }
 
+/* -- arenas -----------------------------------------------------------------
+ *
+ * Chunks never move: growing an arena appends a chunk rather than reallocating
+ * an existing one, so every ref/MutSpan already handed out keeps its address
+ * ([ARN-1], [LT-4]). Each data allocation records its own alignment for the
+ * allocator's matching free call. A reset retains chunks and rewinds them;
+ * the borrow checker has already proved that no returned view is live
+ * ([ARN-7]). */
+
+typedef struct ember_arena_chunk {
+    struct ember_arena_chunk* next;
+    unsigned char* data;
+    size_t capacity;
+    size_t used;
+    size_t align;
+} ember_arena_chunk;
+
+typedef struct ember_arena_state {
+    ember_arena_chunk* first;
+    ember_arena_chunk* current;
+} ember_arena_state;
+
+#define EMBER_ARENA_GROWTH_CHUNK ((size_t)1024 * (size_t)1024)
+
+static bool arena_power_of_two(size_t value) {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+static ember_arena_chunk* arena_chunk_new(size_t capacity, size_t align) {
+    ember_arena_chunk* chunk = (ember_arena_chunk*)ember_alloc(
+        sizeof(ember_arena_chunk), _Alignof(ember_arena_chunk));
+    chunk->next = NULL;
+    chunk->capacity = capacity;
+    chunk->used = 0;
+    chunk->align = align;
+    chunk->data = (unsigned char*)ember_alloc(capacity, align);
+    return chunk;
+}
+
+void* ember_arena_new(size_t initial_capacity) {
+    ember_arena_state* arena = (ember_arena_state*)ember_alloc(
+        sizeof(ember_arena_state), _Alignof(ember_arena_state));
+    arena->first = NULL;
+    arena->current = NULL;
+    if (initial_capacity != 0) {
+        size_t align = _Alignof(max_align_t);
+        arena->first = arena_chunk_new(initial_capacity, align);
+        arena->current = arena->first;
+    }
+    return arena;
+}
+
+static void* arena_chunk_take(ember_arena_chunk* chunk, size_t size, size_t align) {
+    if (chunk->align < align || chunk->used > SIZE_MAX - (align - 1)) {
+        return NULL;
+    }
+    size_t offset = (chunk->used + align - 1) & ~(align - 1);
+    if (offset > chunk->capacity || size > chunk->capacity - offset) {
+        return NULL;
+    }
+    chunk->used = offset + size;
+    return chunk->data + offset;
+}
+
+void* ember_arena_alloc_copy(void* opaque, size_t size, size_t align, const void* value) {
+    ember_arena_state* arena = (ember_arena_state*)opaque;
+    if (arena == NULL || value == NULL || !arena_power_of_two(align)) {
+        ember_loc loc = { "<arena>", 0, 0 };
+        ember_panic("invalid arena allocation", 24, loc);
+    }
+    if (size == 0) {
+        size = 1;
+    }
+
+    ember_arena_chunk* chunk = arena->current ? arena->current : arena->first;
+    while (chunk != NULL) {
+        void* slot = arena_chunk_take(chunk, size, align);
+        if (slot != NULL) {
+            arena->current = chunk;
+            memcpy(slot, value, size);
+            return slot;
+        }
+        chunk = chunk->next;
+    }
+
+    size_t capacity = size > EMBER_ARENA_GROWTH_CHUNK ? size : EMBER_ARENA_GROWTH_CHUNK;
+    size_t chunk_align = align > _Alignof(max_align_t) ? align : _Alignof(max_align_t);
+    ember_arena_chunk* fresh = arena_chunk_new(capacity, chunk_align);
+    if (arena->first == NULL) {
+        arena->first = fresh;
+    } else {
+        ember_arena_chunk* tail = arena->first;
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = fresh;
+    }
+    arena->current = fresh;
+    void* slot = arena_chunk_take(fresh, size, align);
+    if (slot == NULL) {
+        ember_loc loc = { "<arena>", 0, 0 };
+        ember_panic("arena allocation overflow", 25, loc);
+    }
+    memcpy(slot, value, size);
+    return slot;
+}
+
+void ember_arena_reset(void* opaque) {
+    ember_arena_state* arena = (ember_arena_state*)opaque;
+    if (arena == NULL) {
+        return;
+    }
+    for (ember_arena_chunk* chunk = arena->first; chunk != NULL; chunk = chunk->next) {
+        chunk->used = 0;
+    }
+    arena->current = arena->first;
+}
+
+void* ember_arena_mark(void* opaque) {
+    ember_arena_state* arena = (ember_arena_state*)opaque;
+    if (arena == NULL || arena->current == NULL) {
+        return NULL;
+    }
+    return arena->current->data + arena->current->used;
+}
+
+void ember_arena_rewind(void* opaque, void* mark) {
+    ember_arena_state* arena = (ember_arena_state*)opaque;
+    if (arena == NULL) {
+        return;
+    }
+    if (mark == NULL) {
+        ember_arena_reset(arena);
+        return;
+    }
+    uintptr_t wanted = (uintptr_t)mark;
+    for (ember_arena_chunk* chunk = arena->first; chunk != NULL; chunk = chunk->next) {
+        uintptr_t start = (uintptr_t)chunk->data;
+        if (start <= wanted && wanted - start <= chunk->capacity) {
+            chunk->used = (size_t)(wanted - start);
+            for (ember_arena_chunk* later = chunk->next; later != NULL; later = later->next) {
+                later->used = 0;
+            }
+            arena->current = chunk;
+            return;
+        }
+    }
+    ember_loc loc = { "<arena>", 0, 0 };
+    ember_panic("invalid arena mark", 18, loc);
+}
+
+void ember_arena_free(void* opaque) {
+    ember_arena_state* arena = (ember_arena_state*)opaque;
+    if (arena == NULL) {
+        return;
+    }
+    ember_arena_chunk* chunk = arena->first;
+    while (chunk != NULL) {
+        ember_arena_chunk* next = chunk->next;
+        ember_free(chunk->data, chunk->capacity, chunk->align);
+        ember_free(chunk, sizeof(ember_arena_chunk), _Alignof(ember_arena_chunk));
+        chunk = next;
+    }
+    ember_free(arena, sizeof(ember_arena_state), _Alignof(ember_arena_state));
+}
+
+void* ember_fixed_arena_alloc_copy(
+    void* buffer,
+    size_t capacity,
+    size_t* used,
+    size_t size,
+    size_t align,
+    const void* value
+) {
+    if ((buffer == NULL && capacity != 0) || used == NULL || value == NULL ||
+        !arena_power_of_two(align)) {
+        ember_loc loc = { "<fixed arena>", 0, 0 };
+        ember_panic("invalid fixed arena allocation", 30, loc);
+    }
+    if (size == 0) {
+        size = 1;
+    }
+    if (capacity == 0) {
+        ember_loc loc = { "<fixed arena>", 0, 0 };
+        ember_panic("fixed arena exhausted", 21, loc);
+    }
+    uintptr_t base = (uintptr_t)buffer;
+    if (*used > UINTPTR_MAX - base || base + *used > UINTPTR_MAX - (align - 1)) {
+        ember_loc loc = { "<fixed arena>", 0, 0 };
+        ember_panic("fixed arena allocation overflow", 31, loc);
+    }
+    uintptr_t aligned = (base + *used + align - 1) & ~(uintptr_t)(align - 1);
+    size_t offset = (size_t)(aligned - base);
+    if (offset > capacity || size > capacity - offset) {
+        ember_loc loc = { "<fixed arena>", 0, 0 };
+        ember_panic("fixed arena exhausted", 21, loc);
+    }
+    *used = offset + size;
+    void* slot = (void*)aligned;
+    memcpy(slot, value, size);
+    return slot;
+}
+
 /* -- growable buffers -------------------------------------------------------- */
 
 /* The alignment a growable buffer allocates at. The compiler passes an element

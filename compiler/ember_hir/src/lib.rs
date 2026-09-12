@@ -362,6 +362,31 @@ pub enum Builtin {
     RefCellTryBorrow,
     /// `[CELL-6]` — `c.try_borrow_mut() -> Option[RefMut[T]]`.
     RefCellTryBorrowMut,
+    /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
+    /// is a compiler-known move-only struct; the runtime state it owns is
+    /// opaque to Ember source.
+    ArenaWithCapacity,
+    /// `[ARN-1]`–`[ARN-4]` — `arena.alloc(owned value)` and
+    /// `arena.alloc_nodrop(owned value)`. Type checking distinguishes the two
+    /// spellings for `[ARN-3]`; both lower to an aligned bump allocation and
+    /// a move of the value into the returned storage.
+    ArenaAlloc { elem: Ty },
+    /// `[ARN-1]`, `[ARN-7]` — `arena.reset()`. Its receiver is `mut self`, so
+    /// ordinary borrowing prevents a rewind while any allocation view lives.
+    ArenaReset,
+    /// `[ARN-4]` — bump allocation from an `Arena.fixed` buffer. The element
+    /// type is explicit so lowering keeps both the receiver type and the
+    /// copied value's layout without relying on a backend heuristic.
+    FixedArenaAlloc { elem: Ty },
+    /// `[ARN-7]` — rewind a fixed arena after its allocation views end.
+    FixedArenaReset,
+    /// `[ARN-6]` — create a LIFO scope while holding a mutable borrow of its
+    /// parent. The result type is carried explicitly because the same builtin
+    /// constructs a scope from both `Arena` and `ScopedArena` parents.
+    ArenaScope { scoped: Ty },
+    /// `[ARN-1]`, `[ARN-6]` — allocate through a scope. Its element type is
+    /// explicit for the same reason as the other arena allocation builtins.
+    ScopedArenaAlloc { elem: Ty },
 }
 
 impl Builtin {
@@ -409,6 +434,13 @@ impl Builtin {
             Builtin::RefCellBorrowMut => "borrow_mut",
             Builtin::RefCellTryBorrow => "try_borrow",
             Builtin::RefCellTryBorrowMut => "try_borrow_mut",
+            Builtin::ArenaWithCapacity => "with_capacity",
+            Builtin::ArenaAlloc { .. }
+            | Builtin::FixedArenaAlloc { .. }
+            | Builtin::ScopedArenaAlloc { .. } => "alloc",
+            Builtin::ArenaReset => "reset",
+            Builtin::FixedArenaReset => "reset",
+            Builtin::ArenaScope { .. } => "scope",
         }
     }
 }

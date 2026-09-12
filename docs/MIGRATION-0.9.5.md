@@ -1,4 +1,4 @@
-# Migration intake — Ember 0.9.5_Hardened_8
+# Migration intake — Ember 0.9.5_Hardened_9
 
 Status as of 2026-09-12: **target accepted for development; not yet installed
 as the normative repository specification.**
@@ -7,8 +7,9 @@ This document is the evidence-backed bridge between the repository's current
 normative language, `0.8.5_Hardened_1`, and the owner's proposed target,
 received as `0.9.5_Hardened_3`, corrected and frozen as H4, advanced by source
 recovery to H5, advanced through the mutable-helper API ruling as H6, and
-clarified at the callable-parameter-mode boundary as H7, then completed at the
-helper-input and `Callable` bridge boundaries as the `0.9.5_Hardened_8`
+clarified at the callable-parameter-mode boundary as H7, completed at the
+helper-input and `Callable` bridge boundaries as H8, and advanced through the
+owner-approved Arena return-provenance repair as the `0.9.5_Hardened_9`
 development target. It is not a second specification. Where this document and
 a normative rule differ, the specification governs.
 
@@ -74,7 +75,7 @@ use explicit `mut`. It is 707,643 bytes and 7,579 lines, SHA-256:
 
     573BF0729BC6AEF51E872CBF773EDEAB642F91635BFA52F03797FD050D53BC8D
 
-The current frozen development target is:
+The frozen H8 callable-mode predecessor is:
 
     docs/spec-source/Ember_v0.9.5_Hardened_8.md
 
@@ -85,10 +86,19 @@ and 7,644 lines, SHA-256:
 
     28FB191D8B8CE085AE878F55A15E5B0F0C9E364FD6BA58CD2416FA8101BA4156
 
-H4 through H7 remain immutable under
-their revision identities. Any later correction requires
-`0.9.5_Hardened_9`, which then becomes the development target. Target
-selection and normative repository
+The current frozen development target is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_9.md
+
+H9 closes ODR-008: a growing `Arena` parameter may be named by
+`@borrows(arena)` only as the provenance source of a returned view backed by
+that arena. It is 718,316 bytes and 7,696 lines, SHA-256:
+
+    0DAC71E2832FE422FFEBE004E25B438CE41BB518E921C6D8B243C8FE5F6A1738
+
+H4 through H8 remain immutable under their revision identities. Any later
+correction requires `0.9.5_Hardened_10`, which then becomes the development
+target. Target selection and normative repository
 adoption are separate gates. `E3065` remains a specified-but-unimplemented
 diagnostic.
 
@@ -141,10 +151,11 @@ become normative.
 | SPEC-095-017 | semantic/API ambiguity | Recovered `[LT-8]` gives shared-`Span` signatures, while `[LT-11]` and `[TST-16]` refer to mutable inputs. | **Resolved in H6 by owner ruling.** Separate all-mutable `_mut` helpers use `MutSpan[T]`; mixed overloads are not implied. ODR-005 closed. |
 | SPEC-095-018 | semantic/callable-mode ambiguity | H6's `_mut` signatures use unmarked `MutSpan` parameters, but `[FN-1]` makes unmarked parameters shared and `fn_type` cannot encode callback parameter modes. | **Resolved across H7/H8 by owner rulings.** H7 adds callable grammar/modes; H8 makes helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed. |
 | SPEC-095-019 | semantic/callable-abstraction ambiguity | H7 distinguishes borrowed, `mut`, and `owned` callable parameters, but `[CLO-3]` maps callable types to `Callable[Args, R]`, whose `Args` tuple carries no mode vector. | **Resolved in H8 by owner ruling.** The existing public abstraction remains; the compiler's canonical callable type preserves the full mode vector as compile-time-only metadata. ODR-007 closed. |
+| SPEC-095-020 | semantic/region-provenance ambiguity | H8 `[LT-4]` required an Arena-backed returned view to retain the supplying Arena's region, while `[LT-1a]` rejected every non-view parameter in the only public return-provenance annotation. | **Resolved in H9 by owner ruling.** `@borrows(arena)` is a narrow provenance-only exception for a growing Arena-backed returned view. Arena remains non-view and arbitrary non-view parameters remain forbidden. ODR-008 closed. |
 
 The strengthened rule-index pass reports no duplicate definitions or orphaned
 amendments in the current target, and LT-8 through LT-13, LT-8a, LT-11a,
-FN-6a, TST-20, and TST-21 resolve as definitions. The supplied mnemonics
+LT-4a, LT-4b, FN-6a, TST-20, TST-21, and TST-22 resolve as definitions. The supplied mnemonics
 `TST-LT-MUT` and `TST-LT-MODE` were not valid indexed rule IDs and are
 normalized to the next unused numeric TST IDs.
 The existing four dangling-reference baseline remains unchanged. Missing test
@@ -169,12 +180,15 @@ the H5 source-recovery change:
 - one implementation defect is open: D-038;
 - four intentional deviations are open: D1–D4; D5 is closed and D6 withdrawn.
 
-Current state after Gate B item 3: 178 Rust tests and 200 Ember conformance
-cases across 70 rule directories pass; 58 defects are recorded and none is
+Current state during Gate B item 4: 178 Rust tests and 229 Ember conformance
+cases across 80 rule directories pass; 58 defects are recorded and none is
 open. `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` are covered; D-044/E3023 closes
 writes through borrowed value parameters; and D-038's implicit `String`→`str`
-coercion shares the explicit `as_str()` borrow path. The frozen H8 target and
-adopted normative specification are unchanged by these compiler/test blocks.
+coercion shares the explicit `as_str()` borrow path. Growing, fixed, and scoped
+Arena core allocation is implemented, including aligned stable storage,
+reset/scope borrowing, `E3090`, `E3096`, and H9 `@borrows(arena)` wrapper
+provenance. The frozen H9 target and adopted normative specification are
+unchanged by these compiler/test blocks.
 
 `cargo test` emits one Rust test-target style warning for
 `from_is_contextual_so_that_From_can_declare_it`; this does not contradict the
@@ -204,7 +218,7 @@ rustfmt to a required gate.
 | Per-field movedness | **Implemented by the D-042 fix.** Recursive move paths, per-path conditional flags, partial cleanup, sibling preservation, reinitialisation and `E3042` are covered by adversarial `[EXP-6]` cases. This is now available as a foundation for `[LT-38]`; field-sensitive region provenance itself is not implemented. |
 | String view coercion | **Implemented.** Implicit `String`→`str` and explicit `as_str()` share `view_of`, the `StringAsStr` elision entry, MIR view verification, and backend lowering; mutation and return-region adversaries are covered. |
 | Remaining `Cell`/`RefCell` obligations | `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` now have executable conformance evidence; E3023/B4 is live and D-044 is closed. `Cell.take`/the `Default` update arm await `Default`; `[CELL-3]`/`[CELL-8]` `!Sync` await `Send`/`Sync` and threading. `[CELL-9]`'s class-only unchecked-exclusivity interaction has no reachable trigger until that later subsystem exists. |
-| Arena | `[ARN-*]` not started. Arena is a region allocator, not another interior-mutability primitive. |
+| Arena | **Core implemented.** Compiler-known move-only `Arena`, `FixedArena`, and `ScopedArena`; stable aligned bump allocation; `alloc`, `alloc_nodrop`, `reset`, nested LIFO `scope`; drop/rewind glue; `E3090`/`E3096`; and H9 `@borrows(arena)` wrapper provenance have executable evidence. `alloc_array`, `alloc_uninit`, `ArenaArray`/`ArenaMap`, effect/concurrency obligations, and their prerequisites remain open. Arena is a region allocator, not another interior-mutability primitive. |
 | UnsafeCell | Normatively specified in 0.8.5, not implemented. |
 | Phase 2 completeness | `mem.*`, `Clone`/`Default` derives, the full standard collection surface, several borrow/lifetime rules, and `[DIA-7..10]` UI snapshots remain incomplete. |
 | Objects and later phases | Class/foreign-class/coroutine syntax exists in the parser, but class layout/RC/exclusivity/vtables, effects/comptime/derives, C and C++ importers, concurrency, DOD/ECS/SIMD, interpreter, LLVM backend, hot reload, deterministic execution, LSP/debugger, and the full standard library are not implemented. |
@@ -229,16 +243,16 @@ fact.
 4. Record every semantic addition as owner-approved and every structural
    repair by its actual class — **H4 records `HC-095-03`, H5 records
    `HC-095-04`, H6 records `HC-095-05`, H7 records `HC-095-06`, H8 records
-   `HC-095-07`, this migration
+   `HC-095-07`, and H9 records `HC-095-08`; this migration
    ledger classifies each correction, and ADR-023 records the hardening
    protocol; update the adopted-source ledger when the selected successor is
    installed**.
 5. Recover the missing source in H5, resolve ODR-005 in H6, record callable
-   modes in H7, and close the helper-input and `Callable` bridge boundaries in
-   H8 — **done**. Explicitly adopt the current target:
+   modes in H7, close the helper-input and `Callable` bridge boundaries in H8,
+   and close Arena return provenance in H9 — **done**. Explicitly adopt the current target:
    regenerate `docs/spec/`, add `0.9`/`0.9.5` version selection, and update
    ratchets only for gaps introduced by this explicit specification revision.
-   H4 through H8 are frozen and MUST NOT be amended in place.
+   H4 through H9 are frozen and MUST NOT be amended in place.
 6. Make the rule tooling understand the consolidated rule forms and prove it
    still rejects references masquerading as definitions — **implemented and
    verified for headings and standalone paragraphs; extraction is not the
@@ -259,7 +273,10 @@ from being accidentally discarded.
    compile as changes to a private ABI copy. E3023/B4 now diagnoses all mutable
    access paths and applies `[CELL-10]`'s suggestion ordering.
 3. ~~Fix D-038.~~ **Done.** The implicit form reuses the verified explicit-borrow path; no second view producer was introduced.
-4. Implement `Arena` and its region behavior.
+4. Finish `Arena` and its region behavior. **Core allocation, fixed/scoped
+   arenas, reset/rewind, drop-free enforcement, and H9 wrapper provenance are
+   done.** The remaining surfaces depend on `Default`, `Zeroable`,
+   `MaybeUninit`, collection support, effects, and concurrency.
 5. Implement `UnsafeCell` exactly within `[UNS-10]`–`[UNS-10b]`.
 6. Finish the remaining Phase 2 exit criteria, including UI snapshots.
 
@@ -318,15 +335,19 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 
 ## 7. Exact next task
 
-**Implement `Arena` and its region behavior (`[ARN-*]`, `[LT-4]`).**
+**Implement the prerequisites for the remaining Arena surface, then finish
+`Arena` (`[ARN-3]`–`[ARN-5]`).**
 
-D-038 is complete and reuses the existing `view_of`/region/verification path
-that made explicit `as_str()` sound in D-037. Arena is next in Gate B order.
-Keep it a region allocator rather than treating it as a third interior-
-mutability primitive, and do not begin 0.9.5 region-vector work as part of the
-Arena task.
+The safe core is present. The next dependency block is `Default`, `Zeroable`,
+and `MaybeUninit`, which are required before `alloc_array` and `alloc_uninit`
+can be implemented without inventing initialization semantics. After those,
+implement the remaining Arena collection surface (`ArenaArray`/`ArenaMap`)
+against the actual collection machinery. Keep effect/concurrency-dependent
+obligations explicitly tracked until those phases exist. Do not substitute
+test-specific zeroing or an ad-hoc uninitialized type, and keep Arena a region
+allocator rather than an interior-mutability primitive.
 
-The parallel specification task is now explicit normative adoption of H8;
-ODR-006 and ODR-007 are closed. Do not broaden ODR-005's all-mutable ruling
+The parallel specification task is now explicit normative adoption of H9;
+ODR-006 through ODR-008 are closed. Do not broaden ODR-005's all-mutable ruling
 into unapproved mixed overloads, change `mut` inputs to `owned`, or turn the
 compile-time callable mode vector into a public generic or runtime mechanism.

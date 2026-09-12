@@ -61,6 +61,13 @@ pub fn check(
     // construction under `[RNG-10]`, not a library function, so its error type
     // cannot depend on a module having been imported.
     checker.range_error_ty();
+    // `[ARN-1]` — `Arena` is a prelude/compiler-known type just like the
+    // Phase-2 `Cell` family. Register it before user declarations and before
+    // signatures are resolved, so `fn f(a: Arena)` is valid even when no body
+    // has constructed one yet.
+    checker.arena_ty();
+    checker.fixed_arena_ty();
+    checker.scoped_arena_ty();
 
     // Names first, across every module, so that an import can name an item in
     // a module that has not been walked yet — `[MOD-4]` allows cycles.
@@ -311,6 +318,19 @@ struct Checker<'a> {
     /// borrow state; `derives_copy` is clear so guards are move-only
     /// (`[CELL-12]`'s reasoning for the cell applies to the guard's borrow).
     ref_guards: HashMap<StructId, (Ty, bool)>,
+    /// `[ARN-1]` — the one compiler-known `Arena` struct. It owns an opaque
+    /// runtime state pointer, is move-only, and has compiler-provided drop
+    /// glue. A set keeps the recognition structural without teaching every
+    /// compiler phase a new `TyKind`.
+    arenas: HashSet<StructId>,
+    /// `[ARN-4]` — compiler-known fixed arenas borrow a caller-provided byte
+    /// span and never grow. Kept separate from `arenas` because their layout,
+    /// destruction, and code generation are intentionally different.
+    fixed_arenas: HashSet<StructId>,
+    /// `[ARN-6]` — LIFO scope guards, recognized separately so method
+    /// dispatch and compiler-provided rewind glue cannot be confused with a
+    /// user struct that happens to contain references.
+    scoped_arenas: HashSet<StructId>,
     /// Instantiations still to have their bodies checked.
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
@@ -375,6 +395,9 @@ impl<'a> Checker<'a> {
             cells: HashMap::new(),
             refcells: HashMap::new(),
             ref_guards: HashMap::new(),
+            arenas: HashSet::new(),
+            fixed_arenas: HashSet::new(),
+            scoped_arenas: HashSet::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
             locals: Vec::new(),
@@ -393,12 +416,37 @@ impl<'a> Checker<'a> {
         self.sink.emit(Diagnostic::error(code, span, message));
     }
 
+    /// A generic body is first checked with opaque parameters and then again
+    /// for each concrete monomorphisation. Most second-pass diagnostics would
+    /// duplicate the first pass and stay quiet. `[ARN-3]` is the first rule
+    /// whose verdict can change only after substitution: `T` may become an
+    /// `Array[U]` that needs drop. Preserve that concrete E3090 instead of
+    /// silently accepting resource storage with no destructor bookkeeping.
+    fn emit_concrete_instantiation_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
+        for diagnostic in diagnostics {
+            if diagnostic.code != Some(codes::E3090) {
+                continue;
+            }
+            let duplicate = self.sink.diagnostics().iter().any(|existing| {
+                existing.code == diagnostic.code
+                    && existing.primary.span == diagnostic.primary.span
+                    && existing.message == diagnostic.message
+            });
+            if !duplicate {
+                self.sink.emit_classified(diagnostic);
+            }
+        }
+    }
+
     /// `[LT-1a]` — `@borrows(p₁, …, pₙ)` overrides the region that `[LT-1]`'s
     /// elision would give a view-typed return, so that the caller may keep
     /// using the parameters it does *not* name.
     ///
     /// "Naming a parameter that is not view-typed, or writing `@borrows` on a
-    /// function whose return is not view-typed, is `E2031`." A name that
+    /// function whose return is not view-typed, is `E2031`." `[LT-4a]` adds
+    /// one narrow exception: a growing `Arena` may be named as the provenance
+    /// source of storage backing the returned view. It does not make Arena a
+    /// view type. A name that
     /// matches no parameter is the same mistake and is reported the same way,
     /// with the parameters that would have been valid listed — the attribute
     /// is a contract (`[VER-2]` makes widening it a breaking change), so a
@@ -431,9 +479,9 @@ impl<'a> Checker<'a> {
             return None;
         }
 
-        let viewable: Vec<String> = params
+        let provenance_sources: Vec<String> = params
             .iter()
-            .filter(|(_, ty, _, _)| self.types.is_view(*ty))
+            .filter(|(_, ty, _, _)| self.types.is_view(*ty) || self.is_arena(*ty))
             .map(|(name, _, _, _)| name.to_string())
             .collect();
 
@@ -450,10 +498,13 @@ impl<'a> Checker<'a> {
             }
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
-                    let known = if viewable.is_empty() {
-                        "this function has no view-typed parameter".to_string()
+                    let known = if provenance_sources.is_empty() {
+                        "this function has no view-typed or Arena provenance parameter".to_string()
                     } else {
-                        format!("the view-typed parameters are {}", viewable.join(", "))
+                        format!(
+                            "the view-typed or Arena provenance parameters are {}",
+                            provenance_sources.join(", ")
+                        )
                     };
                     self.sink.emit(
                         Diagnostic::error(
@@ -463,6 +514,11 @@ impl<'a> Checker<'a> {
                         )
                         .help(known),
                     );
+                }
+                Some((_, ty, _, _)) if self.is_arena(*ty) => {
+                    // `[LT-4a]` — body checking still has to prove that the
+                    // returned view actually derives from this arena. Merely
+                    // naming it grants no region and no storage authority.
                 }
                 Some((_, ty, _, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
@@ -2170,6 +2226,15 @@ impl<'a> Checker<'a> {
                     let u8_ty = self.common.u8;
                     return self.types.intern(TyKind::Vec { elem: u8_ty });
                 }
+                if name.is("Arena") {
+                    return self.arena_ty();
+                }
+                if name.is("FixedArena") {
+                    return self.fixed_arena_ty();
+                }
+                if name.is("ScopedArena") {
+                    return self.scoped_arena_ty();
+                }
                 if let Some(&ty) = self.named_types.get(&self.resolve_name(name)) {
                     return ty;
                 }
@@ -2938,6 +3003,170 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[ARN-1]` — the growing arena is one move-only, compiler-known owner
+    /// of an opaque runtime state. It is deliberately not an
+    /// interior-mutability type: shared access may bump-allocate, but the
+    /// returned references carry the arena borrow and every reclaiming
+    /// operation takes `mut self` (`[LT-4]`, `[ARN-7]`).
+    fn arena_ty(&mut self) -> Ty {
+        let name = Symbol::intern("Arena");
+        if let Some(&ty) = self.named_types.get(&name) {
+            if matches!(self.types.kind(ty), TyKind::Struct(id) if self.arenas.contains(id)) {
+                return ty;
+            }
+        }
+        let state = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("state"),
+                ty: state,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }, FieldDef {
+                // A scope borrows the parent as a whole in MIR, while the
+                // generated representation retains this address as a token.
+                // Each ScopedArena has its own token, so nesting is unbounded.
+                name: Symbol::intern("token"),
+                ty: self.common.u8,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: false,
+            // The backend supplies the destructor. No source-visible drop
+            // method exists, and the pointer field itself owns nothing.
+            has_drop: true,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.arenas.insert(id);
+        ty
+    }
+
+    fn is_arena(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id) if self.arenas.contains(id))
+    }
+
+    /// `[ARN-4]` — a fixed arena is a view over a mutable byte span plus its
+    /// bump offset. It owns no allocation and therefore needs no destructor;
+    /// the mutable span makes the type a view and move-only structurally.
+    fn fixed_arena_ty(&mut self) -> Ty {
+        let name = Symbol::intern("FixedArena");
+        if let Some(&ty) = self.named_types.get(&name) {
+            if matches!(self.types.kind(ty), TyKind::Struct(id) if self.fixed_arenas.contains(id)) {
+                return ty;
+            }
+        }
+        let buffer = self.types.intern(TyKind::Span { elem: self.common.u8, mutable: true });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![
+                FieldDef {
+                    name: Symbol::intern("buffer"),
+                    ty: buffer,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("used"),
+                    ty: self.common.usize,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+            ],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.fixed_arenas.insert(id);
+        ty
+    }
+
+    fn is_fixed_arena(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id) if self.fixed_arenas.contains(id))
+    }
+
+    /// `[ARN-6]` — one scope guard shape serves every nesting depth. The
+    /// `parent_token` reference is what carries the immediate parent's mutable
+    /// borrow; `state` reaches the growing arena; `mark` identifies the bump
+    /// position to restore; and this scope's own token supports another nested
+    /// scope without a recursively sized value.
+    fn scoped_arena_ty(&mut self) -> Ty {
+        let name = Symbol::intern("ScopedArena");
+        if let Some(&ty) = self.named_types.get(&name) {
+            if matches!(self.types.kind(ty), TyKind::Struct(id) if self.scoped_arenas.contains(id)) {
+                return ty;
+            }
+        }
+        let token_ref = self.types.intern(TyKind::Ref { mutable: true, inner: self.common.u8 });
+        let state = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![
+                FieldDef {
+                    name: Symbol::intern("parent_token"),
+                    ty: token_ref,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("state"),
+                    ty: state,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("mark"),
+                    ty: state,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("token"),
+                    ty: self.common.u8,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+            ],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: true,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.scoped_arenas.insert(id);
+        ty
+    }
+
+    fn is_scoped_arena(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id) if self.scoped_arenas.contains(id))
+    }
+
     /// `Result[T, E]`, likewise.
     fn result_of(&mut self, ok: Ty, err: Ty) -> Ty {
         let name = Symbol::intern(&format!(
@@ -3192,9 +3421,12 @@ impl<'a> Checker<'a> {
                     self.type_params.insert(param.name, ty);
                 }
 
+                let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
                 let function = self.check_one_function(decl, block, instance, &item.attrs, item.span);
                 quiet = std::mem::replace(self.sink, saved);
+                let concrete = quiet.diagnostics()[quiet_before..].to_vec();
+                self.emit_concrete_instantiation_diagnostics(concrete);
                 self.type_params.clear();
                 out.push(function);
             }
@@ -3220,6 +3452,7 @@ impl<'a> Checker<'a> {
                 }
 
                 let first = reported.insert((generic_name, fn_decl.name.name));
+                let quiet_before = (!first).then(|| quiet.diagnostics().len());
                 let saved = if first {
                     None
                 } else {
@@ -3235,6 +3468,10 @@ impl<'a> Checker<'a> {
                 );
                 if let Some(saved) = saved {
                     quiet = std::mem::replace(self.sink, saved);
+                }
+                if let Some(before) = quiet_before {
+                    let concrete = quiet.diagnostics()[before..].to_vec();
+                    self.emit_concrete_instantiation_diagnostics(concrete);
                 }
                 self.type_params.clear();
                 if let Some(function) = function {
@@ -5496,6 +5733,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.synth_variant(id, *name, args, span)
             }
 
+            // `[ARN-4]` — `Arena.with_capacity(bytes)` is an associated
+            // constructor. The parser cannot know that the name on the left
+            // is a type, so it arrives in the same method-call shape as enum
+            // and range constructors.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if is_single_path(recv, "Arena") && self.lookup(Symbol::intern("Arena")).is_none() =>
+            {
+                self.synth_arena_construction(*name, generic_args, args, span)
+            }
+
             // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
             // `Roughness.clamped(x)`, `unsafe Roughness.new_unchecked(x)`.
             // A type name on the left is an associated function, not a
@@ -6884,6 +7131,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let Some(inner) = self.refcell_inner(receiver.ty) {
             return self.synth_refcell_method(receiver, inner, name, args, span);
         }
+        if self.is_arena(receiver.ty) {
+            return self.synth_arena_method(receiver, name, args, span);
+        }
+        if self.is_fixed_arena(receiver.ty) {
+            return self.synth_fixed_arena_method(receiver, name, args, span);
+        }
+        if self.is_scoped_arena(receiver.ty) {
+            return self.synth_scoped_arena_method(receiver, name, args, span);
+        }
         // `[TYP-17]` — on a generic parameter, only what its bounds provide
         // is permitted, and that is exactly what is looked up.
         if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
@@ -7732,6 +7988,354 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[ARN-4]` — construct the growing arena with one initial chunk.
+    fn synth_arena_construction(
+        &mut self,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let arena = self.arena_ty();
+        if name.name.is("fixed") {
+            if !generic_args.is_empty() {
+                self.error(codes::E2020, span, "`Arena.fixed` takes no type arguments");
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Arena.fixed` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let buffer_ty = self.types.intern(TyKind::Span {
+                elem: self.common.u8,
+                mutable: true,
+            });
+            let buffer = self.check_expr(&args[0].value, buffer_ty);
+            let fixed = self.fixed_arena_ty();
+            let TyKind::Struct(id) = *self.types.kind(fixed) else {
+                unreachable!("FixedArena is compiler-known as a struct")
+            };
+            let used = Expr { ty: self.common.usize, kind: ExprKind::Int(0), span };
+            return Expr {
+                ty: fixed,
+                kind: ExprKind::StructLit { struct_id: id, fields: vec![buffer, used] },
+                span,
+            };
+        }
+        if !name.name.is("with_capacity") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`Arena` has no associated function `{}` in this phase", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !generic_args.is_empty() {
+            self.error(codes::E2020, span, "`Arena.with_capacity` takes no type arguments");
+        }
+        if args.len() != 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`Arena.with_capacity` takes one argument, found {}", args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let capacity = self.check_expr(&args[0].value, self.common.usize);
+        Expr {
+            ty: arena,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaWithCapacity,
+                args: vec![capacity],
+            },
+            span,
+        }
+    }
+
+    /// `[ARN-1]`–`[ARN-4]`, `[ARN-7]` — the core operations on a growing
+    /// arena. Allocation borrows `self` shared and returns a mutable view tied
+    /// to that borrow; reset takes `mut self`, so the ordinary borrow checker
+    /// is the mechanism that prevents invalidation of live views.
+    fn synth_arena_method(
+        &mut self,
+        receiver: Expr,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let method = name.name.as_str();
+        if method == "scope" {
+            return self.synth_arena_scope(receiver, "Arena", args, span);
+        }
+        if method == "reset" {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Arena.reset` takes no arguments, found {}", args.len()),
+                );
+            }
+            let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+            return Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::ArenaReset, args: vec![receiver] },
+                span,
+            };
+        }
+
+        if !matches!(method, "alloc" | "alloc_nodrop") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`Arena` has no method named `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if args.len() != 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`Arena.{method}` takes one argument, found {}", args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "arena allocation needs a variable to borrow");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        let value = {
+            let value = self.synth_committed(&args[0].value);
+            self.read_through(value)
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        self.reject_stored_view(value.ty, args[0].value.span, "an arena allocation");
+        if method == "alloc" && self.types.needs_drop(value.ty) {
+            let shown = self.types.display(value.ty);
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3090,
+                    args[0].value.span,
+                    format!("`{shown}` needs `drop` and cannot be allocated with `Arena.alloc`"),
+                )
+                .primary_label("this value's destructor would never run")
+                .help("use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally")
+                .note("arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)"),
+            );
+        }
+
+        let arena_ref = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr {
+            ty: arena_ref,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        };
+        let result = self.types.intern(TyKind::Ref { mutable: true, inner: value.ty });
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaAlloc { elem: value.ty },
+                args: vec![borrowed, value],
+            },
+            span,
+        }
+    }
+
+    /// `[ARN-4]`, `[ARN-7]` — allocation and rewind for a fixed arena. The
+    /// semantic shape matches a growing Arena, but exhaustion panics instead
+    /// of allocating another chunk and drop owns no runtime storage.
+    fn synth_fixed_arena_method(
+        &mut self,
+        receiver: Expr,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let method = name.name.as_str();
+        if method == "reset" {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`FixedArena.reset` takes no arguments, found {}", args.len()),
+                );
+            }
+            let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+            return Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin {
+                    which: Builtin::FixedArenaReset,
+                    args: vec![receiver],
+                },
+                span,
+            };
+        }
+        if !matches!(method, "alloc" | "alloc_nodrop") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`FixedArena` has no method named `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if args.len() != 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`FixedArena.{method}` takes one argument, found {}", args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "fixed-arena allocation needs a variable to borrow");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let value = {
+            let value = self.synth_committed(&args[0].value);
+            self.read_through(value)
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        self.reject_stored_view(value.ty, args[0].value.span, "an arena allocation");
+        if method == "alloc" && self.types.needs_drop(value.ty) {
+            let shown = self.types.display(value.ty);
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3090,
+                    args[0].value.span,
+                    format!("`{shown}` needs `drop` and cannot be allocated with `FixedArena.alloc`"),
+                )
+                .primary_label("this value's destructor would never run")
+                .help("use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally")
+                .note("arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)"),
+            );
+        }
+        let arena_ref = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr {
+            ty: arena_ref,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        };
+        let result = self.types.intern(TyKind::Ref { mutable: true, inner: value.ty });
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::FixedArenaAlloc { elem: value.ty },
+                args: vec![borrowed, value],
+            },
+            span,
+        }
+    }
+
+    fn synth_arena_scope(
+        &mut self,
+        receiver: Expr,
+        owner: &str,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{owner}.scope` takes no arguments, found {}", args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "an arena scope needs a parent variable to borrow");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let parent = self.pass_receiver(receiver, Mode::Mut, span);
+        let scoped = self.scoped_arena_ty();
+        Expr {
+            ty: scoped,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaScope { scoped },
+                args: vec![parent],
+            },
+            span,
+        }
+    }
+
+    /// `[ARN-6]` — a scope allocates from the same stable chunk chain and may
+    /// create another scope. Its drop rewinds to its captured mark; no public
+    /// reset is exposed because scope exit is the reclaim boundary.
+    fn synth_scoped_arena_method(
+        &mut self,
+        receiver: Expr,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let method = name.name.as_str();
+        if method == "scope" {
+            return self.synth_arena_scope(receiver, "ScopedArena", args, span);
+        }
+        if !matches!(method, "alloc" | "alloc_nodrop") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`ScopedArena` has no method named `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if args.len() != 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`ScopedArena.{method}` takes one argument, found {}", args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "scoped-arena allocation needs a variable to borrow");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let value = {
+            let value = self.synth_committed(&args[0].value);
+            self.read_through(value)
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        self.reject_stored_view(value.ty, args[0].value.span, "an arena allocation");
+        if method == "alloc" && self.types.needs_drop(value.ty) {
+            let shown = self.types.display(value.ty);
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3090,
+                    args[0].value.span,
+                    format!("`{shown}` needs `drop` and cannot be allocated with `ScopedArena.alloc`"),
+                )
+                .primary_label("this value's destructor would never run")
+                .help("use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally")
+                .note("arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)"),
+            );
+        }
+        let arena_ref = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr {
+            ty: arena_ref,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        };
+        let result = self.types.intern(TyKind::Ref { mutable: true, inner: value.ty });
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::ScopedArenaAlloc { elem: value.ty },
+                args: vec![borrowed, value],
+            },
+            span,
+        }
+    }
+
     /// `[SPN-2]`, `[SPN-3]` — the methods on `Span[T]` and `MutSpan[T]`.
     ///
     /// Part VII §7 names the full set (`.len()`, `.iter()`, `.iter_mut()`,
@@ -8503,6 +9107,14 @@ fn is_place(kind: &ExprKind) -> bool {
         ExprKind::Deref(_) => true,
         _ => false,
     }
+}
+
+fn is_single_path(expr: &ast::Expr, wanted: &str) -> bool {
+    matches!(
+        &expr.kind,
+        ast::ExprKind::Path { segments }
+            if segments.len() == 1 && segments[0].name.is(wanted)
+    )
 }
 
 /// The local whose storage owns a place. This deliberately follows only the

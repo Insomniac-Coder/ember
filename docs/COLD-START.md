@@ -11,8 +11,8 @@ phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..027 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..007 are closed; ODR-003 is deferred editorial; no owner semantic decision is currently open |
+| `docs/DECISIONS.md` | ADR-001..028 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..008 are closed; ODR-003 is deferred editorial; no owner semantic decision is currently open |
 
 ---
 
@@ -30,10 +30,11 @@ phase order.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 70 conformance rule directories, 200 cases. 58 defects recorded, **none open**.
+ 80 conformance rule directories, 229 cases. 58 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **No erratum currently awaits an owner semantic decision.** ERR-047 and
-ERR-048 were closed by the H7/H8 owner rulings; earlier ERR-041 and ERR-043 were
+ERR-048 were closed by the H7/H8 owner rulings; ERR-049 was closed by the H9
+Arena-provenance ruling; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
 Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
@@ -53,7 +54,9 @@ boundary in H6. The owner then specified ordinary borrowed/default, `mut`, and
 H7. The owner then closed the helper-input and `Callable` bridge boundaries in
 `Ember_v0.9.5_Hardened_8.md`: mutable helper inputs are `mut` reborrows, no
 helper consumes a view, and callable modes remain compile-time canonical type
-metadata through the existing abstraction. H8 is the new frozen development
+metadata through the existing abstraction. H9 then resolved the Arena-backed
+return-provenance boundary with the narrow `@borrows(arena)` exception. H9 is
+the new frozen development
 target, but not yet the normative repository source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied. No 0.9/0.9.5 implementation
@@ -126,13 +129,14 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.5_Hardened_8`, per the owner's
+The current development target is `0.9.5_Hardened_9`, per the owner's
 instruction that each issued hardening pass increments the hardening number.
-H7 is the immediate predecessor and remains frozen. H5 recovered the missing
+H8 is the immediate predecessor and remains frozen. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
 modes; H8 records helper input modes and compile-time mode preservation through
-`Callable`. The 0.9.5 multi-region-view feature itself is the owner-selected
-language change. Any H8 correction must be H9.
+`Callable`; H9 records Arena-backed return provenance. The 0.9.5 multi-region-
+view feature itself is the owner-selected language change. Any H9 correction
+must be H10.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -152,8 +156,8 @@ left is coverage:
                  @derive(Clone)) — both are unbuilt features, not missing tests
     BRW   7/9    missing BRW-8 (an ABI decision, "never observable" — assert on
                  emitted C), BRW-9
-    LT    5/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
-                 LT-2a, LT-4 (Arena), LT-5, LT-7 (callback regions)
+    LT    6/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
+                 LT-2a, LT-5, LT-7 (callback regions)
     DRP   4/6    missing DRP-4 (needs effects, Phase 4),
                  DRP-6 (Box/handle/Shared — Phase 3). DRP-5 has cases since D-030
                  was fixed (drop-body moves rejected)
@@ -181,7 +185,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: `Arena`
+## 5. Next task: prerequisites for the remaining `Arena` surface
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -219,10 +223,22 @@ already clear; no specification or ADR changed.
    reuses `view_of`, region elision, MIR view verification, and the D-037
    backend path. Three mutation-tested `[SPN-1]` cases pin assignment, argument,
    NLL, mutation, and return-region behavior.
-2. **`Arena` (`[ARN-*]`).** Not started. **Not a third interior-mutability
-   primitive** — it is a region allocator, and amendment A13 records that the
-   three share the implementation concern and *not* the concept. Do not build
-   it by generalising `Cell` or `RefCell`.
+2. **`Arena` core (`[ARN-1]`–`[ARN-4]`, `[ARN-6]`, `[ARN-7]`, `[LT-4]`).**
+   **Implemented.** Growing, fixed, and scoped compiler-known arenas have
+   stable aligned bump allocation, reset/rewind, nested LIFO scopes, drop-free
+   enforcement, `E3090`/`E3096`, and H9 wrapper provenance. Generic
+   instantiations re-check `[ARN-3]`, so `alloc(Array[T]())` cannot hide behind
+   an opaque type parameter.
+3. **Remaining Arena surface.** `alloc_array` needs `Default`/`Zeroable`;
+   `alloc_uninit` needs `MaybeUninit`; `ArenaArray`/`ArenaMap` need the
+   corresponding collection machinery; allocation effects and `ThreadArena`
+   wait for the effects/concurrency phases. These are intentional dependency
+   gaps, not compiler defects. Build those prerequisites before the dependent
+   APIs; do not invent initialization or unsafe semantics to make a test pass.
+
+Arena is **not a third interior-mutability primitive**. It is a region
+allocator, and amendment A13 records that it shares implementation machinery
+with `Cell`/`RefCell`, not their semantic concept.
 
 **Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`;
 `Cell.take` on `CELL-DEF-1`. Neither rule was softened to fit.
@@ -252,7 +268,7 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-007 are closed. ODR-003 is deferred editorial work. No owner
+through ODR-008 are closed. ODR-003 is deferred editorial work. No owner
 semantic question is currently open.
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
@@ -274,6 +290,9 @@ semantic question is currently open.
 * **ODR-007 — CLOSED.** H8 retains `Callable[Args, R]` and preserves the full
   callable mode vector as compiler-known, compile-time-only canonical type
   metadata. No new public generic or runtime mode mechanism is implied.
+* **ODR-008 — CLOSED.** H9 permits `@borrows(arena)` only when a returned view
+  is proven to use storage owned by that growing Arena parameter. Arena remains
+  non-view; arbitrary non-view parameters remain E2031.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms

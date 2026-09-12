@@ -1200,7 +1200,8 @@ impl<'a> Builder<'a> {
                 // a count and returns the pointer, so its element type is in
                 // the result, and `size_of` carries it on a placeholder.
                 let arg_ty = match which {
-                    hir::Builtin::MemAlloc => expr.ty,
+                    hir::Builtin::MemAlloc
+                    | hir::Builtin::ArenaWithCapacity => expr.ty,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -1212,7 +1213,13 @@ impl<'a> Builder<'a> {
                 // `[OWN-3]`'s elaboration deletes the temporary's
                 // statement-end drop. Erasing it to a copy destroys the value
                 // twice — once as the temporary, once with the buffer.
-                let spill = matches!(which, hir::Builtin::ArrayPush);
+                let spill = matches!(
+                    which,
+                    hir::Builtin::ArrayPush
+                        | hir::Builtin::ArenaAlloc { .. }
+                        | hir::Builtin::FixedArenaAlloc { .. }
+                        | hir::Builtin::ScopedArenaAlloc { .. }
+                );
                 let args: Vec<Operand> = args
                     .iter()
                     .enumerate()

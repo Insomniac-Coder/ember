@@ -19,7 +19,7 @@ language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
 not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
 so 0.8.3 could not absorb it and the hardening count started again. The current
 repository-normative source is `0.8.5_Hardened_1`; the separately frozen
-development target is `0.9.5_Hardened_8`.
+development target is `0.9.5_Hardened_9`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -61,8 +61,9 @@ prevents it from replacing `docs/spec-source/ember-spec.md`. That is the current
 as H4, the owner-supplied `[LT-8]`–`[LT-13]` source recovery is frozen as H5,
 the mutable-helper API resolution is frozen as H6, and the owner's callable-
 parameter-mode ruling is frozen as H7. The helper-input and `Callable` bridge
-ruling is frozen as H8. ODR-004 through ODR-007 are closed.
-`docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H7→H8 correction;
+ruling is frozen as H8. The owner-approved Arena-backed return-provenance
+clarification is frozen as H9. ODR-004 through ODR-008 are closed.
+`docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H8→H9 correction;
 this ledger continues to declare
 differences in the currently adopted repository-normative source checked by
 `tools/hardening_check.py`.
@@ -176,6 +177,28 @@ Because H7 was frozen, ADR-023 requires this ruling to be issued as
 `Ember_v0.9.5_Hardened_8.md`. ODR-006 and ODR-007 close. The adopted 0.8.5
 source and implementation remain unchanged; no 0.9.5 implementation or
 conformance is claimed.
+
+### HC-095-08 — H9 Arena-backed return provenance
+
+**Class: SEMANTICALLY NEUTRAL CLARIFICATION, explicitly owner-approved.** Implementing
+`[LT-4]` exposed a boundary in `[LT-1a]`: allocation results carry the borrow
+of an `Arena`, but the only public return-provenance annotation rejected every
+non-view parameter. The owner resolved that boundary on 2026-09-12 with one
+narrow exception. `@borrows(arena)` may name a growing `Arena` parameter only
+when the returned view is proven to derive from storage owned by that arena.
+
+H9 adds `[LT-4a]` and `[LT-4b]`. `Arena` remains a non-view, arbitrary
+non-view parameters remain E2031, the annotation grants no lifetime extension
+or ownership transfer, and omitted or false provenance is rejected. The
+owner-supplied illustrative `alloc_span`/`alloc_mut_span` names were normalized
+to the already-specified `alloc`/`alloc_array` surface rather than creating a
+second Arena API. The supplied mnemonic `[TST-LT-ARENA-RETURN]` becomes the
+next numeric conformance rule, `[TST-22]`.
+
+Because H8 was frozen, ADR-023 requires this ruling to be issued as
+`Ember_v0.9.5_Hardened_9.md`. H8 remains unchanged. H9 becomes the frozen
+development target; it does not replace the adopted 0.8.5 normative source or
+claim blanket 0.9.5 conformance.
 
 ### The four kinds, and what each is allowed to do
 

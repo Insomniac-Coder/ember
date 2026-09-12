@@ -264,6 +264,31 @@ void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 void ember_free(void* p, size_t size, size_t align);
 void* ember_try_alloc(size_t size, size_t align);
 
+/* -- arenas ---------------------------------------------------------------
+ *
+ * [ARN-1]..[ARN-4]: the runtime state is deliberately opaque. The compiler's
+ * move-only Arena value owns one pointer returned by ember_arena_new. Values
+ * copied into the bump storage are never dropped individually; reset rewinds
+ * only after the compiler has proved that no allocation view remains live.
+ *
+ * Arenas are already part of EMBER_RUNTIME_ABI 1's specified surface. These
+ * declarations complete that reserved surface; they do not define a second
+ * ABI protocol or change the version number. */
+void* ember_arena_new(size_t initial_capacity);
+void* ember_arena_alloc_copy(void* arena, size_t size, size_t align, const void* value);
+void ember_arena_reset(void* arena);
+void ember_arena_free(void* arena);
+void* ember_arena_mark(void* arena);
+void ember_arena_rewind(void* arena, void* mark);
+void* ember_fixed_arena_alloc_copy(
+    void* buffer,
+    size_t capacity,
+    size_t* used,
+    size_t size,
+    size_t align,
+    const void* value
+);
+
 /* -- growable buffers ------------------------------------------------------ */
 
 /* Part XX.1 makes `Array[T]` a compiler-known type until Phase 2's generics

@@ -65,6 +65,10 @@ struct Loan {
     /// evaluating an argument that is itself a call ends the block, so the
     /// reservation and its activation sit in different blocks.
     reserved_at: HashSet<Point>,
+    /// `[ARN-6]` — this mutable borrow was consumed by `Arena.scope` and is
+    /// held by the returned `ScopedArena`. Conflicts use A1/E3096 rather than
+    /// an ordinary B1/B3 alias diagnostic.
+    arena_scope: bool,
 }
 
 /// How a place is touched at a point (§4.7 step 5).
@@ -103,7 +107,15 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         // `v: Span[i32] = a` followed by `a.push(…)` compiles: the push
         // reallocates and `v` is dangling, which is the exact thing
         // `[UNS-4]` and `[PHIL-10]` say Safe Ember cannot do.
-        FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. } => Elision::Named(vec![0]),
+        FuncRef::Builtin {
+            which:
+                Builtin::SpanFrom { .. }
+                | Builtin::ArenaAlloc { .. }
+                | Builtin::FixedArenaAlloc { .. }
+                | Builtin::ScopedArenaAlloc { .. }
+                | Builtin::ArenaScope { .. },
+            ..
+        } => Elision::Named(vec![0]),
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
         // view, so the view stays borrowed too.
         // A `str` built by `as_str()` points into its `String` the same way
@@ -277,7 +289,7 @@ fn check_body(
     // Before the loans: a function that hands back a parameter has no loan of
     // its own, and `[LT-1a]` is about exactly that function.
     check_return_regions(body, types, &regions, sink);
-    let loans = collect_loans(body, &regions);
+    let loans = collect_loans(body, types, &regions, elision);
     if loans.is_empty() {
         return;
     }
@@ -305,7 +317,17 @@ fn check_body(
                     accesses.push((overflow.clone(), Access::Write));
                 }
                 StmtKind::Drop { place, .. } => {
-                    accesses.push((place.clone(), Access::Write));
+                    // A returned Arena allocation keeps the arena loan live
+                    // through `Return`, so the compiler-generated arena drop
+                    // at that boundary is the *manifestation* of `[LT-4]`, not
+                    // a second ordinary alias error. `check_escapes` reports
+                    // the required A1/E3061 shape below. User-visible reset
+                    // and every non-returning drop remain ordinary writes.
+                    if !(matches!(block.terminator, Terminator::Return)
+                        && is_arena_ty(types, place_ty(body, types, place)))
+                    {
+                        accesses.push((place.clone(), Access::Write));
+                    }
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
@@ -392,7 +414,9 @@ fn check_escapes(
 ) {
     for loan in in_scope(loans, regions, point) {
         let root = body.local(loan.place.local);
-        if root.kind == LocalKind::Arg && types.is_view(root.ty) {
+        if root.kind == LocalKind::Arg
+            && (types.is_view(root.ty) || is_named_arena_origin(body, loan.place.local, types))
+        {
             continue;
         }
         let name = place_name(body, types, &loan.place);
@@ -404,22 +428,78 @@ fn check_escapes(
             ),
             _ => format!("`{owner}` is a local, so its storage ends with the frame"),
         };
-        sink.emit_classified(
-            Diagnostic::error(
-                codes::E3060,
-                span,
-                format!("`{name}` does not live long enough"),
-            )
-            .primary_label("the borrow is still live when the function returns")
-            .secondary(loan.span, format!("`{name}` is borrowed here"))
-            .secondary(root.span, storage)
-            .help(
-                "return an owned value, take the destination as a `mut` parameter, or borrow \
-                 something the caller owns",
-            )
-            .note("a returned reference must derive from a parameter (LT-1)"),
-        );
+        let is_arena = is_arena_ty(types, root.ty);
+        if is_arena {
+            let (origin_label, help, note) = if root.kind == LocalKind::Arg {
+                (
+                    format!(
+                        "`{owner}` is a parameter, but the signature does not tie the return to it"
+                    ),
+                    format!(
+                        "write `@borrows({owner})` above the wrapper, or return an owned value"
+                    ),
+                    "an Arena parameter is a return-provenance source only when `@borrows` names it (LT-4a)",
+                )
+            } else {
+                (
+                    format!("`{owner}` is local to this frame"),
+                    "move the `Arena` to an outer scope, or copy the value out before it is reset"
+                        .to_string(),
+                    "Arena allocation views carry the region of the arena borrow (LT-4, ARN-1)",
+                )
+            };
+            sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3061,
+                    span,
+                    format!("arena allocation cannot outlive `{owner}`"),
+                )
+                .primary_label("this allocation view escapes the arena's region")
+                .secondary(loan.span, format!("`{owner}` is borrowed for the allocation here"))
+                .secondary(root.span, origin_label)
+                .help(help)
+                .note(note),
+            );
+        } else {
+            sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3060,
+                    span,
+                    format!("`{name}` does not live long enough"),
+                )
+                .primary_label("the borrow is still live when the function returns")
+                .secondary(loan.span, format!("`{name}` is borrowed here"))
+                .secondary(root.span, storage)
+                .help(
+                    "return an owned value, take the destination as a `mut` parameter, or borrow \
+                     something the caller owns",
+                )
+                .note("a returned reference must derive from a parameter (LT-1)"),
+            );
+        }
     }
+}
+
+/// `[LT-4a]` — a growing Arena remains a non-view type, but an explicit
+/// `@borrows(arena)` contract makes that parameter a valid return-provenance
+/// origin for storage allocated from it. Fixed/scoped arenas are not inferred
+/// into the exception: the owner named `Arena` specifically.
+fn is_named_arena_origin(body: &Body, local: LocalId, types: &TypeTable) -> bool {
+    if !is_growing_arena_ty(types, body.local(local).ty) || local.0 == 0 {
+        return false;
+    }
+    body.borrows
+        .as_ref()
+        .is_some_and(|named| named.contains(&((local.0 - 1) as usize)))
+}
+
+fn is_growing_arena_ty(types: &TypeTable, ty: Ty) -> bool {
+    matches!(types.kind(ty), TyKind::Struct(id) if types.struct_def(*id).name.as_str() == "Arena")
+}
+
+fn is_arena_ty(types: &TypeTable, ty: Ty) -> bool {
+    matches!(types.kind(ty), TyKind::Struct(id)
+        if matches!(types.struct_def(*id).name.as_str(), "Arena" | "FixedArena" | "ScopedArena"))
 }
 
 /// `[CELL-7]` — `L3011 RefCell guard held across a call`.
@@ -474,8 +554,18 @@ fn check_refcell_call(
     .note("a guard live across a call that re-enters the same cell panics at run time [CELL-7]"));
 }
 
-/// Every `Rvalue::Ref` in the body, with the region inference gave it.
-fn collect_loans(body: &Body, regions: &Regions) -> Vec<Loan> {
+/// Every explicit `Rvalue::Ref` in the body, plus `[LT-4a]`'s narrow
+/// signature-level borrow of a non-view Arena argument. Default-mode value
+/// parameters currently retain a by-value ABI representation, so the latter
+/// has no `Rvalue::Ref`; recording it here keeps semantic provenance explicit
+/// in the borrow analysis without pretending that every value parameter is a
+/// view.
+fn collect_loans(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    elision: &dyn Fn(&FuncRef) -> Elision,
+) -> Vec<Loan> {
     let mut loans = Vec::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
@@ -497,10 +587,58 @@ fn collect_loans(body: &Body, regions: &Regions) -> Vec<Loan> {
                 created_at,
                 span: stmt.span,
                 reserved_at: reservation_window(body, place.local, created_at),
+                arena_scope: borrower_feeds_arena_scope(body, place.local),
+            });
+        }
+
+        let Terminator::Call { func, args, dest, .. } = &block.terminator else {
+            continue;
+        };
+        let Some(region) = regions.local_region(dest.local) else {
+            continue;
+        };
+        let tied = elision(func);
+        for (argument, operand) in args.iter().enumerate() {
+            if !tied.ties(argument) {
+                continue;
+            }
+            let (Operand::Copy(borrowed) | Operand::Move(borrowed)) = operand else {
+                continue;
+            };
+            if !is_growing_arena_ty(types, place_ty(body, types, borrowed)) {
+                continue;
+            }
+            let created_at = Point { block: block_index, index: block.stmts.len() };
+            loans.push(Loan {
+                place: borrowed.clone(),
+                mutable: false,
+                borrower: dest.local,
+                region,
+                created_at,
+                span: block.terminator_span,
+                reserved_at: HashSet::new(),
+                arena_scope: false,
             });
         }
     }
     loans
+}
+
+fn borrower_feeds_arena_scope(body: &Body, borrower: LocalId) -> bool {
+    body.blocks.iter().any(|block| {
+        let Terminator::Call {
+            func: FuncRef::Builtin { which: Builtin::ArenaScope { .. }, .. },
+            args,
+            ..
+        } = &block.terminator
+        else {
+            return false;
+        };
+        args.iter().any(|arg| match arg {
+            Operand::Copy(place) | Operand::Move(place) => place.local == borrower,
+            Operand::Const(_) => false,
+        })
+    })
 }
 
 /// `[BRW-3]` — the points at which a mutable borrow is merely *reserved*.
@@ -809,7 +947,9 @@ fn check_point(
             } else {
                 None
             };
-            let (code, message) = if bundled {
+            let (code, message) = if loan.arena_scope {
+                (codes::E3096, format!("`{name}` is scoped here"))
+            } else if bundled {
                 (
                     codes::E3064,
                     format!("`{name}` is borrowed through a view struct that bundles two views"),
@@ -831,31 +971,36 @@ fn check_point(
             }
             sink.emit_classified(
                 diagnostic
-                    .help(match (&borrower, bundled, method_root.as_deref()) {
+                    .help(match (&borrower, loan.arena_scope, bundled, method_root.as_deref()) {
+                        (_, true, _, _) => String::from(
+                            "allocate from `scope` instead, or take this allocation before opening the scope",
+                        ),
                         // `[DIA-7a]` shape B13's help, which is a different fix
                         // from B3's: the use keeping the loan alive may be of
                         // the *other* field, so shortening it is no answer.
-                        (_, true, _) => String::from(
+                        (_, _, true, _) => String::from(
                             "pass the two views as separate parameters rather than bundling \
                              them; or copy the shorter-lived data into an owned field",
                         ),
                         // `[DIA-7a]` shape B8's help: the call takes all of
                         // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, Some(_)) => String::from(
+                        (_, _, _, Some(_)) => String::from(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
-                        (Some(name), _, _) => format!(
+                        (Some(name), _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _) => format!(
+                        (None, _, _, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
                         ),
                     })
-                    .note(if bundled {
+                    .note(if loan.arena_scope {
+                        "a ScopedArena holds its parent's mutable borrow for the scope's whole region (ARN-6)"
+                    } else if bundled {
                         "a view struct has one region: the intersection of its fields' (LT-2)"
                     } else if method_root.is_some() {
                         "a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)"

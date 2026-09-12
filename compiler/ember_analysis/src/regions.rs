@@ -360,7 +360,7 @@ pub enum Elision {
 }
 
 impl Elision {
-    fn ties(&self, argument: usize) -> bool {
+    pub(crate) fn ties(&self, argument: usize) -> bool {
         match self {
             Elision::Nothing => false,
             Elision::Everything => true,
