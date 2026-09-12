@@ -19,7 +19,7 @@ language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
 not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
 so 0.8.3 could not absorb it and the hardening count started again. The current
 repository-normative source is `0.8.5_Hardened_1`; the separately frozen
-development target is `0.9.5_Hardened_4`.
+development target is `0.9.5_Hardened_8`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -58,10 +58,124 @@ This target-selection rule is separate from normative repository adoption. A
 target may be frozen while a recorded source, tooling, or conformance blocker
 prevents it from replacing `docs/spec-source/ember-spec.md`. That is the current
 0.9.5 state: H3 was received unchanged, the bounded correction pass is frozen
-as H4, and the unrecoverable `[LT-8]`–`[LT-13]` source gap means its eventual
-repair must be H5. `docs/MIGRATION-0.9.5.md` inventories every H3→H4 correction;
-this ledger continues to declare differences in the currently adopted
-repository-normative source checked by `tools/hardening_check.py`.
+as H4, the owner-supplied `[LT-8]`–`[LT-13]` source recovery is frozen as H5,
+the mutable-helper API resolution is frozen as H6, and the owner's callable-
+parameter-mode ruling is frozen as H7. The helper-input and `Callable` bridge
+ruling is frozen as H8. ODR-004 through ODR-007 are closed.
+`docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H7→H8 correction;
+this ledger continues to declare
+differences in the currently adopted repository-normative source checked by
+`tools/hardening_check.py`.
+
+### HC-095-04 — H5 source recovery and supersession reconciliation
+
+**Class: SOURCE RECOVERY**, with a **SEMANTICALLY NEUTRAL CLARIFICATION** of
+revision interaction. On 2026-09-12 the owner supplied the missing Hardened 14
+definitions of `[LT-8]`–`[LT-13]`. H5 restores their shared-`Span` helper
+signatures, late-bound independent regions, no-escape requirement, ordinary
+borrowing rule, `@noalloc` guarantee, and then-current persistent-aggregate
+boundary. Transport-only HTML entities, escaped punctuation, and malformed
+code fences were normalized; no rule substance was reconstructed.
+
+The recovered `[LT-13]` predates 0.9.5 and describes the workaround boundary
+under the former single-region `[LT-2]`. H5 explicitly states that the later,
+owner-approved 0.9.5 multi-region-view rule supersedes only that historical
+restriction. The callback helpers, `[LT-10]`, `[TYP-15]`, `[TYP-15a]`, and
+ordinary borrowing remain unchanged.
+
+**No semantic API completion by inference.** `[LT-8]` supplies only shared
+`Span` signatures, while `[LT-11]` and `[TST-16]` mention mutable inputs. H5
+does not invent `MutSpan` overloads. At H5 freeze, ODR-005 asked the owner for
+the exact public surface because different overload matrices accept different
+programs; HC-095-05 records the later resolution.
+
+**No compiler code moved.** This amendment creates the frozen development
+target `Ember_v0.9.5_Hardened_5.md`; it does not install H5 as
+`docs/spec-source/ember-spec.md` and claims no implementation or conformance.
+
+### HC-095-05 — H6 mutable `with_views` API resolution
+
+**Class: SEMANTICALLY NEUTRAL CLARIFICATION, explicitly owner-approved.** The H5
+recovery made an existing boundary visible: `[LT-8]` exposed only shared
+`Span` signatures while `[LT-11]` and `[TST-16]` required mutable-input
+behavior. The owner resolved ODR-005 on 2026-09-12 by keeping the shared family
+and adding explicit all-mutable `with_views2_mut`, `with_views3_mut`, and
+`with_views4_mut` helpers.
+
+The mutable signatures use Ember's canonical `MutSpan[T]` spelling. The
+owner's patch wrote `SpanMut[T]`; every existing type rule, grammar discussion,
+and example uses `MutSpan[T]`, so H6 normalizes the name without creating a new
+type. Mixed shared/mutable overloads were not approved and are not inferred.
+
+`[LT-11]` now ties the `_mut` family explicitly to ordinary exclusive-borrow
+rules. The decision adds no ownership mechanism, alias exception, hidden
+allocation, or escape path. Because H5 was frozen, this owner-approved
+clarification is issued as `Ember_v0.9.5_Hardened_6.md`. It closes the helper-
+family question without changing the repository-normative 0.8.5 program set.
+The subsequent audit found that `fn_type` cannot encode callback parameter
+modes while `[FN-1]` defaults unmarked parameters to shared borrowing. ODR-006
+records that separate issue; H6 does not infer its answer. No compiler code
+moved and no conformance is claimed.
+
+### HC-095-06 — H7 callable parameter-mode boundary clarification
+
+**Class: SEMANTICALLY NEUTRAL CLARIFICATION, explicitly owner-approved.** H6
+selected an all-mutable helper family, but its callback types could not state
+the authority `[LT-11]` required: `fn_type` accepted only types, while
+`[FN-1]` makes an unmarked parameter a shared borrow. The owner resolved the
+callback half on 2026-09-12 by requiring callable types to use the same
+borrowed/default, `mut`, and `owned` parameter modes as ordinary function
+declarations.
+
+H7 adds `fn_type_param` to the grammar and expands `[FN-6]`; the modes preserve
+ordinary ownership, place, move, mutability, lifetime, and FFI-safety rules and
+do not create a parallel callable ownership model. The mutable helpers'
+callbacks now spell `fn(mut MutSpan[...])`. `[LT-11a]` requires a parameter-
+mode mismatch diagnostic, and `[TST-20]` makes the shared family, mutable
+family, alias rejection, callback authority, and ordinary callable modes
+traceable to conformance. The supplied `SpanMut[T]` spelling is normalized to
+the already-defined `MutSpan[T]`, as in H6. The supplied mnemonic
+`[TST-LT-MUT]` is normalized to the next unused numeric test-rule ID because
+the normative rule-index grammar requires a numeric suffix.
+
+**Two owner boundaries remain explicit.** The ruling did not specify whether
+the helper functions' own `MutSpan` inputs are `mut` or `owned`, so ODR-006 is
+only partially resolved. It also did not define how `[CLO-3]`'s
+`Callable[Args, R]` bridge preserves the newly normative mode vector; ODR-007
+records that question. H7 neither invents those semantics nor claims the
+affected surface implementation-ready.
+
+Because H6 was frozen, ADR-023 requires this clarification to be issued as
+`Ember_v0.9.5_Hardened_7.md`. It changes neither the adopted 0.8.5 source nor
+the 0.8.5 implementation. No compiler code moved and no 0.9.5 implementation
+or conformance is claimed.
+
+### HC-095-07 — H8 helper input modes and `Callable` mode preservation
+
+**Class: SEMANTICALLY NEUTRAL CLARIFICATION, explicitly owner-approved.** H7
+made callable parameter modes explicit but left two API boundaries for the
+owner. On 2026-09-12 the owner selected `mut`, not `owned`, for every mutable
+helper input and selected compiler-known canonical type metadata for preserving
+the complete mode vector through the existing `Callable[Args, R]` abstraction.
+
+H8 makes shared helper inputs ordinary borrowed parameters and mutable helper
+inputs explicit `mut` reborrows. Neither family consumes an input view.
+`[LT-10]` states that helpers neither own source storage nor extend its
+lifetime; `[LT-8a]` prohibits callback-mode erasure through `Callable`.
+`[FN-6a]` preserves modes through generic bounds, type and borrow checking,
+overload resolution, and monomorphisation, while requiring compile-time-only
+metadata and no second ownership system or runtime mode bookkeeping.
+
+`[TST-21]` records conformance for helper modes, caller usability, generic
+forwarding, and mismatch/erasure rejection. As in H6/H7, the supplied
+`SpanMut[T]` spelling is normalized to canonical `MutSpan[T]`. The supplied
+mnemonic `[TST-LT-MODE]` is normalized to the next unused numeric test-rule ID
+because it would otherwise be invisible to the normative rule index.
+
+Because H7 was frozen, ADR-023 requires this ruling to be issued as
+`Ember_v0.9.5_Hardened_8.md`. ODR-006 and ODR-007 close. The adopted 0.8.5
+source and implementation remain unchanged; no 0.9.5 implementation or
+conformance is claimed.
 
 ### The four kinds, and what each is allowed to do
 

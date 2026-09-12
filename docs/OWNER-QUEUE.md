@@ -23,17 +23,22 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-001 | **CLOSED** — retain the API exactly | Language / API | — | **No** — ruled 2026-09-10 |
 | ODR-002 | **CLOSED** — `RIDX-1` landed | Tooling / document structure | — | **No** |
 | ODR-003 | **DEFERRED EDITORIAL CLEANUP** — open for a future revision | Editorial / documentation | **P3** | **No** |
-| ODR-004 | **OPEN** — recover missing `[LT-8]`–`[LT-13]` definitions | Specification source recovery / library API | **P1** | **Conditional** — yes if the omitted source cannot be recovered |
+| ODR-004 | **CLOSED** — owner supplied `[LT-8]`–`[LT-13]` | Specification source recovery / library API | — | **No** |
+| ODR-005 | **CLOSED** — explicit all-mutable `_mut` helpers | Language / standard-library API | — | **No** — ruled 2026-09-12 |
+| ODR-006 | **CLOSED** — mutable helper inputs are `mut` reborrows | Language / callable API | — | **No** — ruled 2026-09-12 |
+| ODR-007 | **CLOSED** — mode vector is compiler-known `Callable` metadata | Language / callable abstraction | — | **No** — ruled 2026-09-12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
 work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
-intake and remains the only conditional owner question.
+intake and closed when the owner supplied the missing definitions on 2026-09-12.
+ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001 through ODR-003 do not block anything. **ODR-004 blocks normative
-adoption of the 0.9.5 target and conformance for the `std.borrow.with_views`
-surface.** It does not block H4's frozen identity or unrelated compiler work
-such as D-042.
+ODR-001, ODR-002, and ODR-004 through ODR-007 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **No owner semantic decision is
+currently open.** H8 records the complete helper-mode and callable-abstraction
+ruling. Implementation and conformance remain outstanding, but they are not
+owner questions and do not block unrelated compiler work such as D-042.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
@@ -287,23 +292,28 @@ a consistency pass.
 
 ---
 
-## ODR-004 — `[LT-8]`–`[LT-13]` are referenced but absent from the 0.9.5 source
+## ODR-004 — `[LT-8]`–`[LT-13]` source recovery — **CLOSED**
 
     ID:        ODR-004
-    Status:    OPEN — source recovery required before normative adoption;
-               the repair must be issued as H5
+    Status:    CLOSED — owner supplied the missing definitions; incorporated
+               in H5
     Category:  SPECIFICATION SOURCE RECOVERY / LIBRARY API
-    Priority:  P1
+    Priority:  —
     Location:  supplied Ember_v0.9.5_Hardened_3_Implementation_Ready_Spec.md,
-               lines 105, 304–323, 1,683 and 4,360; frozen H4 target front matter
+               lines 105, 304–323, 1,683 and 4,360; frozen H4 target; H5 §H14.3
 
-    Semantic impact:                  CONDITIONAL
-    Blocks implementation:            YES — only the LT-8..LT-13 helper surface
-    Blocks conformance:               YES — TST-16 requires the absent rules
-    Blocks H4 identity freeze:         NO — H4 is frozen as the target
-    Blocks normative specification adoption: YES
-    Requires owner semantic decision: YES if the original rules cannot be
-                                      recovered verbatim
+    Resolution: Owner-supplied Hardened 14 definitions of LT-8 through LT-13
+    Authority:  Owner message, 2026-09-12
+    Revision:   Ember 0.9.5_Hardened_5
+    ADR:        ADR-024
+    Result:     Closed. H5 §H14.3 is the recovered definition site.
+
+    Semantic impact:                  NONE — source recovery
+    Blocks implementation:            NO
+    Blocks conformance:               NO — the source-recovery issue is closed
+    Blocks H4 identity freeze:         NO — H4 remains the frozen predecessor
+    Blocks normative specification adoption: NO
+    Requires owner semantic decision: NO
 
 **Existing wording.** The supplied 0.9.5 document says the
 `std.borrow.with_views2/3/4` helpers were introduced by 0.9_Hardened_14, remain
@@ -311,14 +321,14 @@ normative compatibility APIs, and are governed by `[LT-8]`–`[LT-13]`.
 `[TST-16]` requires conformance tests for all six. The standard-library table
 also cites `[LT-8]` through `[LT-12]`.
 
-**Conflict.** No definition of any of the six rules exists in either supplied
+**Historical conflict.** No definition of any of the six rules existed in either supplied
 0.9.5 file. H3 added a manifest row saying they were “recovered from Hardened
 14”, but the definitions themselves are still absent. The available
 0.9_Hardened_12 and 0.9_Hardened_13 files also contain none of them, and no
 0.9_Hardened_14 source is available in the repository or supplied downloads.
-The frozen H4 development target corrects the unsupported recovery claim.
-ODR-004 still blocks normative adoption of that target and conformance for this
-helper surface; the eventual repair must be issued as H5 rather than editing H4.
+The frozen H4 development target corrected the unsupported recovery claim.
+The owner then supplied the six definitions; they were normalized only for
+transport-corrupted Markdown and incorporated in H5 rather than editing H4.
 This is not the former ERR-042 tooling problem: there is no hidden inline,
 heading, or shared-line definition for the extractor to discover.
 
@@ -340,20 +350,205 @@ behavior they have. An implementation agent cannot reconstruct six APIs from
 the phrases “allocation-free late-bound callback composition” and
 “two/three/four-view callbacks” without inventing semantics.
 
-**Recommended owner action.** Supply the exact 0.9_Hardened_14 definitions of
-`[LT-8]`–`[LT-13]`. If no authoritative source exists, explicitly choose
-whether the helpers are removed/deferred or specify the missing rules as a new
-owner amendment.
+**Resolution.** The recommended source-recovery path occurred. H5 preserves the
+shared-`Span` signatures, late-bound independent regions, no-escape rule,
+ordinary borrowing, `@noalloc` requirement, and persistent-aggregate boundary.
+It also reconciles the recovered pre-0.9.5 `[LT-13]` wording with the later,
+owner-approved multi-region `[LT-2]` revision without weakening either contract.
 
-**Why this cannot be resolved safely by an agent.** Function signatures,
-mutable-view combinations, callback result restrictions, failure diagnostics,
-and whether the 2/3/4 helpers are separate rules are all absent. Each affects
-accepted programs and borrow behavior. Guessing would violate the standing
-rule that the compiler implements the language rather than defining it.
+**Why an agent could not close the original gap.** Before the owner supplied
+the source, function signatures, callback-result restrictions, escape behavior,
+and allocation guarantees were absent. Each affected accepted programs and
+borrow behavior. H5 now carries those answers. The exact mutable overload
+surface remains separately isolated as ODR-005 rather than being guessed.
 
-See `docs/MIGRATION-0.9.5.md` for the complete intake and the non-semantic
-consolidation defects already repaired in H4 without inventing the missing
-helper semantics.
+See `docs/MIGRATION-0.9.5.md` for the complete intake, H4 custody record, and H5
+source-recovery classification.
+
+---
+
+## ODR-005 — exact mutable `with_views` overload surface — **CLOSED**
+
+    ID:        ODR-005
+    Status:    CLOSED — explicit all-mutable `_mut` family selected
+    Category:  LANGUAGE / STANDARD-LIBRARY API
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_6.md §H14.3, [LT-8] and [LT-11]; [TST-16]
+
+    Resolution: Explicit all-mutable with_views2_mut/3_mut/4_mut helpers
+    Authority:  Owner ruling, 2026-09-12
+    Revision:   Ember 0.9.5_Hardened_6
+    ADR:        ADR-025
+    Result:     Closed. H6 [LT-8]/[LT-11] are authoritative within the
+                development target.
+
+    Semantic impact:                  Owner-approved API clarification
+    Blocks implementation:            NO
+    Blocks conformance:               NO — the decision is complete; evidence remains
+    Blocks H5 identity freeze:         NO
+    Blocks normative specification adoption: NO
+    Requires owner semantic decision: NO
+
+**Existing wording.** `[LT-8]` gives structural signatures only for shared
+`Span[A]` inputs and callbacks. `[LT-11]` nevertheless requires two mutable
+inputs whose sources may alias to be rejected, and `[TST-16]` requires mutable
+alias-rejection coverage.
+
+**Historical conflict.** The safety rule was clear, but the callable API that exposes mutable
+inputs was not. The recovered source did not state whether mutable helpers exist,
+which arguments may be `MutSpan`, whether shared/mutable combinations are one
+overload family, or what exact callback types result. Inventing those signatures
+would change the accepted standard-library API.
+
+**Possible interpretations.**
+
+1. `with_views2/3/4` have an overload family covering every `Span`/`MutSpan`
+   combination, with callback mutability matching each input.
+2. Only particular mutable combinations are provided; the owner supplies the
+   exact matrix.
+3. The public helpers are shared-`Span` only; `[LT-11]` is a general safety
+   boundary for any later or implementation-private mutable form, and TST-16's
+   mutable-helper requirement should be corrected.
+
+**Resolution.** The owner selected distinct `with_views2_mut`,
+`with_views3_mut`, and `with_views4_mut` helpers whose inputs and callback
+parameters are all `MutSpan`. H6 uses Ember's canonical spelling `MutSpan[T]`;
+the ruling's `SpanMut[T]` spelling was a terminology mismatch and did not create
+a second type. The original shared helpers stay shared. No mixed `Span`/
+`MutSpan` overload family is specified. `[LT-11]` binds the mutable family to
+ordinary exclusive borrowing and alias rejection.
+
+**Why owner resolution was required.** The alternatives accepted different
+programs and exposed different mutation capabilities. The existing borrow rules
+could determine whether a selected API was safe, but could not choose which API
+Ember promised.
+
+---
+
+## ODR-006 — mutable helper and callback parameter modes — **CLOSED**
+
+    ID:        ODR-006
+    Status:    CLOSED — mutable helper inputs are mut reborrows
+    Category:  LANGUAGE / CALLABLE API
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_8.md §H14.3 [LT-8]/[LT-8a]/[LT-11];
+               Part III fn_type; [FN-1]/[FN-2a]; [FN-6a]
+
+    Resolution: Mutable helper inputs use mut; no helper input is owned
+    Authority:  Owner rulings, 2026-09-12; ADR-026 / ADR-027
+    Revision:   Ember 0.9.5_Hardened_8
+    Result:     Closed. H8 [LT-8] is authoritative within the development
+                target.
+
+    Semantic impact:                  YES — callability and mutation authority
+    Blocks implementation:            NO — implementation remains to be built
+    Blocks conformance:               NO — evidence remains to be added
+    Blocks H8 identity freeze:         NO
+    Blocks normative specification adoption: NO
+    Requires owner semantic decision: NO
+
+**Resolved portion.** H7 extends `fn_type` with borrowed/default, `mut`, and
+`owned` modes under ordinary `[FN-1]`/`[FN-2]` semantics. The `_mut` callbacks
+now explicitly use `fn(mut MutSpan[A], ...)`; `[LT-11a]` and `[TST-20]`
+make the mode mismatch testable. This closes the callback side of the question.
+
+**Historical remaining conflict.** The H7 helper functions' own inputs were written
+`a: MutSpan[A]`, not `mut a: MutSpan[A]` or `owned a: MutSpan[A]`. `[FN-1]`
+makes that an ordinary shared borrow which cannot itself be mutably borrowed or
+moved when the helper invokes a callback requiring `mut MutSpan[A]`. The owner
+ruling changed callback modes but did not state the helper input modes.
+
+**Possible interpretations.**
+
+1. Spell every helper input `mut a: MutSpan[A]`. This is the direct application
+   of `[FN-1]`/`[FN-1a]` and is recommended if the helper reborrows the caller's
+   mutable view for the callback.
+2. Spell every helper input `owned a: MutSpan[A]`, consuming the view capability
+   into the helper before it passes/reborrows it. This changes caller usability.
+3. Define a narrow rule that an unmarked `MutSpan` parameter may mutate its
+   referent. This conflicts with the general shared-parameter rule and risks an
+   aliasing exception; it is not recommended.
+
+**Former recommended owner action.** Select `mut` or `owned` for the helper's own
+`MutSpan` inputs. Prefer `mut` if the intent is invocation-scoped reborrowing
+that leaves the caller's view usable afterward. Do not choose option 3 without
+explicitly amending `[FN-1]` and the safety argument.
+
+**Why this cannot be resolved safely by an agent.** The alternatives change
+ownership, post-call usability, and which arguments can be passed. The H7
+callback-mode ruling does not select the helper's own mode.
+
+**Owner resolution.** Every mutable helper input is explicitly `mut`; shared
+helper inputs retain the default borrowed mode; neither family consumes a view.
+This is invocation-scoped reborrowing, so caller usability resumes when the
+helper returns. H8 applies the ruling and `[TST-21]` makes it testable. The
+supplied `SpanMut[T]` and `[TST-LT-MODE]` spellings are normalized to canonical
+`MutSpan[T]` and the next unused numeric rule ID, `[TST-21]`.
+
+---
+
+## ODR-007 — mode-bearing `fn` types and `Callable[Args, R]` — **CLOSED**
+
+    ID:        ODR-007
+    Status:    CLOSED — mode vector is compiler-known canonical metadata
+    Category:  LANGUAGE / CALLABLE ABSTRACTION
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_8.md [FN-6a], [CLO-3], [CLO-6];
+               std.core Callable/CallableOnce declarations
+
+    Resolution: Preserve modes internally through existing Callable[Args, R]
+    Authority:  Owner ruling, 2026-09-12; ADR-027
+    Revision:   Ember 0.9.5_Hardened_8
+    Result:     Closed. H8 [FN-6a] is authoritative within the development
+                target.
+
+    Semantic impact:                  YES — callable compatibility and dispatch
+    Blocks implementation:            NO — implementation remains to be built
+    Blocks conformance:               NO — TST-20/TST-21 evidence remains
+    Blocks H8 identity freeze:         NO
+    Blocks normative specification adoption: NO
+    Requires owner semantic decision: NO
+
+**Existing wording.** H7 makes parameter modes part of callable types and says
+they have ordinary ownership semantics. `[CLO-3]` still says `fn(A) -> R`
+denotes an implicit generic bound `Callable[(A), R]`, while `std.core` declares
+`Callable[Args, R]` and `CallableOnce[Args, R]`. `Args` is an ordinary tuple of
+types and carries no mode vector.
+
+**Conflict.** `fn(A)`, `fn(mut A)`, and `fn(owned A)` must be distinguishable
+for compatibility and invocation, but the documented `Callable[Args, R]` bridge
+maps all three to the same `Args = (A)` surface. The owner explicitly rejected
+a separate callable ownership model, so an agent cannot add an unrelated
+parallel interface ad hoc.
+
+**Possible interpretations.**
+
+1. Make the mode vector compiler-known metadata on the implicit callable bound;
+   `Callable[Args, R]` remains the source spelling but `[CLO-3]` defines its
+   mode-bearing use precisely.
+2. Change the public interface shape so the complete `fn(...) -> R` signature,
+   including modes, is the generic argument to `Callable`/`CallableOnce`.
+3. Add a separate mode-vector generic parameter or family of callable
+   interfaces. This is explicit but expands the public standard-library model.
+
+**Former recommended owner action.** Prefer option 1 if preserving the current public
+`Callable[Args, R]` spelling is important; specify how conformance and method
+matching observe the compiler-known mode vector. Otherwise choose an exact
+public interface signature. In every case, mode mismatches must remain type
+errors and no runtime mode dispatch should be introduced.
+
+**Why this cannot be resolved safely by an agent.** The options alter interface
+identity, generic bounds, coherence, closure matching, dynamic callable
+compatibility, and possibly ABI/interface hashes. `[FN-6]` establishes required
+behavior but does not choose this bridge representation.
+
+**Owner resolution.** Option 1 governs. The existing public
+`Callable[Args, R]` abstraction remains, while the compiler's canonical
+callable type carries the complete borrowed/`mut`/`owned` mode vector through
+generic bounds, type and borrow checking, overload resolution, and
+monomorphisation. The metadata is compile-time-only and introduces neither
+runtime bookkeeping nor a second ownership system. `[FN-6a]`, `[LT-8a]`, and
+`[TST-21]` record the contract in H8.
 
 ---
 
@@ -371,3 +566,7 @@ reopening it.
 | ERR-041 / deviation D5 — `[FN-1]` | Part VII §7's worked example governs | Owner ruling 2026-09-10; **S4** | 0.8.5_Hardened_1 | `[FN-1a]`; D5 closed, **no code moved** |
 | ERR-042 — nine "undefined" rule ids | Inventory ordered; it found **zero** gaps | Owner ruling 2026-09-10 | — | Entry **withdrawn as wrong**; see ODR-002 for what is actually true |
 | Scope changes by an implementation agent | Permitted when justified; **must be reported** | Owner ruling 2026-09-10 | — | `docs/HANDOFF.md` §0.0 I |
+| **ODR-004** — missing `[LT-8]`–`[LT-13]` source | Owner supplied the Hardened 14 definitions | Owner message 2026-09-12; **ADR-024** | 0.9.5_Hardened_5 | Closed; H5 §H14.3 is authoritative within the development target |
+| **ODR-005** — mutable `with_views` API | Explicit all-mutable `_mut` helper family using `MutSpan[T]` | Owner ruling 2026-09-12; **ADR-025** | 0.9.5_Hardened_6 | Closed; no mixed-mutability overloads are implied |
+| **ODR-006** — helper/callback modes | Mutable helper inputs are `mut` reborrows; callback modes remain explicit | Owner ruling 2026-09-12; **ADR-026 / ADR-027** | 0.9.5_Hardened_8 | Closed; no helper consumes an input view |
+| **ODR-007** — `fn`/`Callable` mode bridge | Preserve the complete mode vector as compiler-known canonical type metadata | Owner ruling 2026-09-12; **ADR-027** | 0.9.5_Hardened_8 | Closed; no runtime mode bookkeeping or second ownership system |

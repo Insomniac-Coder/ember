@@ -96,6 +96,9 @@ ERR-008) is worth being able to read again.
 | ERR-043 | `[CELL-9]` with `[UNS-5]` | **DECIDED by the owner 2026-09-10** — `UnsafeCell` is retained and becomes the language's lowest-level interior-mutability primitive, in `std.mem`. Amendment S2; `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]` in 0.8.5 |
 | ERR-044 | `[TYP-15]` with `[LT-3]` | **decided by the owner, 2026-09-09** — `[LT-3]`'s semantics govern: a view may be stored where its region outlives the destination, so a static-region view is admitted and every other stays refused. Amendment S1 |
 | ERR-045 | `[LT-1]`'s example with `[LT-1a]` and Part III §2 | **decided** — `[LT-1a]` and the grammar govern; `[LT-1]`'s trailing-suffix example does not parse |
+| ERR-046 | 0.9.5 H5 `[LT-8]` with `[LT-11]` / `[TST-16]` | **DECIDED by the owner 2026-09-12.** H6 adds explicit all-mutable `_mut` helpers using canonical `MutSpan[T]`; no mixed overloads are implied. ODR-005 closed |
+| ERR-047 | H6/H7 `[LT-8]` with `fn_type`, `[FN-1]`, `[FN-2a]` | **DECIDED by the owner 2026-09-12.** H7 adds callable modes; H8 makes mutable helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed |
+| ERR-048 | H7 `[FN-6]` with `[CLO-3]` / `Callable[Args, R]` | **DECIDED by the owner 2026-09-12.** H8 preserves the full mode vector as compiler-known canonical metadata through the existing abstraction. ODR-007 closed |
 
 ---
 
@@ -2039,3 +2042,127 @@ the only thing it can be.
 production for a trailing attribute on `fn_header`, which would be the first
 place in the grammar an attribute may follow the thing it attaches to.
 
+---
+
+## ERR-046 — `[LT-11]` requires mutable-helper behavior that `[LT-8]` does not expose
+
+**Status: decided by the owner, 2026-09-12; resolved in
+0.9.5_Hardened_6. ODR-005 closed.** This does not alter the
+repository-normative 0.8.5 source.
+
+**Where.** The owner-supplied `[LT-8]` definitions give structural signatures
+for `with_views2`, `with_views3`, and `with_views4` whose inputs and callback
+parameters are all `Span`. `[LT-11]` then says:
+
+> Two mutable inputs whose sources may alias are rejected by the ordinary
+> borrow checker.
+
+`[TST-16]` also requires mutable-alias rejection coverage.
+
+**The conflict.** The safety behavior is coherent, but no public signature says
+how a mutable input reaches any helper. `Span` and `MutSpan` are distinct in
+Part IV: the former is `Copy`/read-only and the latter is move-only/read-write.
+The phrase “exact public spelling MAY use the module's overload convention”
+does not define which mutable combinations exist or their callback types.
+
+**What remains fixed.** The shared-`Span` signatures, independent late-bound
+regions, no-escape rule, ordinary alias checks, and `@noalloc` requirement are
+not in question. H5 recovers them exactly. Nor may this ambiguity be used to
+weaken `[LT-11]` for any mutable form the owner chooses.
+
+**Owner resolution.** Keep the shared `with_views2/3/4` family and add distinct
+`with_views2_mut`, `with_views3_mut`, and `with_views4_mut` helpers. Every input
+and callback parameter in a `_mut` signature is `MutSpan`; mixed shared/mutable
+overloads are not part of the ruling. `[LT-11]` remains the governing ordinary
+exclusive-borrow and alias-rejection rule.
+
+The ruling wrote `SpanMut[T]`; H6 normalizes that to `MutSpan[T]`, the only
+mutable-span type Ember defines and the spelling the ruling was referring to.
+This is terminology reconciliation, not a new type or an inferred overload.
+Because H5 was already frozen, ADR-023 requires the resolution to be issued as
+H6 rather than editing H5 in place.
+
+---
+
+## ERR-047 — the mutable helper signatures cannot express their parameter modes
+
+**Status: decided by the owner, 2026-09-12; fully resolved in
+0.9.5_Hardened_8. ODR-006 closed.**
+
+**Where.** H6 `[LT-8]` defines the owner-selected `_mut` family with `MutSpan`
+inputs and `fn(MutSpan[...])` callbacks. `[FN-1]` makes every unmarked parameter
+a shared borrow that the callee cannot mutate; `[FN-2a]` says the callee's
+signature determines the mode. But Part III defines:
+
+```ebnf
+fn_type := ["extern" string_lit] "fn" "(" [type {"," type}] ")" ["->" type]
+```
+
+No callback parameter mode can be written there.
+
+**Why the type name does not settle it.** `MutSpan[T]` is the correct mutable-
+view type, but Ember still distinguishes the type from the parameter mode. The
+specification's own `normalize(mut xs: MutSpan[f32])` example uses `mut`, and
+`[FN-1a]` exists specifically to admit a mutable view-producing expression at
+that `mut` parameter. Treating `a: MutSpan[T]` as silently mutable would create
+a special exception to the general shared-parameter rule.
+
+**What is already decided.** ODR-005 remains closed: there are separate shared
+and all-mutable helper families, the mutable type is `MutSpan`, and no mixed
+overload matrix is implied. This entry does not reopen any of those choices.
+
+**Owner resolution of the callback half.** Callable types now admit the same
+borrowed/default, `mut`, and `owned` parameter modes as ordinary declarations.
+H7 changes each `_mut` callback to `fn(mut MutSpan[...])`, strengthens
+`[LT-11]`, and adds `[LT-11a]` plus `[TST-20]`. A `MutSpan[T]` type does not
+silently supply mutable authority. H6 remains frozen as the evidence of the
+original boundary. The ruling's mnemonic `[TST-LT-MUT]` is normalized to the
+next unused numeric test-rule ID so the conformance obligation is actually
+visible to the normative rule index.
+
+**What still needed the owner after H7.** The helper functions' own inputs remained written
+`a: MutSpan[A]`. Under `[FN-1]` that is a shared borrow, which cannot provide
+the `mut` callback argument. ODR-006 therefore remains open only over whether
+those inputs are `mut` reborrows or `owned` consumed values. That choice changes
+post-call usability and accepted call sites, so H7 does not infer it.
+
+**Final owner resolution.** Mutable helper inputs are `mut` reborrows, not
+`owned` values; shared helper inputs retain the default borrowed mode. H8 makes
+those signatures explicit, states that no helper owns or extends the lifetime
+of source storage, and adds `[LT-8a]` plus `[TST-21]`. The caller's view remains
+usable after the invocation. The supplied `SpanMut[T]` and `[TST-LT-MODE]`
+spellings are normalized to canonical `MutSpan[T]` and the next unused numeric
+test-rule ID.
+
+---
+
+## ERR-048 — mode-bearing callable types collapse at the `Callable` bridge
+
+**Status: decided by the owner, 2026-09-12; resolved in
+0.9.5_Hardened_8. ODR-007 closed.**
+
+**Where.** H7 `[FN-6]` distinguishes `fn(A) -> R`, `fn(mut A) -> R`, and
+`fn(owned A) -> R`. `[CLO-3]` still describes `fn(A) -> R` as an implicit
+`Callable[(A), R]` bound, while the documented `Callable[Args, R]` and
+`CallableOnce[Args, R]` interfaces receive an ordinary tuple of argument
+types, not a parameter-mode vector.
+
+**The conflict.** The three callable types must differ for checking and
+invocation, yet the specified bridge maps them to the same public argument
+tuple. The owner's instruction that callable modes use the ordinary ownership
+model rules out silently treating the mode as a new runtime convention, but it
+does not decide whether the distinction is compiler-known bound metadata or
+part of a revised interface signature.
+
+**What is not in question.** Parameter modes are normative in callable types,
+mode mismatches are type errors, no runtime mode dispatch is introduced, and
+the mutable callbacks use explicit `mut`. This erratum does not reopen
+ADR-026.
+
+**Owner resolution.** Preserve the full mode vector as compiler-known canonical
+type metadata through the existing `Callable[Args, R]` abstraction. The public
+two-parameter interface stays; the ordinary `Args` tuple notation does not
+erase the internal signature. `[FN-6a]`, `[CLO-3]`, and `[CLO-6]` require the
+metadata to survive generic bounds, checking, overload resolution, and
+monomorphisation, while remaining absent at runtime. No second ownership model,
+runtime dispatch, or new public mode-vector generic is introduced.

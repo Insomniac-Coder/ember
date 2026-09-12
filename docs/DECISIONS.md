@@ -768,3 +768,136 @@ target. Its contents are frozen under that identity: a later-discovered flaw is
 not patched silently into the same file, but repaired in the next hardening,
 which then becomes the target. Normative repository adoption is a separate gate
 and may lag the target while a recorded source or conformance blocker remains.
+
+## ADR-024 — Recover `[LT-8]`–`[LT-13]` in H5 without regressing 0.9.5
+
+**Owner-supplied source, 2026-09-12.** H3 claimed that the Hardened 14
+`std.borrow.with_views2/3/4` rules had been recovered but did not contain their
+definitions. H4 corrected that unsupported claim, opened ODR-004, and froze.
+The owner then supplied the definitions, so ADR-023 requires the recovered
+artifact to be `0.9.5_Hardened_5`, with unchanged H4 as its predecessor.
+
+**What was recovered.** `[LT-8]`–`[LT-13]` establish canonical allocation-free
+two-, three-, and four-view helpers over structurally stated `Span` signatures;
+late-bound independent callback regions; no borrowed-region escape; ordinary
+alias/mutability checking; no hidden allocation; and the then-current boundary
+for persistent multi-owner aggregates. The supplied text's HTML entities,
+escaped punctuation, and malformed fences were transport damage and were
+normalized without changing the rule substance.
+
+**Supersession boundary.** Hardened 14 predates the owner-approved 0.9.5
+multi-region-view revision. Its statement that persistent independently-lived
+aggregates require workaround shapes cannot revoke the later `[LT-2]` rule.
+H5 therefore preserves the helpers and every safety constraint while recording
+that 0.9.5 supersedes only the former single-region aggregate limitation.
+`[LT-10]`, `[TYP-15]`, `[TYP-15a]`, and ordinary borrowing remain fully in
+force. This is lineage reconciliation, not a new semantic decision.
+
+**What was not decided.** `[LT-8]` spells shared-`Span` signatures, whereas
+`[LT-11]` and `[TST-16]` refer to mutable inputs. The text does not select an
+exact `MutSpan` overload family. Because that choice changes the public API and
+accepted programs, it is ODR-005 rather than an inferred addendum to this ADR.
+
+## ADR-025 — `with_views` has separate shared and all-mutable helper families
+
+**Owner ruling, 2026-09-12, resolving ODR-005 / ERR-046.** The boundary exposed
+by ADR-024 is real: shared-only signatures cannot make `[LT-11]`'s mutable-input
+contract executable. The owner selected explicit mutable helpers instead of a
+single magically generic `Span`/`MutSpan` family.
+
+The canonical structural API has `with_views2/3/4` for all-shared `Span`
+arguments and `with_views2_mut/3_mut/4_mut` for all-mutable `MutSpan` arguments.
+Each callback parameter preserves the corresponding input's mutability. Mixed
+shared/mutable overloads were not selected and are not implied. Exact public
+spelling may follow the module overload convention only while arity,
+mutability, and type relationships remain intact.
+
+The mutable family is not a new ownership mechanism. Ordinary exclusive-borrow
+rules decide whether all inputs can coexist; potentially aliasing mutable
+sources are rejected, while established disjointness remains usable. Late-bound
+regions, no escape, and `@noalloc` apply identically to both families.
+
+**Terminology correction.** The ruling's patch spelled the mutable type
+`SpanMut[T]`. Ember's existing and pervasive type is `MutSpan[T]`; H6 uses that
+canonical spelling. This reflects the decision's stated mutable-span intent and
+does not add an alias or a second type.
+
+**Version treatment.** H5 was already frozen, so ADR-023 requires a new H6
+artifact. This owner-approved API clarification completes an ambiguity in the
+not-yet-adopted 0.9.5 target; it does not change the currently adopted 0.8.5
+program set and does not claim implementation evidence. It closes which helper
+families and view types exist; ODR-006 separately asks how the helper and
+callback parameter modes are represented under `[FN-1]` and `fn_type`.
+
+## ADR-026 — Callable types carry ordinary parameter modes
+
+**Owner ruling, 2026-09-12, partially resolving ODR-006 / ERR-047.** H6 could
+name the all-mutable helper family but could not type its callbacks faithfully:
+the `fn_type` grammar admitted only a list of types, while `[FN-1]` and `[FN-2]`
+make parameter mode part of the callee's borrowing and ownership contract.
+Treating `MutSpan[T]` as implicitly mutable would have created a type-specific
+exception to those ordinary rules.
+
+**The decision.** Callable types admit the same three modes as declarations:
+an omitted mode is borrowed, `mut` is an inout/mutable borrow, and `owned`
+consumes the argument. Thus `fn(A) -> R`, `fn(mut A) -> R`, and
+`fn(owned A) -> R` are distinct callable contracts, but not a second ownership
+model. Their call sites obey the same mutability, place, move, and lifetime
+rules as ordinary functions. An `extern "C" fn` remains available only where
+the complete mode-bearing signature satisfies the existing FFI-safety rules.
+
+The `_mut` `with_views` callbacks therefore spell every callback parameter
+`mut MutSpan[T]`. `[LT-11a]` requires a mode-mismatch diagnostic instead of
+pretending the `MutSpan` type supplies authority, and `[TST-20]` records the
+corresponding conformance obligations. The ruling's `SpanMut[T]` spelling is
+again normalized to Ember's existing `MutSpan[T]`; no alias is introduced.
+The supplied mnemonic `[TST-LT-MUT]` is likewise normalized to the next unused
+numeric test-rule ID because Ember's normative rule-ID grammar requires a
+numeric suffix; this changes no test obligation.
+
+**What remains undecided.** The ruling does not assign a mode to the helper
+functions' own `MutSpan` inputs. They are still unmarked and therefore shared;
+ODR-006 remains partially open over `mut` versus `owned`. It also does not say
+how the mode vector survives `[CLO-3]`'s mapping from `fn(A) -> R` to
+`Callable[(A), R]`, whose ordinary `Args` tuple carries only types. ODR-007
+records that distinct public/compiler representation choice. Neither boundary
+may be inferred from this ADR.
+
+**Version treatment.** H6 was already frozen, so ADR-023 requires this ruling
+to be issued as `0.9.5_Hardened_7`. H7 remains a development target rather than
+the adopted repository specification, and it claims no implementation or
+conformance evidence.
+
+## ADR-027 — `with_views` reborrows inputs and `Callable` preserves modes internally
+
+**Owner ruling, 2026-09-12, closing ODR-006 and ODR-007.** H7 made callback
+parameter modes expressible but deliberately left two decisions open: whether
+the mutable helpers consume or reborrow their input views, and how the existing
+`Callable[Args, R]` abstraction distinguishes those modes.
+
+**Helper input decision.** Shared helpers take their `Span[T]` inputs with the
+default borrowed mode. Mutable helpers take every `MutSpan[T]` input as `mut`.
+Neither family takes an input `owned`. The mutable family therefore performs
+invocation-scoped reborrowing and does not consume the caller's view. The
+helper never owns the underlying storage, extends its lifetime, or converts a
+borrowed view into an owned value.
+
+**Callable bridge decision.** The public `Callable[Args, R]` abstraction stays
+in place. Its compiler-known canonical type identity additionally carries the
+complete borrowed/`mut`/`owned` parameter-mode vector. That metadata survives
+generic bounds, type and borrow checking, overload resolution, and
+monomorphisation. It is erased before runtime and introduces no mode dispatch,
+ABI change beyond existing ABI rules, public mode-vector generic parameter, or
+second ownership system. `[FN-6a]` and `[CLO-3]` make explicit that the `Args`
+tuple notation does not erase the internal mode vector.
+
+**Conformance.** `[LT-8a]` binds the helpers to that callable representation;
+`[TST-21]` covers helper input modes, caller usability, generic forwarding, and
+mode mismatch/erasure. The owner's transport text used `SpanMut[T]` and
+`[TST-LT-MODE]`; H8 normalizes them to the already-defined `MutSpan[T]` and the
+next unused numeric rule ID without changing substance.
+
+**Version treatment.** H7 was frozen before this ruling arrived, so ADR-023
+requires `0.9.5_Hardened_8`. H8 becomes the frozen development target. It is
+not the adopted repository specification and makes no compiler implementation
+or conformance claim.

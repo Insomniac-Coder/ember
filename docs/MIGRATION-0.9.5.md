@@ -1,12 +1,15 @@
-# Migration intake — Ember 0.9.5_Hardened_4
+# Migration intake — Ember 0.9.5_Hardened_8
 
 Status as of 2026-09-12: **target accepted for development; not yet installed
 as the normative repository specification.**
 
 This document is the evidence-backed bridge between the repository's current
 normative language, `0.8.5_Hardened_1`, and the owner's proposed target,
-received as `0.9.5_Hardened_3` and corrected and frozen as the owner-directed
-`0.9.5_Hardened_4` development target. It is not a second specification. Where this document and
+received as `0.9.5_Hardened_3`, corrected and frozen as H4, advanced by source
+recovery to H5, advanced through the mutable-helper API ruling as H6, and
+clarified at the callable-parameter-mode boundary as H7, then completed at the
+helper-input and `Callable` bridge boundaries as the `0.9.5_Hardened_8`
+development target. It is not a second specification. Where this document and
 a normative rule differ, the specification governs.
 
 ## 1. Source custody and exact inputs
@@ -27,7 +30,7 @@ The current normative working source,
 
     F8EC2010EADC6F7393E81C67C77DCB8268B8604578F419BC03EEDAD422DCC4AF
 
-The frozen H4 development target is:
+The frozen H4 predecessor is:
 
     docs/spec-source/Ember_v0.9.5_Hardened_4.md
 
@@ -35,15 +38,59 @@ It is 695,978 bytes and 7,425 lines, SHA-256:
 
     143E7B85805C44EA93F431CE6D05DC46DB7FA38636577B1DDA698B77D5389AB2
 
-It is deliberately not installed as `ember-spec.md`. It retains every rule ID
-present in 0.8.5, adds 103 referenced IDs, and still identifies six missing
-definitions: LT-8 through LT-13. `E3065` remains a specified-but-unimplemented
-diagnostic.
+It retains every rule ID present in 0.8.5 and records the six-definition source
+gap that was open when H4 froze.
 
-H4 is immutable under that revision identity. Recovering the missing rules or
-making any later correction requires `0.9.5_Hardened_5`; H5 then becomes the
-development target. Target selection and normative repository adoption are
-separate gates.
+The frozen H5 source-recovery predecessor is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_5.md
+
+It is 700,757 bytes and 7,493 lines, SHA-256:
+
+    0421B0313D8768513F6F474BADE2782B8DA237DFF5D59054471CA9F8224AE1ED
+
+H5 recovers `[LT-8]`–`[LT-13]` from the definitions supplied by the owner on
+2026-09-12. Only transport-corrupted Markdown escaping and code fences were
+normalized.
+
+The frozen H6 mutable-helper predecessor is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_6.md
+
+It is 703,559 bytes and 7,522 lines, SHA-256:
+
+    5AF6C2FD36908DCB7A379C06776986CE212A2B8E3EC2C80DF42A8164D3DD825D
+
+H6 resolves ODR-005 using explicit all-mutable `with_views2_mut/3_mut/4_mut`
+signatures with canonical `MutSpan[T]`.
+
+The frozen H7 callable-mode predecessor is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_7.md
+
+H7 records the owner-approved callable parameter-mode ruling: callable types
+admit borrowed/default, `mut`, and `owned` modes, and `_mut` helper callbacks
+use explicit `mut`. It is 707,643 bytes and 7,579 lines, SHA-256:
+
+    573BF0729BC6AEF51E872CBF773EDEAB642F91635BFA52F03797FD050D53BC8D
+
+The current frozen development target is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_8.md
+
+H8 closes ODR-006 and ODR-007: mutable helper inputs are `mut` reborrows,
+neither helper family consumes a view, and `Callable[Args, R]` preserves the
+full mode vector as compile-time canonical type metadata. It is 713,482 bytes
+and 7,644 lines, SHA-256:
+
+    28FB191D8B8CE085AE878F55A15E5B0F0C9E364FD6BA58CD2416FA8101BA4156
+
+H4 through H7 remain immutable under
+their revision identities. Any later correction requires
+`0.9.5_Hardened_9`, which then becomes the development target. Target
+selection and normative repository
+adoption are separate gates. `E3065` remains a specified-but-unimplemented
+diagnostic.
 
 The preserved file is evidence of what the owner supplied. It MUST NOT be
 edited. The working source remains `docs/spec-source/ember-spec.md` until the
@@ -73,12 +120,12 @@ become normative.
 
 ## 3. Specification findings
 
-| ID | Class | Finding | H4 treatment |
+| ID | Class | Finding | Current treatment |
 |---|---|---|---|
 | SPEC-095-001 | document structure | H2 opened a historical block without closing it. | **Resolved.** H4 has one consolidated normative body with paired markers. |
 | SPEC-095-002 | normative contradiction | H2 made the inherited language non-normative. H3 introduced a supersession algorithm over a body already edited in place. | **Resolved.** H4 is one flattened normative source; frozen predecessors remain separate history. |
 | SPEC-095-003 | broken cross-reference | H2's boundary hid the only `[MIR-REG-1]` definition. | **Resolved.** The consolidated Part XIX definition is active and indexed. |
-| SPEC-095-004 | missing normative source, blocking | H3 says `[LT-8]`–`[LT-13]` were recovered, but defines none of them. | **OPEN: ODR-004.** Recover authoritative text or obtain a new owner decision. Do not infer six APIs. |
+| SPEC-095-004 | missing normative source | H3 says `[LT-8]`–`[LT-13]` were recovered, but defines none of them. | **Resolved in H5.** ODR-004 closed when the owner supplied all six definitions. H4 remains the unchanged evidence of the original gap. |
 | SPEC-095-005 | rule-ID collision | H2/H3 reused inherited `[CLI-15]` for cycle inspection and moved the historical meaning. | **Resolved.** Existing `CLI-15` retained; cycle inspection is `CLI-17`. |
 | SPEC-095-006 | implementation/conformance gap | `E3065`/B14 has no repository registry entry, page, emitter, or test. | **Open implementation work.** H4's `DIA-19` defines required artifacts but claims no evidence. |
 | SPEC-095-007 | tooling/document structure | New rules use valid Markdown heading definitions. | **Resolved in tooling.** `rule_index.py --spec` recognizes headings and standalone rule paragraphs, with false-definition tests. |
@@ -91,10 +138,16 @@ become normative.
 | SPEC-095-014 | invalid example | An MRV example mutated `positions` declared as immutable `Span[Vec3]`. | **Resolved.** It is `MutSpan[Vec3]`. |
 | SPEC-095-015 | version/evidence claim | H3 called itself mechanically audited despite the unresolved definitions and collisions. | **Resolved.** H4 is explicitly a frozen development target with normative adoption blocked. |
 | SPEC-095-016 | version-selection wording | `[MOD-6a]` said `0.9.5` was added beyond the versions in `[MOD-6]`, but `[MOD-6]` already listed it. | **Resolved.** One exact supported set remains; `[MOD-6a]` only distinguishes the `0.9` and `0.9.5` contracts. |
+| SPEC-095-017 | semantic/API ambiguity | Recovered `[LT-8]` gives shared-`Span` signatures, while `[LT-11]` and `[TST-16]` refer to mutable inputs. | **Resolved in H6 by owner ruling.** Separate all-mutable `_mut` helpers use `MutSpan[T]`; mixed overloads are not implied. ODR-005 closed. |
+| SPEC-095-018 | semantic/callable-mode ambiguity | H6's `_mut` signatures use unmarked `MutSpan` parameters, but `[FN-1]` makes unmarked parameters shared and `fn_type` cannot encode callback parameter modes. | **Resolved across H7/H8 by owner rulings.** H7 adds callable grammar/modes; H8 makes helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed. |
+| SPEC-095-019 | semantic/callable-abstraction ambiguity | H7 distinguishes borrowed, `mut`, and `owned` callable parameters, but `[CLO-3]` maps callable types to `Callable[Args, R]`, whose `Args` tuple carries no mode vector. | **Resolved in H8 by owner ruling.** The existing public abstraction remains; the compiler's canonical callable type preserves the full mode vector as compile-time-only metadata. ODR-007 closed. |
 
 The strengthened rule-index pass reports no duplicate definitions or orphaned
-amendments in H4. It still reports LT-12 and LT-13 as dangling; a direct expected-
-definition audit proves that LT-8 through LT-13 are all absent. Missing test
+amendments in the current target, and LT-8 through LT-13, LT-8a, LT-11a,
+FN-6a, TST-20, and TST-21 resolve as definitions. The supplied mnemonics
+`TST-LT-MUT` and `TST-LT-MODE` were not valid indexed rule IDs and are
+normalized to the next unused numeric TST IDs.
+The existing four dangling-reference baseline remains unchanged. Missing test
 directories and E3065 artifacts are expected implementation/conformance gaps,
 not evidence that the specification should be weakened.
 
@@ -105,8 +158,8 @@ current 0.8.5 contract; H4 neither creates nor conceals them.
 
 ## 4. Repository state versus the 0.9.5 target
 
-Verified at commit `6c77723114dd563f410b2595058931ac10847837` on `main` before
-this intake:
+Verified at commit `6aefe559e295812cc343443f8a8474cb9a80de1c` on `main` before
+the H5 source-recovery change:
 
 - `cargo build --workspace --locked`: green, no warnings;
 - `cargo test --workspace --locked`: 178 passed, 0 failed;
@@ -159,24 +212,30 @@ fact.
 ### Gate A — make 0.9.5 a sound normative input
 
 1. Preserve each owner's file byte-for-byte — **done for H2 and H3**.
-2. Resolve ODR-004 by recovering or explicitly deciding `[LT-8]`–`[LT-13]`.
+2. Resolve ODR-004 by recovering or explicitly deciding `[LT-8]`–`[LT-13]` —
+   **done in H5 from owner-supplied definitions**.
 3. Produce a consolidated source from the current 0.8.5 lineage: inherited
    rules remain normative; active 0.9/0.9.5 additions are inserted into their
    canonical Parts; superseded rules are replaced once; historical cycle prose
-   remains clearly non-normative — **done in frozen H4; H5 must carry it
-   forward without silently changing H4**.
+   remains clearly non-normative — **done in frozen H4 and carried forward in
+   H5 without changing H4**.
 4. Record every semantic addition as owner-approved and every structural
-   repair by its actual class — **H4 records `HC-095-03`, this migration ledger
-   classifies each correction, and ADR-023 records the hardening protocol;
-   update the adopted-source ledger when H5 is installed**.
-5. Recover the missing source in a new `Ember_v0.9.5_Hardened_5.md`, make H5
-   the development target, regenerate `docs/spec/`, add `0.9`/`0.9.5` version
-   selection, and update ratchets only for gaps introduced by this explicit
-   specification revision. H4 is frozen and MUST NOT be amended in place.
+   repair by its actual class — **H4 records `HC-095-03`, H5 records
+   `HC-095-04`, H6 records `HC-095-05`, H7 records `HC-095-06`, H8 records
+   `HC-095-07`, this migration
+   ledger classifies each correction, and ADR-023 records the hardening
+   protocol; update the adopted-source ledger when the selected successor is
+   installed**.
+5. Recover the missing source in H5, resolve ODR-005 in H6, record callable
+   modes in H7, and close the helper-input and `Callable` bridge boundaries in
+   H8 — **done**. Explicitly adopt the current target:
+   regenerate `docs/spec/`, add `0.9`/`0.9.5` version selection, and update
+   ratchets only for gaps introduced by this explicit specification revision.
+   H4 through H8 are frozen and MUST NOT be amended in place.
 6. Make the rule tooling understand the consolidated rule forms and prove it
    still rejects references masquerading as definitions — **implemented and
-   verified for headings and standalone paragraphs; adoption remains blocked
-   by step 2, not by extraction**.
+   verified for headings and standalone paragraphs; extraction is not the
+   adoption blocker**.
 
 The normative source does not move until these checks pass together. This is
 not resistance to the new semantics; it is what prevents their base language
@@ -250,9 +309,11 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 **D-042 — implement per-field movedness in drop elaboration.**
 
 It is the highest-priority executable compiler task because it is a current
-double-destruction defect, it is independent of the missing `[LT-8]`–`[LT-13]`
-source, and 0.9.5 `[LT-38]` makes field-sensitive moves explicitly
+double-destruction defect, it is independent of the recovered `[LT-8]`–`[LT-13]`
+helper source, and 0.9.5 `[LT-38]` makes field-sensitive moves explicitly
 load-bearing. After D-042: `[CELL-6a]`/`[CELL-9]`/`[CELL-10]`, then Arena.
 
-The parallel specification task is ODR-004 followed by Gate A consolidation.
-Do not invent the missing rules in order to make the queue empty.
+The parallel specification task is now explicit normative adoption of H8;
+ODR-006 and ODR-007 are closed. Do not broaden ODR-005's all-mutable ruling
+into unapproved mixed overloads, change `mut` inputs to `owned`, or turn the
+compile-time callable mode vector into a public generic or runtime mechanism.

@@ -11,8 +11,8 @@ phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..023 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 are closed; ODR-003 is deferred editorial; ODR-004 is the active 0.9.5 source-recovery blocker for missing LT-8 through LT-13 definitions |
+| `docs/DECISIONS.md` | ADR-001..027 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..007 are closed; ODR-003 is deferred editorial; no owner semantic decision is currently open |
 
 ---
 
@@ -32,8 +32,9 @@ phase order.
 
  67 conformance rule directories, 180 cases. 56 defects recorded, **2 open**
  (D-038, D-042). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
-**No errata awaiting the owner** — ERR-041 and ERR-043 were decided on
-2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
+**No erratum currently awaits an owner semantic decision.** ERR-047 and
+ERR-048 were closed by the H7/H8 owner rulings; earlier ERR-041 and ERR-043 were
+decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
 Ratchets in
 `tools/*_baseline.json` may shrink and never grow; `--allow-growth` needs a
 reason in the commit message.
@@ -45,11 +46,17 @@ Read it before starting a task, not after.
 
 **0.9.5 status:** the owner-supplied H2 and H3 files are preserved unchanged
 under `docs/spec-source/as-received/`. The repaired and frozen
-`Ember_v0.9.5_Hardened_4.md` is the new development target, but not yet the
-normative repository source. It retains the owner-selected multi-region-view
-target; ODR-004 blocks normative adoption and conformance for the missing
-`[LT-8]`–`[LT-13]` surface. Because H4 is now frozen, repairing that source gap
-will produce H5, which will then become the target. No 0.9/0.9.5 implementation
+`Ember_v0.9.5_Hardened_4.md` remains the source-gap audit record. The owner then
+supplied `[LT-8]`–`[LT-13]`, frozen as H5, and resolved the mutable-helper
+boundary in H6. The owner then specified ordinary borrowed/default, `mut`, and
+`owned` callable parameter modes and explicit `mut` callback modes in
+H7. The owner then closed the helper-input and `Callable` bridge boundaries in
+`Ember_v0.9.5_Hardened_8.md`: mutable helper inputs are `mut` reborrows, no
+helper consumes a view, and callable modes remain compile-time canonical type
+metadata through the existing abstraction. H8 is the new frozen development
+target, but not yet the normative repository source. It retains the owner-
+selected multi-region-view target and separate shared/all-mutable callback-
+helper families; no mixed overloads are implied. No 0.9/0.9.5 implementation
 or conformance is implied by the target's version label.
 
 ## 2. The rules. Read these before touching `docs/spec-source/`
@@ -119,11 +126,13 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.5_Hardened_4`, per the owner's
+The current development target is `0.9.5_Hardened_8`, per the owner's
 instruction that each issued hardening pass increments the hardening number.
-H3 is the immediate predecessor. H4 is a non-semantic consolidation/repair
-pass; the 0.9.5 multi-region-view feature itself is the owner-selected language
-change. H4 is frozen; its next correction is H5.
+H7 is the immediate predecessor and remains frozen. H5 recovered the missing
+source; H6 records the mutable-helper family; H7 records callable parameter
+modes; H8 records helper input modes and compile-time mode preservation through
+`Callable`. The 0.9.5 multi-region-view feature itself is the owner-selected
+language change. Any H8 correction must be H9.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -228,9 +237,9 @@ ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
 withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
-**The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001 through ODR-003 have owner
-resolutions. ODR-004 is new and blocks normative adoption of the 0.9.5 target
-unless the missing source can be recovered without a semantic decision.
+**The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
+through ODR-007 are closed. ODR-003 is deferred editorial work. No owner
+semantic question is currently open.
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -240,9 +249,17 @@ unless the missing source can be recovered without a semantic decision.
 * **ODR-003 — deferred editorial cleanup.** No semantic change for 0.8.5; the
   next suitable revision classifies each `[FFI-17]` item A/B/C/D against its
   authoritative rule.
-* **ODR-004 — OPEN, P1.** The H3 file claims `[LT-8]`–`[LT-13]` were recovered
-  but contains no definitions. Supply the authoritative Hardened-14 text; if
-  none exists, the owner must decide the exact helper contract or its removal.
+* **ODR-004 — CLOSED.** The owner supplied `[LT-8]`–`[LT-13]` on 2026-09-12;
+  H5 reproduces them with transport-only Markdown normalization and preserves
+  H4 unchanged.
+* **ODR-005 — CLOSED.** H6 adds distinct all-mutable
+  `with_views2_mut/3_mut/4_mut` helpers using canonical `MutSpan[T]`. Shared
+  helpers remain shared; no mixed `Span`/`MutSpan` overloads are implied.
+* **ODR-006 — CLOSED.** H8 makes mutable helper inputs `mut` reborrows; shared
+  inputs stay borrowed and neither family consumes a view.
+* **ODR-007 — CLOSED.** H8 retains `Callable[Args, R]` and preserves the full
+  callable mode vector as compiler-known, compile-time-only canonical type
+  metadata. No new public generic or runtime mode mechanism is implied.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
