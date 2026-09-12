@@ -100,7 +100,7 @@ ERR-008) is worth being able to read again.
 | ERR-047 | H6/H7 `[LT-8]` with `fn_type`, `[FN-1]`, `[FN-2a]` | **DECIDED by the owner 2026-09-12.** H7 adds callable modes; H8 makes mutable helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed |
 | ERR-048 | H7 `[FN-6]` with `[CLO-3]` / `Callable[Args, R]` | **DECIDED by the owner 2026-09-12.** H8 preserves the full mode vector as compiler-known canonical metadata through the existing abstraction. ODR-007 closed |
 | ERR-049 | H8 `[LT-4]` with `[LT-1a]` | **DECIDED by the owner 2026-09-12.** H9 permits the narrow `@borrows(arena)` provenance contract for Arena-backed returned views. `Arena` remains a non-view; arbitrary non-view parameters remain forbidden. ODR-008 closed |
-| ERR-050 | H9 `[ARN-3]` with `[UNS-1]`, `[UNS-5]`, and the Phase 2/4 plan | **OWNER DECISION REQUIRED.** `Zeroable`, `MaybeUninit`, and Arena bulk initialization are named but do not have an executable validity/state-transition contract. ODR-009 open; H9 unchanged |
+| ERR-050 | H9 `[ARN-3]` with `[UNS-1]`, `[UNS-5]`, and the Phase 2/4 plan | **DECIDED by the owner 2026-09-12.** H10 defines deterministic bulk initialization, exact `Zeroable` validity, canonical `MaybeUninit` APIs/state transitions, `!needs_drop`, rollback, and Phase 2 availability. ODR-009 closed; H9 unchanged |
 
 ---
 
@@ -2210,7 +2210,7 @@ numeric `[TST-22]`. No extra Arena method is inferred.
 
 ## ERR-050 — Arena bulk initialization lacks a complete safety contract
 
-**Status: OWNER DECISION REQUIRED; ODR-009 open. H9 is unchanged.**
+**Status: DECIDED by the owner 2026-09-12; ODR-009 closed in H10. H9 is unchanged.**
 
 **Where.** `[ARN-3]` promises an `alloc_array[T]` result initialized by
 `Zeroable` or `Default`, plus `alloc_uninit[u8]` returning
@@ -2232,7 +2232,20 @@ explicitly instantiated generic method: the current minimal
 `arena.alloc_array[Pixel](2)` probe reports E1010, “only direct calls are
 supported in this phase”. That implementation dependency is `GEN-METHOD-1`.
 
-**Why work stopped.** These choices govern valid bit patterns, safe reads of
+**Why work stopped at H9.** These choices govern valid bit patterns, safe reads of
 uninitialized storage, destruction obligations, diagnostics, and the accepted
 API. Implementing any one reading would invent unsafe language semantics. The
-required owner decision and recommended options are recorded in ODR-009.
+required owner decision and recommended options were recorded in ODR-009.
+
+**Owner resolution.** H10 extends `[ARN-2]`/`[ARN-3]` and adds
+`[ARN-8]`–`[ARN-13]` plus `[TST-23]`: `Zeroable` precedes `Default`; E2040 is
+the neither-capability diagnostic; ordinary bulk allocation rejects every
+`needs_drop(T)`; Default construction rolls back the cursor; `Zeroable` means
+all-zero representation validity; and `MaybeUninit` has exact layout,
+non-dropping ownership, safe-write, unsafe-consumption, and full-span rules.
+Core `Zeroable` support is Phase 2 while general derives may remain Phase 4.
+
+The follow-up owner ruling fixes the canonical API names. H10 makes the stated
+move/consume semantics explicit with ordinary Ember parameter modes and uses
+unused continuation IDs because the supplied headings collided with frozen H9
+Arena rules. ADR-029 and HC-095-09 preserve both the ruling and normalization.

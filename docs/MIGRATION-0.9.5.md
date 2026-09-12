@@ -1,4 +1,4 @@
-# Migration intake — Ember 0.9.5_Hardened_9
+# Migration intake — Ember 0.9.5_Hardened_10
 
 Status as of 2026-09-12: **target accepted for development; not yet installed
 as the normative repository specification.**
@@ -10,7 +10,9 @@ recovery to H5, advanced through the mutable-helper API ruling as H6, and
 clarified at the callable-parameter-mode boundary as H7, completed at the
 helper-input and `Callable` bridge boundaries as H8, and advanced through the
 owner-approved Arena return-provenance repair as the `0.9.5_Hardened_9`
-development target. It is not a second specification. Where this document and
+predecessor, and completed by the owner-approved Arena allocation and
+initialization contract as the `0.9.5_Hardened_10` development target. It is
+not a second specification. Where this document and
 a normative rule differ, the specification governs.
 
 ## 1. Source custody and exact inputs
@@ -86,7 +88,7 @@ and 7,644 lines, SHA-256:
 
     28FB191D8B8CE085AE878F55A15E5B0F0C9E364FD6BA58CD2416FA8101BA4156
 
-The current frozen development target is:
+The frozen H9 Arena-provenance predecessor is:
 
     docs/spec-source/Ember_v0.9.5_Hardened_9.md
 
@@ -96,8 +98,18 @@ that arena. It is 718,316 bytes and 7,696 lines, SHA-256:
 
     0DAC71E2832FE422FFEBE004E25B438CE41BB518E921C6D8B243C8FE5F6A1738
 
-H4 through H8 remain immutable under their revision identities. Any later
-correction requires `0.9.5_Hardened_10`, which then becomes the development
+The current frozen development target is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_10.md
+
+H10 closes ODR-009 with deterministic bulk initialization, exact `Zeroable`
+validity, canonical `MaybeUninit` value/span APIs, `!needs_drop`, rollback, and
+Phase 2 availability. It is 728,498 bytes and 7,765 lines, SHA-256:
+
+    F3FFF9C14AA3C80E57949479A1BC917FE7DF62B551B7CB8B17669D19FC5C4B14
+
+H4 through H10 remain immutable under their revision identities. Any later
+correction requires `0.9.5_Hardened_11`, which then becomes the development
 target. Target selection and normative repository
 adoption are separate gates. `E3065` remains a specified-but-unimplemented
 diagnostic.
@@ -152,11 +164,13 @@ become normative.
 | SPEC-095-018 | semantic/callable-mode ambiguity | H6's `_mut` signatures use unmarked `MutSpan` parameters, but `[FN-1]` makes unmarked parameters shared and `fn_type` cannot encode callback parameter modes. | **Resolved across H7/H8 by owner rulings.** H7 adds callable grammar/modes; H8 makes helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed. |
 | SPEC-095-019 | semantic/callable-abstraction ambiguity | H7 distinguishes borrowed, `mut`, and `owned` callable parameters, but `[CLO-3]` maps callable types to `Callable[Args, R]`, whose `Args` tuple carries no mode vector. | **Resolved in H8 by owner ruling.** The existing public abstraction remains; the compiler's canonical callable type preserves the full mode vector as compile-time-only metadata. ODR-007 closed. |
 | SPEC-095-020 | semantic/region-provenance ambiguity | H8 `[LT-4]` required an Arena-backed returned view to retain the supplying Arena's region, while `[LT-1a]` rejected every non-view parameter in the only public return-provenance annotation. | **Resolved in H9 by owner ruling.** `@borrows(arena)` is a narrow provenance-only exception for a growing Arena-backed returned view. Arena remains non-view and arbitrary non-view parameters remain forbidden. ODR-008 closed. |
-| SPEC-095-021 | unsafe-initialization/API gap | H9 names `Zeroable`, `MaybeUninit`, `alloc_array`, and `alloc_uninit` without an exact bit-validity, state-transition, fallback/drop, or diagnostic contract; Phase 2/4 scheduling also disagrees. | **OWNER DECISION REQUIRED.** ERR-050 / ODR-009. H9 remains frozen; do not invent the missing safety semantics. Explicit generic method arguments are separately tracked as compiler debt `GEN-METHOD-1`. |
+| SPEC-095-021 | unsafe-initialization/API gap | H9 names `Zeroable`, `MaybeUninit`, `alloc_array`, and `alloc_uninit` without an exact bit-validity, state-transition, fallback/drop, or diagnostic contract; Phase 2/4 scheduling also disagrees. | **Historical H9 stop; resolved by SPEC-095-022 in H10.** ERR-050 / ODR-009 preserved the owner question without editing H9. Explicit generic method arguments remain separately tracked as compiler debt `GEN-METHOD-1`. |
+| SPEC-095-022 | owner resolution / hardening | The owner supplied the complete Arena initialization contract and canonical `MaybeUninit` API after H9 froze. | **Resolved in H10.** `[ARN-2]`/`[ARN-3]` and `[ARN-8]`–`[ARN-13]` define capability precedence, E2040, `!needs_drop`, rollback, all-zero validity, value/span transitions, API naming, and phase ordering; `[TST-23]` defines conformance. ODR-009/ERR-050 closed. |
 
 The strengthened rule-index pass reports no duplicate definitions or orphaned
 amendments in the current target, and LT-8 through LT-13, LT-8a, LT-11a,
-LT-4a, LT-4b, FN-6a, TST-20, TST-21, and TST-22 resolve as definitions. The supplied mnemonics
+LT-4a, LT-4b, FN-6a, ARN-8 through ARN-13, TST-20, TST-21, TST-22, and TST-23
+resolve as definitions. The supplied mnemonics
 `TST-LT-MUT` and `TST-LT-MODE` were not valid indexed rule IDs and are
 normalized to the next unused numeric TST IDs.
 The existing four dangling-reference baseline remains unchanged. Missing test
@@ -188,7 +202,7 @@ writes through borrowed value parameters; and D-038's implicit `String`→`str`
 coercion shares the explicit `as_str()` borrow path. Growing, fixed, and scoped
 Arena core allocation is implemented, including aligned stable storage,
 reset/scope borrowing, `E3090`, `E3096`, and H9 `@borrows(arena)` wrapper
-provenance. The frozen H9 target and adopted normative specification are
+provenance. The frozen H10 target and adopted normative specification are
 unchanged by these compiler/test blocks.
 
 `cargo test` emits one Rust test-target style warning for
@@ -219,7 +233,7 @@ rustfmt to a required gate.
 | Per-field movedness | **Implemented by the D-042 fix.** Recursive move paths, per-path conditional flags, partial cleanup, sibling preservation, reinitialisation and `E3042` are covered by adversarial `[EXP-6]` cases. This is now available as a foundation for `[LT-38]`; field-sensitive region provenance itself is not implemented. |
 | String view coercion | **Implemented.** Implicit `String`→`str` and explicit `as_str()` share `view_of`, the `StringAsStr` elision entry, MIR view verification, and backend lowering; mutation and return-region adversaries are covered. |
 | Remaining `Cell`/`RefCell` obligations | `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` now have executable conformance evidence; E3023/B4 is live and D-044 is closed. `Cell.take`/the `Default` update arm await `Default`; `[CELL-3]`/`[CELL-8]` `!Sync` await `Send`/`Sync` and threading. `[CELL-9]`'s class-only unchecked-exclusivity interaction has no reachable trigger until that later subsystem exists. |
-| Arena | **Core implemented.** Compiler-known move-only `Arena`, `FixedArena`, and `ScopedArena`; stable aligned bump allocation; `alloc`, `alloc_nodrop`, `reset`, nested LIFO `scope`; drop/rewind glue; `E3090`/`E3096`; and H9 `@borrows(arena)` wrapper provenance have executable evidence. `alloc_array`/`alloc_uninit` are blocked on ODR-009 plus `GEN-METHOD-1`; `ArenaArray`/`ArenaMap` and effect/concurrency obligations remain open. Arena is a region allocator, not another interior-mutability primitive. |
+| Arena | **Core implemented.** Compiler-known move-only `Arena`, `FixedArena`, and `ScopedArena`; stable aligned bump allocation; `alloc`, `alloc_nodrop`, `reset`, nested LIFO `scope`; drop/rewind glue; `E3090`/`E3096`; and H9 `@borrows(arena)` wrapper provenance have executable evidence. H10 closes ODR-009, so `alloc_array`/`alloc_uninit` now await ordinary implementation of `Default`, `Zeroable`, `MaybeUninit`, and `GEN-METHOD-1`; `ArenaArray`/`ArenaMap` and effect/concurrency obligations remain open. Arena is a region allocator, not another interior-mutability primitive. |
 | UnsafeCell | Normatively specified in 0.8.5, not implemented. |
 | Phase 2 completeness | `mem.*`, `Clone`/`Default` derives, the full standard collection surface, several borrow/lifetime rules, and `[DIA-7..10]` UI snapshots remain incomplete. |
 | Objects and later phases | Class/foreign-class/coroutine syntax exists in the parser, but class layout/RC/exclusivity/vtables, effects/comptime/derives, C and C++ importers, concurrency, DOD/ECS/SIMD, interpreter, LLVM backend, hot reload, deterministic execution, LSP/debugger, and the full standard library are not implemented. |
@@ -244,16 +258,16 @@ fact.
 4. Record every semantic addition as owner-approved and every structural
    repair by its actual class — **H4 records `HC-095-03`, H5 records
    `HC-095-04`, H6 records `HC-095-05`, H7 records `HC-095-06`, H8 records
-   `HC-095-07`, and H9 records `HC-095-08`; this migration
+   `HC-095-07`, H9 records `HC-095-08`, and H10 records `HC-095-09`; this migration
    ledger classifies each correction, and ADR-023 records the hardening
    protocol; update the adopted-source ledger when the selected successor is
    installed**.
 5. Recover the missing source in H5, resolve ODR-005 in H6, record callable
    modes in H7, close the helper-input and `Callable` bridge boundaries in H8,
-   and close Arena return provenance in H9 — **done**. Explicitly adopt the current target:
+   close Arena return provenance in H9, and close Arena initialization in H10 — **done**. Explicitly adopt the current target:
    regenerate `docs/spec/`, add `0.9`/`0.9.5` version selection, and update
    ratchets only for gaps introduced by this explicit specification revision.
-   H4 through H9 are frozen and MUST NOT be amended in place.
+   H4 through H10 are frozen and MUST NOT be amended in place.
 6. Make the rule tooling understand the consolidated rule forms and prove it
    still rejects references masquerading as definitions — **implemented and
    verified for headings and standalone paragraphs; extraction is not the
@@ -276,10 +290,9 @@ from being accidentally discarded.
 3. ~~Fix D-038.~~ **Done.** The implicit form reuses the verified explicit-borrow path; no second view producer was introduced.
 4. Finish `Arena` and its region behavior. **Core allocation, fixed/scoped
    arenas, reset/rewind, drop-free enforcement, and H9 wrapper provenance are
-   done.** The remaining surfaces depend on `Default`, `Zeroable`,
-   `MaybeUninit`, collection support, effects, and concurrency. ODR-009 blocks
-   the unsafe-initialization contract; `GEN-METHOD-1` blocks the generic-method
-   call surface.
+   done.** H10 closes ODR-009. The remaining surfaces depend on implementing
+   `Default`, `Zeroable`, `MaybeUninit`, collection support, effects, and
+   concurrency; `GEN-METHOD-1` blocks the generic-method call surface.
 5. Implement `UnsafeCell` exactly within `[UNS-10]`–`[UNS-10b]`.
 6. Finish the remaining Phase 2 exit criteria, including UI snapshots.
 
@@ -338,22 +351,21 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 
 ## 7. Exact next task
 
-**Obtain the ODR-009 owner ruling, then implement the prerequisites for the
-remaining Arena surface and finish `Arena` (`[ARN-3]`–`[ARN-5]`).**
+**Implement H10's prerequisites for the remaining Arena surface and finish
+`Arena` (`[ARN-3]`, `[ARN-5]`, `[ARN-8]`–`[ARN-13]`).**
 
-The safe core is present. H9 does not define enough of `Zeroable`,
-`MaybeUninit`, or bulk initialization to implement them without choosing
-bit-validity, state-transition, drop/failure, API, and diagnostic semantics;
-ERR-050/ODR-009 is therefore the current stop. The compiler also needs the
-separate `GEN-METHOD-1` mechanism for explicit method type arguments. After
-the owner ruling and those prerequisites, implement `alloc_array` and
+The safe core is present and H10 supplies the previously missing `Zeroable`,
+`MaybeUninit`, bulk-initialization, drop/failure, API, and phase semantics;
+ERR-050/ODR-009 is closed. The compiler next needs the separate `GEN-METHOD-1`
+mechanism for explicit method type arguments plus the initialization
+foundation. Then implement `alloc_array` and
 `alloc_uninit`, then the remaining Arena collection surface (`ArenaArray`/`ArenaMap`)
 against the actual collection machinery. Keep effect/concurrency-dependent
 obligations explicitly tracked until those phases exist. Do not substitute
 test-specific zeroing or an ad-hoc uninitialized type, and keep Arena a region
 allocator rather than an interior-mutability primitive.
 
-The parallel specification task is now explicit normative adoption of H9;
-ODR-006 through ODR-008 are closed. Do not broaden ODR-005's all-mutable ruling
+The parallel specification task is explicit normative adoption of H10;
+ODR-006 through ODR-009 are closed. Do not broaden ODR-005's all-mutable ruling
 into unapproved mixed overloads, change `mut` inputs to `owned`, or turn the
 compile-time callable mode vector into a public generic or runtime mechanism.

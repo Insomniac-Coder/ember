@@ -28,7 +28,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-006 | **CLOSED** — mutable helper inputs are `mut` reborrows | Language / callable API | — | **No** — ruled 2026-09-12 |
 | ODR-007 | **CLOSED** — mode vector is compiler-known `Callable` metadata | Language / callable abstraction | — | **No** — ruled 2026-09-12 |
 | ODR-008 | **CLOSED** — `Arena` is a narrow `@borrows` provenance source | Language / region provenance | — | **No** — ruled 2026-09-12 |
-| ODR-009 | **OPEN** — Arena bulk-initialization safety contract | Language / unsafe initialization / API | **P1** | **Yes** |
+| ODR-009 | **CLOSED** — H10 defines Arena initialization completely | Language / unsafe initialization / API | — | **No** — ruled 2026-09-12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -36,10 +36,11 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-008 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **ODR-009 is the one open owner
-semantic decision.** H8 records the complete helper-mode and callable-abstraction
-ruling; H9 records the Arena-backed return-provenance ruling. Full H8/H9
+ODR-001, ODR-002, and ODR-004 through ODR-009 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **There is no open owner semantic
+decision.** H8 records the complete helper-mode and callable-abstraction
+ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
+Arena allocation and initialization contract. Full H8/H9/H10
 implementation and conformance remain outstanding, although the Arena core and
 H9 wrapper-provenance path now have executable evidence. Those gaps are not
 owner questions and did not block the now-closed D-042 compiler work.
@@ -50,23 +51,51 @@ editorial cleanup that can safely wait.
 
 ---
 
-## ODR-009 — Arena bulk-initialization safety contract — **OPEN**
+## ODR-009 — Arena bulk-initialization safety contract — **CLOSED**
 
     ID:        ODR-009
-    Status:    OPEN — owner definition required before alloc_array/alloc_uninit
+    Status:    CLOSED — resolved by the owner and incorporated in H10
     Category:  LANGUAGE / UNSAFE INITIALIZATION / STANDARD-LIBRARY API
-    Priority:  P1
-    Location:  Ember_v0.9.5_Hardened_9.md [ARN-3], [UNS-1], [UNS-5],
-               Part IX §2/§5, Part XV std.mem table, Phase 2 and Phase 4
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_10.md [ARN-2], [ARN-3], [ARN-8]–[ARN-13],
+               [UNS-1], [UNS-5], [TST-23], Phase 2 and Phase 4
 
     Semantic impact:                  YES — validity, initialization, drop, API, accepted programs
-    Blocks implementation:            YES — remaining Arena bulk-allocation surface
-    Blocks conformance:               YES — ARN-3 and TST-22 mutable-span clause
-    Blocks H9 identity freeze:         NO — H9 remains frozen evidence of the gap
-    Blocks normative specification adoption: YES — the target is not implementation-ready here
-    Requires owner semantic decision: YES
+    Blocks implementation:            NO — the semantic/API blocker is resolved
+    Blocks conformance:               NO — implementation and evidence remain ordinary work
+    Blocks H9/H10 identity freeze:     NO — H9 preserves the gap; H10 preserves the ruling
+    Blocks normative specification adoption: NO — other adoption gates remain
+    Requires owner semantic decision: NO
 
-**Existing wording.** `[ARN-3]` demonstrates
+    Resolution: Owner-approved Arena allocation / initialization and MaybeUninit API contract
+    Authority:  Owner rulings supplied 2026-09-12; ADR-029; HC-095-09
+    Revision:   Ember 0.9.5_Hardened_10
+    Result:     Closed. H10 [ARN-2], [ARN-3], and [ARN-8]–[ARN-13] are
+                authoritative within the frozen development target.
+
+**Owner resolution.** `alloc_array` deterministically prefers `Zeroable`, then
+`Default`, and reports existing E2040 when neither is available; ordinary bulk
+allocation always requires `!needs_drop(T)` and `Default` construction rolls
+the Arena cursor back transactionally. `Zeroable` means exactly that the
+all-zero object representation is a valid initialized `T`; automatic proof is
+recursive and manual implementation, if exposed, is unsafe and audited.
+
+`MaybeUninit[T]` has `T`'s size/alignment, never drops `T`, is `Copy` iff `T`
+is, and has the canonical `uninit`, `write`, and unsafe consuming
+`assume_init` operations. `MutSpan[MaybeUninit[T]]` has canonical `write_at`
+and unsafe consuming `assume_init`; the latter asserts full initialization.
+The core predicate/built-ins are Phase 2, while general derive generation may
+remain Phase 4.
+
+**Signature normalization.** The ruling's prose says that `write` moves its
+value and that `assume_init` consumes its source. Because an omitted Ember mode
+means borrowed, H10 writes the corresponding `owned value`, `mut self`, and
+`owned self` modes explicitly. This makes the supplied semantics executable;
+it does not add a second API. The ruling's `[ARN-4]`–`[ARN-7]` headings collided
+with frozen H9 rules, so H10 preserves the earlier meanings and assigns the new
+clauses `[ARN-8]`–`[ARN-13]`. `[TST-ARN-MU]` is normalized to `[TST-23]`.
+
+**Historical question — existing H9 wording.** `[ARN-3]` demonstrated
 `alloc_array[T](count) -> MutSpan[T]`, “zero-initialised if `T: Zeroable` else
 `Default`”, and `alloc_uninit[u8](bytes) -> MutSpan[MaybeUninit[u8]]`.
 `[UNS-5]` says `MaybeUninit[T]` and `mem.zeroed[T]()` exist and describes
@@ -75,7 +104,7 @@ structs”. `[UNS-1]` makes `assume_init` and implementing an unsafe interface
 unsafe. The prelude lists `Default`, whose only stated signature is
 `fn default() -> Self`.
 
-**Conflict / missing contract.** Those sentences name the concepts but do not
+**Historical conflict / missing contract.** Those sentences named the concepts but did not
 define the safety boundary needed to emit code:
 
 1. `MaybeUninit[T]` has no normative layout, `Copy`/`Drop` behavior, constructor,
@@ -97,7 +126,7 @@ this phase”, because explicit type arguments on methods are not implemented.
 That is a separate compiler-side dependency (`GEN-METHOD-1`), not an answer to
 the initialization semantics above.
 
-**Possible interpretations.**
+**Historical possible interpretations.**
 
 1. Define a minimal complete unsafe-initialization contract now: exact
    `Zeroable` validity/derivation rules, exact `MaybeUninit` representation and
@@ -111,16 +140,16 @@ the initialization semantics above.
    preserves implementation safety but changes the Phase 2 exit surface and
    leaves `[TST-22]`'s mutable-span clause unavailable until then.
 
-**Owner answer needed.** If option 1 is selected, the ruling must state at
-least: the exact `Zeroable` interface and compiler-proven eligibility set;
-whether manual unsafe implementations are permitted; `MaybeUninit[T]` layout,
-drop, copy, read/write/assume-init operations and span transition; the exact
-`alloc_array` bound/selection rule; what happens when neither capability is
-available; whether `[ARN-3]` still rejects every `needs_drop` element; and the
-required diagnostic identities. It should also classify the resulting
-revision as H10 hardening or a language revision.
+**Answer supplied.** The owner selected and completed option 1, including the
+canonical public API in a second follow-up ruling. The requested contract now
+appears in H10.
 
-**Why this cannot be resolved safely by the agent.** Each choice changes which
+The answer supplied the exact `Zeroable` eligibility claim, manual-implementation
+boundary, `MaybeUninit` layout/drop/copy and transition APIs, `alloc_array`
+selection, E2040 fallback, `needs_drop` rule, failure semantics, and H10
+classification that the original question required.
+
+**Why this could not be resolved safely by the agent.** Each choice changed which
 bit patterns may become a typed safe value, when destructors are owed, which
 programs type-check, and what API safe code can call. Guessing would silently
 change Ember's accepted-program and memory-safety contract.
@@ -692,3 +721,4 @@ reopening it.
 | **ODR-006** — helper/callback modes | Mutable helper inputs are `mut` reborrows; callback modes remain explicit | Owner ruling 2026-09-12; **ADR-026 / ADR-027** | 0.9.5_Hardened_8 | Closed; no helper consumes an input view |
 | **ODR-007** — `fn`/`Callable` mode bridge | Preserve the complete mode vector as compiler-known canonical type metadata | Owner ruling 2026-09-12; **ADR-027** | 0.9.5_Hardened_8 | Closed; no runtime mode bookkeeping or second ownership system |
 | **ODR-008** — Arena-backed return provenance | Permit narrow `@borrows(arena)` only for a view backed by that Arena | Owner ruling 2026-09-12; **ADR-028** | 0.9.5_Hardened_9 | Closed; Arena remains non-view and arbitrary non-view parameters remain forbidden |
+| **ODR-009** — Arena bulk-initialization contract | Define deterministic initialization, `Zeroable` validity, canonical `MaybeUninit` transitions, rollback, and phase ordering | Owner rulings 2026-09-12; **ADR-029 / HC-095-09** | 0.9.5_Hardened_10 | Closed; implementation and conformance remain ordinary tracked work |

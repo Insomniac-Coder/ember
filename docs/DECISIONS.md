@@ -938,3 +938,37 @@ normalizes `[TST-LT-ARENA-RETURN]` to the next numeric rule ID `[TST-22]`.
 `0.9.5_Hardened_9`. H9 is the new frozen development target. The adopted
 0.8.5 specification remains unchanged pending the separate 0.9.5 adoption
 gates.
+
+## ADR-029 — Arena bulk initialization has one explicit safety boundary
+
+**Owner rulings, 2026-09-12, resolving ODR-009 / ERR-050.** H9 advertised
+`alloc_array`, `alloc_uninit`, `Zeroable`, and `MaybeUninit`, but did not define
+enough of their validity, drop, transition, failure, API, and phase behavior to
+implement them without guessing. The owner selected the complete-contract path
+and supplied the canonical public API in a follow-up ruling.
+
+**Bulk allocation.** Ordinary `alloc_array[T]` always rejects
+`needs_drop(T)`. It deterministically uses `Zeroable` first, then `Default`,
+and reports existing E2040 when neither applies. `Default` construction is
+transactional with respect to the Arena cursor; no partially initialized result
+escapes. `alloc_uninit[T]` has neither capability bound and returns only
+`MutSpan[MaybeUninit[T]]`.
+
+**Validity and ownership.** `Zeroable` asserts exactly that the all-zero object
+representation is valid initialized `T`; compiler proof is recursive, and a
+manual implementation, if exposed, is unsafe and audited. `MaybeUninit[T]` has
+`T`'s size/alignment, never drops `T`, and is `Copy` iff `T` is. Safe `write`
+and `write_at` initialize storage; consuming `assume_init` is unsafe and asserts
+one value or the complete span is initialized. No second safe conversion exists.
+
+**Signature and ID normalization.** The ruling's prose requires moving the
+written value and consuming `assume_init`, so H10 explicitly writes `owned`
+and `mut` modes rather than letting Ember's borrowed default contradict the
+prose. Its `[ARN-4]`–`[ARN-7]` headings collided with H9's frozen rules; H10
+preserves those meanings and assigns the new clauses `[ARN-8]`–`[ARN-13]`.
+The mnemonic conformance heading becomes numeric `[TST-23]`.
+
+**Version treatment.** The ruling completes the intended behavior already
+advertised by 0.9.5 and is owner-classified as a hardening. H9 was frozen, so
+ADR-023 requires `0.9.5_Hardened_10`. H10 is the new frozen development target;
+the adopted 0.8.5 specification remains unchanged pending adoption gates.

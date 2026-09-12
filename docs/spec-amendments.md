@@ -19,7 +19,7 @@ language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
 not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
 so 0.8.3 could not absorb it and the hardening count started again. The current
 repository-normative source is `0.8.5_Hardened_1`; the separately frozen
-development target is `0.9.5_Hardened_9`.
+development target is `0.9.5_Hardened_10`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -63,7 +63,8 @@ the mutable-helper API resolution is frozen as H6, and the owner's callable-
 parameter-mode ruling is frozen as H7. The helper-input and `Callable` bridge
 ruling is frozen as H8. The owner-approved Arena-backed return-provenance
 clarification is frozen as H9. ODR-004 through ODR-008 are closed.
-`docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H8→H9 correction;
+The owner-approved Arena initialization contract is frozen as H10 and closes
+ODR-009. `docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H9→H10 correction;
 this ledger continues to declare
 differences in the currently adopted repository-normative source checked by
 `tools/hardening_check.py`.
@@ -199,6 +200,34 @@ Because H8 was frozen, ADR-023 requires this ruling to be issued as
 `Ember_v0.9.5_Hardened_9.md`. H8 remains unchanged. H9 becomes the frozen
 development target; it does not replace the adopted 0.8.5 normative source or
 claim blanket 0.9.5 conformance.
+
+### HC-095-09 — H10 Arena allocation and initialization contract
+
+**Class: SEMANTICALLY NEUTRAL CLARIFICATION, explicitly owner-approved.** H9
+named `Zeroable`, `Default`, `MaybeUninit`, `alloc_array`, and `alloc_uninit`
+without enough validity, state-transition, destructor, failure, or phase-order
+detail to implement their existing advertised behavior safely. The owner
+resolved ODR-009/ERR-050 on 2026-09-12 and then supplied the missing canonical
+`MaybeUninit` API in a follow-up ruling.
+
+H10 extends `[ARN-2]`/`[ARN-3]` and adds `[ARN-8]`–`[ARN-13]` plus `[TST-23]`.
+It fixes `Zeroable` before `Default` precedence, E2040 fallback,
+`!needs_drop(T)`, cursor rollback, all-zero validity, `MaybeUninit` layout and
+non-dropping ownership, safe writes, unsafe consuming transitions, full-span
+initialization, and Phase 2 availability. General derive generation may remain
+Phase 4.
+
+The supplied headings `[ARN-4]`–`[ARN-7]` collided with frozen H9 definitions,
+so the new clauses receive unused continuation IDs rather than overwriting
+bump-allocation, collection, scope, or LIFO-safety rules. `[TST-ARN-MU]` becomes
+numeric `[TST-23]`. The supplied signatures' move/consume prose is made
+syntactically explicit as `owned value`, `mut self`, and `owned self`, because
+an omitted Ember mode is borrowed under `[FN-2]`.
+
+Because H9 was frozen, ADR-023 requires this ruling to be issued as
+`Ember_v0.9.5_Hardened_10.md`. H9 remains unchanged. H10 becomes the frozen
+development target; it does not replace the adopted 0.8.5 normative source or
+claim implementation/conformance evidence.
 
 ### The four kinds, and what each is allowed to do
 

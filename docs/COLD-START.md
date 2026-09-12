@@ -11,8 +11,8 @@ phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..028 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..008 are closed; ODR-003 is deferred editorial; **ODR-009 is open and blocks Arena bulk initialization** |
+| `docs/DECISIONS.md` | ADR-001..029 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..009 are closed; ODR-003 is deferred editorial; there is currently no open owner semantic decision |
 
 ---
 
@@ -32,8 +32,9 @@ phase order.
 
  80 conformance rule directories, 229 cases. 58 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
-**ERR-050 / ODR-009 awaits an owner semantic decision** on `Zeroable`,
-`MaybeUninit`, and Arena bulk initialization. ERR-047 and ERR-048 were closed
+**ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
+`MaybeUninit`, and Arena bulk initialization. Their compiler/runtime/conformance
+work remains open. ERR-047 and ERR-048 were closed
 by the H7/H8 owner rulings; ERR-049 was closed by the H9
 Arena-provenance ruling; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
@@ -56,8 +57,9 @@ H7. The owner then closed the helper-input and `Callable` bridge boundaries in
 `Ember_v0.9.5_Hardened_8.md`: mutable helper inputs are `mut` reborrows, no
 helper consumes a view, and callable modes remain compile-time canonical type
 metadata through the existing abstraction. H9 then resolved the Arena-backed
-return-provenance boundary with the narrow `@borrows(arena)` exception. H9 is
-the new frozen development
+return-provenance boundary with the narrow `@borrows(arena)` exception. H10
+now resolves deterministic bulk initialization and the complete `Zeroable` /
+`MaybeUninit` safety/API boundary. H10 is the new frozen development
 target, but not yet the normative repository source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied. No 0.9/0.9.5 implementation
@@ -130,14 +132,15 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.5_Hardened_9`, per the owner's
+The current development target is `0.9.5_Hardened_10`, per the owner's
 instruction that each issued hardening pass increments the hardening number.
-H8 is the immediate predecessor and remains frozen. H5 recovered the missing
+H9 is the immediate predecessor and remains frozen. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
 modes; H8 records helper input modes and compile-time mode preservation through
-`Callable`; H9 records Arena-backed return provenance. The 0.9.5 multi-region-
-view feature itself is the owner-selected language change. Any H9 correction
-must be H10.
+`Callable`; H9 records Arena-backed return provenance; H10 records the complete
+Arena initialization and `MaybeUninit` contract. The 0.9.5 multi-region-view
+feature itself is the owner-selected language change. Any H10 correction must
+be H11.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -186,7 +189,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: resolve ODR-009, then finish the remaining `Arena` surface
+## 5. Next task: implement H10's Arena initialization foundation
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -233,11 +236,12 @@ already clear; no specification or ADR changed.
 3. **Remaining Arena surface.** `alloc_array` needs `Default`/`Zeroable`;
    `alloc_uninit` needs `MaybeUninit`; `ArenaArray`/`ArenaMap` need the
    corresponding collection machinery; allocation effects and `ThreadArena`
-   wait for the effects/concurrency phases. **ODR-009 blocks the initialization
-   work:** H9 does not define the zero-bit validity set, `MaybeUninit` state
-   transition, or exact bulk-allocation fallback/drop behavior. Explicit type
-   arguments on methods are the separate compiler gap `GEN-METHOD-1`. Do not
-   invent initialization or unsafe semantics to make a test pass.
+   wait for the effects/concurrency phases. **ODR-009 is closed:** H10 defines
+   the zero-bit validity set, `MaybeUninit` state transitions, canonical APIs,
+   and exact bulk-allocation fallback/drop/rollback behavior. Explicit type
+   arguments on methods remain the separate compiler gap `GEN-METHOD-1`.
+   Implement the H10 contract exactly; do not substitute ad-hoc initialized
+   bytes or implementation-defined conversion APIs.
 
 Arena is **not a third interior-mutability primitive**. It is a region
 allocator, and amendment A13 records that it shares implementation machinery
@@ -271,8 +275,8 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-008 are closed. ODR-003 is deferred editorial work. **ODR-009 is
-open and is the only current owner semantic question.**
+through ODR-009 are closed. ODR-003 is deferred editorial work. **There is no
+current open owner semantic question.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -296,10 +300,10 @@ open and is the only current owner semantic question.**
 * **ODR-008 — CLOSED.** H9 permits `@borrows(arena)` only when a returned view
   is proven to use storage owned by that growing Arena parameter. Arena remains
   non-view; arbitrary non-view parameters remain E2031.
-* **ODR-009 — OPEN.** H9 names `Zeroable`, `MaybeUninit`, `alloc_array`, and
-  `alloc_uninit` without a complete bit-validity, initialization-transition,
-  drop/failure, or exact API contract. This blocks the remaining Arena bulk
-  surface; do not answer it in compiler code.
+* **ODR-009 — CLOSED.** H10 defines `Zeroable`, `MaybeUninit`, `alloc_array`,
+  and `alloc_uninit`, including bit validity, canonical value/span transitions,
+  `!needs_drop`, deterministic fallback, E2040, rollback, and phase ordering.
+  The remaining Arena bulk surface is now ordinary implementation work.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
