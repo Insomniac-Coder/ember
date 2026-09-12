@@ -152,6 +152,7 @@ become normative.
 | SPEC-095-018 | semantic/callable-mode ambiguity | H6's `_mut` signatures use unmarked `MutSpan` parameters, but `[FN-1]` makes unmarked parameters shared and `fn_type` cannot encode callback parameter modes. | **Resolved across H7/H8 by owner rulings.** H7 adds callable grammar/modes; H8 makes helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed. |
 | SPEC-095-019 | semantic/callable-abstraction ambiguity | H7 distinguishes borrowed, `mut`, and `owned` callable parameters, but `[CLO-3]` maps callable types to `Callable[Args, R]`, whose `Args` tuple carries no mode vector. | **Resolved in H8 by owner ruling.** The existing public abstraction remains; the compiler's canonical callable type preserves the full mode vector as compile-time-only metadata. ODR-007 closed. |
 | SPEC-095-020 | semantic/region-provenance ambiguity | H8 `[LT-4]` required an Arena-backed returned view to retain the supplying Arena's region, while `[LT-1a]` rejected every non-view parameter in the only public return-provenance annotation. | **Resolved in H9 by owner ruling.** `@borrows(arena)` is a narrow provenance-only exception for a growing Arena-backed returned view. Arena remains non-view and arbitrary non-view parameters remain forbidden. ODR-008 closed. |
+| SPEC-095-021 | unsafe-initialization/API gap | H9 names `Zeroable`, `MaybeUninit`, `alloc_array`, and `alloc_uninit` without an exact bit-validity, state-transition, fallback/drop, or diagnostic contract; Phase 2/4 scheduling also disagrees. | **OWNER DECISION REQUIRED.** ERR-050 / ODR-009. H9 remains frozen; do not invent the missing safety semantics. Explicit generic method arguments are separately tracked as compiler debt `GEN-METHOD-1`. |
 
 The strengthened rule-index pass reports no duplicate definitions or orphaned
 amendments in the current target, and LT-8 through LT-13, LT-8a, LT-11a,
@@ -218,7 +219,7 @@ rustfmt to a required gate.
 | Per-field movedness | **Implemented by the D-042 fix.** Recursive move paths, per-path conditional flags, partial cleanup, sibling preservation, reinitialisation and `E3042` are covered by adversarial `[EXP-6]` cases. This is now available as a foundation for `[LT-38]`; field-sensitive region provenance itself is not implemented. |
 | String view coercion | **Implemented.** Implicit `String`→`str` and explicit `as_str()` share `view_of`, the `StringAsStr` elision entry, MIR view verification, and backend lowering; mutation and return-region adversaries are covered. |
 | Remaining `Cell`/`RefCell` obligations | `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` now have executable conformance evidence; E3023/B4 is live and D-044 is closed. `Cell.take`/the `Default` update arm await `Default`; `[CELL-3]`/`[CELL-8]` `!Sync` await `Send`/`Sync` and threading. `[CELL-9]`'s class-only unchecked-exclusivity interaction has no reachable trigger until that later subsystem exists. |
-| Arena | **Core implemented.** Compiler-known move-only `Arena`, `FixedArena`, and `ScopedArena`; stable aligned bump allocation; `alloc`, `alloc_nodrop`, `reset`, nested LIFO `scope`; drop/rewind glue; `E3090`/`E3096`; and H9 `@borrows(arena)` wrapper provenance have executable evidence. `alloc_array`, `alloc_uninit`, `ArenaArray`/`ArenaMap`, effect/concurrency obligations, and their prerequisites remain open. Arena is a region allocator, not another interior-mutability primitive. |
+| Arena | **Core implemented.** Compiler-known move-only `Arena`, `FixedArena`, and `ScopedArena`; stable aligned bump allocation; `alloc`, `alloc_nodrop`, `reset`, nested LIFO `scope`; drop/rewind glue; `E3090`/`E3096`; and H9 `@borrows(arena)` wrapper provenance have executable evidence. `alloc_array`/`alloc_uninit` are blocked on ODR-009 plus `GEN-METHOD-1`; `ArenaArray`/`ArenaMap` and effect/concurrency obligations remain open. Arena is a region allocator, not another interior-mutability primitive. |
 | UnsafeCell | Normatively specified in 0.8.5, not implemented. |
 | Phase 2 completeness | `mem.*`, `Clone`/`Default` derives, the full standard collection surface, several borrow/lifetime rules, and `[DIA-7..10]` UI snapshots remain incomplete. |
 | Objects and later phases | Class/foreign-class/coroutine syntax exists in the parser, but class layout/RC/exclusivity/vtables, effects/comptime/derives, C and C++ importers, concurrency, DOD/ECS/SIMD, interpreter, LLVM backend, hot reload, deterministic execution, LSP/debugger, and the full standard library are not implemented. |
@@ -276,7 +277,9 @@ from being accidentally discarded.
 4. Finish `Arena` and its region behavior. **Core allocation, fixed/scoped
    arenas, reset/rewind, drop-free enforcement, and H9 wrapper provenance are
    done.** The remaining surfaces depend on `Default`, `Zeroable`,
-   `MaybeUninit`, collection support, effects, and concurrency.
+   `MaybeUninit`, collection support, effects, and concurrency. ODR-009 blocks
+   the unsafe-initialization contract; `GEN-METHOD-1` blocks the generic-method
+   call surface.
 5. Implement `UnsafeCell` exactly within `[UNS-10]`–`[UNS-10b]`.
 6. Finish the remaining Phase 2 exit criteria, including UI snapshots.
 
@@ -335,13 +338,16 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 
 ## 7. Exact next task
 
-**Implement the prerequisites for the remaining Arena surface, then finish
-`Arena` (`[ARN-3]`–`[ARN-5]`).**
+**Obtain the ODR-009 owner ruling, then implement the prerequisites for the
+remaining Arena surface and finish `Arena` (`[ARN-3]`–`[ARN-5]`).**
 
-The safe core is present. The next dependency block is `Default`, `Zeroable`,
-and `MaybeUninit`, which are required before `alloc_array` and `alloc_uninit`
-can be implemented without inventing initialization semantics. After those,
-implement the remaining Arena collection surface (`ArenaArray`/`ArenaMap`)
+The safe core is present. H9 does not define enough of `Zeroable`,
+`MaybeUninit`, or bulk initialization to implement them without choosing
+bit-validity, state-transition, drop/failure, API, and diagnostic semantics;
+ERR-050/ODR-009 is therefore the current stop. The compiler also needs the
+separate `GEN-METHOD-1` mechanism for explicit method type arguments. After
+the owner ruling and those prerequisites, implement `alloc_array` and
+`alloc_uninit`, then the remaining Arena collection surface (`ArenaArray`/`ArenaMap`)
 against the actual collection machinery. Keep effect/concurrency-dependent
 obligations explicitly tracked until those phases exist. Do not substitute
 test-specific zeroing or an ad-hoc uninitialized type, and keep Arena a region

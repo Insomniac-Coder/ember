@@ -100,6 +100,7 @@ ERR-008) is worth being able to read again.
 | ERR-047 | H6/H7 `[LT-8]` with `fn_type`, `[FN-1]`, `[FN-2a]` | **DECIDED by the owner 2026-09-12.** H7 adds callable modes; H8 makes mutable helper inputs `mut` reborrows and forbids consuming them. ODR-006 closed |
 | ERR-048 | H7 `[FN-6]` with `[CLO-3]` / `Callable[Args, R]` | **DECIDED by the owner 2026-09-12.** H8 preserves the full mode vector as compiler-known canonical metadata through the existing abstraction. ODR-007 closed |
 | ERR-049 | H8 `[LT-4]` with `[LT-1a]` | **DECIDED by the owner 2026-09-12.** H9 permits the narrow `@borrows(arena)` provenance contract for Arena-backed returned views. `Arena` remains a non-view; arbitrary non-view parameters remain forbidden. ODR-008 closed |
+| ERR-050 | H9 `[ARN-3]` with `[UNS-1]`, `[UNS-5]`, and the Phase 2/4 plan | **OWNER DECISION REQUIRED.** `Zeroable`, `MaybeUninit`, and Arena bulk initialization are named but do not have an executable validity/state-transition contract. ODR-009 open; H9 unchanged |
 
 ---
 
@@ -2204,3 +2205,34 @@ parameters remain E2031.
 `alloc_mut_span` names. H9 uses the existing `alloc` and `alloc_array` API to
 state the same provenance rule and normalizes `[TST-LT-ARENA-RETURN]` to the
 numeric `[TST-22]`. No extra Arena method is inferred.
+
+---
+
+## ERR-050 — Arena bulk initialization lacks a complete safety contract
+
+**Status: OWNER DECISION REQUIRED; ODR-009 open. H9 is unchanged.**
+
+**Where.** `[ARN-3]` promises an `alloc_array[T]` result initialized by
+`Zeroable` or `Default`, plus `alloc_uninit[u8]` returning
+`MutSpan[MaybeUninit[u8]]`. `[UNS-5]` lists `MaybeUninit` and `mem.zeroed`, and
+calls `Zeroable` an unsafe marker auto-derived for “all-scalar/POD structs”.
+`[UNS-1]` makes `assume_init` and unsafe-interface implementation unsafe.
+
+**The gap.** The document supplies no exact `MaybeUninit` layout, drop/copy,
+write, or initialization-transition API and no bit-valid eligibility rule for
+`Zeroable`. Treating “scalar” as “all-zero is valid” would be unsound for
+non-null references and can be wrong for range or enum validity. The
+`alloc_array` fallback/bound, neither-capability behavior, partial-default
+initialization, and interaction with `[ARN-3]`'s `needs_drop` rejection are
+also unspecified. Phase 2 requires Arena while Phase 4 schedules `Zeroable`
+derives, with no bridge stated.
+
+This is not repaired by the compiler's separate inability to parse/check an
+explicitly instantiated generic method: the current minimal
+`arena.alloc_array[Pixel](2)` probe reports E1010, “only direct calls are
+supported in this phase”. That implementation dependency is `GEN-METHOD-1`.
+
+**Why work stopped.** These choices govern valid bit patterns, safe reads of
+uninitialized storage, destruction obligations, diagnostics, and the accepted
+API. Implementing any one reading would invent unsafe language semantics. The
+required owner decision and recommended options are recorded in ODR-009.

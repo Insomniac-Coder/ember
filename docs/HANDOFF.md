@@ -279,13 +279,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | **v0.8.5_Hardened_1** — three owner rulings of 2026-09-10: S2 (`UnsafeCell` becomes a real primitive), S3 (`RefCell` never `Copy`), S4 (`[FN-1a]`). `0.8.3`, `0.8.4` and `0.8.5` all accepted |
-| Recent commits | `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035. The Arena/H9 block is the commit containing this update; use `git log -1` for its hash. |
+| Recent commits | `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035. Use `git log -1` for the current documentation-ledger commit. |
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 80 rule directories, 229 cases |
-| Ledgers | 58 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-008 are closed; no owner semantic decision is open |
+| Ledgers | 58 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-008 are closed; **ODR-009 is the one open owner semantic decision** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -877,12 +877,15 @@ the owner-approved rules.
 
 ### 0.14 The next task
 
-**Finish Arena's initialization prerequisites and dependent surface.**
+**Resolve ODR-009, then finish Arena's initialization prerequisites and
+dependent surface.**
 
-Arena core and H9 wrapper provenance are complete in §0.25. Arena remains a
-region allocator, not a third interior-mutability primitive. The exact pickup
-is the real `Default`, `Zeroable`, and `MaybeUninit` foundation, followed by
-`alloc_array`, `alloc_uninit`, `ArenaArray`, and `ArenaMap`. Preserve the
+Arena core and H9 wrapper provenance are complete in §0.25. Section 0.26
+records the unsafe-initialization boundary that blocks further work. Arena
+remains a region allocator, not a third interior-mutability primitive. The
+exact pickup after the owner ruling is the real `Default`, `Zeroable`, and
+`MaybeUninit` foundation, followed by `alloc_array`, `alloc_uninit`,
+`ArenaArray`, and `ArenaMap`. Preserve the
 ordinary borrow relationship: allocations borrow the arena, `reset`/drop
 require mutable access, and no view may outlive the arena or a scoped child.
 
@@ -890,7 +893,7 @@ Read first:
 
 1. `docs/spec-source/ember-spec.md` and the frozen H9 target — especially
    initialization, unsafe, `[TYP-15]`, `[LT-1]`, `[LT-4]`, and `[ARN-*]`;
-2. `docs/MIGRATION-0.9.5.md`, then this §0 and §0.25;
+2. `docs/MIGRATION-0.9.5.md`, then this §0 and §0.26;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
 4. the compiler-known-type patterns in `compiler/ember_typeck/src/lib.rs`,
@@ -1760,21 +1763,57 @@ These gaps are tracked as `ARN-INIT-1`, `ARN-COLL-1`, and `ARN-LATE-1` in
 `BACKLOG.md`. Do not weaken `[ARN-*]`, fake a `Default`/`Zeroable` bound, or
 represent `MaybeUninit` as ordinary initialized bytes merely to finish the API.
 
-**Exact next task:** implement the real initialization prerequisites —
-`Default`, `Zeroable`, and `MaybeUninit` — in their normative dependency order;
-then implement `alloc_array`/`alloc_uninit`, followed by `ArenaArray` and
-`ArenaMap`. If their current normative rules leave accepted programs, unsafe
-initialization, or trait behavior ambiguous, stop with a minimal reproducer and
-an owner question. `UnsafeCell` follows the completed Arena milestone; the
+**Next-boundary result:** the normative audit did find unsafe-initialization and
+API ambiguity, so work stopped exactly as required. Section 0.26 and ODR-009
+carry the owner question. Do not implement the remaining initialization APIs
+until it is answered. `UnsafeCell` follows the completed Arena milestone; the
 0.9.5 multi-region-view work follows explicit H9 adoption.
+
+### 0.26 ODR-009 — Arena bulk initialization is blocked on an owner ruling
+
+After `d2ec959`, the next dependency audit read H9 `[ARN-3]`, `[UNS-1]`, and
+`[UNS-5]` together. The document names `Default`, `Zeroable`, `MaybeUninit`,
+`alloc_array`, and `alloc_uninit`, but does not define the safety contract an
+implementation needs:
+
+* `MaybeUninit[T]` has no normative layout, drop/copy, write, or
+  assume-initialized/span-transition surface;
+* “all-scalar/POD” does not safely define `Zeroable` — a scalar-shaped
+  non-null reference has an invalid all-zero representation, and range/enum
+  validity can exclude zero too;
+* `alloc_array` does not state its exact bound/fallback, neither-capability
+  diagnostic, partial-`Default` failure behavior, or how `[ARN-3]`'s
+  `needs_drop` ban applies;
+* Arena is Phase 2, while the plan schedules `Zeroable` derives in Phase 4.
+
+The minimal current compiler probe
+`pixels = arena.alloc_array[Pixel](2)` reports E1010 “only direct calls are
+supported in this phase”. That exposes the separate compiler limitation that
+explicit generic arguments on methods are absent; it is now `GEN-METHOD-1`.
+Fixing that mechanism would only reach the unsafe-initialization ambiguity, not
+answer it.
+
+**Classification:** ERR-050 is a specification/API safety gap; ODR-009 is a P1
+owner decision. H9 is frozen and was not edited. This is not a compiler defect,
+and no provisional `MaybeUninit`, byte-zero whitelist, or diagnostic ID was
+invented. `BACKLOG.md` tracks the implementation dependencies as
+`ARN-INIT-1`, `ARN-COLL-1`, `ARN-LATE-1`, and `GEN-METHOD-1`.
+
+**Exact next task after the owner ruling:** cut the owner-selected successor
+revision (H10 or a language revision, as ruled), implement the specified
+`Default`/`Zeroable`/`MaybeUninit` foundation and `GEN-METHOD-1`, then implement
+`alloc_array`/`alloc_uninit` and close the mutable-span clause of `[TST-22]`.
+After that, implement `[ARN-5]` `ArenaArray`/`ArenaMap`; later-phase effect and
+thread obligations remain separately gated.
 
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
 the current start point. D-042, the Cell/RefCell closure, D-038, and Arena core
-are complete (§0.22–§0.25). The current order is §0.25: initialization
-prerequisites, remaining Arena surface, UnsafeCell, Phase 2 completion, and the
-0.9.5 multi-region work after H9 is explicitly adopted.
+are complete (§0.22–§0.25). Section 0.26 is the current stop: obtain ODR-009's
+owner ruling, then implement initialization prerequisites, the remaining Arena
+surface, UnsafeCell, Phase 2 completion, and the 0.9.5 multi-region work after
+the selected H9 successor is explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before

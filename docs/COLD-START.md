@@ -12,7 +12,7 @@ phase order.
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
 | `docs/DECISIONS.md` | ADR-001..028 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..008 are closed; ODR-003 is deferred editorial; no owner semantic decision is currently open |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..008 are closed; ODR-003 is deferred editorial; **ODR-009 is open and blocks Arena bulk initialization** |
 
 ---
 
@@ -32,8 +32,9 @@ phase order.
 
  80 conformance rule directories, 229 cases. 58 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
-**No erratum currently awaits an owner semantic decision.** ERR-047 and
-ERR-048 were closed by the H7/H8 owner rulings; ERR-049 was closed by the H9
+**ERR-050 / ODR-009 awaits an owner semantic decision** on `Zeroable`,
+`MaybeUninit`, and Arena bulk initialization. ERR-047 and ERR-048 were closed
+by the H7/H8 owner rulings; ERR-049 was closed by the H9
 Arena-provenance ruling; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
 Ratchets in
@@ -185,7 +186,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: prerequisites for the remaining `Arena` surface
+## 5. Next task: resolve ODR-009, then finish the remaining `Arena` surface
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -232,9 +233,11 @@ already clear; no specification or ADR changed.
 3. **Remaining Arena surface.** `alloc_array` needs `Default`/`Zeroable`;
    `alloc_uninit` needs `MaybeUninit`; `ArenaArray`/`ArenaMap` need the
    corresponding collection machinery; allocation effects and `ThreadArena`
-   wait for the effects/concurrency phases. These are intentional dependency
-   gaps, not compiler defects. Build those prerequisites before the dependent
-   APIs; do not invent initialization or unsafe semantics to make a test pass.
+   wait for the effects/concurrency phases. **ODR-009 blocks the initialization
+   work:** H9 does not define the zero-bit validity set, `MaybeUninit` state
+   transition, or exact bulk-allocation fallback/drop behavior. Explicit type
+   arguments on methods are the separate compiler gap `GEN-METHOD-1`. Do not
+   invent initialization or unsafe semantics to make a test pass.
 
 Arena is **not a third interior-mutability primitive**. It is a region
 allocator, and amendment A13 records that it shares implementation machinery
@@ -268,8 +271,8 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-008 are closed. ODR-003 is deferred editorial work. No owner
-semantic question is currently open.
+through ODR-008 are closed. ODR-003 is deferred editorial work. **ODR-009 is
+open and is the only current owner semantic question.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -293,6 +296,10 @@ semantic question is currently open.
 * **ODR-008 — CLOSED.** H9 permits `@borrows(arena)` only when a returned view
   is proven to use storage owned by that growing Arena parameter. Arena remains
   non-view; arbitrary non-view parameters remain E2031.
+* **ODR-009 — OPEN.** H9 names `Zeroable`, `MaybeUninit`, `alloc_array`, and
+  `alloc_uninit` without a complete bit-validity, initialization-transition,
+  drop/failure, or exact API contract. This blocks the remaining Arena bulk
+  surface; do not answer it in compiler code.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
