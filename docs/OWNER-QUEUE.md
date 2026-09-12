@@ -38,7 +38,7 @@ ODR-001, ODR-002, and ODR-004 through ODR-007 are closed; ODR-003 is deferred
 editorial work with no semantic impact. **No owner semantic decision is
 currently open.** H8 records the complete helper-mode and callable-abstraction
 ruling. Implementation and conformance remain outstanding, but they are not
-owner questions and do not block unrelated compiler work such as D-042.
+owner questions and did not block the now-closed D-042 compiler work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**

@@ -30,8 +30,8 @@ phase order.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 67 conformance rule directories, 180 cases. 56 defects recorded, **2 open**
- (D-038, D-042). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
+ 67 conformance rule directories, 187 cases. 57 defects recorded, **1 open**
+ (D-038). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **No erratum currently awaits an owner semantic decision.** ERR-047 and
 ERR-048 were closed by the H7/H8 owner rulings; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
@@ -181,7 +181,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: D-042, then Cell/RefCell coverage and `Arena`
+## 5. Next task: Cell/RefCell coverage, then `Arena`
 
 **`Cell[T]` and `RefCell[T]` are both built** (2026-09-10). `RefCell` has
 `[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]` and `[CELL-12]` with 20
@@ -189,10 +189,18 @@ conformance cases, guards as view types through `regions.rs`, the one-word
 counter, `ember_panic_refcell` naming the conflicting borrow's location, and
 `L3011` emitted with a page. `docs/HANDOFF.md` §0.20 is the record.
 
-**D-042 comes first:** partial moves out of owned places can currently cause
-double destruction at scope end. Per-field movedness is also load-bearing for
-0.9.5 field-sensitive view validity. Fix it with adversarial drop-count and
-generated-C tests before adding the new region-vector machinery.
+**D-042 is fixed:** drop elaboration now carries recursive per-field move paths,
+splits partial aggregate cleanup into live-field drops, uses per-path flags for
+conditional moves, preserves disjoint siblings, and emits `E3042` for a whole-
+value use after a partial move. Six adversarial `[EXP-6]` cases pin exact drop
+counts, conditional and call-terminator flags, nesting, reinitialisation and the
+diagnostic. This is the ownership foundation 0.9.5 `[LT-38]` needs; it does not
+itself implement region vectors or any 0.9.5 view rule.
+
+The same probe found and closed **D-043**: `owned` parameters were not in the
+callee's destruction scope and leaked when not moved onward. `[OWN-2]` now has
+a direct move-onward/not-moved parameter test. Neither fix changed the
+specification or frozen H8 target.
 
 **What follows in block I:**
 
@@ -210,10 +218,7 @@ generated-C tests before adding the new region-vector machinery.
 **Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`;
 `Cell.take` on `CELL-DEF-1`. Neither rule was softened to fit.
 
-**Open defects:** D-038 (`String`→`str` coercion, fails closed) and **D-042**
-(partial moves out of owned places double-destroy at scope end — the serious
-one; needs per-field movedness in drop elaboration, and until it exists no
-conformance case can pin it in either direction).
+**Open defect:** D-038 (`String`→`str` coercion, fails closed).
 
 **`UnsafeCell` is specified and unbuilt** — `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]`,
 0.8.5. **Do not build `RefCell` on it**; ADR-019's compiler-known route stands.
@@ -267,10 +272,10 @@ semantic question is currently open.
   the tool. `RIDX-1` taught the extractor those forms and pinned the
   definition/reference boundary with tests. Withdrawn ERR-042 retains the
   original inventory.
-* **Two open defects**, neither an owner question: **D-038** (`String`→`str`
-  coercion is listed by `[SPN-1]` and rejected by the checker; fails closed) and
-  **D-042** (partial moves out of owned places double-destroy at scope end;
-  needs per-field movedness in drop elaboration). **D-041** (moves out of
+* **One open defect**, not an owner question: **D-038** (`String`→`str`
+  coercion is listed by `[SPN-1]` and rejected by the checker; fails closed).
+  **D-042** (partial moves) and **D-043** (owned parameters leaked) are fixed
+  with move-path/drop-count conformance evidence. **D-041** (moves out of
   borrowed places unchecked — `x = r.inner` compiled and the value dropped
   twice) was the serious one and is **fixed** this turn: borrowed-ness is
   threaded HIR→MIR and owning moves out of borrows are `E3013`.

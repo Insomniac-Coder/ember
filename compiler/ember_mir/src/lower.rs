@@ -208,6 +208,20 @@ impl<'a> Builder<'a> {
         }
 
         let arg_count = function.params.len();
+        // `[FN-1]` transfers an `owned` argument into the callee. Its lifetime
+        // is therefore the function body just like an owned local's, and
+        // `[OWN-2]` requires the callee to destroy it on every exit unless it
+        // was moved onward. Leaving parameters out of this list leaked every
+        // owned argument whose type needed drop (D-043).
+        let owned: Vec<LocalId> = function
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| {
+                param.mode == hir::Mode::Owned && types.needs_drop(function.local(param.local).ty)
+            })
+            .map(|(index, _)| LocalId((index + 1) as u32))
+            .collect();
         for (index, decl) in function.locals.iter().enumerate() {
             if function.params.iter().any(|p| p.local.0 as usize == index) {
                 continue;
@@ -238,7 +252,7 @@ impl<'a> Builder<'a> {
             current: BasicBlockId(0),
             loops: Vec::new(),
             defers: Vec::new(),
-            owned: Vec::new(),
+            owned,
             statement_temps: Vec::new(),
             arg_count,
             overflow: function.overflow,
@@ -346,8 +360,13 @@ impl<'a> Builder<'a> {
         let body = &self.function.body;
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
-        // slot as it stands. `[FN-8]`'s `main` is the common case.
+        // slot as it stands. `[FN-8]`'s `main` is the common case. Owned
+        // parameters live outside the body block's local scope, so its
+        // `lower_block` deliberately leaves them in `self.owned`; discharge
+        // them here on the fallthrough path. Explicit `return` already calls
+        // `emit_drops_from(0)` while lowering that statement.
         if matches!(self.blocks[self.current.0 as usize].terminator, Terminator::Unreachable) {
+            self.emit_drops_from(0);
             self.terminate(Terminator::Return);
         }
     }

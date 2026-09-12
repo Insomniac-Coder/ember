@@ -279,13 +279,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | **v0.8.5_Hardened_1** — three owner rulings of 2026-09-10: S2 (`UnsafeCell` becomes a real primitive), S3 (`RefCell` never `Copy`), S4 (`[FN-1a]`). `0.8.3`, `0.8.4` and `0.8.5` all accepted |
-| Recent commits | `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Recent commits | `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 67 rule directories, 180 cases |
-| Ledgers | 56 defects, **2 open** (D-038, D-042). **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
+| Conformance | 67 rule directories, 187 cases |
+| Ledgers | 57 defects, **1 open** (D-038). **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -756,14 +756,19 @@ splitting it across agents would have cost more than it saved.
 
 ### 0.12 Open issues carried forward — verified against the repository
 
-**Open defects — two.**
+**Open defects — one.**
 
 | # | What | Rule | Status |
 |---|---|---|---|
 | **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
-| **D-042** | partial moves out of *owned* places double-destroy at scope end (`x = o.inner` emits two `em_Inner_drop` calls for one value); drop elaboration tracks whole-local movedness only | `[EXP-6]`, `[OWN-2]`, `[OWN-3]` | **open.** Needs per-field movedness in drop elaboration. Found while building D-041's accept case; left open |
 
-**Closed this turn:** **D-041** (borrowed-ness threaded HIR→MIR; `check_borrowed_moves` reports owning moves through `Deref` and out of borrowed value parameters as `E3013`; EXP-6 cases + page, red-checked — see the task-2 block below). Previously closed: **D-030** (`check_drop_moves` rejects drop-body moves; DRP-5 cases red-checked) and **D-040** (reporter threads call provenance; E3025 with B8 help; case + page, red-checked).
+**Closed in the current implementation block:** **D-042** (recursive move paths,
+per-path flags, partial cleanup and `E3042`) and **D-043** (owned parameters
+join the callee's destruction scope). See §0.22. Previously closed: **D-041**
+(borrowed-ness threaded HIR→MIR; `check_borrowed_moves` reports owning moves
+through `Deref` and out of borrowed value parameters as `E3013`), **D-030**
+(`check_drop_moves` rejects drop-body moves) and **D-040** (method-call
+provenance selects E3025/B8).
 
 **Open deviations — five, in `docs/DEVIATIONS.md`.** (D6 was withdrawn to Closed:
 unbuilt machinery is a gap, not a deviation — see below.)
@@ -1046,7 +1051,7 @@ every fail/fix as documented), `spec_check.py --emit-appendix` (no drift),
 was already green; the one `non_snake_case` test-target warning
 (`from_is_contextual…From…`) is pre-existing.
 
-Remaining unresolved, explicitly: **ERR-042** (nine cited-but-undefined rule
+At that checkpoint, the explicitly unresolved set was: **ERR-042** (nine cited-but-undefined rule
 ids incl. `IDE-*`); **ERR-043** (`UnsafeCell` undefined; ADR-019 route
 unaffected); **`[RNG-8]` tail of ERR-029** (truncated opening, cannot be
 restored by guessing); **D-038**
@@ -1066,7 +1071,9 @@ numbered list's past collisions with its tables were settled by the owner's own
 `NON-NORMATIVE` demotion under `[CAT-1]` — rules/tables govern — with only a
 future owner revision's deletion outstanding per `spec-amendments.md` "Not
 amended, and why". That is settled text, not an issue.) Next task remains
-`RefCell[T]`, then `Arena` (§0.14); not started here.
+`RefCell[T]`, then `Arena` (§0.14); not started here. Later sections supersede
+this historical inventory and task order; in particular, D-042 is closed in
+§0.22. Do not use this paragraph as the current open-work list.
 
 ### 0.17 Specification authority: frozen vs editable vs generated
 
@@ -1377,7 +1384,7 @@ through `regions.rs`.
 **D-041 fixed** — moves out of borrowed places are checked; `E3013` has a page
 and `tests/conformance/EXP-6/` has 6 cases.
 
-**D-042 filed, open** — *partial moves out of owned places double-destroy at
+**D-042 filed open here; closed later in §0.22** — *partial moves out of owned places double-destroy at
 scope end.* `[EXP-6]` permits moving a field out of a plain struct, leaving it
 partially moved; drop elaboration then destroys the whole struct at scope end.
 Found while building D-041's accept case. **It needs per-field movedness in
@@ -1425,10 +1432,13 @@ an agent's own notes as much as to someone else's.
 
 ---
 
-#### If you are picking this up
+#### Historical pickup order at that checkpoint
 
-1. **D-042 — per-field movedness in drop elaboration.** It is a live double-
-   destruction defect and is load-bearing for 0.9.5 `[LT-38]`.
+This order was correct when written. **D-042 is now closed by §0.22**; the
+current pickup order is stated in §0.21 and at the start of the task list below.
+
+1. **D-042 — per-field movedness in drop elaboration.** At that checkpoint it
+   was a live double-destruction defect and load-bearing for 0.9.5 `[LT-38]`.
 2. **`[CELL-6a]`, `[CELL-9]`, `[CELL-10]` conformance cases** — all buildable
    now, none blocked. `[CELL-10]` is the one with teeth: `shapes.rs` still
    contains no mention of `RefCell`, so the rule is vacuously satisfied and
@@ -1544,20 +1554,81 @@ vectors, per-field provenance, callable access summaries, E3065/B14 artifacts,
 or 0.9.5 conformance evidence. “Specified” is not “implemented”, “verified”,
 or “conformant”.
 
-The next executable compiler task is **D-042: per-field movedness in drop
-elaboration**. It is a current double-destruction defect and is load-bearing
-for 0.9.5 `[LT-38]`. Then close `[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage,
-implement Arena, implement UnsafeCell, and finish Phase 2. In parallel, resolve
-complete the H8 normative-adoption gates; only then begin the
-multi-region-view implementation in the staged order recorded by
-`docs/MIGRATION-0.9.5.md`.
+D-042's per-field movedness foundation is now implemented and verified; §0.22
+is the closure record. The next executable compiler task is the remaining
+`[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage and diagnostic behavior, followed
+by D-038 and Arena in `docs/MIGRATION-0.9.5.md` Gate B order. H8 normative
+adoption remains a separate gate; only then begin multi-region-view work in
+the staged order recorded there.
+
+### 0.22 D-042 closed — field-sensitive moves and exact destruction
+
+**Classification:** compiler defect. `[EXP-6]` already permits moving a field
+out of a plain owned struct and says that the aggregate becomes partially
+moved. `[OWN-2]`, `[OWN-3]`, and `[DRP-2]` already require each value to be
+destroyed exactly once and remaining fields in the prescribed order. Neither
+the adopted 0.8.5 source nor frozen H8 was changed.
+
+**What was wrong.** `moved_by_operand` retained only a local ID and explicitly
+discarded every projected move. For:
+
+```ember
+pair = Pair(Part(1), Part(2))
+first = pair.first
+```
+
+`first` destroyed `Part(1)`, then the whole-local scope drop visited
+`pair.second` and the moved-from `pair.first`; output was `1, 2, 1` for two
+values. The old state could express only `Live`, `Moved`, or `Maybe` for the
+entire local, so it could neither preserve a sibling nor attach a flag to one
+conditional field.
+
+**Compiler mechanism.** `compiler/ember_analysis/src/drops.rs` now builds a
+recursive move-path tree for each MIR local. Its powerset state retains live,
+wholly moved, and partially moved possibilities across joins. A projected move
+invalidates only its subtree; writes reinitialise that subtree and recompute
+its ancestors. A partial aggregate drop expands into independently droppable
+live paths in `[DRP-2]` order, while conditional paths receive distinct flags.
+Moves in call terminators clear those flags too. A sibling path remains usable;
+a whole-value use while an ancestor is partial emits `E3042`/O4, documented in
+`docs/errors/E3042.md`.
+
+**Adversarial evidence.** Six new `tests/conformance/EXP-6/` programs cover:
+
+1. exact unconditional destructor count (`1, 2`, never `1, 2, 1`);
+2. a conditional field flag on moved and unmoved paths;
+3. a projected move passed through a call terminator;
+4. nested move paths and disjoint sibling reads;
+5. field reinitialisation restoring whole-value usability; and
+6. rejection of whole-value use as `E3042` while the sibling remains legal.
+
+The pre-fix compiler failed the first and conditional probes. Deliberately
+removing projected-move collection after the fix makes the conformance suite
+red again. Generated C for the minimal case contains only
+`em_Part_drop(&_2)` and `em_Part_drop(&_1.second)`—no drop of
+`_1.first`.
+
+**Adjacent defect found by the probe: D-043, also fixed.** The call-terminator
+case initially produced no destructor for the transferred value at all. This
+was independent of field flags: an `owned` parameter had never been registered
+in the callee's ownership scope. MIR lowering now treats owned, droppable
+parameters as the function's outer ownership scope; explicit return and
+fallthrough both discharge it unless the argument moved onward. Parameter
+drop flags start live. `tests/conformance/OWN-2/accept_owned_parameters_drop_in_the_callee.em`
+pins both paths. This too was a clear compiler violation of `[FN-1]` and
+`[OWN-2]`, so no specification or ADR moved.
+
+**Scope report.** Approved work was D-042. Actual work was D-042 plus D-043,
+because the required D-042 call-transfer probe exposed the independent callee
+leak. D-043 was recorded separately rather than folded into D-042. No next
+feature block was started.
 
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
-the current start point. The current order is §0.21: D-042 first, then the
-remaining Cell/RefCell coverage, Arena, UnsafeCell, Phase 2 completion, and the
-0.9.5 multi-region work after H8 is explicitly adopted.
+the current start point. D-042 is complete (§0.22). The current order is §0.21:
+remaining Cell/RefCell coverage, D-038, Arena, UnsafeCell, Phase 2 completion,
+and the 0.9.5 multi-region work after H8 is explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before
@@ -1572,8 +1643,8 @@ plus D-039; it filed D-038 and D-041. **D-041 was open and was the serious one:
 moves out of borrowed places were unchecked outside `drop` bodies, so
 `x = r.inner` compiled and the value dropped twice.** `[EXP-6]` names `E3013`
 for exactly this and it had no emitter. **D-041 is now fixed** — see the
-follow-up note below. What remains open from that sweep is D-038, plus D-042
-(filed during the fix, not the sweep).
+follow-up note below. What remained open at that point was D-038, plus D-042
+(filed during the fix, not the sweep); D-042 is now closed in §0.22.
 
 #### What task 2 covered, kept for the method
 
@@ -1676,7 +1747,7 @@ with no emitter outside `drop` bodies.
 *
   Adjacent lost-write-only symptom noted in the entry, unfiled pending a spec
   reading (per brief — not ERR-041, do not file).
-* **D-042 (open, filed during the D-041 fix — scope report below): partial
+* **D-042 (filed open during the D-041 fix; closed later in §0.22): partial
 moves out of *owned* places double-destroy at scope end.** Building D-041's
 accept case showed `x = o.inner` over an owned `o` emitting both
 `em_Inner_drop(&_3)` and `em_Inner_drop(&_1.inner)` for one value (asserted
@@ -1690,7 +1761,7 @@ case therefore covers owned reads and dropless moves only, and says so.
   fixed as briefed, plus D-042 filed (not fixed). The filing is
   technically-justified ledger discipline for a live double-free found by the
   brief's own probe-first method; it blocks nothing (D-041's fix and cases
-  avoid the shape) and D-042 remains outstanding.
+  avoid the shape) and D-042 remained outstanding at that point.
 
   **That sentence was true when written and is no longer.** After filing
   D-042 the same session went on to build `RefCell[T]` and to close

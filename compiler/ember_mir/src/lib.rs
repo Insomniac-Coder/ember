@@ -96,7 +96,7 @@ pub struct BasicBlock {
 }
 
 /// A memory location: a local with a chain of projections.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Place {
     pub local: LocalId,
     pub projection: Vec<Projection>,
@@ -135,7 +135,7 @@ impl Place {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Projection {
     Field(usize),
     /// Indexing by a local's value, with the bounds `Assert` already lowered

@@ -3,9 +3,9 @@
 # What `E3013` is not: a blanket ban on touching borrowed data. `[BRW-1]`
 # lets the owner read and copy while shared borrows are live, and a move of a
 # borrowed value that owns nothing has no second destruction to happen — so
-# all three stay legal beside the rejects. Deliberately absent here: moving a
-# droppable field out of an *owned* struct, which `[EXP-6]` allows but whose
-# scope-end drop is a separate open defect (D-042), not this one.
+# all three stay legal beside the rejects. Moving a droppable field out of an
+# *owned* struct is covered by the later D-042 closure cases in this directory;
+# it is deliberately not folded into this borrowed-place boundary test.
 
 struct Panel:
     pub w: i32

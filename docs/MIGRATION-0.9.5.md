@@ -163,10 +163,10 @@ the H5 source-recovery change:
 
 - `cargo build --workspace --locked`: green, no warnings;
 - `cargo test --workspace --locked`: 178 passed, 0 failed;
-- 180 Ember conformance cases in 67 rule directories pass;
+- 187 Ember conformance cases in 67 rule directories pass;
 - all six document/tooling gates pass;
 - Appendix A matches its generated fixture;
-- two implementation defects are open: D-038 and D-042;
+- one implementation defect is open: D-038;
 - four intentional deviations are open: D1–D4; D5 is closed and D6 withdrawn.
 
 `cargo test` emits one Rust test-target style warning for
@@ -194,7 +194,7 @@ rustfmt to a required gate.
 
 | Area | Current evidence |
 |---|---|
-| Per-field movedness | D-042: moving an owned field can cause it to be destroyed twice. This is a live safety defect and is also load-bearing for new `[LT-38]`. |
+| Per-field movedness | **Implemented by the D-042 fix.** Recursive move paths, per-path conditional flags, partial cleanup, sibling preservation, reinitialisation and `E3042` are covered by adversarial `[EXP-6]` cases. This is now available as a foundation for `[LT-38]`; field-sensitive region provenance itself is not implemented. |
 | String view coercion | D-038: implicit `String` to `str` is rejected; explicit `as_str()` is sound. |
 | Remaining `Cell`/`RefCell` obligations | No cases yet for `[CELL-6a]`, `[CELL-9]`, `[CELL-10]`; `Cell.take`/the `Default` update arm await `Default`; `!Sync` awaits `Send`/`Sync` and threading. |
 | Arena | `[ARN-*]` not started. Arena is a region allocator, not another interior-mutability primitive. |
@@ -243,8 +243,9 @@ from being accidentally discarded.
 
 ### Gate B — finish the load-bearing ownership foundation
 
-1. Fix D-042 with per-field move paths/drop flags, with adversarial drop-count
-   and emitted-C tests.
+1. ~~Fix D-042 with per-field move paths/drop flags and adversarial evidence.~~
+   **Done.** The same probe found and closed D-043, the independent leak of
+   owned parameters at callee exit.
 2. Add real coverage for `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]`.
 3. Fix D-038.
 4. Implement `Arena` and its region behavior.
@@ -306,12 +307,13 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 
 ## 7. Exact next task
 
-**D-042 — implement per-field movedness in drop elaboration.**
+**Add conformance and diagnostic behavior for `[CELL-6a]`, `[CELL-9]`, and
+`[CELL-10]`.**
 
-It is the highest-priority executable compiler task because it is a current
-double-destruction defect, it is independent of the recovered `[LT-8]`–`[LT-13]`
-helper source, and 0.9.5 `[LT-38]` makes field-sensitive moves explicitly
-load-bearing. After D-042: `[CELL-6a]`/`[CELL-9]`/`[CELL-10]`, then Arena.
+D-042 is complete and its field-sensitive move/drop foundation is now covered.
+The next bounded task is the remaining buildable `Cell`/`RefCell` obligation;
+then fix D-038 and implement Arena in Gate B order. Do not begin 0.9.5 region-
+vector work merely because the ownership prerequisite now exists.
 
 The parallel specification task is now explicit normative adoption of H8;
 ODR-006 and ODR-007 are closed. Do not broaden ODR-005's all-mutable ruling

@@ -18,13 +18,12 @@
 //!
 //! This pass runs after lowering, over one body:
 //!
-//! 1. a forward dataflow computing `Live | Moved | Maybe` per local;
-//! 2. every use of a `Moved` local reported as `E3040`;
-//! 3. every `Drop` of a `Moved` local removed, and every `Drop` of a `Maybe`
-//!    local given a flag;
+//! 1. a forward dataflow computing live, moved and partial states per move path;
+//! 2. whole and projected uses checked independently (`E3040`/`E3042`);
+//! 3. drops of moved paths removed and conditional paths given flags;
 //! 4. the flags' assignments written in beside the moves.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
@@ -34,21 +33,174 @@ use ember_mir::{
 use ember_span::Span;
 use ember_types::{Ty, TypeTable, TyKind};
 
-/// Where a local stands on one path.
+/// Possible states of one move path at a program point.
+///
+/// This is a three-bit powerset lattice rather than a three-variant enum. A
+/// control-flow join can contain any combination of live, wholly moved and
+/// partially moved states, and retaining the `PARTIAL` bit is what lets the
+/// diagnostic distinguish `[EXP-6]`/`E3042` from an ordinary conditional
+/// whole-value move.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Owned {
-    /// The value is here and this local will drop it.
-    Live,
-    /// It was moved out; someone else drops it.
-    Moved,
-    /// Moved on some paths reaching this point and not on others.
-    Maybe,
-}
+struct Owned(u8);
 
 impl Owned {
+    const LIVE: Owned = Owned(1);
+    const MOVED: Owned = Owned(2);
+    const PARTIAL: Owned = Owned(4);
+
     fn join(self, other: Owned) -> Owned {
-        if self == other { self } else { Owned::Maybe }
+        Owned(self.0 | other.0)
     }
+
+    fn contains(self, other: Owned) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    fn is_live(self) -> bool {
+        self == Owned::LIVE
+    }
+
+    fn is_moved(self) -> bool {
+        self == Owned::MOVED
+    }
+
+    fn is_partial(self) -> bool {
+        self.contains(Owned::PARTIAL)
+    }
+
+    fn may_be_live(self) -> bool {
+        self.contains(Owned::LIVE)
+    }
+}
+
+/// A tree of places whose movedness can differ independently.
+///
+/// Every local has a root. Plain structs and tuples have child paths; types
+/// with their own destructor, arrays and enums stay atomic because `[EXP-6]`
+/// does not permit taking an owning element out of them. Keeping internal
+/// aggregate nodes is important: moving the only field of a one-field struct
+/// still leaves the *struct* partially moved rather than turning it into an
+/// ordinary whole-value move.
+struct MovePaths {
+    places: Vec<Place>,
+    parents: Vec<Option<usize>>,
+    children: Vec<Vec<usize>>,
+}
+
+impl MovePaths {
+    fn build(body: &Body, types: &TypeTable) -> MovePaths {
+        let mut paths = MovePaths {
+            places: Vec::new(),
+            parents: Vec::new(),
+            children: Vec::new(),
+        };
+        for (index, local) in body.locals.iter().enumerate() {
+            paths.add(Place::local(LocalId(index as u32)), local.ty, None, types);
+        }
+        paths
+    }
+
+    fn add(
+        &mut self,
+        place: Place,
+        ty: Ty,
+        parent: Option<usize>,
+        types: &TypeTable,
+    ) -> usize {
+        let index = self.places.len();
+        self.places.push(place.clone());
+        self.parents.push(parent);
+        self.children.push(Vec::new());
+
+        let fields: Vec<Ty> = match types.kind(ty) {
+            TyKind::Struct(id) if !types.struct_def(*id).has_drop => {
+                types.struct_def(*id).fields.iter().map(|field| field.ty).collect()
+            }
+            TyKind::Tuple(items) => items.clone(),
+            _ => Vec::new(),
+        };
+        for (field, field_ty) in fields.into_iter().enumerate() {
+            let child = self.add(place.clone().field(field), field_ty, Some(index), types);
+            self.children[index].push(child);
+        }
+        index
+    }
+
+    fn initial(&self, body: &Body) -> Vec<Owned> {
+        self.places
+            .iter()
+            .map(|place| match body.local(place.local).kind {
+                LocalKind::Arg | LocalKind::Return => Owned::LIVE,
+                _ => Owned::MOVED,
+            })
+            .collect()
+    }
+
+    /// The exact node, or the deepest atomic ancestor when a projection goes
+    /// inside a type this pass deliberately treats as indivisible.
+    fn node(&self, place: &Place) -> usize {
+        self.places
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| place_prefix(candidate, place))
+            .max_by_key(|(_, candidate)| candidate.projection.len())
+            .map(|(index, _)| index)
+            .expect("every MIR local has a move-path root")
+    }
+
+    fn state(&self, place: &Place, state: &[Owned]) -> Owned {
+        state[self.node(place)]
+    }
+
+    fn move_out(&self, place: &Place, state: &mut [Owned]) {
+        let node = self.node(place);
+        self.set_subtree(node, Owned::MOVED, state);
+        self.recompute_ancestors(node, state);
+    }
+
+    fn initialise(&self, place: &Place, state: &mut [Owned]) {
+        let node = self.node(place);
+        self.set_subtree(node, Owned::LIVE, state);
+        self.recompute_ancestors(node, state);
+    }
+
+    fn set_subtree(&self, node: usize, value: Owned, state: &mut [Owned]) {
+        state[node] = value;
+        for &child in &self.children[node] {
+            self.set_subtree(child, value, state);
+        }
+    }
+
+    fn recompute_ancestors(&self, node: usize, state: &mut [Owned]) {
+        let mut parent = self.parents[node];
+        while let Some(index) = parent {
+            // This ancestor was not itself moved or assigned. It is usable as
+            // a whole only in combinations where every direct child is live;
+            // every other possible combination is a partial value.
+            let children = &self.children[index];
+            let all_may_live = children.iter().all(|child| state[*child].may_be_live());
+            let all_are_live = children.iter().all(|child| state[*child].is_live());
+            let mut bits = 0;
+            if all_may_live {
+                bits |= Owned::LIVE.0;
+            }
+            if !all_are_live {
+                bits |= Owned::PARTIAL.0;
+            }
+            state[index] = Owned(bits);
+            parent = self.parents[index];
+        }
+    }
+}
+
+fn place_prefix(prefix: &Place, place: &Place) -> bool {
+    prefix.local == place.local
+        && prefix.projection.len() <= place.projection.len()
+        && prefix
+            .projection
+            .iter()
+            .zip(&place.projection)
+            .all(|(a, b)| a == b)
 }
 
 /// Rewrite one body so that every value is dropped exactly once, and report
@@ -58,7 +210,8 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     let mut errors = check_drop_moves(body, types, sink);
     // `[EXP-6]`/`[FN-1]` — moves out of borrowed places outside `drop` (D-041).
     errors += check_borrowed_moves(body, types, sink);
-    let entry = initial(body);
+    let paths = MovePaths::build(body, types);
+    let entry = paths.initial(body);
     let mut block_entry: Vec<Option<Vec<Owned>>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
         return 0;
@@ -68,7 +221,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     let mut worklist = vec![0usize];
     while let Some(index) = worklist.pop() {
         let Some(state) = block_entry[index].clone() else { continue };
-        let exit = transfer(body, index, state, None);
+        let exit = transfer(body, index, state, None, &paths);
         for successor in successors(body, index) {
             let merged = match &block_entry[successor] {
                 Some(existing) => {
@@ -94,49 +247,150 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
         reported: vec![false; body.locals.len()],
         in_loop: false,
     };
-    let mut plan: Vec<(usize, usize, Owned)> = Vec::new();
+    let mut plan: BTreeMap<(usize, usize), DropAction> = BTreeMap::new();
     for (index, entry) in block_entry.iter().enumerate() {
         if let Some(state) = entry.clone() {
             let mut state = state;
             reporter.in_loop = cyclic[index];
             for (position, stmt) in body.blocks[index].stmts.iter().enumerate() {
                 if let StmtKind::Drop { place, .. } = &stmt.kind {
-                    if place.projection.is_empty() {
-                        plan.push((index, position, state[place.local.0 as usize]));
-                    }
+                    plan.insert(
+                        (index, position),
+                        plan_drop(place, paths.state(place, &state), &state, &paths, body, types),
+                    );
                 }
-                step(stmt, &mut state, Some(&mut reporter), body);
+                step(stmt, &mut state, Some(&mut reporter), body, &paths);
             }
-            step_terminator(body, index, &mut state, Some(&mut reporter));
+            step_terminator(body, index, &mut state, Some(&mut reporter), &paths);
         }
     }
     errors += reporter.errors;
 
-    // `[OWN-3]` — a local that is `Maybe` at any drop needs a flag.
-    let needs_flag: Vec<LocalId> = plan
-        .iter()
-        .filter(|(_, _, owned)| *owned == Owned::Maybe)
-        .filter_map(|(block, position, _)| match &body.blocks[*block].stmts[*position].kind {
-            StmtKind::Drop { place, .. } => Some(place.local),
-            _ => None,
-        })
-        .collect();
+    // `[OWN-3]` — each move path that may be live at a drop needs its own
+    // flag. A single whole-local flag cannot represent `pair.first` having
+    // moved while `pair.second` remains live.
+    let needs_flag: Vec<Place> = plan.values().flat_map(DropAction::flag_places).collect();
     let flags = create_flags(body, &needs_flag, types);
 
-    // Apply: drop of a moved value goes away, and a `Maybe` drop gets its flag.
-    for (block, position, owned) in plan {
-        let stmt = &mut body.blocks[block].stmts[position];
-        let StmtKind::Drop { place, flag } = &mut stmt.kind else { continue };
-        match owned {
-            Owned::Live => {}
-            Owned::Moved => stmt.kind = StmtKind::Nop,
-            Owned::Maybe => *flag = flags.get(&place.local).copied(),
+    // Apply the settled plan. A partial aggregate expands into drops of its
+    // still-live owning leaves, in `[DRP-2]` order.
+    for (block_index, block) in body.blocks.iter_mut().enumerate() {
+        let mut rewritten = Vec::with_capacity(block.stmts.len());
+        for (position, mut stmt) in std::mem::take(&mut block.stmts).into_iter().enumerate() {
+            let Some(action) = plan.remove(&(block_index, position)) else {
+                rewritten.push(stmt);
+                continue;
+            };
+            match action {
+                DropAction::Keep => rewritten.push(stmt),
+                DropAction::Remove => {}
+                DropAction::Guard(place) => {
+                    if let StmtKind::Drop { flag, .. } = &mut stmt.kind {
+                        *flag = flags.get(&place).copied();
+                    }
+                    rewritten.push(stmt);
+                }
+                DropAction::Expand(parts) => {
+                    for (place, state) in parts {
+                        if state.is_moved() || !state.may_be_live() {
+                            continue;
+                        }
+                        let flag = if state.is_live() {
+                            None
+                        } else {
+                            flags.get(&place).copied()
+                        };
+                        rewritten.push(Stmt::new(StmtKind::Drop { place, flag }, stmt.span));
+                    }
+                }
+            }
         }
+        block.stmts = rewritten;
     }
     if !flags.is_empty() {
         write_flag_updates(body, &flags);
     }
     errors
+}
+
+#[derive(Debug)]
+enum DropAction {
+    Keep,
+    Remove,
+    /// Keep the original drop and guard it with this move path's flag.
+    Guard(Place),
+    /// Replace an aggregate drop with its independently owned drop units.
+    Expand(Vec<(Place, Owned)>),
+}
+
+impl DropAction {
+    fn flag_places(&self) -> Vec<Place> {
+        match self {
+            DropAction::Guard(place) => vec![place.clone()],
+            DropAction::Expand(parts) => parts
+                .iter()
+                .filter(|(_, state)| state.may_be_live() && !state.is_live())
+                .map(|(place, _)| place.clone())
+                .collect(),
+            DropAction::Keep | DropAction::Remove => Vec::new(),
+        }
+    }
+}
+
+fn plan_drop(
+    place: &Place,
+    owned: Owned,
+    state: &[Owned],
+    paths: &MovePaths,
+    body: &Body,
+    types: &TypeTable,
+) -> DropAction {
+    if owned.is_live() {
+        return DropAction::Keep;
+    }
+    if owned.is_moved() || !owned.may_be_live() && !owned.is_partial() {
+        return DropAction::Remove;
+    }
+    if !owned.is_partial() {
+        return DropAction::Guard(place.clone());
+    }
+
+    let mut units = Vec::new();
+    drop_units(place.clone(), moved_place_ty(place, body, types), types, &mut units);
+    DropAction::Expand(
+        units
+            .into_iter()
+            .map(|unit| {
+                let unit_state = paths.state(&unit, state);
+                (unit, unit_state)
+            })
+            .collect(),
+    )
+}
+
+/// Maximal independently droppable places, in the order `[DRP-2]` requires.
+/// A plain aggregate has no destructor of its own, so it can be decomposed;
+/// a type with a destructor must stay whole (and `[EXP-6]` forbids producing
+/// a partial instance of it in the first place).
+fn drop_units(place: Place, ty: Ty, types: &TypeTable, out: &mut Vec<Place>) {
+    if !types.needs_drop(ty) {
+        return;
+    }
+    match types.kind(ty) {
+        TyKind::Struct(id) if !types.struct_def(*id).has_drop => {
+            let fields: Vec<Ty> =
+                types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
+            for (index, field_ty) in fields.into_iter().enumerate().rev() {
+                drop_units(place.clone().field(index), field_ty, types, out);
+            }
+        }
+        TyKind::Tuple(items) => {
+            for (index, item) in items.iter().copied().enumerate().rev() {
+                drop_units(place.clone().field(index), item, types, out);
+            }
+        }
+        _ => out.push(place),
+    }
 }
 
 /// `[DRP-5]` — the `self` of a `drop` body, when this body is one.
@@ -477,62 +731,106 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
     errors
 }
 
-/// A `bool` local per conditionally moved value, cleared at the start of the
-/// body so that a path which never assigned the value does not drop it.
+/// A `bool` local per conditionally moved path.
 fn create_flags(
     body: &mut Body,
-    wanted: &[LocalId],
+    wanted: &[Place],
     types: &TypeTable,
-) -> BTreeMap<LocalId, LocalId> {
+) -> BTreeMap<Place, LocalId> {
     let mut flags = BTreeMap::new();
     let bool_ty = find_bool(types).unwrap_or_else(|| body.locals[0].ty);
-    for local in wanted {
-        if flags.contains_key(local) {
+    for place in wanted {
+        if flags.contains_key(place) {
             continue;
         }
         let flag = LocalId(body.locals.len() as u32);
-        let span = body.local(*local).span;
+        let span = body.local(place.local).span;
+        let suffix = place
+            .projection
+            .iter()
+            .map(|projection| match projection {
+                Projection::Field(index) => format!("_field_{index}"),
+                Projection::Index(local) => format!("_index_{}", local.0),
+                Projection::ConstIndex(index) => format!("_index_{index}"),
+                Projection::Deref => "_deref".to_string(),
+                Projection::Downcast(variant) => format!("_variant_{variant}"),
+                Projection::Column(index) => format!("_column_{index}"),
+            })
+            .collect::<String>();
+        let name = body
+            .local(place.local)
+            .name
+            .as_ref()
+            .map(|name| format!("{name}{suffix}_live"));
         body.locals.push(LocalDecl {
             ty: bool_ty,
             kind: LocalKind::Temp,
-            name: body.local(*local).name.as_ref().map(|n| format!("{n}_live")),
+            name,
             span,
         });
-        flags.insert(*local, flag);
+        flags.insert(place.clone(), flag);
     }
     flags
 }
 
-/// Set each flag where its value is stored, clear it where the value is moved
-/// out, and start every flag false.
-fn write_flag_updates(body: &mut Body, flags: &BTreeMap<LocalId, LocalId>) {
+/// Set each flag where its path is stored, clear it where the path is moved
+/// out, and initialise it from the root local's entry state.
+fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
     for block in body.blocks.iter_mut() {
         let mut rewritten: Vec<Stmt> = Vec::with_capacity(block.stmts.len());
         for stmt in std::mem::take(&mut block.stmts) {
             let span = stmt.span;
-            // A move out of a flagged local clears its flag.
-            let mut cleared: Vec<LocalId> = Vec::new();
-            if let StmtKind::Assign { rvalue, .. } = &stmt.kind {
-                moved_by_rvalue(rvalue, &mut cleared);
+            let mut moved = Vec::new();
+            let mut written = Vec::new();
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    moved_by_rvalue(rvalue, &mut moved);
+                    written.push(place.clone());
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    moved_by_operand(lhs, &mut moved);
+                    moved_by_operand(rhs, &mut moved);
+                    written.push(dest.clone());
+                    written.push(overflow.clone());
+                }
+                StmtKind::StorageLive(_)
+                | StmtKind::StorageDead(_)
+                | StmtKind::Drop { .. }
+                | StmtKind::Nop => {}
             }
-            // Storing into a flagged local sets its flag.
-            let set = match &stmt.kind {
-                StmtKind::Assign { place, .. } if place.projection.is_empty() => {
-                    flags.get(&place.local).copied()
-                }
-                StmtKind::CheckedBinaryOp { dest, .. } if dest.projection.is_empty() => {
-                    flags.get(&dest.local).copied()
-                }
-                _ => None,
-            };
             rewritten.push(stmt);
-            for local in cleared {
-                if let Some(&flag) = flags.get(&local) {
-                    rewritten.push(assign_bool(flag, false, span));
-                }
+            let clear: BTreeSet<LocalId> = flags
+                .iter()
+                .filter(|(path, _)| moved.iter().any(|place| paths_overlap(place, path)))
+                .map(|(_, flag)| *flag)
+                .collect();
+            let set: BTreeSet<LocalId> = flags
+                .iter()
+                .filter(|(path, _)| written.iter().any(|place| place_prefix(place, path)))
+                .map(|(_, flag)| *flag)
+                .collect();
+            for flag in clear {
+                rewritten.push(assign_bool(flag, false, span));
             }
-            if let Some(flag) = set {
+            for flag in set {
                 rewritten.push(assign_bool(flag, true, span));
+            }
+        }
+
+        // Moves into a call happen in the terminator. Clear their flags in
+        // the final statements of this block, before control transfers.
+        if let Terminator::Call { args, .. } = &block.terminator {
+            let mut moved = Vec::new();
+            for arg in args {
+                moved_by_operand(arg, &mut moved);
+            }
+            let clear: BTreeSet<LocalId> = flags
+                .iter()
+                .filter(|(path, _)| moved.iter().any(|place| paths_overlap(place, path)))
+                .map(|(_, flag)| *flag)
+                .collect();
+            for flag in clear {
+                rewritten.push(assign_bool(flag, false, block.terminator_span));
             }
         }
         block.stmts = rewritten;
@@ -543,9 +841,9 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<LocalId, LocalId>) {
     let mut set_on_entry: Vec<(usize, LocalId, Span)> = Vec::new();
     for (index, block) in body.blocks.iter().enumerate() {
         if let Terminator::Call { dest, next, .. } = &block.terminator {
-            if dest.projection.is_empty() {
-                if let Some(&flag) = flags.get(&dest.local) {
-                    set_on_entry.push((next.0 as usize, flag, block.terminator_span));
+            for (path, flag) in flags {
+                if place_prefix(dest, path) {
+                    set_on_entry.push((next.0 as usize, *flag, block.terminator_span));
                 }
             }
         }
@@ -557,14 +855,23 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<LocalId, LocalId>) {
         body.blocks[block].stmts = stmts;
     }
 
-    // Every flag starts false: the value is not there until it is stored.
+    // User locals start empty; owned parameters arrive live. Initialising
+    // every flag to false leaked a conditionally moved argument on its
+    // not-moved path.
     let span = body.span;
     let mut prologue: Vec<Stmt> = flags
-        .values()
-        .map(|flag| assign_bool(*flag, false, span))
+        .iter()
+        .map(|(place, flag)| {
+            let live = matches!(body.local(place.local).kind, LocalKind::Arg | LocalKind::Return);
+            assign_bool(*flag, live, span)
+        })
         .collect();
     prologue.extend(std::mem::take(&mut body.blocks[0].stmts));
     body.blocks[0].stmts = prologue;
+}
+
+fn paths_overlap(a: &Place, b: &Place) -> bool {
+    place_prefix(a, b) || place_prefix(b, a)
 }
 
 fn assign_bool(flag: LocalId, value: bool, span: Span) -> Stmt {
@@ -584,28 +891,17 @@ fn find_bool(types: &TypeTable) -> Option<Ty> {
         .map(|(ty, _)| ty)
 }
 
-/// Parameters and the return slot arrive owned; every other local starts
-/// empty, which for this analysis is the same as moved-out.
-fn initial(body: &Body) -> Vec<Owned> {
-    body.locals
-        .iter()
-        .map(|decl| match decl.kind {
-            LocalKind::Arg | LocalKind::Return => Owned::Live,
-            _ => Owned::Moved,
-        })
-        .collect()
-}
-
 fn transfer(
     body: &Body,
     index: usize,
     mut state: Vec<Owned>,
     mut reporter: Option<&mut Reporter>,
+    paths: &MovePaths,
 ) -> Vec<Owned> {
     for stmt in &body.blocks[index].stmts {
-        step(stmt, &mut state, reporter.as_deref_mut(), body);
+        step(stmt, &mut state, reporter.as_deref_mut(), body, paths);
     }
-    step_terminator(body, index, &mut state, reporter);
+    step_terminator(body, index, &mut state, reporter, paths);
     state
 }
 
@@ -618,19 +914,21 @@ fn step_terminator(
     index: usize,
     state: &mut [Owned],
     reporter: Option<&mut Reporter>,
+    paths: &MovePaths,
 ) {
     let span = body.blocks[index].terminator_span;
     let Terminator::Call { args, dest, .. } = &body.blocks[index].terminator else { return };
 
     let mut read = Vec::new();
-    let mut push = |place: &Place| read.push(place.local);
+    let mut push = |place: &Place| read.push(place.clone());
     for arg in args {
         read_by_operand(arg, &mut push);
     }
     if let Some(reporter) = reporter {
-        for local in &read {
-            if state[local.0 as usize] != Owned::Live {
-                reporter.report(*local, state[local.0 as usize], span, body);
+        for place in &read {
+            let owned = paths.state(place, state);
+            if !owned.is_live() {
+                reporter.report(place, owned, span, body);
             }
         }
     }
@@ -638,15 +936,19 @@ fn step_terminator(
     for arg in args {
         moved_by_operand(arg, &mut moved);
     }
-    for local in moved {
-        state[local.0 as usize] = Owned::Moved;
+    for place in moved {
+        paths.move_out(&place, state);
     }
-    if dest.projection.is_empty() {
-        state[dest.local.0 as usize] = Owned::Live;
-    }
+    paths.initialise(dest, state);
 }
 
-fn step(stmt: &Stmt, state: &mut [Owned], reporter: Option<&mut Reporter>, body: &Body) {
+fn step(
+    stmt: &Stmt,
+    state: &mut [Owned],
+    reporter: Option<&mut Reporter>,
+    body: &Body,
+    paths: &MovePaths,
+) {
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
             // `[OWN-3]` — reading a moved value is `E3040`.
@@ -655,29 +957,29 @@ fn step(stmt: &Stmt, state: &mut [Owned], reporter: Option<&mut Reporter>, body:
             // `[BRW-7]` — a borrow does not consume, so it is not in `read`,
             // but a reference into memory that was moved out of dangles.
             let borrowed = match rvalue {
-                Rvalue::Ref { place, .. } => Some(place.local),
+                Rvalue::Ref { place, .. } => Some(place),
                 _ => None,
             };
             if let Some(reporter) = reporter {
-                for local in &read {
-                    if state[local.0 as usize] != Owned::Live {
-                        reporter.report(*local, state[local.0 as usize], stmt.span, body);
+                for place in &read {
+                    let owned = paths.state(place, state);
+                    if !owned.is_live() {
+                        reporter.report(place, owned, stmt.span, body);
                     }
                 }
-                if let Some(local) = borrowed {
-                    if state[local.0 as usize] != Owned::Live {
-                        reporter.report_borrow(local, state[local.0 as usize], stmt.span, body);
+                if let Some(place) = borrowed {
+                    let owned = paths.state(place, state);
+                    if !owned.is_live() {
+                        reporter.report_borrow(place, owned, stmt.span, body);
                     }
                 }
             }
             let mut moved = Vec::new();
             moved_by_rvalue(rvalue, &mut moved);
-            for local in moved {
-                state[local.0 as usize] = Owned::Moved;
+            for moved in moved {
+                paths.move_out(&moved, state);
             }
-            if place.projection.is_empty() {
-                state[place.local.0 as usize] = Owned::Live;
-            }
+            paths.initialise(place, state);
         }
         // `[TYP-8]` — checked arithmetic writes its result through its own
         // statement rather than an `Assign`, so without this arm the
@@ -686,43 +988,39 @@ fn step(stmt: &Stmt, state: &mut [Owned], reporter: Option<&mut Reporter>, body:
         // local went through here.
         StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
             let mut read = Vec::new();
-            let mut push = |place: &Place| read.push(place.local);
+            let mut push = |place: &Place| read.push(place.clone());
             read_by_operand(lhs, &mut push);
             read_by_operand(rhs, &mut push);
             if let Some(reporter) = reporter {
-                for local in &read {
-                    if state[local.0 as usize] != Owned::Live {
-                        reporter.report(*local, state[local.0 as usize], stmt.span, body);
+                for place in &read {
+                    let owned = paths.state(place, state);
+                    if !owned.is_live() {
+                        reporter.report(place, owned, stmt.span, body);
                     }
                 }
             }
             let mut moved = Vec::new();
             moved_by_operand(lhs, &mut moved);
             moved_by_operand(rhs, &mut moved);
-            for local in moved {
-                state[local.0 as usize] = Owned::Moved;
+            for moved in moved {
+                paths.move_out(&moved, state);
             }
             for place in [dest, overflow] {
-                if place.projection.is_empty() {
-                    state[place.local.0 as usize] = Owned::Live;
-                }
+                paths.initialise(place, state);
             }
         }
         // A drop ends the value's life whatever it was.
         StmtKind::Drop { place, .. } => {
-            if place.projection.is_empty() {
-                state[place.local.0 as usize] = Owned::Moved;
-            }
+            paths.move_out(place, state);
         }
-        StmtKind::StorageLive(local) => state[local.0 as usize] = Owned::Moved,
+        StmtKind::StorageLive(local) => paths.move_out(&Place::local(*local), state),
         _ => {}
     }
 }
 
-/// Which locals an rvalue moves out of. Only a whole-local `Move` counts: a
-/// move out of a field is a partial move, which Phase 2's later work handles
-/// with per-field paths.
-fn moved_by_rvalue(rvalue: &Rvalue, out: &mut Vec<LocalId>) {
+/// Which places an rvalue moves out of. Projected places are retained: dropping
+/// that information was D-042's double-destruction bug.
+fn moved_by_rvalue(rvalue: &Rvalue, out: &mut Vec<Place>) {
     match rvalue {
         Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => moved_by_operand(o, out),
         Rvalue::Cast { operand, .. } => moved_by_operand(operand, out),
@@ -738,17 +1036,15 @@ fn moved_by_rvalue(rvalue: &Rvalue, out: &mut Vec<LocalId>) {
     }
 }
 
-fn moved_by_operand(operand: &Operand, out: &mut Vec<LocalId>) {
+fn moved_by_operand(operand: &Operand, out: &mut Vec<Place>) {
     if let Operand::Move(place) = operand {
-        if place.projection.is_empty() {
-            out.push(place.local);
-        }
+        out.push(place.clone());
     }
 }
 
-/// Which locals an rvalue reads, whether by copy or by move.
-fn read_by_rvalue(rvalue: &Rvalue, out: &mut Vec<LocalId>) {
-    let mut push = |place: &Place| out.push(place.local);
+/// Which places an rvalue reads, whether by copy or by move.
+fn read_by_rvalue(rvalue: &Rvalue, out: &mut Vec<Place>) {
+    let mut push = |place: &Place| out.push(place.clone());
     match rvalue {
         Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => read_by_operand(o, &mut push),
         Rvalue::Cast { operand, .. } => read_by_operand(operand, &mut push),
@@ -828,7 +1124,8 @@ struct Reporter<'a> {
 }
 
 impl Reporter<'_> {
-    fn report(&mut self, local: LocalId, state: Owned, span: Span, body: &Body) {
+    fn report(&mut self, place: &Place, state: Owned, span: Span, body: &Body) {
+        let local = place.local;
         let index = local.0 as usize;
         if self.reported[index] {
             return;
@@ -842,6 +1139,20 @@ impl Reporter<'_> {
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
+        if state.is_partial() {
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3042,
+                    span,
+                    format!("`{name}` is partially moved"),
+                )
+                .primary_label("used here as a whole after one of its fields was moved")
+                .secondary(decl.span, format!("`{name}` is declared here"))
+                .note("moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]")
+                .help("reassign the moved field, or destructure the whole struct up front"),
+            );
+            return;
+        }
         // `[OWN-4]` — "A loop body that moves a value declared outside the loop
         // is `E3041` unless the value is reassigned before the next iteration
         // on every path." That is a different rule from `[OWN-3]`'s use after
@@ -855,7 +1166,7 @@ impl Reporter<'_> {
         // edge leaves it `MaybeMoved` at the loop head, because the entry state
         // joins "not yet moved" with "moved last time" — so `MaybeMoved` inside
         // a cycle is exactly `[OWN-4]`'s shape.
-        let in_loop = self.in_loop && state != Owned::Moved;
+        let in_loop = self.in_loop && !state.is_moved();
         let diagnostic = if in_loop {
             Diagnostic::error(
                 codes::E3041,
@@ -872,9 +1183,10 @@ impl Reporter<'_> {
                 "it instead of moving it, or move a clone"
             ))
         } else {
-            let message = match state {
-                Owned::Moved => format!("`{name}` has been moved out of"),
-                _ => format!("`{name}` may have been moved out of"),
+            let message = if state.is_moved() {
+                format!("`{name}` has been moved out of")
+            } else {
+                format!("`{name}` may have been moved out of")
             };
             Diagnostic::error(codes::E3040, span, message)
                 .primary_label("used here after the move")
@@ -887,7 +1199,8 @@ impl Reporter<'_> {
     /// `[BRW-7]` — "no borrow of a moved or uninitialised place. `E3050`."
     /// Shape O6, whose required help is to name the path the place is not
     /// initialised on and to move the borrow after the initialisation.
-    fn report_borrow(&mut self, local: LocalId, state: Owned, span: Span, body: &Body) {
+    fn report_borrow(&mut self, place: &Place, state: Owned, span: Span, body: &Body) {
+        let local = place.local;
         let index = local.0 as usize;
         if self.reported[index] {
             return;
@@ -899,15 +1212,16 @@ impl Reporter<'_> {
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
-        let (message, note) = match state {
-            Owned::Moved => (
+        let (message, note) = if state.is_moved() {
+            (
                 format!("`{name}` is borrowed after it has been moved out of"),
                 "the borrow would point at memory whose owner gave it away",
-            ),
-            _ => (
+            )
+        } else {
+            (
                 format!("`{name}` may have been moved out of when it is borrowed here"),
                 "on at least one path reaching this line the value is gone",
-            ),
+            )
         };
         self.sink.emit_classified(
             Diagnostic::error(codes::E3050, span, message)
