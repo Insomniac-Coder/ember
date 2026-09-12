@@ -21,16 +21,19 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ID | Status | Category | Priority | Semantic decision required |
 |---|---|---|---|---|
 | ODR-001 | **CLOSED** — retain the API exactly | Language / API | — | **No** — ruled 2026-09-10 |
-| ODR-002 | **RESOLVED AS TOOLING WORK** — open until `RIDX-1` lands | Tooling / document structure | **P2** | **No** |
+| ODR-002 | **CLOSED** — `RIDX-1` landed | Tooling / document structure | — | **No** |
 | ODR-003 | **DEFERRED EDITORIAL CLEANUP** — open for a future revision | Editorial / documentation | **P3** | **No** |
+| ODR-004 | **OPEN** — recover missing `[LT-8]`–`[LT-13]` definitions | Specification source recovery / library API | **P1** | **Conditional** — yes if the omitted source cannot be recovered |
 
-**All three were resolved by the owner on 2026-09-10.** Two remain technically
-open because work follows from them — `RIDX-1` for ODR-002, an editorial pass
-for ODR-003 — but **neither needs another owner decision, and neither is a
-language question.**
+**ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
+is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
+work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
+intake and remains the only conditional owner question.
 
-**Nothing in this queue blocks anything.** No open entry blocks implementation,
-conformance, a specification freeze, or requires an owner semantic decision.
+ODR-001 through ODR-003 do not block anything. **ODR-004 blocks normative
+adoption of the 0.9.5 target and conformance for the `std.borrow.with_views`
+surface.** It does not block H4's frozen identity or unrelated compiler work
+such as D-042.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
@@ -127,13 +130,11 @@ language *less* implementation-ready with no corresponding design benefit.
 
 ---
 
-## ODR-002 — six rule definitions the extraction tool cannot see
+## ODR-002 — six rule definitions the extraction tool could not see — **CLOSED**
 
     ID:        ODR-002
-    Status:    RESOLVED AS TOOLING WORK, NOT SPEC WORK (owner, 2026-09-10).
-               Technically OPEN until RIDX-1 lands.
-               No owner semantic decision required.
-               No language change required. Deferred to tooling.
+    Status:    CLOSED — RIDX-1 landed in 6c77723
+               No owner semantic decision required; no language change made.
     Category:  TOOLING / DOCUMENT STRUCTURE
     Priority:  P2
     Tracking:  RIDX-1 in docs/BACKLOG.md; design in docs/RFC-rule-extraction.md
@@ -187,6 +188,13 @@ not a definition' made mechanical."* All six sit in `rule_index_baseline.json`.
 **Keep the six rules exactly as they are. Do not restructure their normative
 wording. Do not weaken the extractor. Improve the tool instead**, as separate
 work: `RIDX-1`, designed in `docs/RFC-rule-extraction.md`.
+
+**Resolution evidence.** `tools/rule_index.py` now recognizes the four
+documented definition forms, and `tools/test_rule_index.py` includes positive
+cases plus a `FalseDefinitionsRefused` suite. The dangling-reference baseline
+fell from 12 to 4; the remaining four are genuine references/reservations, not
+definitions. The specification did not move. Commit `6c77723` landed the
+completed implementation and its tests.
 
 The dependency that must not exist, and the architecture that must:
 
@@ -276,6 +284,76 @@ That is exactly the drift the four recorded contradictions came from. A hardened
 specification should eliminate the second source of truth, not keep two copies
 in step — but the elimination is item-by-item work for a suitable revision, not
 a consistency pass.
+
+---
+
+## ODR-004 — `[LT-8]`–`[LT-13]` are referenced but absent from the 0.9.5 source
+
+    ID:        ODR-004
+    Status:    OPEN — source recovery required before normative adoption;
+               the repair must be issued as H5
+    Category:  SPECIFICATION SOURCE RECOVERY / LIBRARY API
+    Priority:  P1
+    Location:  supplied Ember_v0.9.5_Hardened_3_Implementation_Ready_Spec.md,
+               lines 105, 304–323, 1,683 and 4,360; frozen H4 target front matter
+
+    Semantic impact:                  CONDITIONAL
+    Blocks implementation:            YES — only the LT-8..LT-13 helper surface
+    Blocks conformance:               YES — TST-16 requires the absent rules
+    Blocks H4 identity freeze:         NO — H4 is frozen as the target
+    Blocks normative specification adoption: YES
+    Requires owner semantic decision: YES if the original rules cannot be
+                                      recovered verbatim
+
+**Existing wording.** The supplied 0.9.5 document says the
+`std.borrow.with_views2/3/4` helpers were introduced by 0.9_Hardened_14, remain
+normative compatibility APIs, and are governed by `[LT-8]`–`[LT-13]`.
+`[TST-16]` requires conformance tests for all six. The standard-library table
+also cites `[LT-8]` through `[LT-12]`.
+
+**Conflict.** No definition of any of the six rules exists in either supplied
+0.9.5 file. H3 added a manifest row saying they were “recovered from Hardened
+14”, but the definitions themselves are still absent. The available
+0.9_Hardened_12 and 0.9_Hardened_13 files also contain none of them, and no
+0.9_Hardened_14 source is available in the repository or supplied downloads.
+The frozen H4 development target corrects the unsupported recovery claim.
+ODR-004 still blocks normative adoption of that target and conformance for this
+helper surface; the eventual repair must be issued as H5 rather than editing H4.
+This is not the former ERR-042 tooling problem: there is no hidden inline,
+heading, or shared-line definition for the extractor to discover.
+
+**Possible interpretations.**
+
+1. The six rule definitions exist in an omitted 0.9_Hardened_14 source and
+   should be recovered verbatim. **Recommended.** This is source recovery and
+   creates no new semantics.
+2. The references are stale and the helper surface should be removed or
+   deferred. That changes the claimed standard-library contract and needs the
+   owner.
+3. The helpers are intended, but the six rules were never written. Defining
+   their exact signatures, mutability, escape, allocation, and region behavior
+   is new normative work and needs the owner.
+
+**Semantic impact.** The difference is observable: options 2 and 3 decide
+whether programs naming these helpers are accepted and what borrow/escape
+behavior they have. An implementation agent cannot reconstruct six APIs from
+the phrases “allocation-free late-bound callback composition” and
+“two/three/four-view callbacks” without inventing semantics.
+
+**Recommended owner action.** Supply the exact 0.9_Hardened_14 definitions of
+`[LT-8]`–`[LT-13]`. If no authoritative source exists, explicitly choose
+whether the helpers are removed/deferred or specify the missing rules as a new
+owner amendment.
+
+**Why this cannot be resolved safely by an agent.** Function signatures,
+mutable-view combinations, callback result restrictions, failure diagnostics,
+and whether the 2/3/4 helpers are separate rules are all absent. Each affects
+accepted programs and borrow behavior. Guessing would violate the standing
+rule that the compiler implements the language rather than defining it.
+
+See `docs/MIGRATION-0.9.5.md` for the complete intake and the non-semantic
+consolidation defects already repaired in H4 without inventing the missing
+helper semantics.
 
 ---
 

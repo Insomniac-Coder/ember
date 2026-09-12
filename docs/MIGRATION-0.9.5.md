@@ -1,0 +1,258 @@
+# Migration intake — Ember 0.9.5_Hardened_4
+
+Status as of 2026-09-12: **target accepted for development; not yet installed
+as the normative repository specification.**
+
+This document is the evidence-backed bridge between the repository's current
+normative language, `0.8.5_Hardened_1`, and the owner's proposed target,
+received as `0.9.5_Hardened_3` and corrected and frozen as the owner-directed
+`0.9.5_Hardened_4` development target. It is not a second specification. Where this document and
+a normative rule differ, the specification governs.
+
+## 1. Source custody and exact inputs
+
+The latest owner's supplied file is preserved byte-for-byte at:
+
+    docs/spec-source/as-received/Ember_v0.9.5_Hardened_3_Implementation_Ready_Spec.md
+
+SHA-256:
+
+    EE046114EA1DBF10D607244BA7EF35BC14F6A508080FC67F3D83269E4E7CD9D6
+
+It is 700,219 bytes and 7,424 lines. The preceding H2 input remains preserved
+beside it with SHA-256
+`6B4AE150740822361699519222A71A967910A6CD1736BA06B4A8B89F36F2D2AE`.
+The current normative working source,
+`docs/spec-source/ember-spec.md`, is 611,798 bytes and 5,607 lines, SHA-256:
+
+    F8EC2010EADC6F7393E81C67C77DCB8268B8604578F419BC03EEDAD422DCC4AF
+
+The frozen H4 development target is:
+
+    docs/spec-source/Ember_v0.9.5_Hardened_4.md
+
+It is 695,978 bytes and 7,425 lines, SHA-256:
+
+    143E7B85805C44EA93F431CE6D05DC46DB7FA38636577B1DDA698B77D5389AB2
+
+It is deliberately not installed as `ember-spec.md`. It retains every rule ID
+present in 0.8.5, adds 103 referenced IDs, and still identifies six missing
+definitions: LT-8 through LT-13. `E3065` remains a specified-but-unimplemented
+diagnostic.
+
+H4 is immutable under that revision identity. Recovering the missing rules or
+making any later correction requires `0.9.5_Hardened_5`; H5 then becomes the
+development target. Target selection and normative repository adoption are
+separate gates.
+
+The preserved file is evidence of what the owner supplied. It MUST NOT be
+edited. The working source remains `docs/spec-source/ember-spec.md` until the
+consolidation gate in §5 passes.
+
+## 2. Intake result
+
+The 0.9.5 target is usable, but neither supplied Markdown file is safe to copy
+over the normative source verbatim. Its central language change is clear:
+
+- `@view struct` values may carry multiple compiler-inferred region slots;
+- fields retain independent provenance instead of being collapsed to one
+  intersection region;
+- field projections require only their own live region slots;
+- whole-value and opaque operations conservatively require all relevant slots;
+- region metadata and callable-access summaries are compile-time-only and
+  erased before ABI/code generation;
+- `[TYP-15]` remains an all-slots escape condition, and arbitrary owning
+  containers of views remain forbidden by `[TYP-15a]`.
+
+That is an owner-selected semantic target. The repository must implement it;
+the target must not be narrowed to fit today's one-region compiler.
+
+The file also contains document-integrity defects and unverified historical
+claims. Those must be separated from the semantic target before the file can
+become normative.
+
+## 3. Specification findings
+
+| ID | Class | Finding | H4 treatment |
+|---|---|---|---|
+| SPEC-095-001 | document structure | H2 opened a historical block without closing it. | **Resolved.** H4 has one consolidated normative body with paired markers. |
+| SPEC-095-002 | normative contradiction | H2 made the inherited language non-normative. H3 introduced a supersession algorithm over a body already edited in place. | **Resolved.** H4 is one flattened normative source; frozen predecessors remain separate history. |
+| SPEC-095-003 | broken cross-reference | H2's boundary hid the only `[MIR-REG-1]` definition. | **Resolved.** The consolidated Part XIX definition is active and indexed. |
+| SPEC-095-004 | missing normative source, blocking | H3 says `[LT-8]`–`[LT-13]` were recovered, but defines none of them. | **OPEN: ODR-004.** Recover authoritative text or obtain a new owner decision. Do not infer six APIs. |
+| SPEC-095-005 | rule-ID collision | H2/H3 reused inherited `[CLI-15]` for cycle inspection and moved the historical meaning. | **Resolved.** Existing `CLI-15` retained; cycle inspection is `CLI-17`. |
+| SPEC-095-006 | implementation/conformance gap | `E3065`/B14 has no repository registry entry, page, emitter, or test. | **Open implementation work.** H4's `DIA-19` defines required artifacts but claims no evidence. |
+| SPEC-095-007 | tooling/document structure | New rules use valid Markdown heading definitions. | **Resolved in tooling.** `rule_index.py --spec` recognizes headings and standalone rule paragraphs, with false-definition tests. |
+| SPEC-095-008 | evidence error | H2 described simulated cycles as implemented. | **Resolved by H3 and retained.** H4 distinguishes `SPECIFIED`, `IMPLEMENTED`, `VERIFIED`, and `CONFORMANT`. |
+| SPEC-095-009 | stale self-identification | Embedded 0.8.5 front matter contradicted the current revision. | **Resolved.** It is condensed as historical lineage and an intake authority notice governs. |
+| SPEC-095-010 | inherited known defect | `[TST-11]` retained the merge corruption covered by decided ERR-031. | **Resolved** using the already-decided source reading; no new semantics. |
+| SPEC-095-011 | rule-ID collision | H3 reused inherited `RT-1`–`RT-4` for unrelated runtime-hardening rules. | **Resolved.** Existing IDs retained; additions are `RT-6`–`RT-9`. |
+| SPEC-095-012 | rule-ID collision | H3 reused inherited `DIA-18` for E3065 artifact completeness. | **Resolved.** Existing `DIA-18` retained; addition is `DIA-19`. |
+| SPEC-095-013 | duplicate definitions | H3's “canonical registry” restated 41 heading IDs as definition-shaped bullets and still omitted some heading rules. | **Resolved.** Direct heading extraction is authoritative; the remaining index is unbracketed and non-normative. |
+| SPEC-095-014 | invalid example | An MRV example mutated `positions` declared as immutable `Span[Vec3]`. | **Resolved.** It is `MutSpan[Vec3]`. |
+| SPEC-095-015 | version/evidence claim | H3 called itself mechanically audited despite the unresolved definitions and collisions. | **Resolved.** H4 is explicitly a frozen development target with normative adoption blocked. |
+| SPEC-095-016 | version-selection wording | `[MOD-6a]` said `0.9.5` was added beyond the versions in `[MOD-6]`, but `[MOD-6]` already listed it. | **Resolved.** One exact supported set remains; `[MOD-6a]` only distinguishes the `0.9` and `0.9.5` contracts. |
+
+The strengthened rule-index pass reports no duplicate definitions or orphaned
+amendments in H4. It still reports LT-12 and LT-13 as dangling; a direct expected-
+definition audit proves that LT-8 through LT-13 are all absent. Missing test
+directories and E3065 artifacts are expected implementation/conformance gaps,
+not evidence that the specification should be weakened.
+
+The alternate-spec report names six diagnostic codes absent from the current
+compiler registry. `E3065` is the new 0.9.5 gap. `E4050`, `E4057`, `E4060`,
+`E4064`, and `W4001` are inherited known-baseline gaps already present in the
+current 0.8.5 contract; H4 neither creates nor conceals them.
+
+## 4. Repository state versus the 0.9.5 target
+
+Verified at commit `6c77723114dd563f410b2595058931ac10847837` on `main` before
+this intake:
+
+- `cargo build --workspace --locked`: green, no warnings;
+- `cargo test --workspace --locked`: 178 passed, 0 failed;
+- 180 Ember conformance cases in 67 rule directories pass;
+- all six document/tooling gates pass;
+- Appendix A matches its generated fixture;
+- two implementation defects are open: D-038 and D-042;
+- four intentional deviations are open: D1–D4; D5 is closed and D6 withdrawn.
+
+`cargo test` emits one Rust test-target style warning for
+`from_is_contextual_so_that_From_can_declare_it`; this does not contradict the
+warning-free `cargo build` result, but it should be cleaned up.
+
+The supplementary `cargo fmt --all -- --check` is red over broad pre-existing
+formatting drift in compiler sources. It is not currently one of the six gates,
+was not caused by this specification intake, and was not hidden by a bulk
+unrelated rewrite. Clean it in an isolated mechanical change before promoting
+rustfmt to a required gate.
+
+### Implemented or materially present
+
+| Area | Evidence-backed state |
+|---|---|
+| Bootstrap | Rust workspace, diagnostics, lexer, parser, AST/HIR/MIR, analyses, C11 backend, C runtime, build/run/check/explain/fmt commands. |
+| Core source language | Substantial scalar, struct, enum, tuple/array, expression/control-flow, module/visibility, interface/generic, range, formatting, and error-recovery support. Phase 1 is useful but not represented by complete per-rule conformance. |
+| Ownership | Whole-local moves, `Copy`, deterministic drops, drop flags, overwrite and statement-temporary destruction, NLL loans, two-phase borrows, reborrows, disjoint fields, and one-region view propagation. |
+| Views | `ref`, `ref mut`, `Span`, `MutSpan`, `str`, one-region `@view struct`, `[TYP-15]` storage checks, and static-region storage behavior. |
+| Interior mutability | `Cell[T]` core surface and `RefCell[T]` borrow/try-borrow guards are compiler-known and tested. `RefCell` is move-only; guard views and `L3011` exist. |
+| Diagnostics/tooling | Stable code registry, JSON/text diagnostics, borrow-shape classifier, error-page validation, rule-index ratchets, generated spec split, spec block checks, and generated-C assertions including ordering. |
+
+### Incomplete before 0.9.5-specific work can be called conformant
+
+| Area | Current evidence |
+|---|---|
+| Per-field movedness | D-042: moving an owned field can cause it to be destroyed twice. This is a live safety defect and is also load-bearing for new `[LT-38]`. |
+| String view coercion | D-038: implicit `String` to `str` is rejected; explicit `as_str()` is sound. |
+| Remaining `Cell`/`RefCell` obligations | No cases yet for `[CELL-6a]`, `[CELL-9]`, `[CELL-10]`; `Cell.take`/the `Default` update arm await `Default`; `!Sync` awaits `Send`/`Sync` and threading. |
+| Arena | `[ARN-*]` not started. Arena is a region allocator, not another interior-mutability primitive. |
+| UnsafeCell | Normatively specified in 0.8.5, not implemented. |
+| Phase 2 completeness | `mem.*`, `Clone`/`Default` derives, the full standard collection surface, several borrow/lifetime rules, and `[DIA-7..10]` UI snapshots remain incomplete. |
+| Objects and later phases | Class/foreign-class/coroutine syntax exists in the parser, but class layout/RC/exclusivity/vtables, effects/comptime/derives, C and C++ importers, concurrency, DOD/ECS/SIMD, interpreter, LLVM backend, hot reload, deterministic execution, LSP/debugger, and the full standard library are not implemented. |
+| 0.9.5 multi-region views | Not implemented. `regions.rs` stores one region per view local, `[LT-2]` currently collapses a view struct to one region, and `borrows.rs` emits old `E3064` for the independent-region case. There are no region vectors, field provenance, callable field-access summaries, summary hashing, `[VERIFY-3]`, or `[TST-17]`–`[TST-19]` evidence. |
+
+The current implementation is therefore **mid-Phase 2**, not a 0.9 or 0.9.5
+implementation. Version labels in the supplied document do not change that
+fact.
+
+## 5. Migration gates and work order
+
+### Gate A — make 0.9.5 a sound normative input
+
+1. Preserve each owner's file byte-for-byte — **done for H2 and H3**.
+2. Resolve ODR-004 by recovering or explicitly deciding `[LT-8]`–`[LT-13]`.
+3. Produce a consolidated source from the current 0.8.5 lineage: inherited
+   rules remain normative; active 0.9/0.9.5 additions are inserted into their
+   canonical Parts; superseded rules are replaced once; historical cycle prose
+   remains clearly non-normative — **done in frozen H4; H5 must carry it
+   forward without silently changing H4**.
+4. Record every semantic addition as owner-approved and every structural
+   repair by its actual class — **H4 records `HC-095-03`, this migration ledger
+   classifies each correction, and ADR-023 records the hardening protocol;
+   update the adopted-source ledger when H5 is installed**.
+5. Recover the missing source in a new `Ember_v0.9.5_Hardened_5.md`, make H5
+   the development target, regenerate `docs/spec/`, add `0.9`/`0.9.5` version
+   selection, and update ratchets only for gaps introduced by this explicit
+   specification revision. H4 is frozen and MUST NOT be amended in place.
+6. Make the rule tooling understand the consolidated rule forms and prove it
+   still rejects references masquerading as definitions — **implemented and
+   verified for headings and standalone paragraphs; adoption remains blocked
+   by step 2, not by extraction**.
+
+The normative source does not move until these checks pass together. This is
+not resistance to the new semantics; it is what prevents their base language
+from being accidentally discarded.
+
+### Gate B — finish the load-bearing ownership foundation
+
+1. Fix D-042 with per-field move paths/drop flags, with adversarial drop-count
+   and emitted-C tests.
+2. Add real coverage for `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]`.
+3. Fix D-038.
+4. Implement `Arena` and its region behavior.
+5. Implement `UnsafeCell` exactly within `[UNS-10]`–`[UNS-10b]`.
+6. Finish the remaining Phase 2 exit criteria, including UI snapshots.
+
+### Gate C — implement inferred multi-region views
+
+1. Design and ADR the internal region-vector and field-provenance
+   representation; no source-level lifetime syntax and no runtime region
+   object.
+2. Extend HIR/MIR and `regions.rs` from one region per view value to
+   field-sensitive slots while preserving the legacy one-slot case.
+3. Add verified return-provenance and callable field-access summaries, with
+   conservative all-fields behavior for opaque calls and interface/cache
+   invalidation when summaries change.
+4. Replace the old 0.9.5-invalid `E3064` rejection with the specified behavior;
+   implement `E3065`/B14 for uninferrable returned provenance.
+5. Implement `[VERIFY-3]` and conformance for every clause of `[LT-14]`–
+   `[LT-43]`, `[TST-17]`–`[TST-19]`, plus generated-C checks proving region
+   erasure.
+6. Do not call the feature conformant until the acceptance condition is backed
+   by repository evidence.
+
+### Gate D — continue the existing phase plan
+
+After Phase 2 and the multi-region foundation, continue Phase 3 onward in the
+specification's dependency order: objects/RC/exclusivity; effects/comptime;
+C FFI; concurrency/DOD/ECS; C++ FFI/interpreter; hot reload/determinism; then
+1.0 tooling and full conformance. The 0.9.5 implementation-contract additions
+strengthen the evidence required at each phase; they do not make later phases
+already complete.
+
+## 6. Development protocol
+
+The standing procedure in `HANDOFF.md` §0.0 remains in force:
+
+1. Read `COLD-START.md`, this migration intake, `HANDOFF.md` §0, the normative
+   rule, `DECISIONS.md`, `DEFECTS.md`, `DEVIATIONS.md`, and `BACKLOG.md` before
+   changing code.
+2. Classify each finding before acting: language decision, specification
+   ambiguity, compiler defect, test defect, or implementation limitation.
+3. Probe the exact normative clause with a minimal adversarial program before
+   implementation.
+4. Add a conformance case that can fail; deliberately break it once and watch
+   it go red.
+5. Implement the semantic mechanism across every affected phase and verifier,
+   not a test-specific exception.
+6. Inspect generated C when ordering, layout, ownership, ABI, or compiler-made
+   names matter; use `assert-c-order` for ordering rules and C11 `-pedantic`
+   for portability.
+7. Update the correct ledgers. A compiler defect does not edit the language;
+   a missing test does not create semantics; a real contradiction stops for
+   owner input.
+8. Run warning-free build, all tests, all six gates, Appendix A verification,
+   and any feature-specific backend/runtime checks before committing.
+9. Report actual scope, evidence, remaining work, and any unverified claim.
+   Wait for the owner's green signal before beginning the next bounded task.
+
+## 7. Exact next task
+
+**D-042 — implement per-field movedness in drop elaboration.**
+
+It is the highest-priority executable compiler task because it is a current
+double-destruction defect, it is independent of the missing `[LT-8]`–`[LT-13]`
+source, and 0.9.5 `[LT-38]` makes field-sensitive moves explicitly
+load-bearing. After D-042: `[CELL-6a]`/`[CELL-9]`/`[CELL-10]`, then Arena.
+
+The parallel specification task is ODR-004 followed by Gate A consolidation.
+Do not invent the missing rules in order to make the queue empty.

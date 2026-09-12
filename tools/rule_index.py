@@ -46,6 +46,8 @@ state. This is the same shape `[TST-7]` uses for its `,ignore` blocks.
     python tools/rule_index.py                 # check, exit non-zero on new gaps
     python tools/rule_index.py --write-baseline
     python tools/rule_index.py --report        # full listing, always exits 0
+    python tools/rule_index.py --spec path.md --report
+                                                # audit another spec without adopting it
 """
 
 import argparse
@@ -65,6 +67,12 @@ BASELINE = ROOT / "tools" / "rule_index_baseline.json"
 # amendment ids (`[LEX-11a]`), the hyphenated class admits `[CG-C-3]`.
 RULE_ID = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]")
 QUOTED_RULE_ID = re.compile(r"`\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]`")
+HEADING_RULE_ID = re.compile(
+    r"^\s*#{1,6}\s+\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\](?:\s|$)"
+)
+PARAGRAPH_RULE_ID = re.compile(
+    r"^\s*`?\[([A-Z][A-Z0-9-]*-[0-9]+[a-z]?)\]`?(?=\s|$)"
+)
 CODE = re.compile(r"\b([EWL])(\d{4})\b")
 REGISTRY_ENTRY = re.compile(
     r"^\s*([EWL]\d{4})\s*=\s*\((\w+),\s*\d+,\s*(\w+),\s*\"([^\"]*)\"", re.M
@@ -76,7 +84,7 @@ REGISTRY_ENTRY = re.compile(
 # Words that announce a citation rather than a definition, when they appear
 # before the first rule id on a line.
 REFERENCE_LEAD = re.compile(
-    r"(?:see|per|under|from|by|cites?|citing|named in|listed in|which|that|and)\s*$",
+    r"\b(?:see|per|under|from|by|cites?|citing|named in|listed in|which|that|and)\s*$",
     re.I,
 )
 REFERENCE_TAIL = re.compile(r"^(?:'s|,|\)|\.|;|:|\s+and\b|\s+applies|\s+is unaffected)")
@@ -122,16 +130,29 @@ GRANT_RANGE = re.compile(
 )
 
 
-def spec_lines():
-    if not SPEC.exists():
-        sys.exit(f"specification not found at {SPEC}")
-    return SPEC.read_text(encoding="utf-8").split("\n")
+def spec_lines(path=SPEC):
+    if not path.exists():
+        sys.exit(f"specification not found at {path}")
+    return path.read_text(encoding="utf-8").split("\n")
 
 
 def rule_definitions(lines):
     """id -> [line numbers where it is *stated as a rule*]."""
     defs = {}
     for n, line in enumerate(lines, 1):
+        # Consolidated specifications may give a rule its own Markdown
+        # heading. The id must immediately follow the heading marker: a
+        # heading such as "Notes on [TYP-1]" is a reference, not a definition.
+        heading = HEADING_RULE_ID.match(line)
+        if heading:
+            defs.setdefault(heading.group(1), []).append(n)
+            continue
+        paragraph = PARAGRAPH_RULE_ID.match(line)
+        if paragraph:
+            tail = line[paragraph.end():]
+            if DEFINITION_TAIL.match(tail):
+                defs.setdefault(paragraph.group(1), []).append(n)
+            continue
         if not re.match(r"^\s*[*-]\s", line):
             continue
         # Only the FIRST rule id on a bullet can be the rule that bullet
@@ -178,6 +199,9 @@ def stated_anywhere(lines):
     """
     stated = set()
     for line in lines:
+        heading = HEADING_RULE_ID.match(line)
+        if heading:
+            stated.add(heading.group(1))
         # A grant names its ids outright ("individually citable as
         # `[RC-2a]`..`[RC-2d]`"), so every id in the range is stated even
         # though only the endpoints are written out.
@@ -318,9 +342,19 @@ def main():
         "in the commit message.",
     )
     ap.add_argument("--report", action="store_true")
+    ap.add_argument(
+        "--spec",
+        type=Path,
+        default=SPEC,
+        help="specification source to inspect (defaults to the normative source)",
+    )
     args = ap.parse_args()
 
-    lines = spec_lines()
+    spec_path = args.spec.resolve()
+    if args.write_baseline and spec_path != SPEC.resolve():
+        ap.error("--write-baseline is only valid for the normative specification")
+
+    lines = spec_lines(spec_path)
     text = "\n".join(lines)
     failures = []
     known = load_baseline()
@@ -444,11 +478,26 @@ def main():
           f"{len(known.get('codes_without_tests', []))} codes without tests")
 
     if args.report:
+        print("\n-- duplicate rule definitions --")
+        for rid, where in sorted(duplicates.items()):
+            print(f"   {rid}: lines {', '.join(str(n) for n in where)}")
+        print("\n-- orphaned amendments --")
+        for rid, n in orphaned_amendments(lines):
+            print(f"   {rid}: line {n}")
+        print("\n-- dangling rule references --")
+        for rid, n in dangling:
+            print(f"   {rid}: first seen at line {n}")
         print("\n-- rules with no conformance directory --")
         for r in missing_tests:
             print(f"   {r}")
+        print("\n-- codes named in the specification but absent from the registry --")
+        for c in not_in_registry:
+            print(f"   {c}")
         print("\n-- codes with no error page --")
         for c in missing_pages:
+            print(f"   {c}")
+        print("\n-- registered codes no conformance test asserts --")
+        for c in untested:
             print(f"   {c}")
         return 0
 

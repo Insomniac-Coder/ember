@@ -5,7 +5,8 @@ and `docs/spec-source/ember-spec.md`, with the reason for it.
 
 ## The hardening protocol (owner, 2026-09-09)
 
-The normative document carries **two numbers that move independently**:
+Each normative specification and issued development target carries **two
+numbers that move independently**:
 `v0.8.4_Hardened_1`, `v0.8.4_Hardened_2`, and so on.
 
 * The **language version** moves when the set of accepted programs changes.
@@ -14,9 +15,11 @@ The normative document carries **two numbers that move independently**:
   and no rule changes meaning.
 
 A hardening may never carry a semantic change; that is precisely what forces the
-language number instead. The current file is `0.8.4_Hardened_2` and not
-`0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts, so
-0.8.3 could not absorb it and the hardening count started again.
+language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
+not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
+so 0.8.3 could not absorb it and the hardening count started again. The current
+repository-normative source is `0.8.5_Hardened_1`; the separately frozen
+development target is `0.9.5_Hardened_4`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -41,6 +44,24 @@ it needs the owner's own words and nothing may be written in their place.
 
 Each hardening gets a section below listing what it added and, for each, the
 defect or difficulty that justified it.
+
+### Issued hardenings become immutable development targets
+
+**Owner ruling, 2026-09-12; ADR-023.** A bounded audit may reconcile several
+non-semantic findings in one hardening pass. When that pass is issued, its
+`Hardened_N` number advances and the resulting artifact becomes the development
+target. It is frozen under that identity. A flaw discovered after issuance is
+repaired in `Hardened_(N+1)`, which then becomes the target; the predecessor is
+never silently edited.
+
+This target-selection rule is separate from normative repository adoption. A
+target may be frozen while a recorded source, tooling, or conformance blocker
+prevents it from replacing `docs/spec-source/ember-spec.md`. That is the current
+0.9.5 state: H3 was received unchanged, the bounded correction pass is frozen
+as H4, and the unrecoverable `[LT-8]`–`[LT-13]` source gap means its eventual
+repair must be H5. `docs/MIGRATION-0.9.5.md` inventories every H3→H4 correction;
+this ledger continues to declare differences in the currently adopted
+repository-normative source checked by `tools/hardening_check.py`.
 
 ### The four kinds, and what each is allowed to do
 

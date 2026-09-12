@@ -99,6 +99,16 @@ class FormRecognition(unittest.TestCase):
         for rid in GRANTED:
             self.assertIn(rid, stated)
 
+    def test_rule_heading(self):
+        lines = ["## [LT-14] Per-field region provenance", "Normative body."]
+        self.assertIn("LT-14", rule_index.stated_anywhere(lines))
+        self.assertEqual({"LT-14": [1]}, rule_index.rule_definitions(lines))
+
+    def test_standalone_paragraph_definition(self):
+        lines = ["`[TYP-15]` A view-typed value MUST NOT escape its source."]
+        self.assertIn("TYP-15", rule_index.stated_anywhere(lines))
+        self.assertEqual({"TYP-15": [1]}, rule_index.rule_definitions(lines))
+
 
 class FalseDefinitionsRefused(unittest.TestCase):
     """Citations in the newly recognised positions must stay references.
@@ -203,6 +213,23 @@ class FalseDefinitionsRefused(unittest.TestCase):
             "`[ZZZ-7]` MUST precede named; `[FAKE-13]` parameters with defaults may be omitted.",
             ids=("FAKE-13",),
         )
+
+    def test_leading_see_is_a_reference(self):
+        stated = rule_index.stated_anywhere(["For details, see `[FAKE-16]`."])
+        self.assertNotIn("FAKE-16", stated)
+
+    def test_leading_per_is_a_reference(self):
+        stated = rule_index.stated_anywhere(["This is rejected per `[FAKE-17]`."])
+        self.assertNotIn("FAKE-17", stated)
+
+    def test_heading_reference_is_not_a_definition(self):
+        lines = ["## Notes about [FAKE-14]", "This section only cites the rule."]
+        self.assertNotIn("FAKE-14", rule_index.stated_anywhere(lines))
+        self.assertEqual({}, rule_index.rule_definitions(lines))
+
+    def test_standalone_paragraph_reference_is_not_a_definition(self):
+        lines = ["`[FAKE-15]` is unchanged by this revision."]
+        self.assertEqual({}, rule_index.rule_definitions(lines))
 
 
 class ScopePins(unittest.TestCase):

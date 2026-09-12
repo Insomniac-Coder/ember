@@ -742,3 +742,29 @@ instead of beside it.
 permitted reason. `E3105` is registered ahead of its emitter so `[DIA-6a]`
 holds. Building it is not part of `RefCell`, and `RefCell` must not be built on
 it: ADR-019's route stands until interface generics can express these in Ember.
+
+## ADR-023 — Each issued specification-hardening pass advances `Hardened_N`
+
+**Owner ruling, 2026-09-12.** The owner supplied
+`0.9.5_Hardened_3` and directed that a correction to that artifact must not be
+left under the same revision identity: the audited correction pass is
+`0.9.5_Hardened_4`, with H3 as its immediate predecessor. A later independently
+issued hardening pass advances to H5, and so on.
+
+This is a provenance and release-discipline decision, not permission to place a
+semantic change in a hardening. The existing split remains: a hardening may add
+clarification, source recovery, implementation invariants, conformance detail,
+or editorial repair without changing accepted language semantics; a semantic
+change still requires an owner-approved language revision.
+
+An individual hardening artifact may reconcile several findings discovered in
+one bounded audit. The rule is that an edited artifact is never presented under
+the predecessor's frozen identity. Received files remain byte-for-byte under
+`docs/spec-source/as-received/`; working candidates and eventual frozen cuts
+carry their own incremented revision number.
+
+Once that bounded pass is closed, the new hardening becomes the development
+target. Its contents are frozen under that identity: a later-discovered flaw is
+not patched silently into the same file, but repaired in the next hardening,
+which then becomes the target. Normative repository adoption is a separate gate
+and may lag the target while a recorded source or conformance blocker remains.

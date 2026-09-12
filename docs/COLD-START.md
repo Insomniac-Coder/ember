@@ -1,8 +1,9 @@
 # Cold start — read this first
 
-State as of 2026-09-09, everything pushed. Then `docs/HANDOFF.md` for the phase
-plan (its own "Start here" is marked superseded — ignore it) and
-`docs/MIGRATION-0.8.3.md` for the analysis that set the order.
+State as of 2026-09-12. Read `docs/MIGRATION-0.9.5.md` next for the active
+migration, then `docs/HANDOFF.md` §0 for the process and verified implementation
+state. `docs/MIGRATION-0.8.3.md` remains historical context for the original
+phase order.
 
 | Ledger | Answers |
 |---|---|
@@ -10,8 +11,8 @@ plan (its own "Start here" is marked superseded — ignore it) and
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..022 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** All three ruled 2026-09-10: ODR-001 **closed**; ODR-002 → tooling (`RIDX-1`); ODR-003 → deferred editorial. **Nothing in it blocks anything and none needs a further owner decision** |
+| `docs/DECISIONS.md` | ADR-001..023 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 are closed; ODR-003 is deferred editorial; ODR-004 is the active 0.9.5 source-recovery blocker for missing LT-8 through LT-13 definitions |
 
 ---
 
@@ -41,6 +42,15 @@ reason in the commit message.
 five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
+
+**0.9.5 status:** the owner-supplied H2 and H3 files are preserved unchanged
+under `docs/spec-source/as-received/`. The repaired and frozen
+`Ember_v0.9.5_Hardened_4.md` is the new development target, but not yet the
+normative repository source. It retains the owner-selected multi-region-view
+target; ODR-004 blocks normative adoption and conformance for the missing
+`[LT-8]`–`[LT-13]` surface. Because H4 is now frozen, repairing that source gap
+will produce H5, which will then become the target. No 0.9/0.9.5 implementation
+or conformance is implied by the target's version label.
 
 ## 2. The rules. Read these before touching `docs/spec-source/`
 
@@ -109,6 +119,12 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
+The current development target is `0.9.5_Hardened_4`, per the owner's
+instruction that each issued hardening pass increments the hardening number.
+H3 is the immediate predecessor. H4 is a non-semantic consolidation/repair
+pass; the 0.9.5 multi-region-view feature itself is the owner-selected language
+change. H4 is frozen; its next correction is H5.
+
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
 checking the current section the moment the version moved. It was one commit
@@ -156,7 +172,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: `[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage, then `Arena`
+## 5. Next task: D-042, then Cell/RefCell coverage and `Arena`
 
 **`Cell[T]` and `RefCell[T]` are both built** (2026-09-10). `RefCell` has
 `[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]` and `[CELL-12]` with 20
@@ -164,7 +180,12 @@ conformance cases, guards as view types through `regions.rs`, the one-word
 counter, `ember_panic_refcell` naming the conflicting borrow's location, and
 `L3011` emitted with a page. `docs/HANDOFF.md` §0.20 is the record.
 
-**What is left of block I, in order:**
+**D-042 comes first:** partial moves out of owned places can currently cause
+double destruction at scope end. Per-field movedness is also load-bearing for
+0.9.5 field-sensitive view validity. Fix it with adversarial drop-count and
+generated-C tests before adding the new region-vector machinery.
+
+**What follows in block I:**
 
 1. **`[CELL-6a]`, `[CELL-9]`, `[CELL-10]` conformance cases.** All buildable,
    none blocked. `[CELL-10]` is the one with teeth — `compiler/ember_diag/src/shapes.rs`
@@ -207,28 +228,28 @@ ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
 withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
-**The queue lives in `docs/OWNER-QUEUE.md`, and the owner ruled on all three on
-2026-09-10.** None needs a further owner decision.
+**The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001 through ODR-003 have owner
+resolutions. ODR-004 is new and blocks normative adoption of the 0.9.5 target
+unless the missing source can be recovered without a semantic decision.
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
-* **ODR-002 — tooling work, not spec work.** The six rules stay untouched; the
-  extractor is the defective component. `RIDX-1` in `BACKLOG.md`, designed in
-  `docs/RFC-rule-extraction.md`. **Do not restructure the rules and do not
-  weaken the extractor.**
+* **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
+  untouched. `RIDX-1` landed in `6c77723`; the extractor now recognises the
+  legitimate structural forms and its tests reject reference-shaped false
+  definitions.
 * **ODR-003 — deferred editorial cleanup.** No semantic change for 0.8.5; the
   next suitable revision classifies each `[FFI-17]` item A/B/C/D against its
   authoritative rule.
+* **ODR-004 — OPEN, P1.** The H3 file claims `[LT-8]`–`[LT-13]` were recovered
+  but contains no definitions. Supply the authoritative Hardened-14 text; if
+  none exists, the owner must decide the exact helper contract or its removal.
 
-* **One question raised and deliberately not acted on.** Six rule ids
-  (`[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) are
-  properly defined but stated in positions `rule_index.py` cannot recognise —
-  second on a shared line, or inline in a paragraph. They could be made findable
-  by splitting each onto its own bullet with its text verbatim, an
-  `EDITORIAL REPAIR` changing no meaning. That is a layout edit to the owner's
-  prose for a tool's benefit, which is the wrong direction by this project's
-  cardinal rule, so it was **not** done. The alternative is teaching the
-  detector the inline and granting-sentence forms and accepting the
-  false-negative risk. Withdrawn ERR-042 carries the full inventory.
+* **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
+  `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
+  the old extractor could not read. The specification was not rearranged for
+  the tool. `RIDX-1` taught the extractor those forms and pinned the
+  definition/reference boundary with tests. Withdrawn ERR-042 retains the
+  original inventory.
 * **Two open defects**, neither an owner question: **D-038** (`String`→`str`
   coercion is listed by `[SPN-1]` and rejected by the checker; fails closed) and
   **D-042** (partial moves out of owned places double-destroy at scope end;

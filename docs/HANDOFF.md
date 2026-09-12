@@ -1,6 +1,6 @@
 # Ember — handoff
 
-## 0. Current state — the authoritative snapshot (2026-09-09)
+## 0. Current state — the authoritative snapshot (updated 2026-09-12)
 
 **Written as a migration hand-off. Everything in this section was verified
 against the repository at the time of writing, not copied from a previous
@@ -277,12 +277,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | **v0.8.5_Hardened_1** — three owner rulings of 2026-09-10: S2 (`UnsafeCell` becomes a real primitive), S3 (`RefCell` never `Copy`), S4 (`[FN-1a]`). `0.8.3`, `0.8.4` and `0.8.5` all accepted |
-| Recent commits | `c330c35` the five rulings · `06c6f5c` the implementation agent's D-030/D-040 work, landed on their behalf · `23b2d8e` prologue · `5b6f307` the D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Recent commits | `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
-| Conformance | 63 rule directories, 161 cases |
-| Ledgers | 56 defects, **2 open** (D-038, D-042). **4 open deviations** (D1–D4). **No errata awaiting the owner** |
+| `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
+| Conformance | 67 rule directories, 180 cases |
+| Ledgers | 56 defects, **2 open** (D-038, D-042). **4 open deviations** (D1–D4). ODR-004 is the sole 0.9.5 source-recovery blocker |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -1434,11 +1435,87 @@ an agent's own notes as much as to someone else's.
 3. **D-042 and D-038 remain open.** D-042 is the more serious — a live
    double-destroy — and needs per-field movedness in drop elaboration.
 
+### 0.21 0.9.5 intake and H4 consolidation — 2026-09-12
+
+The owner supplied two proposed implementation-ready specifications. Both are
+preserved byte-for-byte and are evidence, not editable working copies:
+
+| Input | SHA-256 |
+|---|---|
+| `docs/spec-source/as-received/Ember_v0.9.5_Hardened_2_Implementation_Ready_Spec.md` | `6B4AE150740822361699519222A71A967910A6CD1736BA06B4A8B89F36F2D2AE` |
+| `docs/spec-source/as-received/Ember_v0.9.5_Hardened_3_Implementation_Ready_Spec.md` | `EE046114EA1DBF10D607244BA7EF35BC14F6A508080FC67F3D83269E4E7CD9D6` |
+| `docs/spec-source/Ember_v0.9.5_Hardened_4.md` | `143E7B85805C44EA93F431CE6D05DC46DB7FA38636577B1DDA698B77D5389AB2` |
+
+**The development target has moved; normative authority has not.** The owner
+selected 0.9.5 and directed that this correction pass be numbered and frozen as
+`0.9.5_Hardened_4`; H3 is its immediate predecessor. The resulting target is
+`docs/spec-source/Ember_v0.9.5_Hardened_4.md`. Meanwhile,
+`docs/spec-source/ember-spec.md` and frozen `Ember_v0.8.5_Hardened_1.md` remain
+the repository's normative source until ODR-004 closes and the adoption gates
+pass. H4 MUST NOT be edited in place: any later correction, including recovered
+`[LT-8]`–`[LT-13]` text, is issued as H5 and H5 then becomes the target.
+
+#### What H3 fixed
+
+H3 repaired H2's missing baseline-end marker, made the inherited 0.8.5 body
+normative, stopped claiming simulated implementation/conformance evidence, and
+added an explicit E3065 artifact obligation. Those improvements are retained.
+
+#### What H3 still got wrong, and H4 repaired
+
+| Finding | H4 treatment |
+|---|---|
+| H3 said LT-8 through LT-13 were recovered, but defined none of them | Claim withdrawn; ODR-004 remains a P1 source-recovery blocker. No signatures or semantics were invented. |
+| New cycle inspection reused inherited `CLI-15` | Existing `CLI-15` retained; cycle inspection is `CLI-17`. |
+| New runtime rules reused inherited `RT-1` through `RT-4` | Existing meanings retained; new rules are `RT-6` through `RT-9`. |
+| New E3065 artifact rule reused inherited `DIA-18` | Existing FFI diagnostic rule retained; new artifact rule is `DIA-19`. |
+| A “machine-readable registry” restated heading rules as definition-shaped bullets and produced dozens of duplicates | Removed as a normative registry. Headings are extracted directly; the remaining unbracketed list is navigation only. |
+| Active and in-place `TYP-15`/`TYP-15a` wording was duplicated | The canonical definitions remain once in Part IV. The 0.8.4 static-region decision is preserved. |
+| MRV example mutated an immutable `Span` | Corrected to `MutSpan`; no semantic change. |
+| Inherited TST-11 merge corruption remained | Repaired using the already-decided ERR-031 source reading. |
+| Embedded 0.8.5 front matter contradicted current identity | Condensed into historical lineage; H4 has one current version declaration. |
+| `MOD-6a` redundantly added `0.9.5` beyond a `MOD-6` set that already contained it | One exact supported set remains; `MOD-6a` only distinguishes the `0.9` and `0.9.5` contracts. |
+
+`tools/rule_index.py` now accepts `--spec <path>`, recognizes rules defined by
+Markdown headings and standalone rule paragraphs, and reports duplicates,
+orphans, dangling references, registry gaps, page gaps, and untested codes in
+report mode. Tests pin both positive recognition and reference-shaped false
+definitions. The normative 0.8.5 gate remains green; H4 currently has zero
+duplicate definitions and zero orphaned amendments.
+
+#### The one specification blocker
+
+The exact definitions of `[LT-8]` through `[LT-13]` are absent from H2, H3,
+the available 0.9_Hardened_12/13 files, and the repository. H3's statement that
+they were recovered is unsupported. `[TST-16]` and the standard-library table
+still require them, so their signatures, mutable-view combinations,
+callback-result restrictions, escape behavior, and allocation guarantees
+cannot be reconstructed safely. Recover the exact Hardened-14 text. If it does
+not exist, obtain an explicit owner decision. This is not ERR-042/RIDX-1: there
+is no hidden definition for tooling to recognize.
+
+#### Implementation status and order
+
+No 0.9/0.9.5 feature was implemented in this specification pass. The compiler
+still has one region per view value and the old E3064 path; it has no region
+vectors, per-field provenance, callable access summaries, E3065/B14 artifacts,
+or 0.9.5 conformance evidence. “Specified” is not “implemented”, “verified”,
+or “conformant”.
+
+The next executable compiler task is **D-042: per-field movedness in drop
+elaboration**. It is a current double-destruction defect and is load-bearing
+for 0.9.5 `[LT-38]`. Then close `[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage,
+implement Arena, implement UnsafeCell, and finish Phase 2. In parallel, resolve
+ODR-004 through H5 and adopt that successor; only then begin the
+multi-region-view implementation in the staged order recorded by
+`docs/MIGRATION-0.9.5.md`.
+
 ## The task list — where to begin
 
-`RefCell[T]` remains the next milestone (§0.14). These are ordered so that the
-cheap verification that de-risks it comes first; **1 and 2 together are under a
-day and 2 is what protects everything after it.**
+The historical list below records how `RefCell[T]` was reached. It is no longer
+the current start point. The current order is §0.21: D-042 first, then the
+remaining Cell/RefCell coverage, Arena, UnsafeCell, Phase 2 completion, and the
+0.9.5 multi-region work after the post-ODR-004 H5 specification is adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before
