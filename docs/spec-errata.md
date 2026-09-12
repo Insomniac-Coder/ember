@@ -79,7 +79,7 @@ ERR-008) is worth being able to read again.
 | ERR-026 | `[GRM-23]` with `[ATT-1]`, `[DIA-6a]` | **decided** — `a in b in c` is `E0102`, not `E0104` |
 | ERR-027 | `[UNS-7]`, `[STD-6]`, `[EFF-17]`, `[EFF-18]`, XX §6's registry paragraph | **decided** — four leftovers from the layer 0.6.2 removed, struck |
 | ERR-028 | `[EFF-18]` with Part X §1 and `[DET-2]` | **decided** — the effect set has ten members; `Nondet` was added after `[EFF-18]` was written |
-| ERR-029 | `[BLD-2]`, `[FFI-34]`, `[FFI-38]`, `[FFI-2a]`, `[BLD-11]`, `[TCB-5]`, `[FFI-33b]`, `[TST-13]`, `[RNG-7]`, `[RNG-8]` | **decided, except `[RNG-8]`** — nine editorial instructions read as carried out. **`[RNG-8]` is open**: its text opens mid-sentence on an ellipsis and the missing opening survives nowhere in the document, so it cannot be restored, only guessed |
+| ERR-029 | `[BLD-2]`, `[FFI-34]`, `[FFI-38]`, `[FFI-2a]`, `[BLD-11]`, `[TCB-5]`, `[FFI-33b]`, `[TST-13]`, `[RNG-7]`, `[RNG-8]` | **decided** — the nine editorial instructions read as carried out; `[RNG-8]`'s truncated head was recovered verbatim from both 0.6 source copies and declared in `spec-amendments.md`, matching the decision recorded in this entry's body |
 | ERR-030 | `[GRM-16]` with Part III §4's `small_stmt` | **decided** — the rule supersedes the production; already implemented that way |
 | ERR-031 | `[TST-11]` | **decided** — a merge artefact; the obligations read as the surrounding clauses state them |
 | ERR-032 | `[TST-7]` with XVI.4 and XVI.7a's fenced blocks | **decided** — the two overlay blocks are fenced `ember,ignore`, as the rule says they are |

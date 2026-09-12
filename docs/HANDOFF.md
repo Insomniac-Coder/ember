@@ -279,13 +279,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | **v0.8.5_Hardened_1** — three owner rulings of 2026-09-10: S2 (`UnsafeCell` becomes a real primitive), S3 (`RefCell` never `Copy`), S4 (`[FN-1a]`). `0.8.3`, `0.8.4` and `0.8.5` all accepted |
-| Recent commits | `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Recent commits | `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 67 rule directories, 187 cases |
-| Ledgers | 57 defects, **1 open** (D-038). **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
+| Conformance | 70 rule directories, 197 cases |
+| Ledgers | 58 defects, **1 open** (D-038). **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -764,13 +764,14 @@ splitting it across agents would have cost more than it saved.
 
 **Closed in the current implementation block:** **D-042** (recursive move paths,
 per-path flags, partial cleanup and `E3042`) and **D-043** (owned parameters
-join the callee's destruction scope). See §0.22. Previously closed: **D-041**
+join the callee's destruction scope), plus **D-044** (writes through borrowed
+value parameters now report E3023/B4). See §0.22 and §0.23. Previously closed: **D-041**
 (borrowed-ness threaded HIR→MIR; `check_borrowed_moves` reports owning moves
 through `Deref` and out of borrowed value parameters as `E3013`), **D-030**
 (`check_drop_moves` rejects drop-body moves) and **D-040** (method-call
 provenance selects E3025/B8).
 
-**Open deviations — five, in `docs/DEVIATIONS.md`.** (D6 was withdrawn to Closed:
+**Open deviations — four, in `docs/DEVIATIONS.md`.** (D5 and D6 are closed:
 unbuilt machinery is a gap, not a deviation — see below.)
 
 | # | What | Status |
@@ -779,7 +780,6 @@ unbuilt machinery is a gap, not a deviation — see below.)
 | **D2** | **`[CLO-6]`'s `owned f: fn(A) -> R` is refused, not implemented** | **open.** This is the live residual of the closure work — see the note below |
 | **D3** | `extern class` parses and is then refused by name (the C++ importer is Phase 7) | open. ERR-037 |
 | **D4** | `E9012` is registered and never emitted | open |
-| **D5** | a `mut` parameter whose type is itself a borrow — `[FN-1]`'s literal reading versus Part VII §7's own worked example | **unratified; awaiting an owner decision.** Complying with the letter makes the document's own example uncompilable, so neither side moves. ERR-041, ADR-017 |
 
 **`[CLO-3]` / ADR-018 is CLOSED, not open.** The owner ruled that the rule
 stands and the compiler catches up — *"Do not change the Ember spec to
@@ -792,13 +792,13 @@ rather than mis-compiled: consumption is a property of the bound, not of the
 closure's type, and until a call can consume its callee, treating `CallableOnce`
 as `Callable` would permit the second call the rule forbids.
 
-**Open errata — awaiting the owner.**
+**Historical errata status — no owner semantic decision is open.**
 
 | # | What | Status |
 |---|---|---|
-| **ERR-042** | nine rule ids are cited and defined by no rule — `[TYP-26]`, `[IFC-2]`, `[HND-2]`, `[GPU-7]`, and the whole `[IDE-1]`/`[IDE-2]`/`[IDE-5]`/`[IDE-7]`/`[IDE-10]` family. Part XX cites five IDE rules on one line and defines none | **open — reported to the owner.** Rule-id bookkeeping |
-| **ERR-043** | `UnsafeCell` is named once in 5,526 lines, as *the* primitive a package uses for unchecked interior mutability, and no rule defines it | **open — reported to the owner.** See §0.13 |
-| **ERR-029, the `[RNG-8]` part** | `[RNG-8]`'s text opens mid-sentence on an ellipsis and the missing opening survives in no copy of the document, so it cannot be restored, only guessed | **open.** The other nine items in ERR-029 are decided |
+| **ERR-042** | originally claimed nine undefined rule ids | **withdrawn.** The inventory was stale and the remaining six definitions were structurally invisible to the extractor; ODR-002/RIDX-1 fixed the tool without changing rule prose |
+| **ERR-043** | originally found `UnsafeCell` named without semantics | **decided.** Owner ruling S2 / ADR-022 added `[UNS-10]`–`[UNS-10b]` in 0.8.5; implementation remains future Gate B work |
+| **ERR-029** | ten editorial instructions embedded in rule bodies, including a truncated `[RNG-8]` head | **decided.** The instructions read as carried out; `[RNG-8]`'s head was recovered verbatim from both preserved 0.6 sources and declared as source recovery |
 
 **Compiler debt — `docs/BACKLOG.md`.** `RT-GEN-1` (generate `ember_rt.h`/`.c`
 from the symbol prefix), `LNT-CFG-1` (`[MAN-3]`'s `[lints]` configuration —
@@ -807,7 +807,7 @@ from the symbol prefix), `LNT-CFG-1` (`[MAN-3]`'s `[lints]` configuration —
 **`CELL-DEF-1`** and **`CELL-SYNC-1`**. `LT-REG-1` is struck through — done.
 
 **Phase 2 coverage still outstanding**, from `COLD-START.md` §4: `OWN` 6/8,
-`BRW` 7/9, `LT` 5/10, `DRP` 3/6, `CELL` 4/12, and **`[DIA-7..10]` with
+`BRW` 7/9, `LT` 5/10, `DRP` 4/6, `CELL` 11/13, and **`[DIA-7..10]` with
 `tests/ui/` snapshots at 0/5 — which is a Phase 2 *exit* criterion**
 (COLD-START §6).
 
@@ -852,7 +852,8 @@ descriptions below are preserved as found; each carries its resolution.**
   Built.
 * **`RefCell[T]`** — interior mutability. Mutates **through a reference**, so
   `[BRW-1]`'s question is asked **at run time** against a borrow counter
-  (`[CELL-5]`..`[CELL-8]`). Not built.
+  (`[CELL-5]`..`[CELL-8]`). Built, including guard-region/drop behavior and
+  every-profile checks; `[CELL-8]`'s `!Sync` marker awaits threading.
 * **`Arena`** — **a region allocator, not an interior-mutability primitive.**
   Its mutation happens to reach through a shared borrow, but what it must prove
   is a **region** rather than an alias, which `[ARN-1]` does **statically**. Not
@@ -871,93 +872,43 @@ three by exempting a type from `[BRW-1]` has not implemented it."* `Cell` is
 sound here for exactly that reason: nothing escapes, so the write is not an
 aliasing question at all, and the borrow checker was **not weakened**.
 
-**`UnsafeCell` remains an unresolved owner-level question (ERR-043).** ADR-019
-chose compiler-known types over building on it *because it is not available* —
-it is named once and defined nowhere, and inventing the semantics of the one
-construct that suspends `[BRW-1]` is the owner's call. ADR-019 carries an
-explicit warning worth repeating: **the existence of `Builtin::CellSet` is not
-evidence about what the language permits an arbitrary package to implement.**
-Do not reach ERR-043, observe that the compiler already mutates through a shared
-borrow for `Cell`, and conclude that the language therefore permits it. That is
-the compiler-justifies-specification move by a longer road. **Do not invent
-semantics for unresolved owner-level questions.**
+**`UnsafeCell` is specified but unimplemented.** Owner ruling S2 / ADR-022 and
+`[UNS-10]`–`[UNS-10b]` define its deliberately narrow unsafe boundary. ADR-019
+still chooses compiler-known `Cell`/`RefCell` lowering; their builtins are not
+evidence that an arbitrary package may bypass `[BRW-1]`. Implement
+`UnsafeCell` later as its own Gate B task and do not infer any semantics beyond
+the owner-approved rules.
 
 ### 0.14 The next task
 
-**`RefCell[T]`, then `Arena`.** Block I's remaining two.
+**D-038 — implement the specified implicit `String`→`str` coercion.**
 
-**Do not begin implementing them as part of reading this hand-off.** Report and
-wait for the green signal, per the owner's standing rule.
+Do not begin it as part of the Cell/RefCell closure. Report this completed
+bounded task and wait for the owner's green signal.
 
-**Why `RefCell` is the next significant milestone, and harder than `Cell` was.**
-`Cell` was contained because nothing escaped it. `RefCell` is the opposite:
-`[CELL-5]`'s `borrow` and `borrow_mut` hand out `Ref[T]` and `RefMut[T]`, and
-`[CELL-7]` makes those **genuine view types** whose region borrows the cell and
-whose `drop` releases the borrow state. So **`regions.rs`, `[TYP-15]`, borrow
-checking, guard lifetime and escape behaviour all become load-bearing**, none of
-which `Cell` touched. Add to that: `[CELL-9]` puts the borrow check in **every**
-profile and forbids `exclusivity = "unchecked"` from reaching it; `[CELL-6a]`
-forbids any profile making `try_borrow` infallible, because that would change
-which branch of a `match` runs, which `[PRF-1]` forbids; `[CELL-5]`'s panic
-message must name **the conflicting borrow's source location**, recorded in
-debug *and* release; and `[CELL-7]`'s `L3011` — "`RefCell` guard held across a
-call" — **is registered in `compiler/ember_diag/src/codes.rs` and emitted by
-nothing**, so it is work this task closes. It is **not** blocked and **not**
-opt-in: `[CELL-7]` says it *fires* when a guard is live across a call that could
-re-enter the same cell. (An earlier revision of this section said it needed
-`LNT-CFG-1` first — that entry is about `[LT-1b]`'s `L3014`, which is a
-different lint and is the opt-in one.) `[CELL-10]` constrains the
-*diagnostics*: shape B4
-may suggest `RefCell` **only** when the conflicting accesses are provably not
-simultaneous, and never as a first suggestion.
+The explicit `String.as_str()` path is sound because D-037 routed it through
+`view_of`, tied its result to the receiver in region elision, and extended
+MIR's view verifier. The implicit coercion must reuse that same producer and
+those same boundaries; creating a second direct builtin path would reopen the
+dangling-view defect under a different spelling. Start with the minimal
+specified program `s: String; v: str = s`, then add mutation and escape
+adversaries proving the source remains borrowed for the view's lifetime.
 
-**What carries over from `Cell`:** the transparent-struct shape and the
-`cells`-style side table; privacy as the mechanism for an unreachable field; and
-`assert-c-order` for any rule that is about order.
+Read first:
 
-**What does not — and this is now settled, so do not re-derive it:**
-`RefCell[T]` is **never `Copy`**, whatever `T` is. `[CELL-12]`, owner ruling of
-2026-09-10, amendment S3, ADR-021. A `RefCell` carries mutable runtime borrow
-state; duplicating the value would give two cells inconsistent knowledge of one
-storage and make the invariant `[CELL-5]`..`[CELL-8]` rest on unsound.
-`[CELL-4]`'s field-derived `Copy` rule is stated for `Cell` and explicitly does
-**not** reach `RefCell`, so the derivation that came free for `Cell` must be
-deliberately overridden here.
+1. `docs/spec-source/ember-spec.md` — especially `[SPN-1]`, `[TYP-15]`,
+   `[BRW-1]`, and `[LT-1]`;
+2. `docs/MIGRATION-0.9.5.md`, then this §0 and §0.23;
+3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
+   `docs/BACKLOG.md`;
+4. the Array→Span coercion and `view_of` in
+   `compiler/ember_typeck/src/lib.rs`, String-view elision in MIR lowering,
+   `compiler/ember_analysis/src/regions.rs`, and MIR view verification.
 
-ADR-021 is worth reading before you rely on any other `Cell` derivation: a
-derivation that is free and correct for one type is not thereby correct for the
-next type that reuses its machinery.
-
-**Read before starting, in this order:**
-
-1. `docs/spec-source/Ember_v0.8.4_Hardened_1.md` — the frozen language
-   revision (Part IX §7 for `[CELL-*]`, Part IX §2 for `[ARN-*]`). For
-   implementation, `docs/spec-source/ember-spec.md` governs on any difference
-   — the two currently differ only by E5 (Part X, unrelated to `RefCell`); see
-   §0.17 and do not treat the files as interchangeable.
-2. `docs/HANDOFF.md` — this file, §0 first, then the Block I section
-3. `docs/COLD-START.md` — §2's rules and §5's design notes
-4. `docs/DECISIONS.md` — ADR-019 and ADR-020 especially
-5. `docs/DEFECTS.md` — D-035 and D-030
-6. `docs/BACKLOG.md` — the compiler-debt table
-
-**Then inspect the existing infrastructure before writing anything:**
-
-    compiler/ember_analysis/src/regions.rs   region variables, the constraint graph
-    compiler/ember_analysis/src/borrows.rs   NLL, loans, elision, the [DIA-7] shapes
-    compiler/ember_analysis/src/drops.rs     moves, drop flags, [OWN-4]'s loop shape
-    compiler/ember_typeck/src/lib.rs         cell_of, cells, synth_cell_method — the compiler-known-type pattern
-    compiler/ember_mir/src/lower.rs          lower_assign, lower_cell_store, lower_cell_into_inner, temp_unowned
-
-**`RefCell` conformance must actually exercise the rules** (§0.3's lesson
-applies in full). At least, each tied to its rule id: multiple `Ref`s;
-`Ref` + `RefMut` refused; multiple `RefMut`s refused; runtime contention
-panics with the conflicting borrow's source location (debug *and* release);
-guard `drop` releasing borrow state; early return through a live guard;
-nested borrows and nested scopes; returned `Ref` / `RefMut`; stored views and
-region boundaries; non-escaping vs escaping views; static-region views
-admitted where `[TYP-15]` allows; invalid long-lived storage refused with
-`E3063`. Break every new case red once before trusting it.
+After D-038, the next milestone is **Arena**, then **UnsafeCell**, in Gate B
+order. Arena remains a region allocator, not a third interior-mutability
+primitive. Do not begin Arena, UnsafeCell, H8 normative adoption, or 0.9.5
+multi-region-view implementation during the D-038 task.
 
 ### 0.15 The principles, in one place
 
@@ -1405,7 +1356,7 @@ was the half flagged as needing the hardest testing, and it was done.
 
 ---
 
-#### Coverage still missing, and it is not blocked
+#### Coverage still missing at that checkpoint (closed in §0.23)
 
 | Rule | | |
 |---|---|---|
@@ -1434,8 +1385,9 @@ an agent's own notes as much as to someone else's.
 
 #### Historical pickup order at that checkpoint
 
-This order was correct when written. **D-042 is now closed by §0.22**; the
-current pickup order is stated in §0.21 and at the start of the task list below.
+This order was correct when written. **D-042 is now closed by §0.22 and the
+Cell/RefCell coverage by §0.23**; the current pickup order is stated in §0.14
+and at the start of the task list below.
 
 1. **D-042 — per-field movedness in drop elaboration.** At that checkpoint it
    was a live double-destruction defect and load-bearing for 0.9.5 `[LT-38]`.
@@ -1555,9 +1507,9 @@ or 0.9.5 conformance evidence. “Specified” is not “implemented”, “veri
 or “conformant”.
 
 D-042's per-field movedness foundation is now implemented and verified; §0.22
-is the closure record. The next executable compiler task is the remaining
-`[CELL-6a]`/`[CELL-9]`/`[CELL-10]` coverage and diagnostic behavior, followed
-by D-038 and Arena in `docs/MIGRATION-0.9.5.md` Gate B order. H8 normative
+is the closure record. The remaining `[CELL-6a]`/`[CELL-9]`/`[CELL-10]`
+coverage and diagnostic behavior is complete in §0.23. The next executable
+compiler task is D-038, followed by Arena in `docs/MIGRATION-0.9.5.md` Gate B order. H8 normative
 adoption remains a separate gate; only then begin multi-region-view work in
 the staged order recorded there.
 
@@ -1623,11 +1575,92 @@ because the required D-042 call-transfer probe exposed the independent callee
 leak. D-043 was recorded separately rather than folded into D-042. No next
 feature block was started.
 
+### 0.23 Cell/RefCell conformance closure and D-044 — 2026-09-12
+
+**Classification.** `[CELL-6a]` and `[CELL-9]` lacked durable coverage. The
+`[CELL-10]` probe then exposed a separate compiler defect, D-044. The adopted
+specification already made an omitted parameter mode a shared borrow (`[FN-1]`),
+mapped E3023 to shape B4, and constrained RefCell suggestions. The compiler and
+tests moved; neither `ember-spec.md`, frozen 0.8.5, nor frozen H8 changed, and no
+ADR was needed.
+
+**The defect and minimal reproducer.** A default-mode value parameter was
+represented as an ordinary ABI local, so this compiled:
+
+```ember
+struct Counter:
+    pub value: i32
+
+fn increment(counter: Counter):
+    counter.value = counter.value + 1
+```
+
+The assignment changed only the callee's private copy and silently disappeared
+on return. This was not merely an assignment-parser hole: explicit `ref mut`,
+`as_mut_span()`, a `mut self` method, and forwarding to a `mut` parameter all
+formed write-capable access through the same borrowed mode.
+
+**Compiler mechanism.** Type checking now retains a set of default-mode
+parameter locals independently of their physical ABI types, including generic
+functions, methods, and lambda bodies. Every mutable-access creation path walks
+its HIR place to the root local and emits classified E3023/B4 when that root is
+a borrowed parameter. Shared-reference writes retain E3021 and are not double-
+reported. The first E3023 help is always the structural repair — one owner and
+an explicit `mut` parameter. At a single access proven non-simultaneous, later
+helps may name `Cell[T]` for a `Copy` payload, `RefCell[T]`, then class, with
+their costs. Method and argument boundaries conservatively omit RefCell until
+the whole call can prove that sibling accesses are not simultaneous. This is
+`[CELL-10]`'s distinction, not a universal interior-mutability recommendation.
+
+**Harness mechanism.** Three new annotations make the relevant contracts
+executable rather than prose:
+
+* `#$ profiles: debug, release, shipping` repeats check/build/run and uses a
+  separate output directory per profile; tests without it retain the prior
+  debug-only behavior;
+* repeated `#$ help:` directives must occur in that order in rendered help
+  lines; and
+* `#$ not-help:` forbids a substring specifically in rendered help lines, so a
+  source annotation cannot satisfy or defeat itself.
+
+**Conformance evidence.** `tests/conformance/CELL-6a/` exercises both fallible
+borrow directions and observes `None` in all three profiles.
+`tests/conformance/CELL-9/` inspects generated C for `ptrdiff_t borrow;` — the
+counter is one machine word and `[CELL-5]`'s location fields are separate — and
+provokes the runtime check in all three profiles. The
+`exclusivity = "unchecked"` sentence concerns dynamic classes; package/class
+exclusivity is not a reachable compiler feature yet, so that interaction is a
+dependency gap rather than a defect or a falsely claimed test.
+`tests/conformance/CELL-10/` contains one structural accept, five independent
+E3023 access-path rejects, and a simultaneous-borrow E3022 case that forbids a
+RefCell help. `docs/errors/E3023.md` provides an executable failing example and
+compilable repair.
+
+**Mutation evidence.** The minimal assignment test was red before the compiler
+fix. Disabling parameter-provenance enforcement made all five E3023 probes
+compile with exit 0. Reversing the required help order made the suite fail on
+the order assertion. Running the every-profile case as shipping-only with an
+incorrect output failed and named `[shipping]`. Replacing the C counter needle
+with `size_t borrow;` failed and printed the actual `ptrdiff_t` field. These
+checks were restored before the green run.
+
+**Scope report.** Approved work was the bounded `[CELL-6a]`/`[CELL-9]`/
+`[CELL-10]` closure. Actual work included the harness support that those rules
+require and D-044 because the mandatory `[CELL-10]` probe demonstrated a live
+compiler violation of `[FN-1]`; it was filed and fixed rather than hidden in a
+coverage task. Stale type-checker comments about decided ERR-041/UnsafeCell and
+the ERR-029 summary/body mismatch were corrected as documentation only. D-038,
+Arena, UnsafeCell, H8 adoption, and multi-region views were not started.
+
+**Current pickup.** D-038 is next, exactly as §0.14 and
+`docs/MIGRATION-0.9.5.md` §7 state. Then Arena, then UnsafeCell. Report and wait
+for a green signal before beginning D-038.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
-the current start point. D-042 is complete (§0.22). The current order is §0.21:
-remaining Cell/RefCell coverage, D-038, Arena, UnsafeCell, Phase 2 completion,
+the current start point. D-042 and the Cell/RefCell closure are complete
+(§0.22–§0.23). The current order is §0.14: D-038, Arena, UnsafeCell, Phase 2 completion,
 and the 0.9.5 multi-region work after H8 is explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
@@ -1787,13 +1820,13 @@ ways, and the sweep mapped clauses to cases wherever they live.
 
 `[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]`, `[CELL-12]` built with 20
 conformance cases; `L3011` now emitted from guard-liveness tracking, with a
-page. **What is left of block I's `RefCell` half is coverage, not
-implementation:** `[CELL-6a]`, `[CELL-9]` and `[CELL-10]` have no cases and all
-three are buildable now. `[CELL-3]`/`[CELL-8]` (`!Sync`) stay blocked on
+page. **The remaining buildable coverage is now complete (§0.23):**
+`[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` have executable cases, and the probe
+closed D-044. `[CELL-3]`/`[CELL-8]` (`!Sync`) stay blocked on
 `CELL-SYNC-1`. The `Copy` question was answered by the owner — `[CELL-12]`,
 never `Copy` — and must not be re-derived.
 
-### 4. `Arena` — after `RefCell`
+### 4. `Arena` — after D-038
 
 `[ARN-*]`. **Not a third interior-mutability primitive** (§0.13): it is a region
 allocator, and what it must prove is a region rather than an alias, statically.

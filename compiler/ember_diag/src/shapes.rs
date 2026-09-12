@@ -218,5 +218,6 @@ mod tests {
         // rejected two overlapping mutable borrows could not say so.
         assert_eq!(shape_for(codes::E3021), Some(Shape::B3));
         assert_eq!(shape_for(codes::E3022), Some(Shape::B1));
+        assert_eq!(shape_for(codes::E3023), Some(Shape::B4));
     }
 }

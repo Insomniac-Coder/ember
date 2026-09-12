@@ -30,7 +30,7 @@ phase order.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 67 conformance rule directories, 187 cases. 57 defects recorded, **1 open**
+ 70 conformance rule directories, 197 cases. 58 defects recorded, **1 open**
  (D-038). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **No erratum currently awaits an owner semantic decision.** ERR-047 and
 ERR-048 were closed by the H7/H8 owner rulings; earlier ERR-041 and ERR-043 were
@@ -159,8 +159,8 @@ left is coverage:
                  was fixed (drop-body moves rejected)
     SPN   3/3    done
     OWN-5        both clauses now, after D-035 — see the note below
-    CELL  4/12   Cell is built (CELL-1, 2, 4, 11). RefCell is CELL-5..8,
-                 CELL-9, CELL-10, CELL-6a; Arena is ARN-*. See §5
+    CELL  11/13  Cell/RefCell cases exist for every currently buildable rule;
+                 CELL-3 and CELL-8 (`!Sync`) wait for Send/Sync/threads. See §5
     DIA   0/5    needs tests/ui snapshots — see §6
 
 **A directory named for a rule is not coverage of the rule.**
@@ -181,13 +181,16 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: Cell/RefCell coverage, then `Arena`
+## 5. Next task: D-038, then `Arena`
 
-**`Cell[T]` and `RefCell[T]` are both built** (2026-09-10). `RefCell` has
-`[CELL-5]`, `[CELL-6]`, `[CELL-7]`, `[CELL-11]` and `[CELL-12]` with 20
-conformance cases, guards as view types through `regions.rs`, the one-word
-counter, `ember_panic_refcell` naming the conflicting borrow's location, and
-`L3011` emitted with a page. `docs/HANDOFF.md` §0.20 is the record.
+**`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
+Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
+borrow paths in debug, release, and shipping; `[CELL-9]` pins the one-word
+counter in generated C and the every-profile runtime check; `[CELL-10]` pins
+ordered positive and forbidden negative suggestions. The class-only
+`exclusivity = "unchecked"` interaction has no reachable trigger until classes
+and package exclusivity exist; it is a dependency gap, not a current compiler
+defect. `[CELL-3]`/`[CELL-8]` remain correctly blocked on `CELL-SYNC-1`.
 
 **D-042 is fixed:** drop elaboration now carries recursive per-field move paths,
 splits partial aggregate cleanup into live-field drops, uses per-path flags for
@@ -202,14 +205,19 @@ callee's destruction scope and leaked when not moved onward. `[OWN-2]` now has
 a direct move-onward/not-moved parameter test. Neither fix changed the
 specification or frozen H8 target.
 
-**What follows in block I:**
+The `[CELL-10]` probe found and closed **D-044**: default-mode value parameters
+lost their shared-borrow provenance at type checking, so writes compiled and
+changed only a private ABI copy. Parameter modes now remain explicit type-
+checker state across assignment, `ref mut`, mutable-view, `mut self`, and
+`mut`-argument paths. E3023/B4 leads with the structural `mut` repair and only
+offers costed interior mutability where non-simultaneity is proven. The rule was
+already clear; no specification or ADR changed.
 
-1. **`[CELL-6a]`, `[CELL-9]`, `[CELL-10]` conformance cases.** All buildable,
-   none blocked. `[CELL-10]` is the one with teeth — `compiler/ember_diag/src/shapes.rs`
-   still contains no mention of `RefCell`, so the rule ("shape B4 may suggest
-   `RefCell` **only** when the accesses are provably not simultaneous, never
-   first") is vacuously satisfied and becomes real work now that `RefCell`
-   exists.
+**What follows in Gate B:**
+
+1. **D-038:** implement the specified implicit `String`→`str` coercion without
+   creating a second view-producing path; it must reuse `view_of`, region
+   elision, MIR view verification, and the D-037 mutation guard.
 2. **`Arena` (`[ARN-*]`).** Not started. **Not a third interior-mutability
    primitive** — it is a region allocator, and amendment A13 records that the
    three share the implementation concern and *not* the concept. Do not build
@@ -274,8 +282,9 @@ semantic question is currently open.
   original inventory.
 * **One open defect**, not an owner question: **D-038** (`String`→`str`
   coercion is listed by `[SPN-1]` and rejected by the checker; fails closed).
-  **D-042** (partial moves) and **D-043** (owned parameters leaked) are fixed
-  with move-path/drop-count conformance evidence. **D-041** (moves out of
+  **D-042** (partial moves), **D-043** (owned parameters leaked), and **D-044**
+  (writes through borrowed value parameters) are fixed with adversarial
+  conformance evidence. **D-041** (moves out of
   borrowed places unchecked — `x = r.inner` compiled and the value dropped
   twice) was the serious one and is **fixed** this turn: borrowed-ness is
   threaded HIR→MIR and owning moves out of borrows are `E3013`.

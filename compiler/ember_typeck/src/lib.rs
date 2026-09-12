@@ -14,7 +14,7 @@
 
 mod usefulness;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ember_ast as ast;
 use ember_hir as hir;
@@ -319,6 +319,11 @@ struct Checker<'a> {
     // Per-function state.
     locals: Vec<LocalDecl>,
     scopes: Vec<HashMap<Symbol, LocalId>>,
+    /// `[FN-1]` — locals introduced by default-mode parameters. Their values
+    /// are shared borrows even though small `Copy` values may use a by-value
+    /// ABI, so no write rooted at one is permitted. Keeping the mode here lets
+    /// the type checker reject the write before that ABI detail reaches MIR.
+    borrowed_params: HashSet<LocalId>,
     /// While checking the second and later alternatives of an `|` pattern:
     /// the locals the first alternative bound, which they must reuse.
     or_bindings: Option<HashMap<Symbol, LocalId>>,
@@ -374,6 +379,7 @@ impl<'a> Checker<'a> {
             pending_methods: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
+            borrowed_params: HashSet::new(),
             or_bindings: None,
             loop_labels: Vec::new(),
             in_defer: false,
@@ -3049,6 +3055,7 @@ impl<'a> Checker<'a> {
                 if let Some(block) = &decl.body {
                     self.locals = Vec::new();
                     self.scopes = vec![HashMap::new()];
+                    self.borrowed_params.clear();
                     self.ret_ty = self.signatures[def.0 as usize].ret;
                     let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
                         [def.0 as usize]
@@ -3061,7 +3068,10 @@ impl<'a> Checker<'a> {
                             Mode::Mut => self.mut_param_ty(ty),
                             _ => ty,
                         };
-                        self.declare(Some(name), local_ty, param_span);
+                        let local = self.declare(Some(name), local_ty, param_span);
+                        if mode == Mode::Borrow {
+                            self.borrowed_params.insert(local);
+                        }
                     }
                     self.check_block(block);
                 }
@@ -3072,6 +3082,7 @@ impl<'a> Checker<'a> {
 
             self.locals = Vec::new();
             self.scopes = vec![HashMap::new()];
+            self.borrowed_params.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
 
             let mut params = Vec::new();
@@ -3090,6 +3101,9 @@ impl<'a> Checker<'a> {
                     _ => ty,
                 };
                 let local = self.declare(Some(name), local_ty, span);
+                if mode == Mode::Borrow {
+                    self.borrowed_params.insert(local);
+                }
                 params.push(Param { local, mode });
             }
 
@@ -3312,6 +3326,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Function {
         self.locals = Vec::new();
         self.scopes = vec![HashMap::new()];
+        self.borrowed_params.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
@@ -3326,6 +3341,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
+            if mode == Mode::Borrow {
+                self.borrowed_params.insert(local);
+            }
             params.push(Param { local, mode });
         }
         let body = self.check_block(block);
@@ -3426,6 +3444,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Option<Function> {
         self.locals = Vec::new();
         self.scopes = vec![HashMap::new()];
+        self.borrowed_params.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
@@ -3440,6 +3459,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
+            if mode == Mode::Borrow {
+                self.borrowed_params.insert(local);
+            }
             params.push(Param { local, mode });
         }
 
@@ -3715,7 +3737,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // `[MOD-7]` — assignment and augmented assignment are both
                 // writes.
                 self.reject_readonly_write(&place, target.span);
-                self.reject_write_through_shared_ref(&place, target.span);
+                let through_shared_ref =
+                    self.reject_write_through_shared_ref(&place, target.span);
+                if !through_shared_ref {
+                    self.reject_borrowed_parameter_write(&place, target.span, true);
+                }
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
                 // would produce an `R` where a `T` is required and is
@@ -5554,6 +5580,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // `[MOD-7]` — "taking `ref mut h.value`" is a write.
                 if *mutable {
                     self.reject_readonly_write(&inner, place.span);
+                    let through_shared_ref =
+                        self.reject_write_through_shared_ref(&inner, place.span);
+                    if !through_shared_ref {
+                        self.reject_borrowed_parameter_write(&inner, place.span, true);
+                    }
                 }
                 if !is_place(&inner.kind) {
                     self.error(
@@ -6425,28 +6456,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Normally `ref mut T`: the mode is an inout borrow, so every mention of
     /// the name reads through it and the caller sees the writes.
     ///
-    /// A `MutSpan[T]` is the exception here, and **that exception is not in the
-    /// specification** — it is D5 in `docs/DEVIATIONS.md`, live and unratified.
-    ///
-    /// The document contradicts itself. `[FN-1]` says a `mut` argument "MUST be
-    /// a mutable place"; Part VII §7 calls `fn normalize(mut xs: MutSpan[f32])`
-    /// as `normalize(buf.as_mut_span())`, whose argument is a call result and
-    /// not a place at all. Read literally the document's own example is
-    /// `E2140`, and `split_at` — which `[SPN-*]` names as the sanctioned way to
-    /// obtain two mutable borrows into one container — cannot be called on its
-    /// own result either.
-    ///
-    /// This takes the example's side: a `MutSpan` **is** the mutable access —
-    /// it carries the pointer, and `[SPN-3]` makes it move-only so there is
-    /// exactly one — so `mut` on one means "you may write through it" and the
-    /// place requirement lands on whatever the view was taken of.
-    ///
-    /// That reading was written into `[FN-1]` as amendment A6 and the owner
-    /// **withdrew it**: a hardening may not answer what Ember means, only how
-    /// to implement what it already means, and this answers the former. So the
-    /// rule stands as written, the compiler stands as built, and the gap
-    /// between them is recorded rather than hidden. ERR-041 and ADR-017 hold
-    /// the question; one line changes here if it is ruled the other way.
+    /// A `MutSpan[T]` is the owner-approved `[FN-1a]` exception: the view value
+    /// already carries the mutable access and `[SPN-3]` makes it move-only, so
+    /// another `ref mut` would be a reference to a reference. The mutable-place
+    /// requirement applies to the storage from which the view was derived.
+    /// ERR-041 and ADR-017 preserve the earlier ambiguity and its resolution;
+    /// D5 is closed and `tests/conformance/FN-1a/` pins the ruling.
     fn mut_param_ty(&mut self, ty: Ty) -> Ty {
         if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
             return ty;
@@ -6503,7 +6518,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// did not emit `const` would have mutated through a shared borrow in
     /// silence. It is rejected here, where the type alone answers the
     /// question and no flow analysis is needed.
-    fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) {
+    fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
         let mut current = place;
         loop {
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
@@ -6524,7 +6539,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         "but not write [BRW-1]"
                     )),
                 );
-                return;
+                return true;
             }
             match &current.kind {
                 // A path to a reference local reads as `Deref(Local)` with the
@@ -6534,9 +6549,71 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ExprKind::Field { base, .. }
                 | ExprKind::Index { base, .. }
                 | ExprKind::Deref(base) => current = base,
-                _ => return,
+                _ => return false,
             }
         }
+    }
+
+    /// `[FN-1]`, `[BRW-1]`, `[CELL-10]` — a default-mode parameter is a
+    /// shared borrow, even when its ABI is a small by-value copy. A write
+    /// rooted at that parameter is shape B4: the caller remains the owner and
+    /// the callee is asking for a second writer at a different program point.
+    ///
+    /// `offer_interior_mutability` is true only when this site itself proves
+    /// that the accesses are not simultaneous in one expression. Calls can
+    /// contain several `mut` arguments, so their structural diagnostic must
+    /// not suggest `RefCell` until the whole call has established that fact.
+    fn reject_borrowed_parameter_write(
+        &mut self,
+        place: &Expr,
+        span: Span,
+        offer_interior_mutability: bool,
+    ) -> bool {
+        let Some(local) = root_local(&place.kind) else { return false };
+        if !self.borrowed_params.contains(&local) {
+            return false;
+        }
+
+        let decl = &self.locals[local.0 as usize];
+        let name = decl.name.unwrap_or_else(|| Symbol::intern("parameter"));
+        let name = name.to_string();
+        let declaration = decl.span;
+        let ty = decl.ty;
+        let shown = self.types.display(ty);
+        let mut diagnostic = Diagnostic::error(
+            codes::E3023,
+            span,
+            format!("cannot mutate borrowed parameter `{name}`"),
+        )
+        .primary_label("this write needs mutable access")
+        .secondary(declaration, format!("`{name}` is borrowed here"))
+        .help(format!(
+            "restructure to a single owner and declare this parameter `mut {name}: {shown}`"
+        ));
+
+        if offer_interior_mutability {
+            diagnostic = if self.types.is_copy(ty) {
+                diagnostic.help(
+                    "if the value is genuinely shared, use `Cell[T]` for the `Copy` payload or \
+                     `RefCell[T]` for runtime-checked borrows",
+                )
+            } else {
+                diagnostic.help(
+                    "if the value is genuinely shared, use `RefCell[T]` for runtime-checked borrows",
+                )
+            };
+            diagnostic = diagnostic
+                .help("if the value has identity, make it a `class`")
+                .note(concat!(
+                    "`RefCell` adds a one-word runtime borrow-state check in every profile ",
+                    "(CELL-5, CELL-9); a class adds a heap allocation, a 24-byte header, ",
+                    "reference counting and dynamic exclusivity, and is not `@static_safe` ",
+                    "(OBJ-1, RC-1, EXC-1, EFF-13)"
+                ));
+        }
+
+        self.sink.emit_classified(diagnostic);
+        true
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
@@ -7202,6 +7279,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
@@ -7209,10 +7287,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // The environment is parameter zero, so the emitted function has
         // `[CLO-6]`'s `call(self, args)` shape.
         if let Some((name, ty, env_span)) = env {
-            self.declare(Some(name), ty, env_span);
+            let local = self.declare(Some(name), ty, env_span);
+            self.borrowed_params.insert(local);
         }
         for (name, ty, param_span) in params {
-            self.declare(Some(*name), *ty, *param_span);
+            let local = self.declare(Some(*name), *ty, *param_span);
+            self.borrowed_params.insert(local);
         }
 
         let (body, body_ty) = match &lambda.body {
@@ -7240,6 +7320,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let locals = std::mem::replace(&mut self.locals, outer_locals);
         self.scopes = outer_scopes;
+        self.borrowed_params = outer_borrowed_params;
         self.ret_ty = outer_ret;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
@@ -7366,6 +7447,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         which: hir::Builtin,
     ) -> Expr {
         let span = container.span;
+        if mutable {
+            self.reject_readonly_write(&container, span);
+            let through_shared_ref = self.reject_write_through_shared_ref(&container, span);
+            if !through_shared_ref {
+                self.reject_borrowed_parameter_write(&container, span, true);
+            }
+        }
         let reference =
             self.types.intern(TyKind::Ref { mutable, inner: container.ty });
         let borrowed = Expr {
@@ -7384,8 +7472,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ///
     /// All of them take `self`, a **shared** borrow, and three of them mutate.
     /// Nothing in safe Ember can do that, so something has to be the exception,
-    /// and ADR-019 records why it is these builtins rather than an `UnsafeCell`
-    /// the document never defines. What makes it sound is `[CELL-2]`: because
+    /// and ADR-019 records why it is these builtins rather than `UnsafeCell`.
+    /// That primitive is now specified by `[UNS-10]`, but remains separate
+    /// implementation work. What makes `Cell` sound is `[CELL-2]`: because
     /// no reference to the contents ever escapes, the write is not an aliasing
     /// question at all — so the borrow checker is told about a builtin call and
     /// is not weakened anywhere.
@@ -7839,6 +7928,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if mode != Mode::Mut {
             return receiver;
         }
+        self.reject_readonly_write(&receiver, span);
+        let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
+        if !through_shared_ref {
+            self.reject_borrowed_parameter_write(&receiver, span, false);
+        }
         if !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,
@@ -7867,6 +7961,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `ref mut` would be a reference to a reference.
         if matches!(self.types.kind(param_ty), TyKind::Span { mutable: true, .. }) {
             let view = self.check_expr(arg, param_ty);
+            self.reject_borrowed_parameter_write(&view, arg.span, false);
             if view.ty != self.common.error && !self.viewed_place(&view) {
                 self.error(
                     codes::E2140,
@@ -7880,6 +7975,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`
         // method" is a write.
         self.reject_readonly_write(&place, arg.span);
+        let through_shared_ref = self.reject_write_through_shared_ref(&place, arg.span);
+        if !through_shared_ref {
+            self.reject_borrowed_parameter_write(&place, arg.span, false);
+        }
         if !is_place(&place.kind) && place.ty != self.common.error {
             self.error(
                 codes::E2140,
@@ -8390,6 +8489,19 @@ fn is_place(kind: &ExprKind) -> bool {
         ExprKind::Field { base, .. } => is_place(&base.kind),
         ExprKind::Deref(_) => true,
         _ => false,
+    }
+}
+
+/// The local whose storage owns a place. This deliberately follows only the
+/// place-forming HIR nodes accepted by [`is_place`]; value-producing wrappers
+/// must not make a temporary look like a borrowed parameter.
+fn root_local(kind: &ExprKind) -> Option<LocalId> {
+    match kind {
+        ExprKind::Local(local) => Some(*local),
+        ExprKind::Field { base, .. }
+        | ExprKind::Index { base, .. }
+        | ExprKind::Deref(base) => root_local(&base.kind),
+        _ => None,
     }
 }
 

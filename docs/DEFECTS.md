@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-12 — `[CELL-10]` / borrowed-parameter write closure
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-044 | **Writes through default-mode value parameters were accepted and silently lost.** `[FN-1]` makes an omitted parameter mode a shared borrow, but the type checker retained only the parameter's ABI-local type. A small value therefore looked like an ordinary writable local: `fn increment(counter: Counter): counter.value = counter.value + 1` compiled, mutated only the callee's private by-value copy, and returned with the caller unchanged. The same hole admitted `ref mut`, mutable-view creation, `mut self`, and forwarding to a `mut` parameter | `[FN-1]`, `[BRW-1]`, `[CELL-10]`, `[DIA-7]` shape B4 | **fixed** | type checking now retains default-mode parameter provenance independently of ABI representation and rejects every write-capable access rooted there as `E3023`. The diagnostic's first help is the structural single-owner/`mut` repair; `Cell`/`RefCell` and class are later, costed alternatives only at sites proven not simultaneous. Call boundaries conservatively omit `RefCell` until the whole call can establish that condition. **Verified:** the minimal assignment case failed the conformance suite before the fix; disabling the new provenance check made all five E3023 probes under `tests/conformance/CELL-10/` compile with exit 0. Ordered and forbidden-help directives were each mutation-tested red, and `docs/errors/E3023.md` contains an executable failing/fixed pair. The specification was already explicit; neither it nor an ADR changed |
+
 ## 2026-09-12 — D-042 move-path closure
 
 | # | Defect | Rule | Status | Fixed in |

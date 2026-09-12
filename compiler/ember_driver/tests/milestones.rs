@@ -36,6 +36,11 @@ struct Expectations {
     kind: Option<String>,
     stdout: Option<String>,
     exit: Option<i32>,
+    /// Profiles in which this program must have the same specified result.
+    /// Empty means the ordinary `debug` run. A rule with an explicit
+    /// every-profile quantifier must list all three rather than relying on an
+    /// implementation comment that says the lowering has no profile input.
+    profiles: Vec<String>,
     /// `!contains("…")` or `contains("…")` against the emitted C.
     assert_c: Vec<(bool, String)>,
     /// `#$ assert-c-order: "a" then "b"` — both appear in the emitted C, and
@@ -61,6 +66,11 @@ struct Expectations {
     /// substring of the message are matched anywhere in the output, which is
     /// what a `compile-fail` test in `tests/` needs.
     errors: Vec<(String, String)>,
+    /// Ordered `= help:` substrings required from a diagnostic.
+    helps: Vec<String>,
+    /// Text that must not occur in any `= help:` line. This pins negative
+    /// suggestion policy such as `[CELL-10]` without matching source comments.
+    forbidden_helps: Vec<String>,
     /// `#$ warning[WXXXX]: text` / `#$ warning[LXXXX]: text` — a warning or
     /// lint the compiler must produce. These were parsed by nobody until
     /// 2026-09-08, so a file could assert any warning at all and pass.
@@ -101,6 +111,20 @@ fn parse_expectations(source: &str) -> Expectations {
 
         if let Some(value) = rest.strip_prefix("test:") {
             expectations.kind = Some(value.trim().to_string());
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("profiles:") {
+            expectations.profiles = value
+                .split(',')
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(str::to_string)
+                .collect();
+            for profile in &expectations.profiles {
+                assert!(
+                    matches!(profile.as_str(), "debug" | "release" | "shipping"),
+                    "unknown test profile {profile:?}"
+                );
+            }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("exit:") {
             expectations.exit = value.trim().parse().ok();
@@ -144,6 +168,12 @@ fn parse_expectations(source: &str) -> Expectations {
                     .push((code.trim().to_string(), message.trim().to_string()));
             }
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("help:") {
+            expectations.helps.push(value.trim().to_string());
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("not-help:") {
+            expectations.forbidden_helps.push(value.trim().to_string());
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
@@ -161,7 +191,7 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, exit, assert-c, error[…], warning[…], panics, stdout, rules, note"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, rules, note"
             );
         }
     }
@@ -225,6 +255,43 @@ fn ember(args: &[&str], root: &Path) -> Run {
     }
 }
 
+fn profiles(expectations: &Expectations) -> Vec<&str> {
+    if expectations.profiles.is_empty() {
+        vec!["debug"]
+    } else {
+        expectations.profiles.iter().map(String::as_str).collect()
+    }
+}
+
+/// Assert only against rendered help lines. Searching all of stderr would let
+/// a source annotation satisfy itself when the renderer echoes the source,
+/// the same false-positive that [`without_source_echo`] prevents for codes.
+/// Required help fragments are ordered so policy such as `[DIA-9]` can prove
+/// that the structural repair precedes an interior-mutability alternative.
+fn assert_diagnostic_helps(relative: &str, stderr: &str, expectations: &Expectations) {
+    let help_lines = without_source_echo(stderr)
+        .lines()
+        .filter(|line| line.trim_start().starts_with("= help:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut after = 0;
+    for required in &expectations.helps {
+        let Some(found) = help_lines[after..].find(required) else {
+            panic!(
+                "{relative}: expected ordered help containing {required:?}\n--- help lines ---\n{help_lines}\n--- stderr ---\n{stderr}"
+            );
+        };
+        after += found + required.len();
+    }
+    for forbidden in &expectations.forbidden_helps {
+        assert!(
+            !help_lines.contains(forbidden),
+            "{relative}: diagnostic help must not contain {forbidden:?}\n--- help lines ---\n{help_lines}\n--- stderr ---\n{stderr}"
+        );
+    }
+}
+
 fn check_file(path: &Path, root: &Path) {
     let source = std::fs::read_to_string(path).expect("the test file is readable");
     let expectations = parse_expectations(&source);
@@ -271,129 +338,154 @@ fn check_file(path: &Path, root: &Path) {
     let out_dir = std::env::temp_dir().join("ember-tests").join(
         path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
     );
-    let out_dir_arg = out_dir.to_string_lossy().into_owned();
+    let profiles = profiles(&expectations);
 
     // A `compile-fail` test must be rejected, with the diagnostics it names.
     if !expectations.errors.is_empty() || expectations.kind.as_deref() == Some("compile-fail") {
-        let checked = ember(&["check", &relative], root);
-        assert_ne!(
-            checked.exit, 0,
-            "{relative}: expected compilation to fail, but it succeeded"
-        );
-        let said = without_source_echo(&checked.stderr);
-        for (code, message) in &expectations.errors {
-            assert!(
-                said.contains(code.as_str()),
-                "{relative}: expected {code}
+        for profile in &profiles {
+            let checked = ember(&["check", &relative, "--profile", profile], root);
+            assert_ne!(
+                checked.exit, 0,
+                "{relative} [{profile}]: expected compilation to fail, but it succeeded"
+            );
+            let said = without_source_echo(&checked.stderr);
+            for (code, message) in &expectations.errors {
+                assert!(
+                    said.contains(code.as_str()),
+                    "{relative} [{profile}]: expected {code}
 stderr:
 {}",
-                checked.stderr
-            );
-            assert!(
-                said.contains(message.as_str()),
-                "{relative}: expected a message containing {message:?}
+                    checked.stderr
+                );
+                assert!(
+                    said.contains(message.as_str()),
+                    "{relative} [{profile}]: expected a message containing {message:?}
 stderr:
 {}",
-                checked.stderr
-            );
+                    checked.stderr
+                );
+            }
+            assert_diagnostic_helps(&relative, &checked.stderr, &expectations);
         }
         return;
     }
 
     // `[TST-1]` — warnings and lints the file names must be produced.
     if !expectations.warnings.is_empty() {
-        let checked = ember(&["check", &relative], root);
-        let said = without_source_echo(&checked.stderr);
-        for (code, message) in &expectations.warnings {
-            assert!(
-                said.contains(code.as_str()),
-                "{relative}: expected {code}
+        for profile in &profiles {
+            let checked = ember(&["check", &relative, "--profile", profile], root);
+            let said = without_source_echo(&checked.stderr);
+            for (code, message) in &expectations.warnings {
+                assert!(
+                    said.contains(code.as_str()),
+                    "{relative} [{profile}]: expected {code}
 stderr:
 {}",
-                checked.stderr
-            );
-            assert!(
-                said.contains(message.as_str()),
-                "{relative}: expected a warning containing {message:?}
+                    checked.stderr
+                );
+                assert!(
+                    said.contains(message.as_str()),
+                    "{relative} [{profile}]: expected a warning containing {message:?}
 stderr:
 {}",
-                checked.stderr
-            );
+                    checked.stderr
+                );
+            }
+            assert_diagnostic_helps(&relative, &checked.stderr, &expectations);
         }
     }
 
     // The emitted C, for `assert-c-order`.
     if !expectations.assert_c_order.is_empty() {
-        let emitted = ember(&["build", &relative, "--emit", "c"], root);
-        assert_eq!(emitted.exit, 0, "emitting C for {relative} failed:\n{}", emitted.stderr);
-        for (first, second) in &expectations.assert_c_order {
-            let at_first = emitted.stdout.find(first.as_str());
-            let at_second = emitted.stdout.find(second.as_str());
-            let (Some(at_first), Some(at_second)) = (at_first, at_second) else {
-                panic!(
-                    "{relative}: assert-c-order needs both needles present; {} is missing\n--- emitted C ---\n{}",
-                    if at_first.is_none() { format!("{first:?}") } else { format!("{second:?}") },
+        for profile in &profiles {
+            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
+            assert_eq!(
+                emitted.exit, 0,
+                "emitting C for {relative} [{profile}] failed:\n{}",
+                emitted.stderr
+            );
+            for (first, second) in &expectations.assert_c_order {
+                let at_first = emitted.stdout.find(first.as_str());
+                let at_second = emitted.stdout.find(second.as_str());
+                let (Some(at_first), Some(at_second)) = (at_first, at_second) else {
+                    panic!(
+                        "{relative} [{profile}]: assert-c-order needs both needles present; {} is missing\n--- emitted C ---\n{}",
+                        if at_first.is_none() { format!("{first:?}") } else { format!("{second:?}") },
+                        emitted.stdout
+                    );
+                };
+                assert!(
+                    at_first < at_second,
+                    "{relative} [{profile}]: expected {first:?} before {second:?}, found it after\n--- emitted C ---\n{}",
                     emitted.stdout
                 );
-            };
-            assert!(
-                at_first < at_second,
-                "{relative}: expected {first:?} before {second:?}, found it after\n--- emitted C ---\n{}",
-                emitted.stdout
-            );
+            }
         }
     }
 
     // The emitted C, for `assert-c`.
     if !expectations.assert_c.is_empty() {
-        let emitted = ember(&["build", &relative, "--emit", "c"], root);
-        assert_eq!(emitted.exit, 0, "emitting C for {relative} failed:\n{}", emitted.stderr);
-        for (expect_present, needle) in &expectations.assert_c {
-            let present = emitted.stdout.contains(needle.as_str());
+        for profile in &profiles {
+            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
             assert_eq!(
-                present, *expect_present,
-                "{relative}: expected the emitted C {} {needle:?}\n--- emitted C ---\n{}",
-                if *expect_present { "to contain" } else { "not to contain" },
-                emitted.stdout
+                emitted.exit, 0,
+                "emitting C for {relative} [{profile}] failed:\n{}",
+                emitted.stderr
             );
+            for (expect_present, needle) in &expectations.assert_c {
+                let present = emitted.stdout.contains(needle.as_str());
+                assert_eq!(
+                    present, *expect_present,
+                    "{relative} [{profile}]: expected the emitted C {} {needle:?}\n--- emitted C ---\n{}",
+                    if *expect_present { "to contain" } else { "not to contain" },
+                    emitted.stdout
+                );
+            }
         }
     }
 
-    let run = ember(&["run", &relative, "--out-dir", &out_dir_arg], root);
+    for profile in &profiles {
+        let profile_out_dir = out_dir.join(profile);
+        let out_dir_arg = profile_out_dir.to_string_lossy().into_owned();
+        let run = ember(
+            &["run", &relative, "--out-dir", &out_dir_arg, "--profile", profile],
+            root,
+        );
 
-    // A `run-fail` test compiles and runs, then panics with a given message.
-    if let Some(message) = &expectations.panics {
-        assert_ne!(
-            run.exit, 0,
-            "{relative}: expected a panic, but the program exited cleanly
+        // A `run-fail` test compiles and runs, then panics with a given message.
+        if let Some(message) = &expectations.panics {
+            assert_ne!(
+                run.exit, 0,
+                "{relative} [{profile}]: expected a panic, but the program exited cleanly
 stdout:
 {}",
-            run.stdout
-        );
-        assert!(
-            run.stderr.contains(message.as_str()),
-            "{relative}: expected a panic mentioning {message:?}
+                run.stdout
+            );
+            assert!(
+                run.stderr.contains(message.as_str()),
+                "{relative} [{profile}]: expected a panic mentioning {message:?}
 stderr:
 {}",
-            run.stderr
-        );
-        return;
-    }
+                run.stderr
+            );
+            continue;
+        }
 
-    if let Some(expected) = &expectations.stdout {
+        if let Some(expected) = &expectations.stdout {
+            assert_eq!(
+                run.stdout.trim_end(),
+                expected.trim_end(),
+                "{relative} [{profile}]: stdout differs\nstderr:\n{}",
+                run.stderr
+            );
+        }
+        let expected_exit = expectations.exit.unwrap_or(0);
         assert_eq!(
-            run.stdout.trim_end(),
-            expected.trim_end(),
-            "{relative}: stdout differs\nstderr:\n{}",
-            run.stderr
+            run.exit, expected_exit,
+            "{relative} [{profile}]: exit code differs\nstdout:\n{}\nstderr:\n{}",
+            run.stdout, run.stderr
         );
     }
-    let expected_exit = expectations.exit.unwrap_or(0);
-    assert_eq!(
-        run.exit, expected_exit,
-        "{relative}: exit code differs\nstdout:\n{}\nstderr:\n{}",
-        run.stdout, run.stderr
-    );
 }
 
 fn check_directory(name: &str) -> usize {
@@ -537,17 +629,23 @@ fn the_emitted_c_compiles_without_warnings() {
 fn parse_expectations_reads_the_annotation_forms() {
     let source = "\
 #$ test: run-pass
+#$ profiles: debug, release, shipping
 struct S:
     x: i32
 #$ stdout: 5
 #$ assert-c: !contains(\"ember_alloc\")
+#$ help: keep one owner
+#$ not-help: RefCell
 #$ exit: 0
 ";
     let parsed = parse_expectations(source);
     assert_eq!(parsed.kind.as_deref(), Some("run-pass"));
     assert_eq!(parsed.stdout.as_deref(), Some("5"));
     assert_eq!(parsed.exit, Some(0));
+    assert_eq!(parsed.profiles, ["debug", "release", "shipping"]);
     assert_eq!(parsed.assert_c, vec![(false, "ember_alloc".to_string())]);
+    assert_eq!(parsed.helps, ["keep one owner"]);
+    assert_eq!(parsed.forbidden_helps, ["RefCell"]);
 }
 
 /// `[TST-4]`/`[TST-4a]` — every rule directory under `tests/conformance/` is
@@ -601,4 +699,3 @@ fn the_conformance_suite_runs() {
         }
     }
 }
-
