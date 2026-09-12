@@ -169,12 +169,12 @@ the H5 source-recovery change:
 - one implementation defect is open: D-038;
 - four intentional deviations are open: D1–D4; D5 is closed and D6 withdrawn.
 
-Current state after Gate B item 2: 178 Rust tests and 197 Ember conformance
-cases across 70 rule directories pass; 58 defects are recorded and D-038 is
-the only open one. `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` are covered, and
-D-044/E3023 closes writes through borrowed value parameters. The frozen H8
-target and adopted normative specification are unchanged by this compiler/test
-block.
+Current state after Gate B item 3: 178 Rust tests and 200 Ember conformance
+cases across 70 rule directories pass; 58 defects are recorded and none is
+open. `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` are covered; D-044/E3023 closes
+writes through borrowed value parameters; and D-038's implicit `String`→`str`
+coercion shares the explicit `as_str()` borrow path. The frozen H8 target and
+adopted normative specification are unchanged by these compiler/test blocks.
 
 `cargo test` emits one Rust test-target style warning for
 `from_is_contextual_so_that_From_can_declare_it`; this does not contradict the
@@ -202,7 +202,7 @@ rustfmt to a required gate.
 | Area | Current evidence |
 |---|---|
 | Per-field movedness | **Implemented by the D-042 fix.** Recursive move paths, per-path conditional flags, partial cleanup, sibling preservation, reinitialisation and `E3042` are covered by adversarial `[EXP-6]` cases. This is now available as a foundation for `[LT-38]`; field-sensitive region provenance itself is not implemented. |
-| String view coercion | D-038: implicit `String` to `str` is rejected; explicit `as_str()` is sound. |
+| String view coercion | **Implemented.** Implicit `String`→`str` and explicit `as_str()` share `view_of`, the `StringAsStr` elision entry, MIR view verification, and backend lowering; mutation and return-region adversaries are covered. |
 | Remaining `Cell`/`RefCell` obligations | `[CELL-6a]`, `[CELL-9]`, and `[CELL-10]` now have executable conformance evidence; E3023/B4 is live and D-044 is closed. `Cell.take`/the `Default` update arm await `Default`; `[CELL-3]`/`[CELL-8]` `!Sync` await `Send`/`Sync` and threading. `[CELL-9]`'s class-only unchecked-exclusivity interaction has no reachable trigger until that later subsystem exists. |
 | Arena | `[ARN-*]` not started. Arena is a region allocator, not another interior-mutability primitive. |
 | UnsafeCell | Normatively specified in 0.8.5, not implemented. |
@@ -258,7 +258,7 @@ from being accidentally discarded.
    parameters had lost `[FN-1]`'s shared-borrow provenance, making their writes
    compile as changes to a private ABI copy. E3023/B4 now diagnoses all mutable
    access paths and applies `[CELL-10]`'s suggestion ordering.
-3. Fix D-038.
+3. ~~Fix D-038.~~ **Done.** The implicit form reuses the verified explicit-borrow path; no second view producer was introduced.
 4. Implement `Arena` and its region behavior.
 5. Implement `UnsafeCell` exactly within `[UNS-10]`–`[UNS-10b]`.
 6. Finish the remaining Phase 2 exit criteria, including UI snapshots.
@@ -318,13 +318,13 @@ The standing procedure in `HANDOFF.md` §0.0 remains in force:
 
 ## 7. Exact next task
 
-**Fix D-038: implement implicit `String`→`str` coercion.**
+**Implement `Arena` and its region behavior (`[ARN-*]`, `[LT-4]`).**
 
-The Cell/RefCell coverage block and D-044 are complete. D-038 must reuse the
-existing `view_of`/region/verification path that made explicit `as_str()` sound
-in D-037; do not add a second unverified view producer. After D-038, implement
-Arena in Gate B order. Do not begin Arena or 0.9.5 region-vector work as part of
-the D-038 task.
+D-038 is complete and reuses the existing `view_of`/region/verification path
+that made explicit `as_str()` sound in D-037. Arena is next in Gate B order.
+Keep it a region allocator rather than treating it as a third interior-
+mutability primitive, and do not begin 0.9.5 region-vector work as part of the
+Arena task.
 
 The parallel specification task is now explicit normative adoption of H8;
 ODR-006 and ODR-007 are closed. Do not broaden ODR-005's all-mutable ruling

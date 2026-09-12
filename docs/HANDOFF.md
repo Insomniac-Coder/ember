@@ -279,13 +279,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | **v0.8.5_Hardened_1** — three owner rulings of 2026-09-10: S2 (`UnsafeCell` becomes a real primitive), S3 (`RefCell` never `Copy`), S4 (`[FN-1a]`). `0.8.3`, `0.8.4` and `0.8.5` all accepted |
-| Recent commits | `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Recent commits | `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 and final L3011 gate · `351e0e8` owner-queue resolution · `c330c35` the five rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean**; run `git log` for the current head rather than trusting a hash written here |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **178 tests, all passing**, 0 failures. The count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 70 rule directories, 197 cases |
-| Ledgers | 58 defects, **1 open** (D-038). **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
+| Conformance | 70 rule directories, 200 cases |
+| Ledgers | 58 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-007 are closed; no owner semantic decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -756,11 +756,7 @@ splitting it across agents would have cost more than it saved.
 
 ### 0.12 Open issues carried forward — verified against the repository
 
-**Open defects — one.**
-
-| # | What | Rule | Status |
-|---|---|---|---|
-| **D-038** | implicit `String`→`str` coercion is rejected (`E2020`), though `[SPN-1]` lists it; the explicit `as_str()` spelling works | `[SPN-1]` | **open.** Fails closed (sound direction); needs the coercion arm in typeck. Found by task 2 |
+**Open compiler defects — none.** D-038 is closed in §0.24.
 
 **Closed in the current implementation block:** **D-042** (recursive move paths,
 per-path flags, partial cleanup and `E3042`) and **D-043** (owned parameters
@@ -881,18 +877,12 @@ the owner-approved rules.
 
 ### 0.14 The next task
 
-**D-038 — implement the specified implicit `String`→`str` coercion.**
+**`Arena` — implement `[ARN-*]` and `[LT-4]`.**
 
-Do not begin it as part of the Cell/RefCell closure. Report this completed
-bounded task and wait for the owner's green signal.
-
-The explicit `String.as_str()` path is sound because D-037 routed it through
-`view_of`, tied its result to the receiver in region elision, and extended
-MIR's view verifier. The implicit coercion must reuse that same producer and
-those same boundaries; creating a second direct builtin path would reopen the
-dangling-view defect under a different spelling. Start with the minimal
-specified program `s: String; v: str = s`, then add mutation and escape
-adversaries proving the source remains borrowed for the view's lifetime.
+D-038 is closed in §0.24. Arena remains a region allocator, not a third
+interior-mutability primitive. Preserve the ordinary borrow relationship:
+allocations borrow the arena, `reset`/drop require mutable access, and no view
+may outlive the arena or a scoped child.
 
 Read first:
 
@@ -901,14 +891,12 @@ Read first:
 2. `docs/MIGRATION-0.9.5.md`, then this §0 and §0.23;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
-4. the Array→Span coercion and `view_of` in
-   `compiler/ember_typeck/src/lib.rs`, String-view elision in MIR lowering,
-   `compiler/ember_analysis/src/regions.rs`, and MIR view verification.
+4. the compiler-known-type patterns in `compiler/ember_typeck/src/lib.rs`,
+   region/elision handling in `compiler/ember_analysis`, drop elaboration, and
+   the C runtime allocation surface.
 
-After D-038, the next milestone is **Arena**, then **UnsafeCell**, in Gate B
-order. Arena remains a region allocator, not a third interior-mutability
-primitive. Do not begin Arena, UnsafeCell, H8 normative adoption, or 0.9.5
-multi-region-view implementation during the D-038 task.
+After Arena, the next milestone is **UnsafeCell**, then the remaining Phase 2
+exit work. Do not begin 0.9.5 multi-region-view implementation during Arena.
 
 ### 0.15 The principles, in one place
 
@@ -1508,8 +1496,9 @@ or “conformant”.
 
 D-042's per-field movedness foundation is now implemented and verified; §0.22
 is the closure record. The remaining `[CELL-6a]`/`[CELL-9]`/`[CELL-10]`
-coverage and diagnostic behavior is complete in §0.23. The next executable
-compiler task is D-038, followed by Arena in `docs/MIGRATION-0.9.5.md` Gate B order. H8 normative
+coverage and diagnostic behavior is complete in §0.23, and D-038 is closed in
+§0.24. The next executable compiler task is Arena in
+`docs/MIGRATION-0.9.5.md` Gate B order. H8 normative
 adoption remains a separate gate; only then begin multi-region-view work in
 the staged order recorded there.
 
@@ -1652,15 +1641,42 @@ coverage task. Stale type-checker comments about decided ERR-041/UnsafeCell and
 the ERR-029 summary/body mismatch were corrected as documentation only. D-038,
 Arena, UnsafeCell, H8 adoption, and multi-region views were not started.
 
-**Current pickup.** D-038 is next, exactly as §0.14 and
-`docs/MIGRATION-0.9.5.md` §7 state. Then Arena, then UnsafeCell. Report and wait
-for a green signal before beginning D-038.
+**Superseded pickup.** D-038 is now closed in §0.24. Arena is next, then
+UnsafeCell, as §0.14 and `docs/MIGRATION-0.9.5.md` §7 state.
+
+### 0.24 D-038 closed — implicit `String`→`str` borrows — 2026-09-12
+
+**Classification:** compiler defect. `[SPN-1]` already states that `String`
+coerces to `str` and that the coercion takes a borrow. The checker instead
+reported E2020. The rule was unambiguous, so neither the adopted specification,
+frozen H8 target, nor an ADR changed.
+
+**Mechanism:** `coerce` recognizes the compiler-known `String` representation
+when `str` is expected and calls the same `view_of(..., StringAsStr)` producer
+as explicit `as_str()`. This preserves the explicit HIR/MIR reference, region
+elision, `verify_views` backstop, and backend path established by D-037; there
+is no second view-producing implementation.
+
+**Evidence:** three cases in `tests/conformance/SPN-1/` cover direct binding and
+argument coercion, NLL ending a call-only borrow before later mutation, E3021
+when mutation overlaps a live implicit view, and E3060 when code attempts to
+return a view of non-view parameter storage. Before the fix the acceptance case
+and mutation case failed at the coercion with E2020. Removing only the new arm
+afterward restored E2020 in all three probes; restoring it made the full 200-
+case conformance suite green.
+
+**Scope report:** approved work was D-038. Actual work was the coercion arm,
+three adversarial tests, and the defect/current-state documentation. No Arena,
+UnsafeCell, normative-specification, frozen-H8, or multi-region implementation
+was included in this bounded change. The owner subsequently gave a standing
+instruction to continue, so Arena is the current pickup without a separate
+pause.
 
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
-the current start point. D-042 and the Cell/RefCell closure are complete
-(§0.22–§0.23). The current order is §0.14: D-038, Arena, UnsafeCell, Phase 2 completion,
+the current start point. D-042, the Cell/RefCell closure, and D-038 are complete
+(§0.22–§0.24). The current order is §0.14: Arena, UnsafeCell, Phase 2 completion,
 and the 0.9.5 multi-region work after H8 is explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
@@ -1713,8 +1729,8 @@ note). Found two live defects and fixed both; filed two more; added 13 cases:
   strings; mutating while the `str` lived compiled and dangled.
   `tests/conformance/SPN-1/reject_mutating_around_a_live_str_view.em` fails as
   required and compiles on revert.
-* **D-038 (open): implicit `String`→`str` coercion rejected** — fails closed;
-  no case pins the rejection since the rule admits the program.
+* **D-038 (fixed in §0.24): implicit `String`→`str` coercion was rejected** —
+  it now shares the explicit `as_str()` borrow path and has three cases.
 * **D-039 (fixed) / D-040 (open): reservation windows opened for user-local
 borrows** (two `ref mut` borrows reported B3/`E3021` instead of B1/`E3022`;
 now temp-only, with a case red-checked both ways). Method-call conflicts
@@ -1826,7 +1842,7 @@ closed D-044. `[CELL-3]`/`[CELL-8]` (`!Sync`) stay blocked on
 `CELL-SYNC-1`. The `Copy` question was answered by the owner — `[CELL-12]`,
 never `Copy` — and must not be re-derived.
 
-### 4. `Arena` — after D-038
+### 4. `Arena` — current
 
 `[ARN-*]`. **Not a third interior-mutability primitive** (§0.13): it is a region
 allocator, and what it must prove is a region rather than an alias, statically.

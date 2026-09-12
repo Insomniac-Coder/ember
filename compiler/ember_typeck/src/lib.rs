@@ -4889,6 +4889,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return self.view_of(expr, expected, mutable, Builtin::SpanFrom { mutable });
             }
         }
+        // `[SPN-1]` — `String` coerces to `str`. This must use the same
+        // producer as the explicit `as_str()` spelling: the result points into
+        // the string's buffer, so representing it as an ordinary conversion
+        // would hide the source loan from region inference and borrow checking
+        // (D-037). `String` is the compiler-known `Vec[u8]` representation.
+        if expected == self.common.str_
+            && matches!(
+                *self.types.kind(expr.ty),
+                TyKind::Vec { elem } if elem == self.common.u8
+            )
+        {
+            return self.view_of(expr, expected, false, Builtin::StringAsStr);
+        }
         // `[RNG-3]` — construction. A constant the compiler can place in range
         // needs no check; one it can place outside is `E2211`; anything else
         // is outside `[RNG-10]`'s closed set and is `E2215`.

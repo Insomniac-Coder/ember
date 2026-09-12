@@ -30,8 +30,8 @@ phase order.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 70 conformance rule directories, 197 cases. 58 defects recorded, **1 open**
- (D-038). **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
+ 70 conformance rule directories, 200 cases. 58 defects recorded, **none open**.
+ **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **No erratum currently awaits an owner semantic decision.** ERR-047 and
 ERR-048 were closed by the H7/H8 owner rulings; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
@@ -181,7 +181,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: D-038, then `Arena`
+## 5. Next task: `Arena`
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -215,9 +215,10 @@ already clear; no specification or ADR changed.
 
 **What follows in Gate B:**
 
-1. **D-038:** implement the specified implicit `String`→`str` coercion without
-   creating a second view-producing path; it must reuse `view_of`, region
-   elision, MIR view verification, and the D-037 mutation guard.
+1. ~~**D-038:** implicit `String`→`str` coercion.~~ **Fixed.** The coercion
+   reuses `view_of`, region elision, MIR view verification, and the D-037
+   backend path. Three mutation-tested `[SPN-1]` cases pin assignment, argument,
+   NLL, mutation, and return-region behavior.
 2. **`Arena` (`[ARN-*]`).** Not started. **Not a third interior-mutability
    primitive** — it is a region allocator, and amendment A13 records that the
    three share the implementation concern and *not* the concept. Do not build
@@ -226,7 +227,7 @@ already clear; no specification or ADR changed.
 **Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`;
 `Cell.take` on `CELL-DEF-1`. Neither rule was softened to fit.
 
-**Open defect:** D-038 (`String`→`str` coercion, fails closed).
+**Open compiler defects:** none.
 
 **`UnsafeCell` is specified and unbuilt** — `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]`,
 0.8.5. **Do not build `RefCell` on it**; ADR-019's compiler-known route stands.
@@ -280,9 +281,9 @@ semantic question is currently open.
   the tool. `RIDX-1` taught the extractor those forms and pinned the
   definition/reference boundary with tests. Withdrawn ERR-042 retains the
   original inventory.
-* **One open defect**, not an owner question: **D-038** (`String`→`str`
-  coercion is listed by `[SPN-1]` and rejected by the checker; fails closed).
-  **D-042** (partial moves), **D-043** (owned parameters leaked), and **D-044**
+* **No open compiler defect.** **D-038** now routes implicit `String`→`str`
+  through the same explicit-borrow producer as `as_str()`. **D-042** (partial
+  moves), **D-043** (owned parameters leaked), and **D-044**
   (writes through borrowed value parameters) are fixed with adversarial
   conformance evidence. **D-041** (moves out of
   borrowed places unchecked — `x = r.inner` compiled and the value dropped
