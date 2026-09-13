@@ -283,14 +283,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `352ea64` (`Implement Array split_at_mut and B1 repair`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `c520a32` (`Implement mem ownership operations and stable panic tests`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `c520a32` OWN-6/O2/Windows panic runner · `f3224b9` approved post-H4 simplicity RFC · `3095f83` D-062 documentation · `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 98 top-level rule directories, 324 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 76 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
+| Conformance | 99 top-level rule directories, 328 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 79 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -2389,10 +2389,10 @@ shape-required concrete construct, rejects orphan companions, and compiles the
 fixed program. Paths and line endings are normalized, but diagnostic content
 is otherwise exact.
 
-Fourteen of the 25 code-keyed ownership shapes now have honest cases: O1, O3,
-O4, O6, O7, B1, B3, B4, B6, B7, B8, B12, B13, and A1. Every fixed companion was
+Fifteen of the 25 code-keyed ownership shapes now have honest cases: O1, O2,
+O3, O4, O6, O7, B1, B3, B4, B6, B7, B8, B12, B13, and A1. Every fixed companion was
 compiled, not inferred. This is **partial `[DIA-13]` coverage**, not a claim
-that the rule is complete: O2/O5/O8/O9/B2/B5/B9/B10/B11/X1/S1 have no current
+that the rule is complete: O5/O8/O9/B2/B5/B9/B10/B11/X1/S1 have no current
 producer, R1 still needs the `ember explain --borrow` overlay, and §XX.6.2's
 N1–N12 basic classifier and snapshots remain.
 
@@ -2458,6 +2458,42 @@ create `0.9.6_Hardened_5`. Any concrete specification correction discovered
 while applying the RFC follows the ordinary classification, owner-decision,
 new-document, conformance, and adoption process.
 
+### 0.39 OWN-6/O2 ownership operations and non-interactive panic tests — 2026-09-13
+
+Implementation checkpoint `c520a32` closes three specification-conformance
+defects without changing the specification. D-063 made O2's required repair
+real: `std.mem` now publicly exposes `take`, `replace`, and `swap`, and one
+compiler-known path carries them through type checking, HIR, MIR, borrow
+analysis, and C lowering. Namespace-qualified and directly imported names use
+the same resolver. `replace` evaluates and borrows the place, evaluates the
+owned replacement, moves out the old value, stores the new value, and returns
+the old value without dropping it. `take` constructs `T.default()` before the
+same exchange. `swap` exchanges two proven-disjoint mutable places without an
+Ember-visible temporary or destructor. These are ordinary `[OWN-6]` semantics,
+not a fourth assignment ordering and not a borrow-checking exception.
+
+D-064 separates two-phase runtime access state from diagnostic identity. A
+reserved mutable call argument still behaves as `[BRW-3]` requires while later
+arguments are evaluated, but an overlapping second mutable argument now
+reports E3022/B1 rather than E3021/B3. D-065 keeps `[PAN-1]`'s Windows
+`abort()` behavior and Ember's own stderr but disables the UCRT report hook
+immediately before termination, preventing WerFault from blocking unattended
+`run-fail` tests.
+
+Evidence is executable: O2 has an exact snapshot and compiling fixed source;
+OWN-6 covers non-`Copy` values, exact destructor counts, missing `Default`, a
+live shared borrow, and same-place swap; MIR exposes replacement/swap
+terminators; no reachable source stub remains in generated C; program and
+runtime C both pass Clang C11 `-pedantic -Wall -Wextra -Werror`. Debug and
+release workspace builds are warning-free, 189 Rust tests pass, the full
+99-directory/328-source conformance walk completes, and all six gates are
+green. The test build retains its one pre-existing lexer test-name warning.
+
+Do not claim all of `[OWN-6]` or `std.mem` complete: `mem.forget` and
+`align_of` remain `MEM-API-1`. Diagnostic work continues with the remaining
+reachable catalogue shapes; the approved §0.38 simplicity rule requires each
+new path to reuse the same ownership, borrow, layout, and verified-MIR facts.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2469,8 +2505,9 @@ and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 H4 cut; §0.33 records the completed `ARN-COLL-1` implementation; §0.34 records
 the first verified `ARCH-096-1` fact/backend boundary; §0.35 records completed
 UnsafeCell; §§0.36–0.37 record the diagnostic UI foundation and D-062/B1
-closure; §0.38 records the approved post-H4 simplicity policy. The active task
-is now the Phase 2 diagnostic-shape snapshot suite,
+closure; §0.38 records the approved post-H4 simplicity policy; §0.39 records
+the OWN-6/O2 and panic-runner checkpoint. The active task is now the remaining
+Phase 2 diagnostic-shape snapshot suite,
 with the remaining canonical-fact migration continuing incrementally, followed
 by Phase 2 rule closure and the multi-region work before the current target can
 be explicitly adopted.

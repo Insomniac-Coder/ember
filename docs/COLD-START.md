@@ -18,13 +18,13 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `a02c0a5` on `main`, followed by
+**Last committed implementation baseline:** `c520a32` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
-    188 tests green      cargo test --workspace
+    189 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -34,8 +34,8 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 98 top-level conformance rule directories, 320 `.em` files including support
- modules. 73 defects recorded, **none open**.
+ 99 top-level conformance rule directories, 328 `.em` files including support
+ modules. 79 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core

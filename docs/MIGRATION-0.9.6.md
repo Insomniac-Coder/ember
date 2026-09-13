@@ -140,7 +140,10 @@ repository baseline currently has executable evidence for:
   `Arena.alloc_array[T]`;
 - receiver-less interface members with concrete and bound associated calls,
   full interface-signature conformance, `Cell.take`, and `Cell.update`'s
-  move-only `T: Default` arm; and
+  move-only `T: Default` arm;
+- `[OWN-6]` `std.mem.take`, `replace`, and `swap` through ordinary generic,
+  mutable-place, borrow, move, and `Default` checking, plus an executable O2
+  diagnostic repair; and
 - exact `0.9`, `0.9.5`, and `0.9.6` source-selector recognition, while unknown
   patch contracts remain E0006.
 
@@ -162,6 +165,15 @@ accepts only an opaque `VerifiedMir` that binds the exact body slice and type
 table checked by unconditional structural and view-provenance verification
 after final body pruning. This is an incremental `ARCH-096-1` checkpoint, not
 complete H4 adoption.
+
+The subsequent diagnostic/ownership checkpoint is `c520a32`. It raises the
+workspace total to 189 tests and executable coverage to 99 conformance
+directories and 328 Ember source files. O2 now has an exact rendered snapshot
+and compiling `mem.take` repair; OWN-6 probes cover non-`Copy` replacement,
+take, swap, destructor counts, missing `Default`, live-borrow conflicts, and
+same-place mutable overlap. Windows aborting tests no longer invoke an
+interactive WerFault report, so the full conformance runner completes
+non-interactively while preserving `[PAN-1]` termination and panic text.
 
 ## 4. Known implementation gaps
 
@@ -221,6 +233,8 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Send` behavior remains blocked only on the later threading-trait machinery,
   an intentional dependency gap rather than a compiler defect.
 - Phase 2 UI/diagnostic snapshots and other long-standing exit work remain.
+- `MEM-API-1`: `[OWN-6]` `mem.forget` and Part XV's `align_of` remain after
+  the completed `drop`/`take`/`replace`/`swap`/`size_of` subset.
 
 The four open deviations remain D1–D4. D5 is closed and D6 withdrawn. There is
 no open compiler defect and no open owner semantic/API decision. ODR-011
