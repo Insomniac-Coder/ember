@@ -576,7 +576,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // Definite initialisation (Part XVIII §4.6) runs on MIR, before any
     // optimisation could remove the read it is looking for.
-    ember_analysis::check_definite_init_all(&bodies, &mut sink);
+    let initialization_facts = ember_analysis::analyze_definite_init_all(&bodies);
+    // `[IMP-7]` — the fact verifier proves that the canonical initialization
+    // fixpoint describes this initial MIR before diagnostics consume it and
+    // before drop elaboration transforms the CFG.
+    ember_analysis::verify_initialization_facts_all(&bodies, &initialization_facts);
+    ember_analysis::check_definite_init_all_with_facts(
+        &bodies,
+        &initialization_facts,
+        &mut sink,
+    );
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
@@ -620,8 +629,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if program.main.is_some() {
         retain_referenced_standard_bodies(&mut bodies);
     }
+    // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
+    // boundary. This check is unconditional and follows the final body-pruning
+    // transformation, so release builds cannot emit stale or malformed MIR.
+    let verified_mir = ember_mir::verify::for_codegen(&bodies, &types).unwrap_or_else(|violations| {
+        panic!(
+            "MIR code-generation verification failed:\n{}",
+            violations
+                .iter()
+                .map(|v| format!("  {}: {}", v.body, v.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
     let module_name = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let emitted = ember_codegen_c::emit(&bodies, &types, &map, &module_name, program.main.is_some());
+    let emitted = ember_codegen_c::emit(verified_mir, &map, &module_name, program.main.is_some());
     if options.emit.as_deref() == Some("c") {
         print!("{}", emitted.c_source);
         return Ok(finish(&sink, &map, options));

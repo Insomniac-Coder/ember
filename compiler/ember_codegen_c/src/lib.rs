@@ -19,6 +19,7 @@ use ember_mir::{
     AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FuncRef, LocalKind, Operand, Place,
     Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
+use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
 use ember_span::SourceMap;
@@ -45,12 +46,13 @@ fn drop_symbol(owner: &str) -> String {
 }
 
 pub fn emit(
-    bodies: &[Body],
-    types: &TypeTable,
+    mir: VerifiedMir<'_>,
     map: &SourceMap,
     module_name: &str,
     has_main: bool,
 ) -> Output {
+    let bodies = mir.bodies();
+    let types = mir.types();
     let (order, structural) = plan_types(types);
     let usize_ty = types
         .all()

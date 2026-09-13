@@ -40,6 +40,37 @@ impl InitializationState {
     }
 }
 
+/// `[IMP-7]` — the canonical definite-initialization facts for one MIR body.
+///
+/// Block entries and exits are retained together so downstream consumers do
+/// not independently solve the same dataflow problem. `None` denotes an
+/// unreachable block. The fact verifier checks this record against the MIR
+/// before any safety-critical transformation consumes or invalidates it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InitializationFacts {
+    pub(crate) body_symbol: String,
+    pub(crate) block_entry: Vec<Option<Vec<InitializationState>>>,
+    pub(crate) block_exit: Vec<Option<Vec<InitializationState>>>,
+}
+
+impl InitializationFacts {
+    pub fn body_symbol(&self) -> &str {
+        &self.body_symbol
+    }
+
+    pub fn block_entry(&self, block: usize) -> Option<&[InitializationState]> {
+        self.block_entry.get(block)?.as_deref()
+    }
+
+    pub fn block_exit(&self, block: usize) -> Option<&[InitializationState]> {
+        self.block_exit.get(block)?.as_deref()
+    }
+
+    pub fn block_count(&self) -> usize {
+        self.block_entry.len()
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ProvenanceRoot {
     Param(LocalId),

@@ -1,7 +1,9 @@
 //! The MIR verifier (Part XVIII §4.2).
 //!
-//! Runs after every pass in debug builds of the compiler. It checks structural
-//! invariants only — well-formedness of the CFG and of places — not semantics.
+//! Runs after transformations in debug builds and unconditionally at the
+//! code-generation boundary. The base verifier checks structural invariants —
+//! well-formedness of the CFG and of places — while the typed view verifier
+//! checks the provenance-carrying shapes code generation is allowed to see.
 //! `[MIR-4]`: every block ends with exactly one terminator, which the type
 //! system already guarantees, so the check here is that every terminator names
 //! a block that exists.
@@ -21,6 +23,24 @@ use ember_types::{Ty, TyKind, TypeTable};
 pub struct Violation {
     pub body: String,
     pub message: String,
+}
+
+/// A MIR program that has passed every verifier required by the current C
+/// backend boundary. The constructor is private to this module, so a backend
+/// cannot accidentally consume a raw `&[Body]` after a transformation.
+pub struct VerifiedMir<'a> {
+    bodies: &'a [Body],
+    types: &'a TypeTable,
+}
+
+impl VerifiedMir<'_> {
+    pub fn bodies(&self) -> &[Body] {
+        self.bodies
+    }
+
+    pub fn types(&self) -> &TypeTable {
+        self.types
+    }
 }
 
 /// Accumulates violations while walking one body.
@@ -236,6 +256,16 @@ mod tests {
         let violations = verify(&body_with(vec![stmt], Span::new(ember_span::FileId(0), 0, 1)));
         assert!(violations.is_empty(), "got {violations:?}");
     }
+
+    #[test]
+    fn the_codegen_boundary_rejects_structurally_unverified_mir() {
+        let bodies = vec![body_with(Vec::new(), Span::DUMMY)];
+        let (types, _) = TypeTable::new();
+        let Err(violations) = for_codegen(&bodies, &types) else {
+            panic!("structurally invalid MIR crossed the codegen boundary");
+        };
+        assert!(violations.iter().any(|v| v.message.contains("terminator has no source span")));
+    }
 }
 
 /// Verify every body, panicking on the first violation. Called from the driver
@@ -420,6 +450,25 @@ pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
     );
 }
 
+/// `[IMP-7]` / `[VERIFY-3]` — establish the code-generation boundary.
+///
+/// This runs in every compiler profile, after the final MIR body-selection
+/// transformation. A verifier failure is a compiler defect, so the caller
+/// reports the collected internal violations rather than translating
+/// untrusted MIR.
+pub fn for_codegen<'a>(
+    bodies: &'a [Body],
+    types: &'a TypeTable,
+) -> Result<VerifiedMir<'a>, Vec<Violation>> {
+    let mut violations: Vec<Violation> = bodies.iter().flat_map(verify).collect();
+    violations.extend(bodies.iter().flat_map(|body| verify_views(body, types)));
+    if violations.is_empty() {
+        Ok(VerifiedMir { bodies, types })
+    } else {
+        Err(violations)
+    }
+}
+
 #[cfg(test)]
 mod view_invariant_tests {
     use super::*;
@@ -505,6 +554,20 @@ mod view_invariant_tests {
         let violations = verify_views(&body, &types);
         assert_eq!(violations.len(), 1, "got {violations:?}");
         assert!(violations[0].message.contains("carries no borrow"));
+    }
+
+    #[test]
+    fn the_codegen_boundary_rejects_a_view_without_provenance() {
+        let (body, types) = env_body(Rvalue::Cast {
+            kind: crate::CastKind::Numeric,
+            operand: Operand::Copy(Place::local(LocalId(1))),
+            to: body_ty_placeholder(),
+        });
+        let bodies = vec![body];
+        let Err(violations) = for_codegen(&bodies, &types) else {
+            panic!("a provenance-free view crossed the codegen boundary");
+        };
+        assert!(violations.iter().any(|v| v.message.contains("carries no borrow")));
     }
 
     fn body_ty_placeholder() -> Ty {

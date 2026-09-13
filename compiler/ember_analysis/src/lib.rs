@@ -12,7 +12,12 @@ pub mod definite_init;
 pub mod drops;
 pub mod unused;
 
-pub use definite_init::{check_all as check_definite_init_all, check_definite_init};
+pub use definite_init::{
+    analyze_all as analyze_definite_init_all, analyze_definite_init,
+    check_all as check_definite_init_all, check_all_with_facts as check_definite_init_all_with_facts,
+    check_definite_init, check_definite_init_with_facts, verify_initialization_facts,
+    verify_initialization_facts_all,
+};
 pub use drops::{elaborate as elaborate_drops, elaborate_all as elaborate_drops_all};
 pub use borrows::check_all as check_borrows_all;
 pub use unused::check_all as check_unused_all;

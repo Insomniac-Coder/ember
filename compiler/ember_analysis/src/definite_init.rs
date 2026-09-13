@@ -15,12 +15,31 @@ use ember_mir::{
 };
 use ember_span::Span;
 
-use crate::facts::InitializationState as State;
+use crate::facts::{InitializationFacts, InitializationState as State};
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InitializationFactViolation {
+    pub body: String,
+    pub message: String,
+}
 
 /// Check one body and report every read of a local that may not be
 /// initialised. Returns the number of errors reported.
 pub fn check_definite_init(body: &Body, sink: &mut Sink) -> usize {
-    let local_count = body.locals.len();
+    let facts = analyze_definite_init(body);
+    let violations = verify_initialization_facts(body, &facts);
+    assert!(
+        violations.is_empty(),
+        "initialization fact verification failed for `{}`: {violations:?}",
+        body.symbol
+    );
+    check_definite_init_with_facts(body, &facts, sink)
+}
+
+/// Produce the shared `[IMP-7]` initialization facts for one initial MIR
+/// body. Diagnostics and verification both consume this result; neither
+/// performs a second fixpoint.
+pub fn analyze_definite_init(body: &Body) -> InitializationFacts {
     let entry = initial_state(body);
 
     // Per-block entry states, refined until they stop changing. Bodies are
@@ -28,7 +47,11 @@ pub fn check_definite_init(body: &Body, sink: &mut Sink) -> usize {
     // need for the dominator machinery a larger analysis would want.
     let mut block_entry: Vec<Option<Vec<State>>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
-        return 0;
+        return InitializationFacts {
+            body_symbol: body.symbol.clone(),
+            block_entry,
+            block_exit: Vec::new(),
+        };
     }
     block_entry[0] = Some(entry);
 
@@ -53,16 +76,113 @@ pub fn check_definite_init(body: &Body, sink: &mut Sink) -> usize {
         }
     }
 
-    // A second pass reports, so that a diagnostic is only produced once the
-    // entry states have settled. Reporting during the fixpoint would emit the
-    // same error on every iteration.
-    let mut reporter = Reporter { body, sink, errors: 0, reported: vec![false; local_count] };
+    let block_exit = block_entry
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| entry.clone().map(|state| transfer(body, index, state, None)))
+        .collect();
+
+    InitializationFacts { body_symbol: body.symbol.clone(), block_entry, block_exit }
+}
+
+/// Diagnose reads using the already-solved canonical fact set.
+pub fn check_definite_init_with_facts(
+    body: &Body,
+    facts: &InitializationFacts,
+    sink: &mut Sink,
+) -> usize {
+    debug_assert_eq!(facts.body_symbol(), body.symbol);
+    let mut reporter =
+        Reporter { body, sink, errors: 0, reported: vec![false; body.locals.len()] };
     for index in 0..body.blocks.len() {
-        if let Some(state) = block_entry[index].clone() {
-            transfer(body, index, state, Some(&mut reporter));
+        if let Some(state) = facts.block_entry(index) {
+            transfer(body, index, state.to_vec(), Some(&mut reporter));
         }
     }
     reporter.errors
+}
+
+/// Verify that a canonical initialization fact set still describes this MIR.
+///
+/// This is deliberately stronger than checking vector lengths. It proves the
+/// entry seed, each transfer result, and every predecessor join. A fact set
+/// whose safety result no longer matches the CFG therefore cannot cross the
+/// analysis boundary as trusted metadata.
+pub fn verify_initialization_facts(
+    body: &Body,
+    facts: &InitializationFacts,
+) -> Vec<InitializationFactViolation> {
+    let mut violations = Vec::new();
+    let mut fail = |message: String| {
+        violations.push(InitializationFactViolation { body: body.symbol.clone(), message });
+    };
+
+    if facts.body_symbol() != body.symbol {
+        fail(format!(
+            "fact set belongs to `{}`, not `{}`",
+            facts.body_symbol(), body.symbol
+        ));
+        return violations;
+    }
+    if facts.block_entry.len() != body.blocks.len()
+        || facts.block_exit.len() != body.blocks.len()
+    {
+        fail(format!(
+            "fact set has {} entries and {} exits for {} MIR blocks",
+            facts.block_entry.len(),
+            facts.block_exit.len(),
+            body.blocks.len()
+        ));
+        return violations;
+    }
+    if body.blocks.is_empty() {
+        return violations;
+    }
+
+    let expected_seed = initial_state(body);
+
+    for index in 0..body.blocks.len() {
+        let Some(entry) = &facts.block_entry[index] else {
+            if facts.block_exit[index].is_some() {
+                fail(format!("bb{index} is unreachable but has exit facts"));
+            }
+            continue;
+        };
+        if entry.len() != body.locals.len() {
+            fail(format!(
+                "bb{index} has {} entry facts for {} locals",
+                entry.len(),
+                body.locals.len()
+            ));
+            continue;
+        }
+        let expected_exit = transfer(body, index, entry.clone(), None);
+        if facts.block_exit[index].as_ref() != Some(&expected_exit) {
+            fail(format!("bb{index} exit facts do not match its MIR transfer"));
+        }
+    }
+
+    let mut expected_entries: Vec<Option<Vec<State>>> = vec![None; body.blocks.len()];
+    expected_entries[0] = Some(expected_seed);
+    for (predecessor, exit) in facts.block_exit.iter().enumerate() {
+        let Some(exit) = exit else { continue };
+        for successor in successors(body, predecessor) {
+            let slot = &mut expected_entries[successor];
+            *slot = Some(match slot.take() {
+                Some(existing) => {
+                    existing.iter().zip(exit).map(|(a, b)| a.join(*b)).collect()
+                }
+                None => exit.clone(),
+            });
+        }
+    }
+    for (index, expected) in expected_entries.iter().enumerate() {
+        if &facts.block_entry[index] != expected {
+            fail(format!("bb{index} entry facts do not equal the join of predecessor exits"));
+        }
+    }
+
+    violations
 }
 
 struct Reporter<'a> {
@@ -249,14 +369,135 @@ fn read_rvalue(rvalue: &Rvalue, state: &[State], span: Span, reporter: &mut Opti
     }
 }
 
-/// Run the analysis over every body.
+/// Produce canonical initialization facts for every initial MIR body.
+pub fn analyze_all(bodies: &[Body]) -> Vec<InitializationFacts> {
+    bodies.iter().map(analyze_definite_init).collect()
+}
+
+/// Diagnose every body from a previously verified canonical fact set.
+pub fn check_all_with_facts(
+    bodies: &[Body],
+    facts: &[InitializationFacts],
+    sink: &mut Sink,
+) -> usize {
+    assert_eq!(
+        bodies.len(),
+        facts.len(),
+        "initialization fact count does not match the MIR body count"
+    );
+    bodies
+        .iter()
+        .zip(facts)
+        .map(|(body, facts)| check_definite_init_with_facts(body, facts, sink))
+        .sum()
+}
+
+/// Compatibility entry point for callers that do not need to retain facts.
+/// The explicit driver pipeline uses `analyze_all`, verifies, then calls
+/// `check_all_with_facts` so the phase boundary remains visible.
 pub fn check_all(bodies: &[Body], sink: &mut Sink) -> usize {
-    bodies.iter().map(|body| check_definite_init(body, sink)).sum()
+    let facts = analyze_all(bodies);
+    verify_initialization_facts_all(bodies, &facts);
+    check_all_with_facts(bodies, &facts, sink)
+}
+
+/// Verify every body's initialization facts, panicking on a compiler-internal
+/// mismatch. User source errors are diagnosed by the consumer above; a fact
+/// mismatch means the compiler's trusted semantic boundary is stale.
+pub fn verify_initialization_facts_all(bodies: &[Body], facts: &[InitializationFacts]) {
+    assert_eq!(
+        bodies.len(),
+        facts.len(),
+        "initialization fact count does not match the MIR body count"
+    );
+    let violations: Vec<InitializationFactViolation> = bodies
+        .iter()
+        .zip(facts)
+        .flat_map(|(body, facts)| verify_initialization_facts(body, facts))
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "initialization fact verification failed:\n{}",
+        violations
+            .iter()
+            .map(|v| format!("  {}: {}", v.body, v.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ember_mir::{BasicBlock, BasicBlockId, Const, LocalDecl, Stmt};
+
+    fn branch_body() -> Body {
+        let (_, common) = ember_types::TypeTable::new();
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        Body {
+            name: "facts".to_string(),
+            symbol: "facts".to_string(),
+            locals: vec![
+                LocalDecl {
+                    ty: common.void,
+                    kind: LocalKind::Return,
+                    name: None,
+                    span,
+                },
+                LocalDecl {
+                    ty: common.bool_,
+                    kind: LocalKind::Arg,
+                    name: Some("choose".to_string()),
+                    span,
+                },
+                LocalDecl {
+                    ty: common.i32,
+                    kind: LocalKind::User,
+                    name: Some("value".to_string()),
+                    span,
+                },
+            ],
+            blocks: vec![
+                BasicBlock {
+                    stmts: vec![Stmt::new(StmtKind::StorageLive(LocalId(2)), Span::DUMMY)],
+                    terminator: Terminator::SwitchInt {
+                        discr: Operand::Copy(Place::local(LocalId(1))),
+                        targets: vec![(1, BasicBlockId(1))],
+                        otherwise: BasicBlockId(2),
+                    },
+                    terminator_span: span,
+                },
+                BasicBlock {
+                    stmts: vec![Stmt::new(
+                        StmtKind::Assign {
+                            place: Place::local(LocalId(2)),
+                            rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                                value: 1,
+                                ty: common.i32,
+                            })),
+                        },
+                        span,
+                    )],
+                    terminator: Terminator::Goto(BasicBlockId(3)),
+                    terminator_span: span,
+                },
+                BasicBlock {
+                    stmts: Vec::new(),
+                    terminator: Terminator::Goto(BasicBlockId(3)),
+                    terminator_span: span,
+                },
+                BasicBlock {
+                    stmts: Vec::new(),
+                    terminator: Terminator::Return,
+                    terminator_span: span,
+                },
+            ],
+            arg_count: 1,
+            span,
+            borrows: None,
+            borrowed_params: Vec::new(),
+        }
+    }
 
     #[test]
     fn the_join_is_a_lattice() {
@@ -272,5 +513,39 @@ mod tests {
         assert!(State::Init.is_readable());
         assert!(!State::Uninit.is_readable());
         assert!(!State::Maybe.is_readable());
+    }
+
+    #[test]
+    fn canonical_facts_retain_the_branch_join() {
+        let body = branch_body();
+        let facts = analyze_definite_init(&body);
+        assert_eq!(facts.block_count(), body.blocks.len());
+        assert_eq!(facts.block_entry(0), Some(&[State::Init, State::Init, State::Uninit][..]));
+        assert_eq!(facts.block_entry(3), Some(&[State::Init, State::Init, State::Maybe][..]));
+        assert!(verify_initialization_facts(&body, &facts).is_empty());
+    }
+
+    #[test]
+    fn the_fact_verifier_rejects_a_stale_transfer_result() {
+        let body = branch_body();
+        let mut facts = analyze_definite_init(&body);
+        facts.block_exit[1].as_mut().unwrap()[2] = State::Uninit;
+        let violations = verify_initialization_facts(&body, &facts);
+        assert!(
+            violations.iter().any(|v| v.message.contains("exit facts")),
+            "expected stale-exit violation, got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn the_fact_verifier_rejects_a_wrong_predecessor_join() {
+        let body = branch_body();
+        let mut facts = analyze_definite_init(&body);
+        facts.block_entry[3].as_mut().unwrap()[2] = State::Init;
+        let violations = verify_initialization_facts(&body, &facts);
+        assert!(
+            violations.iter().any(|v| v.message.contains("predecessor exits")),
+            "expected predecessor-join violation, got {violations:?}"
+        );
     }
 }
