@@ -7506,17 +7506,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let inner = value.ty;
-            // `[TYP-15]` is region-based: a static-region view can live in
-            // this unbounded owner, while a non-static one cannot. Keep the
-            // check at the value boundary so forming `Box[str]` itself remains
-            // legal. The syntax predicate is deliberately conservative until
-            // the general region graph can prove more indirect static flows.
-            self.reject_stored_view_unless(
-                inner,
-                args[0].value.span,
-                "a Box's contents",
-                has_static_region(&args[0].value),
-            );
+            // `[TYP-15]` is region-based: forming `Box[str]` is legal, and
+            // whether this particular value may enter unbounded storage
+            // depends on its inferred region rather than its syntax. The MIR
+            // region pass checks the Box builtin after provenance has flowed
+            // through locals and calls; doing it here would wrongly reject a
+            // static view merely because it was first bound to a name.
             let boxed = self.box_of(inner);
             return Expr {
                 ty: boxed,

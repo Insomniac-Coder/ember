@@ -283,6 +283,51 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
     }
 }
 
+/// `[TYP-15]`, `[LT-3]` — a Box has no bounding region, so a view may enter it
+/// only when every carried region is static. This check belongs after region
+/// inference: spelling the same static view through a local or a zero-input
+/// function must not change whether the program is accepted.
+fn check_box_storage_regions(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    sink: &mut Sink,
+) {
+    for block in &body.blocks {
+        let Terminator::Call {
+            func: FuncRef::Builtin { which: Builtin::BoxNew { elem, .. }, .. },
+            args,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !types.is_view(*elem)
+            || args.first().is_some_and(|value| regions.is_static_operand(value))
+        {
+            continue;
+        }
+        let shown = types.display(*elem);
+        sink.emit_classified(
+            Diagnostic::error(
+                codes::E3063,
+                block.terminator_span,
+                format!("`{shown}` is a view, so it may not be stored in a Box's contents"),
+            )
+            .primary_label("stored here")
+            .help(concat!(
+                "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — ",
+                "and note that costs one allocation per element; or store a `u32` index ",
+                "or a `Handle[T]` and name the container it indexes"
+            ))
+            .note(concat!(
+                "this place has no bounding region, so only a view with the `static` ",
+                "region may be stored in it (TYP-15, LT-3)"
+            )),
+        );
+    }
+}
+
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol } => symbol.as_str() == body.symbol.as_str() && is_method_body(body),
@@ -300,6 +345,7 @@ fn check_body(
 ) {
     let live = liveness(body);
     let regions = Regions::infer(body, types, &live, elision);
+    check_box_storage_regions(body, types, &regions, sink);
     // Before the loans: a function that hands back a parameter has no loan of
     // its own, and `[LT-1a]` is about exactly that function.
     check_return_regions(body, types, &regions, sink);

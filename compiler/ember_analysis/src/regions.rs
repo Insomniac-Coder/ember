@@ -167,7 +167,7 @@ impl Regions {
             }
         }
 
-        let flows = regions.collect_flows(body, elision);
+        let flows = regions.collect_flows(body, types, elision);
         regions.close(&flows);
         regions
     }
@@ -195,9 +195,28 @@ impl Regions {
         &self.holders[region]
     }
 
+    /// `[LT-3]` — whether a view operand is proven to carry only the static
+    /// region. Constants borrow no runtime storage. A view local is static
+    /// exactly when provenance closure found no parameter or local origin for
+    /// it; this preserves the fact through bindings and through calls whose
+    /// result is not tied to a view argument.
+    pub fn is_static_operand(&self, operand: &Operand) -> bool {
+        match operand {
+            Operand::Const(_) => true,
+            Operand::Copy(place) | Operand::Move(place) => self
+                .place_region(place)
+                .is_some_and(|region| self.origins[region].is_empty()),
+        }
+    }
+
     /// §4.7 step 2 — one walk of the body, collecting every assignment that
     /// moves a reference from one place to another.
-    fn collect_flows(&mut self, body: &Body, elision: &dyn Fn(&FuncRef) -> Elision) -> Vec<Flow> {
+    fn collect_flows(
+        &mut self,
+        body: &Body,
+        types: &TypeTable,
+        elision: &dyn Fn(&FuncRef) -> Elision,
+    ) -> Vec<Flow> {
         let mut flows = Vec::new();
         let mut seeds: Vec<(RegionVid, Origin)> = Vec::new();
         for (block_index, block) in body.blocks.iter().enumerate() {
@@ -267,6 +286,22 @@ impl Regions {
                         }
                         if let Some(from) = self.operand_region(arg) {
                             flows.push(Flow { from, to });
+                        } else if let Operand::Copy(place) | Operand::Move(place) = arg
+                            && is_growing_arena(types, body.local(place.local).ty)
+                        {
+                            // `[LT-1a]`, `[LT-4a]` — Arena is the one
+                            // non-view parameter that may source returned
+                            // provenance. It has no local region variable of
+                            // its own, so seed the result directly rather than
+                            // treating the absence of a view-region edge as
+                            // static provenance.
+                            seeds.push((
+                                to,
+                                match body.local(place.local).kind {
+                                    LocalKind::Arg => Origin::Param(place.local),
+                                    _ => Origin::Local(place.local),
+                                },
+                            ));
                         }
                     }
                 }
@@ -343,6 +378,13 @@ impl Regions {
             None
         }
     }
+}
+
+/// `[LT-4a]` names the growing `Arena` specifically as the one non-view
+/// provenance source accepted by `@borrows`.
+fn is_growing_arena(types: &TypeTable, ty: ember_types::Ty) -> bool {
+    matches!(types.kind(ty), ember_types::TyKind::Struct(id)
+        if types.struct_def(*id).name.as_str() == "Arena")
 }
 
 /// `[LT-1]` — which of a callee's arguments its returned view may point into.
