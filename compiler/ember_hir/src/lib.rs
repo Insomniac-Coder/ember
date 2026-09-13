@@ -109,6 +109,11 @@ pub enum Stmt {
     Let { local: LocalId, init: Option<Expr> },
     /// Store into a place.
     Assign { place: Expr, value: Expr },
+    /// `[GRM-5]` — evaluate one aggregate value, then bind or assign its
+    /// projected fields. `temp` is compiler-private and lives only for this
+    /// source statement; keeping the operation explicit prevents a residual
+    /// non-`Copy` field from being extended to block scope.
+    Destructure { temp: LocalId, value: Expr, bindings: Vec<DestructureBinding> },
     Expr(Expr),
     Return(Option<Expr>),
     If { cond: Expr, then_block: Block, else_block: Option<Block> },
@@ -132,6 +137,12 @@ pub enum Stmt {
     /// resolved to a depth while checking, so MIR never sees a name.
     Break { depth: usize },
     Continue { depth: usize },
+}
+
+#[derive(Debug)]
+pub enum DestructureBinding {
+    Let { local: LocalId, value: Expr },
+    Assign { place: Expr, value: Expr },
 }
 
 #[derive(Debug)]
@@ -702,6 +713,37 @@ fn dump_block(
                 dump_expr(place, function, types),
                 dump_expr(value, function, types)
             )),
+            Stmt::Destructure { temp, value, bindings } => {
+                let name = function
+                    .local(*temp)
+                    .name
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| format!("_{}", temp.0));
+                out.push_str(&format!(
+                    "{pad}destructure {name}: {} = {}\n",
+                    types.display(function.local(*temp).ty),
+                    dump_expr(value, function, types)
+                ));
+                for binding in bindings {
+                    match binding {
+                        DestructureBinding::Let { local, value } => {
+                            let decl = function.local(*local);
+                            let target = decl
+                                .name
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| format!("_{}", local.0));
+                            out.push_str(&format!("{pad}  let {target}: {}", types.display(decl.ty)));
+                            out.push_str(&format!(" = {}", dump_expr(value, function, types)));
+                            out.push('\n');
+                        }
+                        DestructureBinding::Assign { place, value } => out.push_str(&format!(
+                            "{pad}  {} = {}\n",
+                            dump_expr(place, function, types),
+                            dump_expr(value, function, types)
+                        )),
+                    }
+                }
+            }
             Stmt::Expr(e) => out.push_str(&format!("{pad}{}\n", dump_expr(e, function, types))),
             Stmt::Return(e) => match e {
                 Some(e) => out.push_str(&format!("{pad}return {}\n", dump_expr(e, function, types))),

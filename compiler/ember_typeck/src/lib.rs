@@ -20,8 +20,8 @@ use ember_ast as ast;
 use ember_hir as hir;
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{
-    BinOp, Block, Builtin, DefId, Expr, ExprKind, Function, LocalDecl, LocalId, Mode, Param,
-    Program, Stmt, UnOp,
+    BinOp, Block, Builtin, DefId, DestructureBinding, Expr, ExprKind, Function, LocalDecl,
+    LocalId, Mode, Param, Program, Stmt, UnOp,
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
@@ -255,6 +255,14 @@ struct MethodEntry {
 struct AssociatedEntry {
     def: DefId,
     from_interface: Option<Symbol>,
+}
+
+/// One leaf of a `[GRM-5]` destructuring target and the aggregate projection
+/// that supplies it. Nested parenthesised target lists append field indices.
+struct DestructureLeaf<'a> {
+    target: &'a ast::Expr,
+    ty: Ty,
+    projection: Vec<usize>,
 }
 
 /// A declared interface: the methods a type must provide, and which of them
@@ -4970,12 +4978,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 out.push(Stmt::Let { local, init });
             }
             ast::StmtKind::Assign { targets, op, value } => {
-                if targets.len() != 1 {
-                    self.error(
-                        codes::E1010,
-                        stmt.span,
-                        "tuple destructuring is not supported yet in this phase",
-                    );
+                let parenthesised = targets.len() == 1
+                    && matches!(&targets[0].kind, ast::ExprKind::Tuple(_));
+                if targets.len() != 1 || parenthesised {
+                    if op.is_some() {
+                        self.error(
+                            codes::E1010,
+                            stmt.span,
+                            "tuple destructuring does not support augmented assignment",
+                        );
+                        return;
+                    }
+                    self.check_destructure(targets, value, stmt.span, out);
                     return;
                 }
                 let target = &targets[0];
@@ -5157,6 +5171,213 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
             }
         }
+    }
+
+    /// `[GRM-5]` — a target list is one aggregate assignment, not a sequence
+    /// of unrelated assignments. The right-hand side is checked before any
+    /// new binding enters scope, then represented by one compiler-private HIR
+    /// temporary so MIR can evaluate it once and end its residual lifetime at
+    /// this statement.
+    fn check_destructure(
+        &mut self,
+        targets: &[ast::Expr],
+        value: &ast::Expr,
+        span: Span,
+        out: &mut Vec<Stmt>,
+    ) {
+        let value = self.synth_committed(value);
+        if value.ty == self.common.error {
+            return;
+        }
+
+        let root_targets = if targets.len() == 1 {
+            match &targets[0].kind {
+                ast::ExprKind::Tuple(items) => items.as_slice(),
+                _ => targets,
+            }
+        } else {
+            targets
+        };
+        let mut leaves = Vec::new();
+        if !self.collect_destructure_leaves(
+            root_targets,
+            value.ty,
+            &mut Vec::new(),
+            &mut leaves,
+            span,
+        ) {
+            return;
+        }
+
+        // `[GRM-5]`'s consistency rule: `_` is neutral, while every other
+        // leaf must be either a fresh bare name or an existing writable place.
+        let mut declares = false;
+        let mut assigns = false;
+        let mut fresh = HashSet::new();
+        for leaf in &leaves {
+            if is_single_path(leaf.target, "_") {
+                continue;
+            }
+            match &leaf.target.kind {
+                ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                    let name = segments[0].name;
+                    if self.lookup(name).is_some() {
+                        assigns = true;
+                    } else {
+                        declares = true;
+                        if !fresh.insert(name) {
+                            self.error(
+                                codes::E1020,
+                                leaf.target.span,
+                                format!("`{name}` is declared more than once in this destructuring"),
+                            );
+                            return;
+                        }
+                    }
+                }
+                _ => assigns = true,
+            }
+        }
+        if declares && assigns {
+            self.error(
+                codes::E1010,
+                span,
+                "all names in a destructuring assignment must be declared or assigned consistently",
+            );
+            return;
+        }
+
+        let aggregate_ty = value.ty;
+        let temp = self.declare(None, aggregate_ty, value.span);
+        let mut bindings = Vec::new();
+        for leaf in leaves {
+            if is_single_path(leaf.target, "_") {
+                continue;
+            }
+            let source = self.destructure_source(temp, aggregate_ty, &leaf.projection, leaf.target.span);
+            if declares {
+                let ast::ExprKind::Path { segments } = &leaf.target.kind else {
+                    unreachable!("declaration consistency admitted a non-name target")
+                };
+                let local = self.declare(Some(segments[0].name), leaf.ty, leaf.target.span);
+                bindings.push(DestructureBinding::Let { local, value: source });
+                continue;
+            }
+
+            let place = self.synth(leaf.target);
+            if place.ty == self.common.error {
+                continue;
+            }
+            if !is_place(&place.kind) {
+                self.error(codes::E2140, leaf.target.span, "assignment target is not a place");
+                continue;
+            }
+            if let ExprKind::Local(local) = place.kind {
+                self.local_ranges.remove(&local);
+            }
+            self.reject_readonly_write(&place, leaf.target.span);
+            let through_shared_ref =
+                self.reject_write_through_shared_ref(&place, leaf.target.span);
+            if !through_shared_ref {
+                self.reject_borrowed_parameter_write(&place, leaf.target.span, true);
+            }
+            let place_ty = place.ty;
+            let source = self.coerce(source, place_ty);
+            bindings.push(DestructureBinding::Assign { place, value: source });
+        }
+        out.push(Stmt::Destructure { temp, value, bindings });
+    }
+
+    /// Expand one aggregate target list into leaves while retaining the exact
+    /// field path for each leaf. Tuples and structs both use declaration-order
+    /// field indices, as `[GRM-5]` requires; parenthesised target lists recurse.
+    fn collect_destructure_leaves<'b>(
+        &mut self,
+        targets: &'b [ast::Expr],
+        aggregate: Ty,
+        projection: &mut Vec<usize>,
+        out: &mut Vec<DestructureLeaf<'b>>,
+        span: Span,
+    ) -> bool {
+        let fields = match self.types.kind(aggregate).clone() {
+            TyKind::Tuple(items) => items,
+            TyKind::Struct(id) => {
+                let fields: Vec<(Ty, FieldVis, Symbol)> = self
+                    .types
+                    .struct_def(id)
+                    .fields
+                    .iter()
+                    .map(|field| (field.ty, field.vis, field.name))
+                    .collect();
+                for (_, vis, name) in &fields {
+                    self.check_field_visible(id, *vis, *name, span);
+                }
+                fields.into_iter().map(|(ty, _, _)| ty).collect()
+            }
+            _ => {
+                let shown = self.types.display(aggregate);
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("destructuring requires a tuple or struct, found `{shown}`"),
+                );
+                return false;
+            }
+        };
+        if fields.len() != targets.len() {
+            let shown = self.types.display(aggregate);
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{shown}` has {} fields, but this destructuring has {} targets",
+                    fields.len(),
+                    targets.len()
+                ),
+            );
+            return false;
+        }
+
+        for (index, (target, ty)) in targets.iter().zip(fields).enumerate() {
+            projection.push(index);
+            let ok = match &target.kind {
+                ast::ExprKind::Tuple(items) => {
+                    self.collect_destructure_leaves(items, ty, projection, out, target.span)
+                }
+                _ => {
+                    out.push(DestructureLeaf {
+                        target,
+                        ty,
+                        projection: projection.clone(),
+                    });
+                    true
+                }
+            };
+            projection.pop();
+            if !ok {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn destructure_source(
+        &self,
+        temp: LocalId,
+        aggregate: Ty,
+        projection: &[usize],
+        span: Span,
+    ) -> Expr {
+        let mut source = Expr { ty: aggregate, kind: ExprKind::Local(temp), span };
+        for &index in projection {
+            let ty = match self.types.kind(source.ty) {
+                TyKind::Tuple(items) => items[index],
+                TyKind::Struct(id) => self.types.struct_def(*id).fields[index].ty,
+                _ => unreachable!("validated destructuring projection"),
+            };
+            source = Expr { ty, kind: ExprKind::Field { base: Box::new(source), index }, span };
+        }
+        source
     }
 
     // -- patterns and `match` -------------------------------------------------

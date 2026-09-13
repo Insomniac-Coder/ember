@@ -445,6 +445,36 @@ impl<'a> Builder<'a> {
                 let place = self.lower_place(place);
                 self.lower_assign(place, value);
             }
+            hir::Stmt::Destructure { temp, value, bindings } => {
+                // `[GRM-5]`/`[EXP-2]` — materialise the right-hand side
+                // before evaluating any destination place, and materialise it
+                // exactly once. Unlike a named `let`, this compiler-private
+                // aggregate is a statement temporary: fields ignored by `_`
+                // and any other unmoved remainder are destroyed here, not at
+                // block exit.
+                let temp = self.local_map[temp.0 as usize];
+                self.at(value.span);
+                self.push(StmtKind::StorageLive(temp));
+                self.lower_into(Place::local(temp), value);
+                if self.types.needs_drop(value.ty) {
+                    self.statement_temps.push(temp);
+                }
+                for binding in bindings {
+                    match binding {
+                        hir::DestructureBinding::Let { local, value } => {
+                            let local = self.local_map[local.0 as usize];
+                            self.at(value.span);
+                            self.push(StmtKind::StorageLive(local));
+                            self.lower_into(Place::local(local), value);
+                            self.owns(local);
+                        }
+                        hir::DestructureBinding::Assign { place, value } => {
+                            let place = self.lower_place(place);
+                            self.lower_assign(place, value);
+                        }
+                    }
+                }
+            }
             hir::Stmt::Expr(expr) => {
                 // The value is discarded, but the effects are not.
                 let ty = expr.ty;
