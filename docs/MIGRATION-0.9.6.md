@@ -24,6 +24,7 @@ the owner explicitly installs it.
 | `docs/spec-source/Ember_v0.9.6_Hardened_3.md` | immutable immediate predecessor; carries the ODR-013 finding | 769,660 bytes; 8,292 lines; SHA-256 `7544B1EBB9DADE8790F500DA5D77900064BC7DE0B20E3DC48674CD2F37422396` |
 | `docs/spec-source/as-received/ODR-013_Hash_static_Hasher_parameter.md` | preserved owner-approved static Hasher ruling and transport normalization | SHA-256 `20970F5C72AACD53F33584448A1AEC800A5B0126F2F63CACFFAD281F6EF60D14` |
 | `docs/spec-source/Ember_v0.9.6_Hardened_4.md` | current frozen development target | 772,027 bytes; 8,319 lines; SHA-256 `D32B945BAE77A612A4664DB9FCDA7F136E741599EBBB3EEC6171C9541DC57B5E` |
+| `docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md` | byte-for-byte owner-approved post-H4 architecture/process RFC; not a specification amendment | 27,488 bytes; 1,138 lines; SHA-256 `0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525` |
 
 The owner approved Revision 5 as the design basis, selected the new 0.9.6
 architecture line, and separately approved the final `[ARN-10]` wording. The
@@ -36,6 +37,12 @@ ODR-012, ADR-032, HC-096-03, and ERR-053 preserve the subsequent public
 hashing-protocol ruling. H2 was not edited.
 ODR-013, ADR-033, HC-096-04, and ERR-054 preserve the subsequent static generic
 Hasher-call ruling. H3 was not edited.
+
+ADR-034 preserves the separately approved post-H4 simplicity RFC. It directs
+implementation and process toward fewer public concepts, reused authoritative
+facts, derived-only caches/aggregates, and conservative unknown handling while
+retaining every H4 semantic distinction needed for safety. It does not amend
+the language, adopt H4, edit H4, or create H5.
 
 Any correction discovered after this freeze becomes
 `0.9.6_Hardened_5`; do not amend H4 in place or silently change its identity.

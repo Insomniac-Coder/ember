@@ -1135,3 +1135,37 @@ removes those transport markers while preserving the selected generic bound.
 `0.9.6_Hardened_4`. `[HASH-1]`, HC-096-04, closed ODR-013, and ERR-054 preserve
 the authority chain. H4 is a frozen development target rather than an
 implementation claim or adopted repository source.
+
+## ADR-034 — Post-H4 simplicity is architectural consolidation, not semantic collapse
+
+**Owner approval, 2026-09-13.** The owner approved Revision 5 of the second
+Ember 0.9.6 Simplicity Consolidation RFC. The received document is preserved
+byte-for-byte as
+`docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md`,
+SHA-256
+`0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525`.
+
+**Decision.** The RFC governs compiler architecture and development process
+for the remainder of the 0.9.6 line. Reduce programmer-visible concepts and
+duplicate mechanisms, reuse existing abstractions and authoritative compiler
+facts, infer facts where sound, and treat unknown information conservatively.
+Derived aggregates, caches, indexes, generated documentation, and architecture
+labels never become independent semantic authorities.
+
+Necessary distinctions remain intact. `AccessContract` and `EffectSet` stay
+separate authoritative facts; initialization retains the H4
+`Uninit | Maybe | Init` lattice and its refinements; provenance, storage
+identity, disjointness, access permission, callable modes, destruction, unsafe
+authority, synchronization, validity, and escape constraints must not be
+collapsed merely because they can share implementation machinery. Existing
+collection interfaces are reused only where their complete semantics match;
+this RFC adds no `Len` or `Capacity` interface and no parallel safety system.
+
+**Authority and version treatment.** This is an architecture/process decision,
+not a source-language amendment, implementation-status claim, or adoption of
+the 0.9.6 specification. The adopted normative source remains
+`docs/spec-source/ember-spec.md`; H4 remains the frozen development target.
+Approval does not edit H4 and does not create `0.9.6_Hardened_5`. A concrete
+future specification correction must be classified, owner-reviewed where
+semantic, materialized as a new immutable document, and passed through the
+ordinary hardening and conformance gates.

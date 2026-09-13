@@ -2433,6 +2433,31 @@ tracks the missing language mechanism explicitly rather than hiding it in
 continue independently, while the remaining Span/MutSpan methods and tuple
 destructuring retain their own implementation gates.
 
+### 0.38 Post-H4 simplicity RFC approved — 2026-09-13
+
+The owner approved the final Revision 5 of the second 0.9.6 Simplicity
+Consolidation RFC. The exact received artifact is preserved at
+`docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md`
+(27,488 bytes, 1,138 lines, SHA-256
+`0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525`).
+ADR-034 records the approval.
+
+This approval changes the development method, not Ember source semantics.
+Prefer a small public and conceptual vocabulary, reuse existing abstractions
+and authoritative semantic facts, keep caches and aggregates derived, and make
+unknown information grant no capability. Do not merge distinctions that H4
+needs for soundness: access and effects, initialization states, provenance and
+storage identity, overlap and region, callable modes, unsafe authority,
+synchronization, validity, escape, and the three distinct write/drop orderings
+remain separate even when they share compiler machinery.
+
+The RFC is not an implementation ledger or a second specification. The adopted
+normative source remains `docs/spec-source/ember-spec.md`; H4 remains the
+immutable development target. The approval does not edit H4, adopt 0.9.6, or
+create `0.9.6_Hardened_5`. Any concrete specification correction discovered
+while applying the RFC follows the ordinary classification, owner-decision,
+new-document, conformance, and adoption process.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2444,7 +2469,8 @@ and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 H4 cut; §0.33 records the completed `ARN-COLL-1` implementation; §0.34 records
 the first verified `ARCH-096-1` fact/backend boundary; §0.35 records completed
 UnsafeCell; §§0.36–0.37 record the diagnostic UI foundation and D-062/B1
-closure. The active task is now the Phase 2 diagnostic-shape snapshot suite,
+closure; §0.38 records the approved post-H4 simplicity policy. The active task
+is now the Phase 2 diagnostic-shape snapshot suite,
 with the remaining canonical-fact migration continuing incrementally, followed
 by Phase 2 rule closure and the multi-region work before the current target can
 be explicitly adopted.

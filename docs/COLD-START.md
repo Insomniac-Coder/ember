@@ -11,7 +11,7 @@ context for the 0.9.5 intake and original phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..033 |
+| `docs/DECISIONS.md` | ADR-001..034 |
 | `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..013 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is currently open |
 
 ---
@@ -79,7 +79,11 @@ target, but not yet the normative repository source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied, and it requires one shared
 semantic-fact/MIR verification architecture without merging distinct language
-semantics. No 0.9/0.9.5/0.9.6 implementation
+semantics. The owner has also approved the post-H4 Revision 5 simplicity RFC
+as architecture/process policy: reuse authoritative facts and abstractions,
+keep necessary semantic distinctions, and make unknown information
+conservative. That approval neither edits H4 nor creates H5. No
+0.9/0.9.5/0.9.6 implementation
 or conformance is implied by the target's version label.
 
 ## 2. The rules. Read these before touching `docs/spec-source/`
