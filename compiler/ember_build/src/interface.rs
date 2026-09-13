@@ -16,7 +16,12 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // no emitted body in this compilation. Older records are incompatible tooling
 // cache entries, not malformed semantic metadata, and are safely invalidated
 // before they can be consumed.
-const SCHEMA_VERSION: u32 = 4;
+// Schema 5 widens the declaration-first callable section from top-level
+// functions to visible members, generic owners, interfaces, and extensions.
+// Schema 4 records are well-formed but omit source contracts now required by
+// `[BLD-2]`, so they must be invalidated rather than treated as stale current
+// metadata.
+const SCHEMA_VERSION: u32 = 5;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -186,7 +191,7 @@ pub struct ModuleInterfaceInput {
     pub callables: Vec<CallableInterfaceRecord>,
 }
 
-/// The schema-v3 module artifact. Its interface hash contains resolved
+/// The schema-v5 module artifact. Its interface hash contains resolved
 /// import-visible callable signatures and callable-region contracts;
 /// source/cache identity already has the shape required to absorb layouts,
 /// effects, and inline bodies as those compiler facts obtain real producers.

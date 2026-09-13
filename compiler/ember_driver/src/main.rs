@@ -918,12 +918,25 @@ fn declaration_signature(
                 Mode::Mut => CallableParameterMode::Mut,
                 Mode::Owned => CallableParameterMode::Owned,
             };
-            let ty = types.canonical_name(parameter.ty).map_err(|error| {
-                format!(
-                    "internal compiler error: [BLD-2] declaration `{}` has a non-canonical parameter type: {error}",
-                    declaration.symbol
-                )
-            })?;
+            let ty = match &parameter.ty {
+                ember_typeck::CallableDeclarationType::Resolved(ty) => {
+                    types.canonical_name(*ty).map_err(|error| {
+                        format!(
+                            "internal compiler error: [BLD-2] declaration `{}` has a non-canonical parameter type: {error}",
+                            declaration.symbol
+                        )
+                    })?
+                }
+                ember_typeck::CallableDeclarationType::Canonical(identity) => {
+                    if identity.is_empty() {
+                        return Err(format!(
+                            "internal compiler error: [BLD-2] declaration `{}` has an empty canonical parameter identity",
+                            declaration.symbol
+                        ));
+                    }
+                    identity.clone()
+                }
+            };
             Ok(CallableParameter { mode, ty })
         })
         .collect::<Result<Vec<_>, String>>()?;

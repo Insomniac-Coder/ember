@@ -51,10 +51,21 @@ pub struct CallableDeclaration {
     pub abi: Option<String>,
 }
 
-#[derive(Copy, Clone, Debug)]
+/// A declaration type that is already resolved by the checker, or the one
+/// narrow source-level identity that has no runtime `Ty` yet: `self` on an
+/// uninstantiated generic owner or an interface declaration. The latter is
+/// still canonical semantic data, never a diagnostic spelling or generated C
+/// symbol.
+#[derive(Clone, Debug)]
+pub enum CallableDeclarationType {
+    Resolved(Ty),
+    Canonical(String),
+}
+
+#[derive(Clone, Debug)]
 pub struct CallableDeclarationParameter {
     pub mode: Mode,
-    pub ty: Ty,
+    pub ty: CallableDeclarationType,
 }
 
 #[derive(Clone, Debug)]
@@ -235,6 +246,11 @@ enum SpanIteratorKind {
 #[derive(Clone)]
 struct GenericStruct {
     params: Vec<Symbol>,
+    /// The resolved bounds belonging to the owner's type parameters. A
+    /// generic method's import-visible contract has to retain these alongside
+    /// its own parameters: `$P0` in `Buffer[T].method` belongs to `Buffer`,
+    /// not to a method-local binder.
+    generic_params: Vec<GenericParam>,
     fields: Vec<FieldDef>,
     derives_copy: bool,
     /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
@@ -470,6 +486,10 @@ struct Checker<'a> {
     /// Source declarations for generic methods, keyed by their uninstantiated
     /// method `DefId`.
     generic_method_sources: HashMap<DefId, MethodSource>,
+    /// Import-visible member declarations collected from resolved source
+    /// signatures. This is distinct from HIR/MIR bodies because interface and
+    /// generic members can be semantically visible without an emitted body.
+    member_callable_declarations: Vec<CallableDeclaration>,
     /// Concrete generic-method instances waiting for body checking/emission.
     pending_generic_methods: Vec<(Instance, DefId)>,
     /// Generic methods on a newly instantiated generic owner must still be
@@ -551,6 +571,7 @@ impl<'a> Checker<'a> {
             pending: Vec::new(),
             pending_methods: Vec::new(),
             generic_method_sources: HashMap::new(),
+            member_callable_declarations: Vec::new(),
             pending_generic_methods: Vec::new(),
             pending_generic_method_validations: Vec::new(),
             locals: Vec::new(),
@@ -1147,73 +1168,153 @@ impl<'a> Checker<'a> {
         param_ty
     }
 
-    /// Build the import-visible top-level callable declaration set from the
-    /// same resolved signatures body checking uses. This is intentionally not
+    /// Build the import-visible callable declaration set from the same
+    /// resolved signatures body checking uses. This is intentionally not
     /// reconstructed from diagnostic strings or raw source: generic bounds
     /// have already been name-resolved and parameter types already carry
     /// their opaque generic identities here.
     fn callable_declarations(&self, modules: &[LoadedModule]) -> Vec<CallableDeclaration> {
-        let mut declarations = Vec::new();
+        let mut declarations = self.member_callable_declarations.clone();
         for (module_index, loaded) in modules.iter().enumerate() {
             let prefix = &self.prefixes[module_index];
             for item in &loaded.module.items {
-                let ast::ItemKind::Fn(decl) = &item.kind else { continue };
-                if item.vis.kind == ast::VisKind::Private {
-                    continue;
-                }
-                let qualified = if prefix.is_empty() {
-                    decl.name.name
-                } else {
-                    Symbol::intern(&format!("{prefix}.{}", decl.name.name))
-                };
-                let Some(&def) = self.fn_ids.get(&qualified) else {
-                    // A prior declaration error owns the diagnostic. Do not
-                    // manufacture a partial interface from a rejected item.
-                    continue;
-                };
-                let signature = &self.signatures[def.0 as usize];
-                let symbol = match &decl.abi {
-                    Some(_) => decl.name.name.to_string(),
-                    None => mangle(qualified, qualified.is("main")),
-                };
-                declarations.push(CallableDeclaration {
-                    span: item.span,
-                    symbol,
-                    parameters: signature
-                        .params
-                        .iter()
-                        .map(|(_, ty, mode, _)| CallableDeclarationParameter {
-                            mode: *mode,
-                            ty: *ty,
-                        })
-                        .collect(),
-                    result: signature.ret,
-                    borrows: signature.borrows.clone(),
-                    generics: signature
-                        .generics
-                        .iter()
-                        .map(|parameter| CallableDeclarationGeneric {
-                            bounds: parameter
-                                .bounds
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect(),
-                            callable: parameter.callable.as_ref().map(|bound| {
-                                CallableDeclarationCallableBound {
-                                    parameters: bound.params.clone(),
-                                    result: bound.ret,
-                                    once: bound.once,
+                match &item.kind {
+                    ast::ItemKind::Fn(decl) if item.vis.kind != ast::VisKind::Private => {
+                        let qualified = if prefix.is_empty() {
+                            decl.name.name
+                        } else {
+                            Symbol::intern(&format!("{prefix}.{}", decl.name.name))
+                        };
+                        let Some(&def) = self.fn_ids.get(&qualified) else {
+                            // A prior declaration error owns the diagnostic. Do not
+                            // manufacture a partial interface from a rejected item.
+                            continue;
+                        };
+                        let symbol = match &decl.abi {
+                            Some(_) => decl.name.name.to_string(),
+                            None => mangle(qualified, qualified.is("main")),
+                        };
+                        declarations.push(self.callable_declaration(
+                            item.span,
+                            symbol,
+                            self.signature_parameters(&self.signatures[def.0 as usize]),
+                            self.signatures[def.0 as usize].ret,
+                            self.signatures[def.0 as usize].borrows.clone(),
+                            &self.signatures[def.0 as usize].generics,
+                            decl.is_unsafe,
+                            decl.abi.clone(),
+                        ));
+                    }
+                    // The owner of `Buffer[T].method` has no runtime `Ty`
+                    // until a particular `Buffer[...]` is instantiated. Its
+                    // source contract nevertheless belongs in EMIF now, with
+                    // the owner's parameter list before the method's own
+                    // parameter list. A generated specialization cannot stand
+                    // in for that declaration.
+                    ast::ItemKind::Struct(decl)
+                        if !decl.generics.is_empty()
+                            && item.vis.kind != ast::VisKind::Private =>
+                    {
+                        let qualified = if prefix.is_empty() {
+                            decl.name.name
+                        } else {
+                            Symbol::intern(&format!("{prefix}.{}", decl.name.name))
+                        };
+                        let Some(generic) = self.generic_structs.get(&qualified) else {
+                            continue;
+                        };
+                        let owner = canonical_generic_owner(qualified, generic.params.len());
+                        for method in &generic.methods {
+                            let Some(member) = decl.members.get(method.source.2) else {
+                                continue;
+                            };
+                            if member.vis.kind == ast::VisKind::Private {
+                                continue;
+                            }
+                            let ast::MemberKind::Fn(source) = &member.kind else {
+                                continue;
+                            };
+                            let mut parameters = Vec::with_capacity(
+                                method.params.len() + usize::from(method.receiver.is_some()),
+                            );
+                            if let Some(mode) = method.receiver {
+                                parameters.push(CallableDeclarationParameter {
+                                    mode,
+                                    ty: CallableDeclarationType::Canonical(owner.clone()),
+                                });
+                            }
+                            parameters.extend(method.params.iter().map(|(_, ty, mode, _)| {
+                                CallableDeclarationParameter {
+                                    mode: *mode,
+                                    ty: CallableDeclarationType::Resolved(*ty),
                                 }
-                            }),
-                        })
-                        .collect(),
-                    is_unsafe: decl.is_unsafe,
-                    abi: decl.abi.clone(),
-                });
+                            }));
+                            let mut generics = generic.generic_params.clone();
+                            generics.extend(method.generics.clone());
+                            declarations.push(self.callable_declaration(
+                                method.span,
+                                member_declaration_symbol(&format!("generic:{qualified}"), method.name),
+                                parameters,
+                                method.ret,
+                                method.borrows.clone(),
+                                &generics,
+                                source.is_unsafe,
+                                source.abi.clone(),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         declarations.sort_by(|left, right| left.symbol.cmp(&right.symbol));
         declarations
+    }
+
+    fn signature_parameters(&self, signature: &Signature) -> Vec<CallableDeclarationParameter> {
+        signature
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| CallableDeclarationParameter {
+                mode: *mode,
+                ty: CallableDeclarationType::Resolved(*ty),
+            })
+            .collect()
+    }
+
+    fn callable_declaration(
+        &self,
+        span: Span,
+        symbol: String,
+        parameters: Vec<CallableDeclarationParameter>,
+        result: Ty,
+        borrows: Option<Vec<usize>>,
+        generics: &[GenericParam],
+        is_unsafe: bool,
+        abi: Option<String>,
+    ) -> CallableDeclaration {
+        CallableDeclaration {
+            span,
+            symbol,
+            parameters,
+            result,
+            borrows,
+            generics: generics
+                .iter()
+                .map(|parameter| CallableDeclarationGeneric {
+                    bounds: parameter.bounds.iter().map(ToString::to_string).collect(),
+                    callable: parameter.callable.as_ref().map(|bound| {
+                        CallableDeclarationCallableBound {
+                            parameters: bound.params.clone(),
+                            result: bound.ret,
+                            once: bound.once,
+                        }
+                    }),
+                })
+                .collect(),
+            is_unsafe,
+            abi,
+        }
     }
 
     /// The qualified form of a name declared in the module being walked.
@@ -1491,8 +1592,8 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let name = self.qualified(decl.name.name);
-            let params: Vec<Symbol> = decl.generics.iter().map(|g| g.name.name).collect();
-            self.declare_generics(&decl.generics);
+            let generic_params = self.declare_generics(&decl.generics);
+            let params: Vec<Symbol> = generic_params.iter().map(|g| g.name).collect();
             let fields = decl
                 .members
                 .iter()
@@ -1545,6 +1646,7 @@ impl<'a> Checker<'a> {
                 GenericStruct {
                     declaring_module: self.current_module,
                     params,
+                    generic_params,
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
                     methods,
@@ -1931,7 +2033,7 @@ impl<'a> Checker<'a> {
     fn collect_interfaces(&mut self, module: &ast::Module) {
         for item in &module.items {
             if let ast::ItemKind::Interface(decl) = &item.kind {
-                self.collect_interface(decl, item.span);
+                self.collect_interface(decl, item.span, item.vis.kind);
             }
         }
     }
@@ -1943,12 +2045,26 @@ impl<'a> Checker<'a> {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    self.collect_members(ty, &decl.members, None, item.span, item_index);
+                    self.collect_members(
+                        ty,
+                        &decl.members,
+                        None,
+                        item.vis.kind != ast::VisKind::Private,
+                        item.span,
+                        item_index,
+                    );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    self.collect_members(ty, &decl.members, None, item.span, item_index);
+                    self.collect_members(
+                        ty,
+                        &decl.members,
+                        None,
+                        item.vis.kind != ast::VisKind::Private,
+                        item.span,
+                        item_index,
+                    );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
@@ -1972,6 +2088,7 @@ impl<'a> Checker<'a> {
                         ty,
                         &decl.members,
                         interface,
+                        true,
                         item.span,
                         item_index,
                     );
@@ -2219,17 +2336,27 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn collect_interface(&mut self, decl: &ast::InterfaceDecl, span: Span) {
+    fn collect_interface(
+        &mut self,
+        decl: &ast::InterfaceDecl,
+        span: Span,
+        visibility: ast::VisKind,
+    ) {
         // Part IV §8 — `Self` inside an `interface` is the implementing type,
         // which is unknown here, so it is a parameter until the interface is
         // used. `[TYP-22]` is what says a method returning it by value is not
         // `dyn`-compatible; statically it resolves like any other parameter.
         let outer_self = self.self_ty.replace(self.common.self_ty);
-        self.collect_interface_inner(decl, span);
+        self.collect_interface_inner(decl, span, visibility);
         self.self_ty = outer_self;
     }
 
-    fn collect_interface_inner(&mut self, decl: &ast::InterfaceDecl, span: Span) {
+    fn collect_interface_inner(
+        &mut self,
+        decl: &ast::InterfaceDecl,
+        span: Span,
+        visibility: ast::VisKind,
+    ) {
         let name = self.qualified(decl.name.name);
         if self.interfaces.contains_key(&name) || self.named_types.contains_key(&name) {
             self.error(
@@ -2265,6 +2392,35 @@ impl<'a> Checker<'a> {
             // signature to take its type from.
             let def = DefId(self.signatures.len() as u32);
             self.signatures.push(signature);
+            if visibility != ast::VisKind::Private && member.vis.kind != ast::VisKind::Private {
+                let signature = &self.signatures[def.0 as usize];
+                let mut parameters = self.signature_parameters(signature);
+                if let Some(mode) = receiver {
+                    // Interface `Self` is deliberately outside ordinary
+                    // function-generic binder space. Its explicit owner tag
+                    // prevents it from being confused with a method-local
+                    // `$P0` in the serialized declaration contract.
+                    parameters.insert(
+                        0,
+                        CallableDeclarationParameter {
+                            mode,
+                            ty: CallableDeclarationType::Canonical(format!(
+                                "interface:{name}::Self"
+                            )),
+                        },
+                    );
+                }
+                self.member_callable_declarations.push(self.callable_declaration(
+                    member.span,
+                    member_declaration_symbol(&format!("interface:{name}"), f.name.name),
+                    parameters,
+                    signature.ret,
+                    signature.borrows.clone(),
+                    &signature.generics,
+                    f.is_unsafe,
+                    f.abi.clone(),
+                ));
+            }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
         }
         // Resolved for the same reason the bounds and the implementation
@@ -2344,12 +2500,20 @@ impl<'a> Checker<'a> {
         ty: Ty,
         members: &[ast::Member],
         from_interface: Option<Symbol>,
+        owner_is_visible: bool,
         span: Span,
         item_index: usize,
     ) {
         // `Self` inside a type body or an `extend` block is that type.
         let outer_self = self.self_ty.replace(ty);
-        self.collect_members_inner(ty, members, from_interface, span, item_index);
+        self.collect_members_inner(
+            ty,
+            members,
+            from_interface,
+            owner_is_visible,
+            span,
+            item_index,
+        );
         self.self_ty = outer_self;
     }
 
@@ -2358,6 +2522,7 @@ impl<'a> Checker<'a> {
         ty: Ty,
         members: &[ast::Member],
         from_interface: Option<Symbol>,
+        owner_is_visible: bool,
         span: Span,
         item_index: usize,
     ) {
@@ -2408,6 +2573,21 @@ impl<'a> Checker<'a> {
                             owner_bindings: Vec::new(),
                         },
                     );
+                }
+            }
+            if owner_is_visible && member.vis.kind != ast::VisKind::Private {
+                if let Some(def) = registered {
+                    let signature = &self.signatures[def.0 as usize];
+                    self.member_callable_declarations.push(self.callable_declaration(
+                        member.span,
+                        method_symbol(&self.types.display(ty), decl.name.name),
+                        self.signature_parameters(signature),
+                        signature.ret,
+                        signature.borrows.clone(),
+                        &signature.generics,
+                        decl.is_unsafe,
+                        decl.abi.clone(),
+                    ));
                 }
             }
         }
@@ -13330,6 +13510,27 @@ fn method_symbol(owner: &str, name: Symbol) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     ember_branding::mangled(&format!("{}_{name}", owner.trim_matches('_')))
+}
+
+/// A source-level generic owner has no concrete `Ty` before one of its
+/// instantiations is reached. EMIF still needs a stable receiver identity, so
+/// spell its already-resolved qualified declaration name with its positional
+/// parameter binders. This is cache metadata only; it is never a C type name.
+fn canonical_generic_owner(name: Symbol, parameters: usize) -> String {
+    let arguments = (0..parameters)
+        .map(|index| format!("$P{index}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{name}[{arguments}]")
+}
+
+/// Declaration-only member identities must not collide with generated C
+/// symbols. A generic or interface member can be import-visible without any
+/// body being emitted, and a concrete specialization is not its source
+/// declaration. The branded mangle keeps the artifact key deterministic while
+/// preserving the runtime/C namespace boundary.
+fn member_declaration_symbol(owner: &str, name: Symbol) -> String {
+    ember_branding::mangled(&format!("__ember_declaration_member__{owner}__{name}"))
 }
 
 /// The name of an interface written in an `implements` list or a supertrait

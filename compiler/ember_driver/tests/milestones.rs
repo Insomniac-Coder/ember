@@ -949,6 +949,129 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// `[TYP-16]` / `[TYP-17]` / `[IFC-1]` / `[MOD-2]` / `[BLD-2]` — members are
+/// source declarations too. In particular, a generic owner's receiver has no
+/// concrete runtime type until an instantiation exists, so an emitted
+/// specialization must not be used as the public declaration contract.
+#[test]
+fn visible_member_declarations_preserve_generic_owner_interface_identity() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-member-interface-{}",
+        std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create member-interface package");
+    std::fs::write(
+        test_root.join(&helper),
+        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Eq]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return self.value\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+    )
+    .expect("write initial member helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import Holder, Meter, Identity\n\nfn main():\n    println(1)\n",
+    )
+    .expect("write member importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for member interfaces");
+        assert!(
+            output.status.success(),
+            "{label} member-interface check failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    check("initial");
+    let before_helper = cached_interface(&out_dir, "helper");
+    let before_root = cached_interface(&out_dir, "root");
+
+    let holder = before_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.metadata.is_none()
+                && contract.signature.parameters.first().is_some_and(|parameter| {
+                    parameter.ty == "helper.Holder[$P0]"
+                        && parameter.mode == CallableParameterMode::Borrow
+                })
+    })
+        .expect("generic-owner member declaration is serialized");
+    assert_eq!(holder.signature.generics.len(), 2);
+    let initial_owner_bounds = holder.signature.generics[0].bounds.clone();
+    assert_eq!(initial_owner_bounds, holder.signature.generics[1].bounds);
+
+    let extension = before_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.metadata.is_some()
+                && contract.signature.parameters.first().is_some_and(|parameter| {
+                    parameter.ty == "helper.Meter"
+                        && parameter.mode == CallableParameterMode::Borrow
+                })
+        })
+        .expect("extension member declaration receives its verified body summary");
+    assert_eq!(extension.signature.result, "i32");
+
+    let interface = before_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.metadata.is_none()
+                && contract.signature.parameters.first().is_some_and(|parameter| {
+                    parameter.ty == "interface:helper.Identity::Self"
+                        && parameter.mode == CallableParameterMode::Borrow
+                })
+    })
+        .expect("interface member declaration is serialized without a fabricated body");
+    assert_eq!(interface.signature.generics.len(), 1);
+    assert_eq!(interface.signature.generics[0].bounds, initial_owner_bounds);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Eq]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return 0\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+    )
+    .expect("change private member body");
+    check("after private member body change");
+    let after_private_helper = cached_interface(&out_dir, "helper");
+    let after_private_root = cached_interface(&out_dir, "root");
+    assert_eq!(before_helper.interface_hash, after_private_helper.interface_hash);
+    assert_eq!(before_root.cache_key, after_private_root.cache_key);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Hash]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return 0\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+    )
+    .expect("change generic owner bound");
+    check("after generic owner bound change");
+    let after_helper = cached_interface(&out_dir, "helper");
+    let after_root = cached_interface(&out_dir, "root");
+
+    assert_ne!(after_private_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(after_private_root.cache_key, after_root.cache_key);
+    let holder = after_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.signature.parameters.first().is_some_and(|parameter| {
+                parameter.ty == "helper.Holder[$P0]"
+                    && parameter.mode == CallableParameterMode::Borrow
+            })
+        })
+        .expect("changed generic-owner declaration remains serialized");
+    assert_ne!(initial_owner_bounds, holder.signature.generics[0].bounds);
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 fn cached_interface(out_dir: &Path, module: &str) -> ModuleInterfaceArtifact {
     let directory = out_dir.join("debug").join("interface");
     for package in std::fs::read_dir(&directory).expect("interface cache has a package directory") {
