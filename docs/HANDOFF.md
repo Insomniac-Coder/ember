@@ -288,14 +288,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `d077563` (`Complete the Span iterator and pointer API`), following `7958259` (`Complete Span API contract in 0.9.6 Hardened 6`) |
-| Recent commits | `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `e0ba765` (`Fix for-loop borrowing and B2 diagnostics`), following `d077563` (complete H6 Span API) and `7958259` (H6/ODR-014 contract) |
+| Recent commits | `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | Clean at the implementation checkpoint; this handoff/ledger update is the only subsequent documentation scope before its own commit |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 110 top-level rule directories, 379 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 83 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
+| Conformance | 112 top-level rule directories, 382 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 84 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -919,18 +919,16 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Continue `DIA-UI-1` with the newly reachable B2 “mutate while iterating”
-shape, then continue `ARCH-096-1` through real iterator/region facts.**
+**Continue `ARCH-096-1` through the real iterator/region producer-consumer
+boundary, then begin H1 multi-region/callable-summary work.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
 verified record. `UnsafeCell` is complete at `a02c0a5`; §0.35 records it, and
-`SPN-API-1` is complete at `d077563`; §0.47 records it. Span iteration now
-provides a real producer with which to test whether mutation of iterated
-storage receives E3020/B2 rather than a generic overlapping-loan shape. Add
-the exact rendered snapshot and compilable `.fixed.em` companion, break the
-case red once, and fix the classifier/producer if the minimal program proves
-it wrong. Do not fabricate still-unreachable class/thread/effect shapes.
+`SPN-API-1` is complete at `d077563`; §0.47 records it. E3020/B2 and canonical
+Array-loop borrowing are complete at `e0ba765`; §0.48 records D-070, the exact
+snapshot and fixed companion, and the two mutation checks. Do not fabricate
+still-unreachable class/thread/effect shapes.
 Keep architecture migration incremental through real producers and consumers;
 do not create placeholder facts or attempt a big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
@@ -2787,9 +2785,47 @@ Ember sources; debug and release builds are warning-free.
 
 No specification or defect record changed for the implementation. ODR-014 was
 an owner API boundary resolved before work began; `SPN-API-1` was an intentional
-implementation gap, not a compiler defect. The exact next implementation task
-is the now-reachable E3020/B2 diagnostic case under `DIA-UI-1`, followed by
-incremental `ARCH-096-1` migration through real producers and consumers.
+implementation gap, not a compiler defect. At that checkpoint the exact next
+implementation task was E3020/B2 under `DIA-UI-1`; that work is now complete
+in §0.48, and incremental `ARCH-096-1` migration is current.
+
+### 0.48 Canonical Array iteration and E3020/B2 complete — 2026-09-13
+
+Implementation commit `e0ba765` closes D-070. Before the fix, canonical
+`for value in values` moved the `Array[T]` into compiler-private `__xs`, so the
+source collection was unavailable and an in-loop mutation reported E3050.
+The explicit `values.as_span().iter()` path retained a real loan but reported
+generic E3021/B3. Both contradicted the already-clear `[CTL-1]`, `[CTL-2]`, and
+diagnostic-shape contract; the specification was not changed.
+
+Direct Array iteration now constructs the existing shared Span borrow, retains
+it for the counted loop, and binds each item as `ref T`. The Array remains
+usable after the loop and a non-`Copy` payload has one owner and one final
+destruction. An explicit `for_iterator` semantic fact travels from HIR to MIR;
+borrow analysis resolves that fact through region holders, so provenance
+through `as_span().iter()` is preserved without guessing from private names or
+source spans. A manually created iterator still receives ordinary E3021/B3.
+
+The B2 UI snapshot pins E3020, both labels, two concrete repair paths, and the
+CTL-2 note; its `.fixed.em` companion compiles. CTL-1/CTL-2 conformance covers
+borrowed item type, post-loop reuse, exact destruction, in-loop rejection, and
+post-loop mutation. Removing the generic iterator marker makes the explicit-
+iterator case red; removing the direct Array holder marker makes the canonical
+case red. The original canonical probe produced E3050. Generated C borrows the
+Array through a pointer-plus-length Span, binds the item as `const T*`, and
+drops/frees the payload once.
+
+Verification at this implementation checkpoint: 189 Rust tests green; full
+conformance and UI suites green across 112 rule directories and 382 Ember
+sources; debug and release builds warning-free; all six adopted-specification
+gates green. The test build retains only the known non-snake-case lexer test-
+name warning.
+
+The exact next task is incremental `ARCH-096-1`: carry canonical facts through
+the real iterator/region producer-consumer boundary just exercised here, then
+start H1's multi-region and callable-summary implementation order. Do not add
+placeholder facts or manufacture the eight still-unreachable diagnostic
+shapes.
 
 ## The task list — where to begin
 
@@ -2808,10 +2844,11 @@ the OWN-6/O2 and panic-runner checkpoint; §0.40 records the FN-2a/B10 closure;
 §0.41 closes `MEM-API-1`; §0.42 records checked Span splitting; §0.43 records
 explicit `MutSpan.reborrow()`; §0.44 closes `TUP-DST-1`; §0.45 records the H5
 target cut; §0.46 completes the bounded concrete Box slice; and §0.47 records
-H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface.
-The active Phase 2 boundary is now the real E3020/B2 diagnostic producer made
-reachable by iteration, followed by incremental canonical-fact migration and
-remaining Phase 2 rule closure before multi-region work and target adoption.
+H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
+§0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing. The active
+Phase 2 boundary is now incremental canonical-fact migration through those
+real iterator/region producers and consumers, followed by multi-region and
+callable-summary work before target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner

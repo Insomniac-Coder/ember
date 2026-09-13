@@ -274,6 +274,15 @@ removing result provenance or cursor advancement makes the relevant
 adversarial case fail. Coverage is now 110 conformance directories and 379
 Ember sources; 189 Rust tests remain green.
 
+The E3020/B2 checkpoint is `e0ba765`. Canonical direct Array iteration now
+borrows the collection for the whole loop and yields `ref T`; it no longer
+moves the Array into a hidden local. The source-loop fact survives HIR-to-MIR
+desugaring and is matched through the loan's region holders, which preserves
+E3021/B3 for manually held iterators while selecting E3020/B2 for mutation
+under a source `for`. Exact UI, fixed-companion, CTL-1, CTL-2, generated-C, and
+mutation evidence close D-070. Coverage is now 112 conformance directories and
+382 Ember sources; 189 Rust tests remain green.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -332,7 +341,7 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Send` behavior remains blocked only on the later threading-trait machinery,
   an intentional dependency gap rather than a compiler defect.
 - Phase 2 UI/diagnostic snapshots and other long-standing exit work remain.
-  Sixteen of 25 ownership shapes now have executable snapshots; the nine
+  Seventeen of 25 ownership shapes now have executable snapshots; the eight
   remaining shapes currently await their later semantic producers rather than
   fabricated test-only diagnostics.
 - **`MEM-API-1` is complete at `17ee5d1`:** `[OWN-6]` `mem.forget` and Part
@@ -522,10 +531,9 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Continue `DIA-UI-1` with E3020/B2, now that H6 Span iteration provides a real
-“mutate while iterating” producer. Require the exact rendered B2 help and a
-compiling `.fixed.em` companion; mutate the new case red once, and distinguish
-the dedicated loop/iterator diagnostic from generic shared/mutable overlap.
-Then continue `ARCH-096-1` incrementally through real iterator and region
-facts. Do not fabricate the remaining class/thread/effect diagnostic shapes,
-add placeholder facts, or start a big-bang semantic-state rewrite.
+Continue `ARCH-096-1` incrementally through the real iterator/region producer
+and consumer boundary established by `e0ba765`, then proceed to the H1
+multi-region and callable-summary work in item 9 of the implementation order.
+Do not fabricate the remaining class/thread/effect diagnostic shapes, add
+placeholder facts, or start a big-bang semantic-state rewrite. E3020/B2 is
+complete; a manually held iterator must continue to report ordinary E3021/B3.

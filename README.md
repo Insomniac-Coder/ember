@@ -35,10 +35,10 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 110 rule directories and 379 Ember
+- the conformance runner passes across 112 rule directories and 382 Ember
   source files;
 - all six adopted-specification gates pass;
-- 83 recorded compiler defects are closed;
+- 84 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open; ODR-014 is closed by H6.
 
@@ -68,6 +68,12 @@ mutable items and chunks retain disjoint storage ranges; zero-width chunks
 panic in every profile; and safe typed raw-pointer extraction does not extend
 the source lifetime. The public source declarations live in `std.collections`;
 compiler-known lowering is only the current bootstrap implementation.
+
+For-loop borrowing and the dedicated mutate-while-iterating diagnostic are
+complete at `e0ba765`: direct Array iteration borrows for the whole loop,
+yields shared references, leaves the Array usable afterward, and reports
+E3020/B2 for conflicting mutation rather than moving the collection or falling
+back to a generic overlapping-loan diagnostic.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the

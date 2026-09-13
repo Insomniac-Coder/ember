@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-13 — for-loop borrowing and B2 diagnostics
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-070 | **Source `for` loops lost both their borrowing semantics and their diagnostic identity during desugaring.** Canonical `for value in values` over an `Array[T]` moved the Array into a hidden local instead of borrowing it for the loop and yielding `ref T`, so an in-loop mutation reported E3050 after the move. The explicit-iterator spelling retained the loan but reported generic E3021/B3 rather than `[CTL-2]`'s E3020/B2 | `[CTL-1]`, `[CTL-2]`, `[BRW-2]`, `[DIA-7a]`, `[DIA-10]`, `[DIA-13]` | **fixed** | `e0ba765` lowers direct Array iteration through the existing shared-Span borrow producer and yields a shared reference, while an explicit semantic marker for a source `for` loop travels from HIR to MIR and is interpreted through the loan's region holders. A manually held iterator therefore remains ordinary E3021/B3. **Verified:** the CTL-1 run-pass case leaves the Array usable after iteration, observes `ref T`, and drops a non-`Copy` payload exactly once; both CTL-2 cases prove whole-loop retention and post-loop release; the B2 UI case pins exact E3020 output and a compiling fixed companion. Removing either the direct-loop or generic-loop marker makes the UI case report E3021, and the original direct-loop probe reported E3050. Generated C borrows the Array through a pointer-plus-length Span, represents the item as `const T*`, and performs one final payload drop/free. The specification was already correct and did not change |
+
+---
+
 ## 2026-09-13 — concrete Box ownership and region storage
 
 | # | Defect | Rule | Status | Fixed in |

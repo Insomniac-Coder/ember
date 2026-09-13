@@ -18,8 +18,9 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `d077563` on `main`, following
-`7958259` for the H6/ODR-014 contract. Both are pushed to `origin/main`
+**Last committed implementation baseline:** `e0ba765` on `main`, following
+`d077563` for the H6 Span implementation and `7958259` for the H6/ODR-014
+contract. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -34,8 +35,8 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 110 top-level conformance rule directories, 379 `.em` files including support
- modules. 83 defects recorded, **none open**.
+ 112 top-level conformance rule directories, 382 `.em` files including support
+ modules. 84 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -234,14 +235,22 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Span API complete; B2 diagnostic coverage is the exact next task
+## 5. Span API and B2 diagnostic complete; canonical facts are next
 
-**Exact next task: continue `DIA-UI-1` with E3020/B2, now that Span iteration
-provides a real mutate-while-iterating producer.** Require the exact rendered
-B2 help and a compiling fixed companion; mutate the case red once. Continue
-`ARCH-096-1` only through real iterator/region producers and consumers; do not
-fabricate the still-unreachable class/thread/effect shapes or add placeholder
-semantic facts.
+**Exact next task: continue `ARCH-096-1` through the real iterator/region
+producer and consumer boundary, then begin the H1 multi-region/callable-summary
+work in the order in `MIGRATION-0.9.6.md`.** Do not fabricate the still-
+unreachable class/thread/effect diagnostic shapes, add placeholder semantic
+facts, or attempt a big-bang rewrite.
+
+**E3020/B2 is complete at `e0ba765`.** Direct Array iteration now borrows the
+Array through the existing shared-Span producer, yields `ref T`, and releases
+the borrow after the loop. A source-loop semantic marker survives HIR/MIR
+desugaring and is interpreted through region holders, so conflicting mutation
+receives the dedicated B2 diagnostic while a manually held iterator remains
+ordinary E3021/B3. The exact UI snapshot and compiling fixed companion are
+present; removing either source-loop marker makes the case red. D-070 records
+the two pre-fix manifestations and the generated-C evidence.
 
 **`SPN-API-1` is complete at `d077563`.** Four public non-prelude
 `std.collections` iterator/chunk `@view` types use ordinary `Iterator` and
@@ -392,14 +401,15 @@ required lifetime rather than merely the final values.
 
 A Phase 2 *exit* criterion now in progress. `compiler/ember_diag/src/shapes.rs`
 holds every shape; `[DIA-13]` wants a rendered snapshot per shape plus
-`[PHIL-8a]`'s `.fixed.em` companion. Sixteen of 25 ownership shapes have exact
-snapshots and compiling repairs; the remaining nine await real semantic
+`[PHIL-8a]`'s `.fixed.em` companion. Seventeen of 25 ownership shapes have exact
+snapshots and compiling repairs; the remaining eight await real semantic
 producers rather than fabricated diagnostics.
 
-Note the pattern three defects took: **the compiler rejects the right program
+Note the pattern four defects took: **the compiler rejects the right program
 under the wrong shape**, so the *help* is wrong. D-011 (`E3064` reported as B3),
 D-028 (a loop move as O1 not O3), D-034 (two mutable indices as `E3021` not
-`E3022`). `[DIA-7a]` makes the shape part of the conformance contract, so a
+`E3022`), and D-070 (loop-held mutation as generic E3021/B3 rather than
+E3020/B2). `[DIA-7a]` makes the shape part of the conformance contract, so a
 snapshot per shape is what stops the next one.
 
 ## 7. Owner queue status
