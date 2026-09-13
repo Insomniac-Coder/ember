@@ -70,6 +70,11 @@ pub struct Body {
     /// retaining this semantic fact lets diagnostics distinguish E3020/B2
     /// from a manually held iterator's ordinary E3021/B3 overlap.
     pub for_iterators: Vec<LocalId>,
+    /// `[MIR-REG-1]` — compiler-internal callable access and result-provenance
+    /// metadata. Lowering leaves this absent; the region analysis derives it
+    /// from MIR before borrow checking. The unconditional code-generation
+    /// verifier rejects a missing or corrupt record.
+    pub callable_regions: Option<CallableRegionMetadata>,
 }
 
 impl Body {
@@ -154,6 +159,245 @@ pub enum Projection {
     Downcast(usize),
     /// An `SoA` column (`[SOA-2]`). Reserved; Phase 6 emits it.
     Column(usize),
+}
+
+/// One input region named by an inferred multi-region result slot.
+/// Paths are relative to the callable's public parameter types, not MIR
+/// locals, so this is suitable for an interface artifact.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ResultRegionSource {
+    View { argument: usize, projection: Vec<Projection> },
+    /// `[LT-4a]`'s narrow non-view Arena provenance source.
+    Arena { argument: usize },
+}
+
+/// `[LT-22]` — the exact input regions from which one returned borrowed field
+/// derives.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ResultFieldProvenance {
+    pub result_projection: Vec<Projection>,
+    pub sources: Vec<ResultRegionSource>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ResultProvenanceSummary {
+    pub fields: Vec<ResultFieldProvenance>,
+}
+
+/// The operations `[LT-35]` permits a callable summary to name.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum RegionAccessKind {
+    Read,
+    Write,
+    BorrowShared,
+    BorrowMut,
+    Move,
+    Return,
+    Publish,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ParameterFieldAccess {
+    pub argument: usize,
+    pub projection: Vec<Projection>,
+    pub operations: Vec<RegionAccessKind>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CallableAccessSummary {
+    /// Opaque/unresolved dispatch: every field and operation is possible.
+    All,
+    /// Exact verified direct-call accesses. Empty means no borrowed field is
+    /// accessed and is deliberately distinct from unknown.
+    Fields(Vec<ParameterFieldAccess>),
+}
+
+/// Canonical `[MIR-REG-1]` metadata carried by a callable's MIR artifact.
+/// `result` is absent for a callable with no exact multi-region result
+/// relation. The ordinary one-region elision contract remains signature data.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableRegionMetadata {
+    pub access: CallableAccessSummary,
+    pub result: Option<ResultProvenanceSummary>,
+    fingerprint: u64,
+}
+
+impl CallableRegionMetadata {
+    pub fn new(
+        mut access: CallableAccessSummary,
+        mut result: Option<ResultProvenanceSummary>,
+    ) -> Self {
+        if let CallableAccessSummary::Fields(fields) = &mut access {
+            for field in &mut *fields {
+                field.operations.sort();
+                field.operations.dedup();
+            }
+            fields.sort_by(|left, right| {
+                (&left.argument, &left.projection).cmp(&(&right.argument, &right.projection))
+            });
+            let mut merged: Vec<ParameterFieldAccess> = Vec::with_capacity(fields.len());
+            for field in fields.drain(..) {
+                if let Some(previous) = merged.last_mut()
+                    && previous.argument == field.argument
+                    && previous.projection == field.projection
+                {
+                    previous.operations.extend(field.operations);
+                    previous.operations.sort();
+                    previous.operations.dedup();
+                } else {
+                    merged.push(field);
+                }
+            }
+            *fields = merged;
+        }
+        if let Some(result) = &mut result {
+            for field in &mut result.fields {
+                field.sources.sort();
+                field.sources.dedup();
+            }
+            result
+                .fields
+                .sort_by(|left, right| left.result_projection.cmp(&right.result_projection));
+            let mut merged: Vec<ResultFieldProvenance> = Vec::with_capacity(result.fields.len());
+            for field in result.fields.drain(..) {
+                if let Some(previous) = merged.last_mut()
+                    && previous.result_projection == field.result_projection
+                {
+                    previous.sources.extend(field.sources);
+                    previous.sources.sort();
+                    previous.sources.dedup();
+                } else {
+                    merged.push(field);
+                }
+            }
+            result.fields = merged;
+        }
+        let mut metadata = Self { access, result, fingerprint: 0 };
+        metadata.fingerprint = metadata.compute_fingerprint();
+        metadata
+    }
+
+    /// Stable summary input for `[LT-40]`'s future interface/cache hash. This
+    /// deliberately does not use Rust's implementation-defined hashers.
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    pub fn fingerprint_is_valid(&self) -> bool {
+        self.fingerprint == self.compute_fingerprint()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_fingerprint_for_test(&mut self) {
+        self.fingerprint ^= 1;
+    }
+
+    fn compute_fingerprint(&self) -> u64 {
+        let mut hash = StableFingerprint::new();
+        match &self.access {
+            CallableAccessSummary::All => hash.byte(0),
+            CallableAccessSummary::Fields(fields) => {
+                hash.byte(1);
+                hash.usize(fields.len());
+                for field in fields {
+                    hash.usize(field.argument);
+                    hash.projections(&field.projection);
+                    hash.usize(field.operations.len());
+                    for operation in &field.operations {
+                        hash.byte(match operation {
+                            RegionAccessKind::Read => 0,
+                            RegionAccessKind::Write => 1,
+                            RegionAccessKind::BorrowShared => 2,
+                            RegionAccessKind::BorrowMut => 3,
+                            RegionAccessKind::Move => 4,
+                            RegionAccessKind::Return => 5,
+                            RegionAccessKind::Publish => 6,
+                        });
+                    }
+                }
+            }
+        }
+        match &self.result {
+            None => hash.byte(0),
+            Some(result) => {
+                hash.byte(1);
+                hash.usize(result.fields.len());
+                for field in &result.fields {
+                    hash.projections(&field.result_projection);
+                    hash.usize(field.sources.len());
+                    for source in &field.sources {
+                        match source {
+                            ResultRegionSource::View { argument, projection } => {
+                                hash.byte(0);
+                                hash.usize(*argument);
+                                hash.projections(projection);
+                            }
+                            ResultRegionSource::Arena { argument } => {
+                                hash.byte(1);
+                                hash.usize(*argument);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        hash.finish()
+    }
+}
+
+/// Fixed FNV-1a encoding used only for compiler metadata identity.
+struct StableFingerprint(u64);
+
+impl StableFingerprint {
+    fn new() -> Self {
+        Self(0xcbf29ce484222325)
+    }
+
+    fn byte(&mut self, value: u8) {
+        self.0 ^= u64::from(value);
+        self.0 = self.0.wrapping_mul(0x100000001b3);
+    }
+
+    fn usize(&mut self, value: usize) {
+        for byte in (value as u64).to_le_bytes() {
+            self.byte(byte);
+        }
+    }
+
+    fn projections(&mut self, projections: &[Projection]) {
+        self.usize(projections.len());
+        for projection in projections {
+            match projection {
+                Projection::Field(index) => {
+                    self.byte(0);
+                    self.usize(*index);
+                }
+                Projection::Index(local) => {
+                    self.byte(1);
+                    self.usize(local.0 as usize);
+                }
+                Projection::ConstIndex(index) => {
+                    self.byte(2);
+                    for byte in index.to_le_bytes() {
+                        self.byte(byte);
+                    }
+                }
+                Projection::Deref => self.byte(3),
+                Projection::Downcast(variant) => {
+                    self.byte(4);
+                    self.usize(*variant);
+                }
+                Projection::Column(column) => {
+                    self.byte(5);
+                    self.usize(*column);
+                }
+            }
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -371,6 +615,62 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
     let mut out = String::new();
     for body in bodies {
         let _ = writeln!(out, "fn {}:", body.symbol);
+        if let Some(metadata) = &body.callable_regions {
+            let _ = writeln!(
+                out,
+                "  callable-regions {:016x}:",
+                metadata.fingerprint()
+            );
+            match &metadata.access {
+                CallableAccessSummary::All => {
+                    let _ = writeln!(out, "    access all-fields");
+                }
+                CallableAccessSummary::Fields(fields) if fields.is_empty() => {
+                    let _ = writeln!(out, "    access none");
+                }
+                CallableAccessSummary::Fields(fields) => {
+                    for field in fields {
+                        let operations = field
+                            .operations
+                            .iter()
+                            .map(|operation| match operation {
+                                RegionAccessKind::Read => "read",
+                                RegionAccessKind::Write => "write",
+                                RegionAccessKind::BorrowShared => "borrow_shared",
+                                RegionAccessKind::BorrowMut => "borrow_mut",
+                                RegionAccessKind::Move => "move",
+                                RegionAccessKind::Return => "return",
+                                RegionAccessKind::Publish => "publish",
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let _ = writeln!(
+                            out,
+                            "    access arg{}{} = {operations}",
+                            field.argument,
+                            dump_region_path(&field.projection)
+                        );
+                    }
+                }
+            }
+            if let Some(result) = &metadata.result {
+                for field in &result.fields {
+                    let sources = field
+                        .sources
+                        .iter()
+                        .map(dump_region_source)
+                        .collect::<Vec<_>>()
+                        .join(" & ");
+                    let _ = writeln!(
+                        out,
+                        "    result{} <- {sources}",
+                        dump_region_path(&field.result_projection)
+                    );
+                }
+            } else {
+                let _ = writeln!(out, "    result signature-elision");
+            }
+        }
         for (i, local) in body.locals.iter().enumerate() {
             let name = local.name.as_deref().unwrap_or("");
             let _ = writeln!(
@@ -386,6 +686,30 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
                 let _ = writeln!(out, "    {}", dump_stmt(stmt, types));
             }
             let _ = writeln!(out, "    {}", dump_terminator(&block.terminator, types));
+        }
+    }
+    out
+}
+
+fn dump_region_source(source: &ResultRegionSource) -> String {
+    match source {
+        ResultRegionSource::View { argument, projection } => {
+            format!("arg{argument}{}", dump_region_path(projection))
+        }
+        ResultRegionSource::Arena { argument } => format!("arena-arg{argument}"),
+    }
+}
+
+fn dump_region_path(projections: &[Projection]) -> String {
+    let mut out = String::new();
+    for projection in projections {
+        match projection {
+            Projection::Field(index) => out.push_str(&format!(".{index}")),
+            Projection::Index(local) => out.push_str(&format!("[_{}]", local.0)),
+            Projection::ConstIndex(index) => out.push_str(&format!("[{index}]")),
+            Projection::Deref => out.push_str(".*"),
+            Projection::Downcast(variant) => out.push_str(&format!(" as variant {variant}")),
+            Projection::Column(column) => out.push_str(&format!(".col{column}")),
         }
     }
     out

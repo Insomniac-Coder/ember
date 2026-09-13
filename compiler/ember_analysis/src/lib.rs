@@ -19,5 +19,5 @@ pub use definite_init::{
     verify_initialization_facts_all,
 };
 pub use drops::{elaborate as elaborate_drops, elaborate_all as elaborate_drops_all};
-pub use borrows::check_all as check_borrows_all;
+pub use borrows::{check_all as check_borrows_all, verify_callable_regions_all};
 pub use unused::check_all as check_unused_all;

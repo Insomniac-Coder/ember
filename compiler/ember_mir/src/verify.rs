@@ -227,6 +227,7 @@ mod tests {
             borrows: None,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
+            callable_regions: None,
         }
     }
 
@@ -266,6 +267,135 @@ mod tests {
             panic!("structurally invalid MIR crossed the codegen boundary");
         };
         assert!(violations.iter().any(|v| v.message.contains("terminator has no source span")));
+    }
+
+    #[test]
+    fn the_codegen_boundary_requires_callable_region_metadata() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let bodies = vec![body_with(Vec::new(), span)];
+        let (types, _) = TypeTable::new();
+        let Err(violations) = for_codegen(&bodies, &types) else {
+            panic!("MIR without callable-region metadata crossed the codegen boundary");
+        };
+        assert!(violations.iter().any(|v| v.message.contains("metadata is missing")));
+    }
+
+    #[test]
+    fn the_codegen_boundary_rejects_a_corrupt_callable_region_fingerprint() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let mut body = body_with(Vec::new(), span);
+        let mut metadata = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(Vec::new()),
+            None,
+        );
+        metadata.corrupt_fingerprint_for_test();
+        body.callable_regions = Some(metadata);
+        let bodies = vec![body];
+        let (types, _) = TypeTable::new();
+        let Err(violations) = for_codegen(&bodies, &types) else {
+            panic!("corrupt callable-region metadata crossed the codegen boundary");
+        };
+        assert!(violations.iter().any(|v| v.message.contains("stale or corrupt")));
+    }
+
+    #[test]
+    fn callable_region_fingerprint_changes_with_the_contract() {
+        let empty = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(Vec::new()),
+            None,
+        );
+        let reads_first = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(vec![crate::ParameterFieldAccess {
+                argument: 0,
+                projection: vec![Projection::Field(0)],
+                operations: vec![crate::RegionAccessKind::Read],
+            }]),
+            None,
+        );
+        let reads_second = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(vec![crate::ParameterFieldAccess {
+                argument: 0,
+                projection: vec![Projection::Field(1)],
+                operations: vec![crate::RegionAccessKind::Read],
+            }]),
+            None,
+        );
+        let returns_first = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(Vec::new()),
+            Some(crate::ResultProvenanceSummary {
+                fields: vec![crate::ResultFieldProvenance {
+                    result_projection: vec![Projection::Field(0)],
+                    sources: vec![crate::ResultRegionSource::View {
+                        argument: 0,
+                        projection: vec![Projection::Field(0)],
+                    }],
+                }],
+            }),
+        );
+        let returns_second = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(Vec::new()),
+            Some(crate::ResultProvenanceSummary {
+                fields: vec![crate::ResultFieldProvenance {
+                    result_projection: vec![Projection::Field(0)],
+                    sources: vec![crate::ResultRegionSource::View {
+                        argument: 1,
+                        projection: vec![Projection::Field(0)],
+                    }],
+                }],
+            }),
+        );
+        let reordered = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(vec![
+                crate::ParameterFieldAccess {
+                    argument: 1,
+                    projection: vec![Projection::Field(1)],
+                    operations: vec![
+                        crate::RegionAccessKind::Write,
+                        crate::RegionAccessKind::Read,
+                    ],
+                },
+                crate::ParameterFieldAccess {
+                    argument: 0,
+                    projection: vec![Projection::Field(0)],
+                    operations: vec![crate::RegionAccessKind::Read],
+                },
+            ]),
+            None,
+        );
+        let canonical = crate::CallableRegionMetadata::new(
+            crate::CallableAccessSummary::Fields(vec![
+                crate::ParameterFieldAccess {
+                    argument: 0,
+                    projection: vec![Projection::Field(0)],
+                    operations: vec![crate::RegionAccessKind::Read],
+                },
+                crate::ParameterFieldAccess {
+                    argument: 1,
+                    projection: vec![Projection::Field(1)],
+                    operations: vec![
+                        crate::RegionAccessKind::Read,
+                        crate::RegionAccessKind::Write,
+                    ],
+                },
+            ]),
+            None,
+        );
+        assert_ne!(empty.fingerprint(), reads_first.fingerprint());
+        assert_ne!(reads_first.fingerprint(), reads_second.fingerprint());
+        assert_ne!(returns_first.fingerprint(), returns_second.fingerprint());
+        assert_eq!(reordered, canonical);
+        assert_eq!(
+            reads_first.fingerprint(),
+            crate::CallableRegionMetadata::new(
+                crate::CallableAccessSummary::Fields(vec![crate::ParameterFieldAccess {
+                    argument: 0,
+                    projection: vec![Projection::Field(0)],
+                    operations: vec![crate::RegionAccessKind::Read],
+                }]),
+                None,
+            )
+            .fingerprint()
+        );
     }
 }
 
@@ -452,6 +582,25 @@ pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
     );
 }
 
+/// `[MIR-REG-1]` / `[VERIFY-3]` — the artifact crossing the final MIR
+/// boundary must carry callable-region metadata whose deterministic identity
+/// still matches its contents. Semantic agreement with field accesses is
+/// rederived by `ember_analysis`; this lower-level check makes omission or
+/// byte-level staleness unconditionally fatal before code generation.
+pub fn verify_callable_region_metadata(body: &Body) -> Vec<Violation> {
+    match &body.callable_regions {
+        None => vec![Violation {
+            body: body.symbol.clone(),
+            message: "callable-region metadata is missing".to_string(),
+        }],
+        Some(metadata) if !metadata.fingerprint_is_valid() => vec![Violation {
+            body: body.symbol.clone(),
+            message: "callable-region metadata fingerprint is stale or corrupt".to_string(),
+        }],
+        Some(_) => Vec::new(),
+    }
+}
+
 /// `[IMP-7]` / `[VERIFY-3]` — establish the code-generation boundary.
 ///
 /// This runs in every compiler profile, after the final MIR body-selection
@@ -464,6 +613,7 @@ pub fn for_codegen<'a>(
 ) -> Result<VerifiedMir<'a>, Vec<Violation>> {
     let mut violations: Vec<Violation> = bodies.iter().flat_map(verify).collect();
     violations.extend(bodies.iter().flat_map(|body| verify_views(body, types)));
+    violations.extend(bodies.iter().flat_map(verify_callable_region_metadata));
     if violations.is_empty() {
         Ok(VerifiedMir { bodies, types })
     } else {
@@ -534,6 +684,7 @@ mod view_invariant_tests {
             borrows: None,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
+            callable_regions: None,
         };
         (body, types)
     }

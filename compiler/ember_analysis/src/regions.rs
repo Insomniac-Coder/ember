@@ -22,33 +22,28 @@
 //!
 //! ## The shape of it
 //!
-//! One region variable per reference-typed local (§4.7 step 1) and one per
-//! borrow expression. Every edge in the graph is an assignment, recorded in
-//! the direction the *data* travels: `Flow { from, to }` for `to = from`. The
-//! two things the borrow checker wants are the two directions of that one
-//! graph:
+//! One region variable exists per reference-typed local field slot (§4.7 step
+//! 1) and one per borrow expression. A forward value-state fixpoint records
+//! which roots can occupy each slot before every MIR point. Backwards
+//! field-slot liveness is then projected through that point-sensitive state:
 //!
-//! * **points** flow backwards along it — `points(from) ⊇ points(to)` — and
-//!   answer "is this loan still live here";
-//! * **provenance** flows forwards — `origins(to) ⊇ origins(from)` — and
-//!   answers "which parameter did this reference come from", which is what
-//!   `[LT-1]`'s elision and `[LT-1a]`'s `@borrows` are checked against.
+//! * **points** answer "is this loan still live here";
+//! * **provenance** answers "which parameter did the value at this point come
+//!   from", which is what `[LT-1]`'s elision and `[LT-1a]`'s `@borrows` check;
+//! * **accesses** are attributed only to the roots reaching the accessed field
+//!   at that point.
 //!
-//! ## What it does not do yet
-//!
-//! Constraints are not location-sensitive: an edge propagates a whole point
-//! set rather than the points reachable from where the assignment sits. §4.7
-//! settles that deliberately — "Polonius-style location-sensitive reasoning is
-//! not required for v1" — and the imprecision it costs needs a reference local
-//! to be *re-seated*, which Ember has no syntax for: `r = ref mut m` writes
-//! through `r` (`[TYP-14]`), it does not point `r` somewhere new. Every
-//! reference local is assigned exactly once, at its declaration.
+//! Reference locals themselves are not reseated (`[TYP-14]`), but `[LT-21]`
+//! explicitly permits a borrowed field in a multi-region view to be replaced.
+//! Consequently the solver must distinguish the value before that write from
+//! the value after it even though both occupy the same compiler region slot.
 
 use std::collections::{HashMap, HashSet};
 
 use ember_mir::{
-    AggregateKind, BasicBlockId, Body, FuncRef, LocalId, LocalKind, Operand, Place, Projection,
-    Rvalue, StmtKind, Terminator,
+    AggregateKind, BasicBlockId, Body, CallableAccessSummary as CallAccessContract, FuncRef,
+    LocalId, LocalKind, Operand, Place, Projection, RegionAccessKind, ResultProvenanceSummary,
+    ResultRegionSource, Rvalue, StmtKind, Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
 
@@ -92,42 +87,6 @@ pub struct ViewRegionSlot {
     pub region: RegionVid,
 }
 
-/// One input region named by an inferred multi-region result slot.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ResultRegionSource {
-    /// A particular borrowed field of a view-typed argument.
-    View { argument: usize, projection: Vec<Projection> },
-    /// `[LT-4a]`'s narrow non-view Arena provenance source.
-    Arena { argument: usize },
-}
-
-/// `[LT-22]` — the input regions from which one returned borrowed field is
-/// derived. Both paths are relative to their public function types, not MIR
-/// locals, so the record can be applied at any direct call site.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ResultFieldProvenance {
-    pub result_projection: Vec<Projection>,
-    pub sources: Vec<ResultRegionSource>,
-}
-
-/// An exact inferred field-to-source relation for a multi-region result.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ResultProvenanceSummary {
-    pub fields: Vec<ResultFieldProvenance>,
-}
-
-/// The operations a callable may perform through a borrowed field.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub enum RegionAccessKind {
-    Read,
-    Write,
-    BorrowShared,
-    BorrowMut,
-    Move,
-    Return,
-    Publish,
-}
-
 const ALL_REGION_ACCESSES: &[RegionAccessKind] = &[
     RegionAccessKind::Read,
     RegionAccessKind::Write,
@@ -137,24 +96,6 @@ const ALL_REGION_ACCESSES: &[RegionAccessKind] = &[
     RegionAccessKind::Return,
     RegionAccessKind::Publish,
 ];
-
-/// The exact operations a direct callable may perform through one parameter
-/// field. The projection is relative to the parameter's public type.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ParameterFieldAccess {
-    pub argument: usize,
-    pub projection: Vec<Projection>,
-    pub operations: Vec<RegionAccessKind>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum CallAccessContract {
-    /// Opaque/unresolved dispatch: every field and operation is possible.
-    All,
-    /// Verified direct-call accesses. An empty vector means no view field is
-    /// accessed and is distinct from unknown.
-    Fields(Vec<ParameterFieldAccess>),
-}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum CallResultContract {
@@ -219,13 +160,31 @@ pub struct Regions {
     drop_requires_regions: Vec<bool>,
     /// The region variable produced by the borrow expression at each point.
     loan_region: HashMap<Point, RegionVid>,
+    /// The possible value roots in every local region slot immediately before
+    /// each MIR point. This is compile-time-only `[LT-21]` provenance; it is
+    /// deliberately absent from layout, ABI, and generated code.
+    values_at: HashMap<Point, Vec<ValueFact>>,
 }
 
-/// One edge of the constraint graph, in the direction the data travels.
-#[derive(Copy, Clone, Debug)]
-struct Flow {
-    from: RegionVid,
-    to: RegionVid,
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+struct ValueFact {
+    roots: HashSet<RegionVid>,
+    origins: HashSet<Origin>,
+    imprecise: bool,
+}
+
+impl ValueFact {
+    fn merge(&mut self, other: &ValueFact) -> bool {
+        let old_roots = self.roots.len();
+        self.roots.extend(other.roots.iter().copied());
+        let old_origins = self.origins.len();
+        self.origins.extend(other.origins.iter().copied());
+        let old_imprecise = self.imprecise;
+        self.imprecise |= other.imprecise;
+        self.roots.len() != old_roots
+            || self.origins.len() != old_origins
+            || self.imprecise != old_imprecise
+    }
 }
 
 impl Regions {
@@ -277,6 +236,7 @@ impl Regions {
             local_regions,
             drop_requires_regions: body.locals.iter().map(|decl| types.needs_drop(decl.ty)).collect(),
             loan_region,
+            values_at: HashMap::new(),
         };
 
         for (index, slots) in regions.local_regions.iter().enumerate() {
@@ -289,9 +249,10 @@ impl Regions {
         // a containing/whole-value place) can next be read. This is the
         // field-sensitive NLL fact `[LT-20]` requires; using whole-local
         // liveness here is the old intersection model.
-        for (point, live_slots) in regions.slot_liveness(body, call_contract) {
+        let slot_liveness = regions.slot_liveness(body, call_contract);
+        for (point, live_slots) in &slot_liveness {
             for region in live_slots {
-                regions.points[region].insert(point);
+                regions.points[*region].insert(*point);
             }
         }
 
@@ -304,9 +265,8 @@ impl Regions {
             }
         }
 
-        regions.collect_accesses(body, call_contract);
-        let flows = regions.collect_flows(body, types, call_contract);
-        regions.close(&flows);
+        regions.values_at = regions.infer_value_states(body, types, call_contract);
+        regions.apply_value_states(body, call_contract, &slot_liveness);
         regions
     }
 
@@ -360,45 +320,583 @@ impl Regions {
     /// exactly when provenance closure found no parameter or local origin for
     /// it; this preserves the fact through bindings and through calls whose
     /// result is not tied to a view argument.
-    pub fn is_static_operand(&self, operand: &Operand) -> bool {
+    pub fn is_static_operand_at(&self, operand: &Operand, point: Point) -> bool {
         match operand {
             Operand::Const(_) => true,
             Operand::Copy(place) | Operand::Move(place) => {
                 let regions = self.place_regions(place);
+                let Some(state) = self.values_at.get(&point) else { return false };
                 !regions.is_empty()
-                    && regions.iter().all(|region| self.origins[*region].is_empty())
+                    && regions
+                        .iter()
+                        .all(|region| state[*region].origins.is_empty())
             }
         }
     }
 
-    /// `[LT-35]` — seed the field operations actually present in this MIR.
-    /// Assignment flows later carry these facts back to the parameter slots
-    /// from which an accessed local or returned field was derived.
-    fn collect_accesses(
+    /// `[VERIFY-3]` — prove that the region graph consumed every slot named
+    /// by installed call metadata and routed every exact result source to its
+    /// destination field. This checks the consumer side independently of the
+    /// summary/body agreement check in `borrows.rs`.
+    pub(crate) fn verify_call_contracts(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> Vec<String> {
+        let mut violations = Vec::new();
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            let Terminator::Call { func, args, dest, .. } = &block.terminator else {
+                continue;
+            };
+            let point = Point { block: block_index, index: block.stmts.len() };
+            let contract = call_contract(func);
+            match &contract.access {
+                CallAccessContract::All => {
+                    for (argument, value) in args.iter().enumerate() {
+                        for region in self.operand_regions(value) {
+                            if !self.contains(region, point) {
+                                violations.push(format!(
+                                    "bb{block_index}: conservative argument {argument} region is not required at the call"
+                                ));
+                            }
+                        }
+                    }
+                }
+                CallAccessContract::Fields(accesses) => {
+                    for access in accesses {
+                        let Some(argument) = args.get(access.argument) else {
+                            violations.push(format!(
+                                "bb{block_index}: callable summary names absent argument {}",
+                                access.argument
+                            ));
+                            continue;
+                        };
+                        for region in self.operand_regions_at(argument, &access.projection) {
+                            if !self.contains(region, point) {
+                                violations.push(format!(
+                                    "bb{block_index}: argument {} field {:?} is not required at the call",
+                                    access.argument, access.projection
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let CallResultContract::Fields(summary) = &contract.result else {
+                continue;
+            };
+            let Some(state) = self.values_at.get(&point) else {
+                violations.push(format!(
+                    "bb{block_index}: callable result has no point-sensitive input state"
+                ));
+                continue;
+            };
+            let produced = self.call_result_facts(
+                body,
+                types,
+                state,
+                func,
+                args,
+                dest,
+                call_contract,
+            );
+            for field in &summary.fields {
+                let mut result = dest.clone();
+                result.projection.extend(field.result_projection.clone());
+                let destinations = self.assigned_place_regions(&result);
+                if destinations.is_empty() {
+                    violations.push(format!(
+                        "bb{block_index}: result field {:?} names no destination region slot",
+                        field.result_projection
+                    ));
+                    continue;
+                }
+                for source in &field.sources {
+                    match source {
+                        ResultRegionSource::View { argument, projection } => {
+                            let Some(value) = args.get(*argument) else {
+                                violations.push(format!(
+                                    "bb{block_index}: result provenance names absent argument {argument}"
+                                ));
+                                continue;
+                            };
+                            let sources = self.operand_regions_at(value, projection);
+                            if sources.is_empty() {
+                                violations.push(format!(
+                                    "bb{block_index}: result provenance argument {argument} field {projection:?} names no source region slot"
+                                ));
+                            }
+                            let source_fact = self.fact_for_operand_at(state, value, projection);
+                            for destination in &destinations {
+                                let destination_fact = produced.get(destination);
+                                let retains_source = destination_fact.is_some_and(|fact| {
+                                    source_fact.roots.is_subset(&fact.roots)
+                                        && source_fact.origins.is_subset(&fact.origins)
+                                        && (!source_fact.imprecise || fact.imprecise)
+                                });
+                                if !retains_source {
+                                    violations.push(format!(
+                                        "bb{block_index}: result field {:?} does not retain argument {argument} field {projection:?}",
+                                        field.result_projection
+                                    ));
+                                }
+                            }
+                        }
+                        ResultRegionSource::Arena { argument } => {
+                            let Some(Operand::Copy(place) | Operand::Move(place)) =
+                                args.get(*argument)
+                            else {
+                                violations.push(format!(
+                                    "bb{block_index}: Arena provenance names non-place argument {argument}"
+                                ));
+                                continue;
+                            };
+                            if !is_growing_arena(types, body.local(place.local).ty) {
+                                violations.push(format!(
+                                    "bb{block_index}: result provenance argument {argument} is not a growing Arena"
+                                ));
+                                continue;
+                            }
+                            let origin = match body.local(place.local).kind {
+                                LocalKind::Arg => Origin::Param(place.local),
+                                _ => Origin::Local(place.local),
+                            };
+                            for destination in &destinations {
+                                if !produced
+                                    .get(destination)
+                                    .is_some_and(|fact| fact.origins.contains(&origin))
+                                {
+                                    violations.push(format!(
+                                        "bb{block_index}: result field {:?} does not retain Arena argument {argument}",
+                                        field.result_projection
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        violations
+    }
+
+    /// `[LT-21]` — infer the possible value occupying every local region slot
+    /// before every MIR point. Assignments replace a fact; CFG joins merge
+    /// facts. This is the minimum location sensitivity field replacement
+    /// requires and is deliberately independent of runtime representation.
+    fn infer_value_states(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> HashMap<Point, Vec<ValueFact>> {
+        let mut entry = vec![ValueFact::default(); self.points.len()];
+        for (local, _) in body.args() {
+            for slot in &self.local_regions[local.0 as usize] {
+                entry[slot.region].roots.insert(slot.region);
+                entry[slot.region].origins.insert(Origin::Param(local));
+            }
+        }
+
+        let mut block_in: Vec<Option<Vec<ValueFact>>> = vec![None; body.blocks.len()];
+        if !body.blocks.is_empty() {
+            block_in[0] = Some(entry);
+        }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (block_index, block) in body.blocks.iter().enumerate() {
+                let Some(mut state) = block_in[block_index].clone() else { continue };
+                for (index, stmt) in block.stmts.iter().enumerate() {
+                    self.transfer_statement(
+                        body,
+                        &mut state,
+                        Point { block: block_index, index },
+                        &stmt.kind,
+                    );
+                }
+                self.transfer_terminator(
+                    body,
+                    types,
+                    &mut state,
+                    Point { block: block_index, index: block.stmts.len() },
+                    &block.terminator,
+                    call_contract,
+                );
+                for successor in region_successors(&block.terminator) {
+                    let target = &mut block_in[successor.0 as usize];
+                    match target {
+                        Some(existing) => {
+                            for (old, incoming) in existing.iter_mut().zip(&state) {
+                                changed |= old.merge(incoming);
+                            }
+                        }
+                        None => {
+                            *target = Some(state.clone());
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut values_at = HashMap::new();
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            let Some(mut state) = block_in[block_index].clone() else { continue };
+            for (index, stmt) in block.stmts.iter().enumerate() {
+                let point = Point { block: block_index, index };
+                values_at.insert(point, state.clone());
+                self.transfer_statement(body, &mut state, point, &stmt.kind);
+            }
+            let point = Point { block: block_index, index: block.stmts.len() };
+            values_at.insert(point, state);
+        }
+        values_at
+    }
+
+    fn transfer_statement(
+        &self,
+        body: &Body,
+        state: &mut [ValueFact],
+        point: Point,
+        kind: &StmtKind,
+    ) {
+        match kind {
+            StmtKind::Assign { place, rvalue } => {
+                let assignments = self.rvalue_facts(body, state, point, place, rvalue);
+                self.install_facts(state, &self.assigned_place_regions(place), assignments);
+            }
+            StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                self.clear_place_facts(state, dest);
+                self.clear_place_facts(state, overflow);
+            }
+            StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
+                for slot in &self.local_regions[local.0 as usize] {
+                    state[slot.region] = ValueFact::default();
+                }
+            }
+            StmtKind::Drop { .. } | StmtKind::Nop => {}
+        }
+    }
+
+    fn transfer_terminator(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &mut [ValueFact],
+        _point: Point,
+        terminator: &Terminator,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) {
+        if let Terminator::Call { func, args, dest, .. } = terminator {
+            let assignments = self.call_result_facts(body, types, state, func, args, dest, call_contract);
+            self.install_facts(state, &self.assigned_place_regions(dest), assignments);
+        }
+    }
+
+    fn rvalue_facts(
+        &self,
+        body: &Body,
+        state: &[ValueFact],
+        point: Point,
+        destination: &Place,
+        rvalue: &Rvalue,
+    ) -> HashMap<RegionVid, ValueFact> {
+        let destinations = self.assigned_place_regions(destination);
+        let mut result = HashMap::new();
+        match rvalue {
+            Rvalue::Ref { place, .. } => {
+                let mut fact = self.fact_for_place(state, place);
+                let Some(loan) = self.loan_region.get(&point).copied() else { return result };
+                fact.roots.insert(loan);
+                if self.deref_base(place).is_none() {
+                    fact.origins.insert(match body.local(place.local).kind {
+                        LocalKind::Arg => Origin::Param(place.local),
+                        _ => Origin::Local(place.local),
+                    });
+                }
+                for destination in destinations {
+                    result.insert(destination, fact.clone());
+                }
+            }
+            Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
+                self.map_facts(
+                    state,
+                    &self.operand_regions(operand),
+                    &destinations,
+                    &mut result,
+                );
+            }
+            Rvalue::Aggregate { kind, operands } if matches!(kind, AggregateKind::Array) => {
+                let mut fact = ValueFact::default();
+                for operand in operands {
+                    fact.merge(&self.fact_for_operand(state, operand));
+                }
+                for destination in destinations {
+                    result.insert(destination, fact.clone());
+                }
+            }
+            Rvalue::Aggregate { kind, operands } => {
+                for (field, operand) in operands.iter().enumerate() {
+                    let mut projection = destination.projection.clone();
+                    projection.extend(aggregate_field_projection(*kind, field));
+                    let field_place = Place { local: destination.local, projection };
+                    self.map_facts(
+                        state,
+                        &self.operand_regions(operand),
+                        &self.assigned_place_regions(&field_place),
+                        &mut result,
+                    );
+                }
+            }
+            Rvalue::Repeat { value, .. } => {
+                let fact = self.fact_for_operand(state, value);
+                for destination in destinations {
+                    result.insert(destination, fact.clone());
+                }
+            }
+            Rvalue::BinaryOp { .. }
+            | Rvalue::UnaryOp { .. }
+            | Rvalue::Discriminant(_) => {}
+        }
+        result
+    }
+
+    fn call_result_facts(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &[ValueFact],
+        func: &FuncRef,
+        args: &[Operand],
+        destination: &Place,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> HashMap<RegionVid, ValueFact> {
+        let destinations = self.assigned_place_regions(destination);
+        let mut result = HashMap::new();
+        match call_contract(func).result {
+            CallResultContract::Fields(summary) => {
+                for field in summary.fields {
+                    let mut result_place = destination.clone();
+                    result_place.projection.extend(field.result_projection);
+                    let mut fact = ValueFact::default();
+                    for source in field.sources {
+                        match source {
+                            ResultRegionSource::View { argument, projection } => {
+                                if let Some(argument) = args.get(argument) {
+                                    fact.merge(&self.fact_for_operand_at(
+                                        state,
+                                        argument,
+                                        &projection,
+                                    ));
+                                }
+                            }
+                            ResultRegionSource::Arena { argument } => {
+                                if let Some(Operand::Copy(place) | Operand::Move(place)) =
+                                    args.get(argument)
+                                    && is_growing_arena(types, body.local(place.local).ty)
+                                {
+                                    fact.origins.insert(match body.local(place.local).kind {
+                                        LocalKind::Arg => Origin::Param(place.local),
+                                        _ => Origin::Local(place.local),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    for destination in self.assigned_place_regions(&result_place) {
+                        result.insert(destination, fact.clone());
+                    }
+                }
+            }
+            CallResultContract::Legacy(tied) => {
+                let mut fact = ValueFact::default();
+                for (index, argument) in args.iter().enumerate() {
+                    if !tied.ties(index) {
+                        continue;
+                    }
+                    let source = self.fact_for_operand(state, argument);
+                    if source.roots.is_empty()
+                        && source.origins.is_empty()
+                        && let Operand::Copy(place) | Operand::Move(place) = argument
+                        && is_growing_arena(types, body.local(place.local).ty)
+                    {
+                        fact.origins.insert(match body.local(place.local).kind {
+                            LocalKind::Arg => Origin::Param(place.local),
+                            _ => Origin::Local(place.local),
+                        });
+                    } else {
+                        fact.merge(&source);
+                    }
+                }
+                fact.imprecise |= destinations.len() > 1;
+                for destination in destinations {
+                    result.insert(destination, fact.clone());
+                }
+            }
+        }
+        result
+    }
+
+    fn install_facts(
+        &self,
+        state: &mut [ValueFact],
+        destinations: &[RegionVid],
+        mut assignments: HashMap<RegionVid, ValueFact>,
+    ) {
+        for destination in destinations {
+            state[*destination] = assignments.remove(destination).unwrap_or_default();
+        }
+    }
+
+    fn clear_place_facts(&self, state: &mut [ValueFact], place: &Place) {
+        for destination in self.assigned_place_regions(place) {
+            state[destination] = ValueFact::default();
+        }
+    }
+
+    fn map_facts(
+        &self,
+        state: &[ValueFact],
+        sources: &[RegionVid],
+        destinations: &[RegionVid],
+        result: &mut HashMap<RegionVid, ValueFact>,
+    ) {
+        if sources.len() == destinations.len() {
+            for (source, destination) in sources.iter().zip(destinations) {
+                result
+                    .entry(*destination)
+                    .or_default()
+                    .merge(&state[*source]);
+            }
+        } else {
+            let mut fact = ValueFact::default();
+            for source in sources {
+                fact.merge(&state[*source]);
+            }
+            for destination in destinations {
+                result.entry(*destination).or_default().merge(&fact);
+            }
+        }
+    }
+
+    fn fact_for_place(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+        let mut fact = ValueFact::default();
+        for region in self.place_regions(place) {
+            fact.merge(&state[region]);
+        }
+        fact
+    }
+
+    fn fact_for_operand(&self, state: &[ValueFact], operand: &Operand) -> ValueFact {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => self.fact_for_place(state, place),
+            Operand::Const(_) => ValueFact::default(),
+        }
+    }
+
+    fn fact_for_operand_at(
+        &self,
+        state: &[ValueFact],
+        operand: &Operand,
+        relative_projection: &[Projection],
+    ) -> ValueFact {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                let mut projected = place.clone();
+                projected.projection.extend_from_slice(relative_projection);
+                self.fact_for_place(state, &projected)
+            }
+            Operand::Const(_) => ValueFact::default(),
+        }
+    }
+
+    /// Project field liveness and operations through the value present at the
+    /// same MIR point. Historical assignments therefore cannot keep their old
+    /// source alive or leak it into a callable result/access summary.
+    fn apply_value_states(
         &mut self,
         body: &Body,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+        slot_liveness: &HashMap<Point, HashSet<RegionVid>>,
     ) {
-        for block in &body.blocks {
-            for stmt in &block.stmts {
+        let mut slot_holders = vec![None; self.points.len()];
+        for (local, slots) in self.local_regions.iter().enumerate() {
+            for slot in slots {
+                slot_holders[slot.region] = Some(LocalId(local as u32));
+            }
+        }
+
+        for (point, live_slots) in slot_liveness {
+            let Some(state) = self.values_at.get(point) else { continue };
+            for slot in live_slots {
+                let holder = slot_holders[*slot];
+                for root in &state[*slot].roots {
+                    self.points[*root].insert(*point);
+                    if let Some(holder) = holder {
+                        self.holders[*root].insert(holder);
+                    }
+                    self.origins[*root].extend(state[*slot].origins.iter().copied());
+                }
+            }
+        }
+
+        self.accesses.iter_mut().for_each(HashSet::clear);
+        for (point, place, operation) in self.access_events(body, call_contract) {
+            let Some(state) = self.values_at.get(&point) else { continue };
+            for root in self.fact_for_place(state, &place).roots {
+                self.accesses[root].insert(operation);
+            }
+        }
+
+        // Result summaries are facts at actual Return points, not unions of
+        // every historical assignment ever made to the return slot.
+        let result_slots = self.local_regions[ember_mir::RETURN_LOCAL.0 as usize].clone();
+        for result in result_slots {
+            let mut fact = ValueFact::default();
+            for (block_index, block) in body.blocks.iter().enumerate() {
+                if !matches!(block.terminator, Terminator::Return) {
+                    continue;
+                }
+                let point = Point { block: block_index, index: block.stmts.len() };
+                if let Some(state) = self.values_at.get(&point) {
+                    fact.merge(&state[result.region]);
+                }
+            }
+            self.origins[result.region] = fact.origins.clone();
+            self.imprecise_provenance[result.region] = fact.imprecise;
+            for root in fact.roots {
+                self.carried_slots[root].insert(result.region);
+            }
+        }
+    }
+
+    fn access_events(
+        &self,
+        body: &Body,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> Vec<(Point, Place, RegionAccessKind)> {
+        let mut events = Vec::new();
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for (index, stmt) in block.stmts.iter().enumerate() {
+                let point = Point { block: block_index, index };
                 match &stmt.kind {
                     StmtKind::Assign { place, rvalue } => {
-                        self.rvalue_accesses(rvalue);
-                        // Replacing a view value changes local provenance but
-                        // does not access its referent. A projection beyond a
-                        // view leaf writes through it and is a real operation.
+                        self.rvalue_access_events(point, rvalue, &mut events);
                         if self.assigned_place_regions(place).is_empty() {
-                            self.mark_place_access(place, RegionAccessKind::Write);
+                            events.push((point, place.clone(), RegionAccessKind::Write));
                         }
                     }
                     StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
-                        self.mark_operand_access(lhs);
-                        self.mark_operand_access(rhs);
+                        self.operand_access_event(point, lhs, &mut events);
+                        self.operand_access_event(point, rhs, &mut events);
                     }
                     StmtKind::Drop { place, .. }
                         if self.drop_requires_regions[place.local.0 as usize] =>
                     {
-                        self.mark_place_access(place, RegionAccessKind::Read);
+                        events.push((point, place.clone(), RegionAccessKind::Read));
                     }
                     StmtKind::StorageLive(_)
                     | StmtKind::StorageDead(_)
@@ -407,327 +905,124 @@ impl Regions {
                 }
             }
 
+            let point = Point { block: block_index, index: block.stmts.len() };
             match &block.terminator {
-                Terminator::SwitchInt { discr, .. } => self.mark_operand_access(discr),
+                Terminator::SwitchInt { discr, .. } => {
+                    self.operand_access_event(point, discr, &mut events)
+                }
                 Terminator::Call { func, args, .. } => match call_contract(func).access {
                     CallAccessContract::All => {
                         for argument in args {
-                            for region in self.operand_regions(argument) {
-                                self.accesses[region].extend(ALL_REGION_ACCESSES);
+                            for operation in ALL_REGION_ACCESSES {
+                                self.operand_access_event_with(
+                                    point,
+                                    argument,
+                                    *operation,
+                                    &mut events,
+                                );
                             }
                         }
                     }
                     CallAccessContract::Fields(accesses) => {
                         for access in accesses {
                             let Some(argument) = args.get(access.argument) else { continue };
-                            for region in
-                                self.operand_regions_at(argument, &access.projection)
-                            {
-                                self.accesses[region].extend(access.operations.iter().copied());
+                            if let Operand::Copy(place) | Operand::Move(place) = argument {
+                                let mut projected = place.clone();
+                                projected.projection.extend(access.projection);
+                                for operation in access.operations {
+                                    events.push((point, projected.clone(), operation));
+                                }
                             }
                         }
                     }
                 },
                 Terminator::Assert { cond, msg, .. } => {
-                    self.mark_operand_access(cond);
+                    self.operand_access_event(point, cond, &mut events);
                     if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
-                        self.mark_operand_access(file);
-                        self.mark_operand_access(line);
+                        self.operand_access_event(point, file, &mut events);
+                        self.operand_access_event(point, line, &mut events);
                     }
                 }
                 Terminator::Return => {
                     for slot in &self.local_regions[ember_mir::RETURN_LOCAL.0 as usize] {
-                        self.accesses[slot.region].insert(RegionAccessKind::Return);
+                        events.push((
+                            point,
+                            Place {
+                                local: ember_mir::RETURN_LOCAL,
+                                projection: slot.projection.clone(),
+                            },
+                            RegionAccessKind::Return,
+                        ));
                     }
                 }
                 Terminator::Goto(_) | Terminator::Unreachable => {}
             }
         }
+        events
     }
 
-    fn rvalue_accesses(&mut self, rvalue: &Rvalue) {
+    fn rvalue_access_events(
+        &self,
+        point: Point,
+        rvalue: &Rvalue,
+        events: &mut Vec<(Point, Place, RegionAccessKind)>,
+    ) {
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } => {
-                self.mark_operand_access(operand)
+            Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+                self.operand_access_event(point, operand, events)
             }
-            Rvalue::Cast { operand, .. } => self.mark_operand_access(operand),
             Rvalue::BinaryOp { lhs, rhs, .. } => {
-                self.mark_operand_access(lhs);
-                self.mark_operand_access(rhs);
+                self.operand_access_event(point, lhs, events);
+                self.operand_access_event(point, rhs, events);
             }
             Rvalue::Aggregate { operands, .. } => {
                 for operand in operands {
-                    self.mark_operand_access(operand);
+                    self.operand_access_event(point, operand, events);
                 }
             }
-            Rvalue::Repeat { value, .. } => self.mark_operand_access(value),
+            Rvalue::Repeat { value, .. } => self.operand_access_event(point, value, events),
             Rvalue::Discriminant(place) => {
-                self.mark_place_access(place, RegionAccessKind::Read)
+                events.push((point, place.clone(), RegionAccessKind::Read))
             }
-            Rvalue::Ref { place, mutable } => self.mark_place_access(
-                place,
+            Rvalue::Ref { place, mutable } => events.push((
+                point,
+                place.clone(),
                 if *mutable {
                     RegionAccessKind::BorrowMut
                 } else {
                     RegionAccessKind::BorrowShared
                 },
-            ),
+            )),
         }
     }
 
-    fn mark_operand_access(&mut self, operand: &Operand) {
-        match operand {
-            Operand::Copy(place) => self.mark_place_access(place, RegionAccessKind::Read),
-            Operand::Move(place) => self.mark_place_access(place, RegionAccessKind::Move),
-            Operand::Const(_) => {}
-        }
+    fn operand_access_event(
+        &self,
+        point: Point,
+        operand: &Operand,
+        events: &mut Vec<(Point, Place, RegionAccessKind)>,
+    ) {
+        self.operand_access_event_with(
+            point,
+            operand,
+            match operand {
+                Operand::Move(_) => RegionAccessKind::Move,
+                Operand::Copy(_) => RegionAccessKind::Read,
+                Operand::Const(_) => return,
+            },
+            events,
+        );
     }
 
-    fn mark_place_access(&mut self, place: &Place, access: RegionAccessKind) {
-        for region in self.place_regions(place) {
-            self.accesses[region].insert(access);
-        }
-    }
-
-    /// §4.7 step 2 — one walk of the body, collecting every assignment that
-    /// moves a reference from one place to another.
-    fn collect_flows(
-        &mut self,
-        body: &Body,
-        types: &TypeTable,
-        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    ) -> Vec<Flow> {
-        let mut flows = Vec::new();
-        let mut seeds: Vec<(RegionVid, Origin)> = Vec::new();
-        for (block_index, block) in body.blocks.iter().enumerate() {
-            for (index, stmt) in block.stmts.iter().enumerate() {
-                let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
-                let destinations = self.assigned_place_regions(place);
-                if destinations.is_empty() {
-                    continue;
-                }
-                match rvalue {
-                    Rvalue::Ref { place: borrowed, .. } => {
-                        let point = Point { block: block_index, index };
-                        if let Some(loan) = self.loan_region.get(&point).copied() {
-                            for to in &destinations {
-                                flows.push(Flow { from: loan, to: *to });
-                            }
-                            match self.deref_base(borrowed) {
-                                // `[BRW-6]` — a reborrow is derived from the
-                                // reference it goes through, so the base's
-                                // region has to cover everywhere the new one
-                                // reaches, and its provenance is the base's.
-                                Some(base) => flows.push(Flow { from: base, to: loan }),
-                                // A borrow names its own origin.
-                                None => {
-                                    let root = borrowed.local;
-                                    seeds.push((
-                                        loan,
-                                        match body.local(root).kind {
-                                            LocalKind::Arg => Origin::Param(root),
-                                            _ => Origin::Local(root),
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
-                        connect_regions(
-                            &mut flows,
-                            &self.operand_regions(operand),
-                            &destinations,
-                        );
-                    }
-                    // `[LT-14]`, `[LT-16]`, `[LT-19]` — each aggregate field
-                    // receives only the source region vector of its matching
-                    // operand. The old all-operands-to-one-destination edge
-                    // was exactly the legacy intersection model.
-                    Rvalue::Aggregate { kind, operands } => {
-                        if matches!(kind, AggregateKind::Array) {
-                            // Fixed arrays of views deliberately have one
-                            // conservative slot: allocating a region vector
-                            // proportional to the source-level array length
-                            // would violate the bounded metadata model. Every
-                            // element must therefore feed that slot. Routing
-                            // through `ConstIndex` would select no destination
-                            // and silently lose provenance.
-                            for operand in operands {
-                                connect_all(
-                                    &mut flows,
-                                    &self.operand_regions(operand),
-                                    &destinations,
-                                );
-                            }
-                        } else {
-                            for (field, operand) in operands.iter().enumerate() {
-                                let mut projection = place.projection.clone();
-                                projection.extend(aggregate_field_projection(*kind, field));
-                                let field_place = Place { local: place.local, projection };
-                                connect_regions(
-                                    &mut flows,
-                                    &self.operand_regions(operand),
-                                    &self.assigned_place_regions(&field_place),
-                                );
-                            }
-                        }
-                    }
-                    Rvalue::Repeat { value, .. } => {
-                        connect_all(&mut flows, &self.operand_regions(value), &destinations);
-                    }
-                    Rvalue::BinaryOp { .. }
-                    | Rvalue::UnaryOp { .. }
-                    | Rvalue::Discriminant(_) => {}
-                }
-            }
-
-            // `[LT-1]` at the call site: the result of a call may point into
-            // any view-typed argument the callee's elision ties it to, so the
-            // caller has to treat those as borrowed for as long as it holds
-            // the result.
-            if let Terminator::Call { func, args, dest, .. } = &block.terminator {
-                let destinations = self.assigned_place_regions(dest);
-                if !destinations.is_empty() {
-                    match call_contract(func).result {
-                        CallResultContract::Fields(summary) => {
-                            for field in summary.fields {
-                                let mut result = dest.clone();
-                                result.projection.extend(field.result_projection);
-                                let field_destinations = self.assigned_place_regions(&result);
-                                for source in field.sources {
-                                    match source {
-                                        ResultRegionSource::View { argument, projection } => {
-                                            let Some(arg) = args.get(argument) else { continue };
-                                            connect_all(
-                                                &mut flows,
-                                                &self.operand_regions_at(arg, &projection),
-                                                &field_destinations,
-                                            );
-                                        }
-                                        ResultRegionSource::Arena { argument } => {
-                                            let Some(Operand::Copy(place) | Operand::Move(place)) =
-                                                args.get(argument)
-                                            else {
-                                                continue;
-                                            };
-                                            for to in &field_destinations {
-                                                seeds.push((
-                                                    *to,
-                                                    match body.local(place.local).kind {
-                                                        LocalKind::Arg => Origin::Param(place.local),
-                                                        _ => Origin::Local(place.local),
-                                                    },
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        CallResultContract::Legacy(tied) => {
-                            if destinations.len() > 1 {
-                                for destination in &destinations {
-                                    self.imprecise_provenance[*destination] = true;
-                                }
-                            }
-                            for (index, arg) in args.iter().enumerate() {
-                                if !tied.ties(index) {
-                                    continue;
-                                }
-                                let sources = self.operand_regions(arg);
-                                if !sources.is_empty() {
-                                    // `[LT-35]` — without a field-sensitive
-                                    // callable summary a call conservatively
-                                    // requires every source and result slot.
-                                    connect_all(&mut flows, &sources, &destinations);
-                                } else if let Operand::Copy(place) | Operand::Move(place) = arg
-                                    && is_growing_arena(types, body.local(place.local).ty)
-                                {
-                                    // `[LT-1a]`, `[LT-4a]` — Arena is the one
-                                    // non-view parameter that may source
-                                    // returned provenance.
-                                    for to in &destinations {
-                                        seeds.push((
-                                            *to,
-                                            match body.local(place.local).kind {
-                                                LocalKind::Arg => Origin::Param(place.local),
-                                                _ => Origin::Local(place.local),
-                                            },
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for (vid, origin) in seeds {
-            self.origins[vid].insert(origin);
-        }
-        flows
-    }
-
-    /// The fixpoint. Points travel backwards along each edge and origins
-    /// forwards; the graph is the same one.
-    fn close(&mut self, flows: &[Flow]) {
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for flow in flows {
-                let carried: Vec<Point> = self.points[flow.to]
-                    .iter()
-                    .filter(|p| !self.points[flow.from].contains(*p))
-                    .copied()
-                    .collect();
-                if !carried.is_empty() {
-                    self.points[flow.from].extend(carried);
-                    changed = true;
-                }
-                let holders: Vec<LocalId> = self.holders[flow.to]
-                    .iter()
-                    .filter(|l| !self.holders[flow.from].contains(*l))
-                    .copied()
-                    .collect();
-                if !holders.is_empty() {
-                    self.holders[flow.from].extend(holders);
-                    changed = true;
-                }
-                let slots: Vec<RegionVid> = self.carried_slots[flow.to]
-                    .iter()
-                    .filter(|slot| !self.carried_slots[flow.from].contains(*slot))
-                    .copied()
-                    .collect();
-                if !slots.is_empty() {
-                    self.carried_slots[flow.from].extend(slots);
-                    changed = true;
-                }
-                if self.imprecise_provenance[flow.from]
-                    && !self.imprecise_provenance[flow.to]
-                {
-                    self.imprecise_provenance[flow.to] = true;
-                    changed = true;
-                }
-                let accesses: Vec<RegionAccessKind> = self.accesses[flow.to]
-                    .iter()
-                    .filter(|access| !self.accesses[flow.from].contains(*access))
-                    .copied()
-                    .collect();
-                if !accesses.is_empty() {
-                    self.accesses[flow.from].extend(accesses);
-                    changed = true;
-                }
-                let origins: Vec<Origin> = self.origins[flow.from]
-                    .iter()
-                    .filter(|o| !self.origins[flow.to].contains(*o))
-                    .copied()
-                    .collect();
-                if !origins.is_empty() {
-                    self.origins[flow.to].extend(origins);
-                    changed = true;
-                }
-            }
+    fn operand_access_event_with(
+        &self,
+        point: Point,
+        operand: &Operand,
+        operation: RegionAccessKind,
+        events: &mut Vec<(Point, Place, RegionAccessKind)>,
+    ) {
+        if let Operand::Copy(place) | Operand::Move(place) = operand {
+            events.push((point, place.clone(), operation));
         }
     }
 
@@ -976,12 +1271,19 @@ impl Regions {
 
     /// The reference a borrow goes *through*, for `[BRW-6]`'s reborrow.
     fn deref_base(&self, place: &Place) -> Option<RegionVid> {
-        if place.projection.iter().any(|p| matches!(p, Projection::Deref)) {
-            let regions = self.place_regions(place);
-            (regions.len() == 1).then(|| regions[0])
-        } else {
-            None
-        }
+        let mut candidates = self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| {
+                path_is_prefix(&slot.projection, &place.projection)
+                    && place.projection[slot.projection.len()..].iter().any(|projection| {
+                        matches!(
+                            projection,
+                            Projection::Deref | Projection::Index(_) | Projection::ConstIndex(_)
+                        )
+                    })
+            });
+        let region = candidates.next()?.region;
+        candidates.next().is_none().then_some(region)
     }
 }
 
@@ -1048,27 +1350,6 @@ fn aggregate_field_projection(kind: AggregateKind, field: usize) -> Vec<Projecti
         AggregateKind::Array => vec![Projection::ConstIndex(field as u64)],
         AggregateKind::Enum(_, variant) => {
             vec![Projection::Downcast(variant), Projection::Field(field)]
-        }
-    }
-}
-
-fn connect_regions(flows: &mut Vec<Flow>, sources: &[RegionVid], destinations: &[RegionVid]) {
-    if sources.len() == destinations.len() {
-        flows.extend(
-            sources
-                .iter()
-                .zip(destinations)
-                .map(|(from, to)| Flow { from: *from, to: *to }),
-        );
-    } else {
-        connect_all(flows, sources, destinations);
-    }
-}
-
-fn connect_all(flows: &mut Vec<Flow>, sources: &[RegionVid], destinations: &[RegionVid]) {
-    for from in sources {
-        for to in destinations {
-            flows.push(Flow { from: *from, to: *to });
         }
     }
 }

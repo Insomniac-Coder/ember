@@ -87,6 +87,20 @@ fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
     bodies.retain(|body| !body.symbol.starts_with(&std_prefix) || keep.contains(&body.symbol));
 }
 
+fn verify_callable_regions_or_panic(bodies: &[ember_mir::Body], types: &TypeTable) {
+    let violations = ember_analysis::verify_callable_regions_all(bodies, types);
+    if !violations.is_empty() {
+        panic!(
+            "MIR callable-region verification failed:\n{}",
+            violations
+                .iter()
+                .map(|v| format!("  {}: {}", v.body, v.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
 fn collect_body_function_symbols(
     body: &ember_mir::Body,
     out: &mut std::collections::BTreeSet<String>,
@@ -595,7 +609,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // the footgun `[GRM-4]` opens.
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
-    ember_analysis::check_borrows_all(&bodies, &types, &mut sink);
+    ember_analysis::check_borrows_all(&mut bodies, &types, &mut sink);
+    if !sink.has_errors() {
+        verify_callable_regions_or_panic(&bodies, &types);
+    }
     ember_analysis::check_unused_all(&bodies, &mut sink);
     // `[DIA-7]` — a borrow error the classifier could not place is recorded
     // rather than left to be noticed. CI fails when the conformance suite
@@ -629,6 +646,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if program.main.is_some() {
         retain_referenced_standard_bodies(&mut bodies);
     }
+    verify_callable_regions_or_panic(&bodies, &types);
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
     // transformation, so release builds cannot emit stale or malformed MIR.

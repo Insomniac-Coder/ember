@@ -297,6 +297,7 @@ impl<'a> Builder<'a> {
             borrows: self.function.borrows.clone(),
             borrowed_params,
             for_iterators,
+            callable_regions: None,
         }
     }
 

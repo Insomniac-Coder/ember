@@ -33,7 +33,9 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    Body, Builtin, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
+    Body, Builtin, CallableAccessSummary as CallAccessContract, CallableRegionMetadata, FuncRef,
+    LocalId, LocalKind, Operand, ParameterFieldAccess, Place, Projection, RegionAccessKind,
+    ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, StmtKind,
     Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
@@ -43,9 +45,7 @@ use crate::facts::{
     AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
 use crate::regions::{
-    CallAccessContract, CallRegionContract, CallResultContract, Elision, Origin,
-    ParameterFieldAccess, Point, RegionAccessKind, Regions, ResultFieldProvenance,
-    ResultProvenanceSummary, ResultRegionSource,
+    CallRegionContract, CallResultContract, Elision, Origin, Point, Regions,
 };
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
@@ -88,23 +88,33 @@ enum Access {
     Borrow { mutable: bool },
 }
 
-pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
+pub fn check_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) {
     // `[LT-1]` is a property of the *callee's* signature, so a call in one
     // body is read against another's. The table is built once.
-    let mut signatures: HashMap<&str, Elision> = HashMap::new();
-    for body in bodies {
-        signatures.insert(body.symbol.as_str(), elision_of(body, types));
+    let mut signatures: HashMap<String, Elision> = HashMap::new();
+    for body in &*bodies {
+        signatures.insert(body.symbol.clone(), elision_of(body, types));
     }
     // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
     // direct call to one of these bodies is a method call. Read once here
     // because the conflict is reported while checking the *caller's* body.
-    let mut methods: HashSet<&str> = HashSet::new();
-    for body in bodies {
+    let mut methods: HashSet<String> = HashSet::new();
+    for body in &*bodies {
         if is_method_body(body) {
-            methods.insert(body.symbol.as_str());
+            methods.insert(body.symbol.clone());
         }
     }
-    let summaries = infer_callable_summaries(bodies, types, &signatures);
+    let inferred = infer_callable_summaries(bodies, types, &signatures);
+    for body in &mut *bodies {
+        let contract = inferred
+            .get(&body.symbol)
+            .expect("callable summary inference omitted a MIR body");
+        body.callable_regions = Some(metadata_from_contract(contract));
+    }
+    // Borrow checking consumes the installed MIR/interface metadata, not the
+    // temporary inference table. That makes the artifact a real producer /
+    // consumer boundary rather than a duplicate cache beside the analysis.
+    let summaries = contracts_from_metadata(bodies, &signatures);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let invalid_result_bodies =
         infer_invalid_result_bodies(bodies, types, &call_contract);
@@ -112,7 +122,7 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
         _ => false,
     };
-    for body in bodies {
+    for body in &*bodies {
         check_body(
             body,
             types,
@@ -124,10 +134,111 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
     }
 }
 
+fn metadata_from_contract(contract: &CallRegionContract) -> CallableRegionMetadata {
+    CallableRegionMetadata::new(
+        contract.access.clone(),
+        match &contract.result {
+            CallResultContract::Fields(summary) => Some(summary.clone()),
+            CallResultContract::Legacy(_) => None,
+        },
+    )
+}
+
+fn contracts_from_metadata(
+    bodies: &[Body],
+    signatures: &HashMap<String, Elision>,
+) -> HashMap<String, CallRegionContract> {
+    bodies
+        .iter()
+        .map(|body| {
+            let metadata = body
+                .callable_regions
+                .as_ref()
+                .expect("borrow checking requires installed callable-region metadata");
+            let result = metadata.result.clone().map_or_else(
+                || {
+                    CallResultContract::Legacy(
+                        signatures
+                            .get(body.symbol.as_str())
+                            .cloned()
+                            .unwrap_or(Elision::Everything),
+                    )
+                },
+                CallResultContract::Fields,
+            );
+            (
+                body.symbol.clone(),
+                CallRegionContract { access: metadata.access.clone(), result },
+            )
+        })
+        .collect()
+}
+
+/// `[VERIFY-3]` — rederive callable metadata from MIR and compare it with the
+/// artifact consumed by callers. A mismatch is an internal compiler failure,
+/// not an optimization hint or a reason to widen a region to `static`.
+pub fn verify_callable_regions_all(
+    bodies: &[Body],
+    types: &TypeTable,
+) -> Vec<ember_mir::verify::Violation> {
+    let signatures: HashMap<String, Elision> = bodies
+        .iter()
+        .map(|body| (body.symbol.clone(), elision_of(body, types)))
+        .collect();
+    let expected = infer_callable_summaries(bodies, types, &signatures);
+    let mut violations = Vec::new();
+    for body in bodies {
+        let Some(actual) = &body.callable_regions else {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: "callable-region metadata is missing".to_string(),
+            });
+            continue;
+        };
+        if !actual.fingerprint_is_valid() {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: "callable-region metadata fingerprint is stale or corrupt".to_string(),
+            });
+            continue;
+        }
+        let wanted = expected
+            .get(&body.symbol)
+            .expect("callable summary verification omitted a MIR body");
+        if *actual != metadata_from_contract(wanted) {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: "callable-region metadata disagrees with the MIR body".to_string(),
+            });
+        }
+    }
+    if bodies.iter().all(|body| {
+        body.callable_regions
+            .as_ref()
+            .is_some_and(CallableRegionMetadata::fingerprint_is_valid)
+    }) {
+        let installed = contracts_from_metadata(bodies, &signatures);
+        let call_contract = |func: &FuncRef| contract_for(func, &installed, &signatures);
+        for body in bodies {
+            let regions = Regions::infer(body, types, &call_contract);
+            violations.extend(
+                regions
+                    .verify_call_contracts(body, types, &call_contract)
+                    .into_iter()
+                    .map(|message| ember_mir::verify::Violation {
+                        body: body.symbol.clone(),
+                        message,
+                    }),
+            );
+        }
+    }
+    violations
+}
+
 /// The pre-0.9.5 whole-result relation, retained both for one-region results
 /// and as the mandatory conservative fallback for calls with no exact
 /// field-to-source summary.
-fn legacy_elision(func: &FuncRef, signatures: &HashMap<&str, Elision>) -> Elision {
+fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elision {
     match func {
         FuncRef::Direct { symbol } => signatures
             .get(symbol.as_str())
@@ -190,7 +301,7 @@ fn conservative_contract(elision: Elision) -> CallRegionContract {
 fn contract_for(
     func: &FuncRef,
     summaries: &HashMap<String, CallRegionContract>,
-    signatures: &HashMap<&str, Elision>,
+    signatures: &HashMap<String, Elision>,
 ) -> CallRegionContract {
     if let FuncRef::Direct { symbol } = func
         && let Some(summary) = summaries.get(symbol.as_str())
@@ -236,7 +347,7 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
 fn infer_callable_summaries(
     bodies: &[Body],
     types: &TypeTable,
-    signatures: &HashMap<&str, Elision>,
+    signatures: &HashMap<String, Elision>,
 ) -> HashMap<String, CallRegionContract> {
     let mut summaries: HashMap<String, CallRegionContract> = HashMap::new();
     for _ in 0..=bodies.len() {
@@ -598,7 +709,7 @@ fn check_box_storage_regions(
     regions: &Regions,
     sink: &mut Sink,
 ) {
-    for block in &body.blocks {
+    for (block_index, block) in body.blocks.iter().enumerate() {
         let Terminator::Call {
             func: FuncRef::Builtin { which: Builtin::BoxNew { elem, .. }, .. },
             args,
@@ -607,8 +718,11 @@ fn check_box_storage_regions(
         else {
             continue;
         };
+        let point = Point { block: block_index, index: block.stmts.len() };
         if !types.is_view(*elem)
-            || args.first().is_some_and(|value| regions.is_static_operand(value))
+            || args
+                .first()
+                .is_some_and(|value| regions.is_static_operand_at(value, point))
         {
             continue;
         }
@@ -1820,5 +1934,100 @@ fn rvalue_reads(rvalue: &Rvalue, out: &mut Vec<(Place, Access)>) {
         Rvalue::Ref { place, mutable } => {
             out.push((place.clone(), Access::Borrow { mutable: *mutable }))
         }
+    }
+}
+
+#[cfg(test)]
+mod callable_region_metadata_tests {
+    use super::*;
+    use ember_mir::{BasicBlock, BasicBlockId, CallableAccessSummary, LocalDecl};
+
+    fn empty_body() -> Body {
+        let (_, common) = TypeTable::new();
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        Body {
+            name: "empty".to_string(),
+            symbol: "empty".to_string(),
+            locals: vec![LocalDecl {
+                ty: common.void,
+                kind: LocalKind::Return,
+                name: None,
+                span,
+            }],
+            blocks: vec![BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                terminator_span: span,
+            }],
+            arg_count: 0,
+            span,
+            borrows: None,
+            borrowed_params: Vec::new(),
+            for_iterators: Vec::new(),
+            callable_regions: None,
+        }
+    }
+
+    #[test]
+    fn installed_callable_metadata_reverifies_against_its_body() {
+        let (types, _) = TypeTable::new();
+        let mut bodies = vec![empty_body()];
+        let mut sink = Sink::new();
+        check_all(&mut bodies, &types, &mut sink);
+        assert!(verify_callable_regions_all(&bodies, &types).is_empty());
+    }
+
+    #[test]
+    fn a_validly_fingerprinted_but_false_summary_is_rejected() {
+        let (types, _) = TypeTable::new();
+        let mut bodies = vec![empty_body()];
+        let mut sink = Sink::new();
+        check_all(&mut bodies, &types, &mut sink);
+        bodies[0].callable_regions = Some(CallableRegionMetadata::new(
+            CallableAccessSummary::All,
+            None,
+        ));
+        let violations = verify_callable_regions_all(&bodies, &types);
+        assert!(violations.iter().any(|v| v.message.contains("disagrees with the MIR body")));
+    }
+
+    #[test]
+    fn a_call_site_rejects_a_summary_naming_an_absent_argument() {
+        let (types, _) = TypeTable::new();
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let callee = empty_body();
+        let mut caller = empty_body();
+        caller.name = "caller".to_string();
+        caller.symbol = "caller".to_string();
+        caller.blocks = vec![
+            BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Call {
+                    func: FuncRef::Direct { symbol: "empty".to_string() },
+                    args: Vec::new(),
+                    dest: Place::local(ember_mir::RETURN_LOCAL),
+                    next: BasicBlockId(1),
+                },
+                terminator_span: span,
+            },
+            BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                terminator_span: span,
+            },
+        ];
+        let mut bodies = vec![callee, caller];
+        let mut sink = Sink::new();
+        check_all(&mut bodies, &types, &mut sink);
+        bodies[0].callable_regions = Some(CallableRegionMetadata::new(
+            CallableAccessSummary::Fields(vec![ParameterFieldAccess {
+                argument: 0,
+                projection: Vec::new(),
+                operations: vec![RegionAccessKind::Read],
+            }]),
+            None,
+        ));
+        let violations = verify_callable_regions_all(&bodies, &types);
+        assert!(violations.iter().any(|v| v.message.contains("names absent argument 0")));
     }
 }
