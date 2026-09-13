@@ -18,8 +18,8 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `0fdd9b6` on `main`, following
-`de641fb` for the concrete Box slice. Both are pushed to `origin/main`
+**Last committed implementation baseline:** `d077563` on `main`, following
+`7958259` for the H6/ODR-014 contract. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -34,7 +34,7 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 102 top-level conformance rule directories, 359 `.em` files including support
+ 110 top-level conformance rule directories, 379 `.em` files including support
  modules. 83 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -234,16 +234,24 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Box complete; Span API completion is the exact next implementation task
+## 5. Span API complete; B2 diagnostic coverage is the exact next task
 
-**Exact next task: complete `SPN-API-1` against H6's owner-selected signatures.**
-Implement the four named non-prelude `std.collections` iterator/chunk view
-types, shared and mutable reborrow behavior, ordinary NLL/conflict checks,
-all-profile zero-size panic, and safe `as_ptr`/`as_mut_ptr` extraction with
-unsafe-only pointer use. Reuse ordinary Iterator, borrow/provenance, bounds,
-and raw-pointer machinery; do not create a parallel view model. Keep the first
-`ARCH-096-1` boundary from `66d0d43` load-bearing and continue that migration
-when a real producer and consumer are available.
+**Exact next task: continue `DIA-UI-1` with E3020/B2, now that Span iteration
+provides a real mutate-while-iterating producer.** Require the exact rendered
+B2 help and a compiling fixed companion; mutate the case red once. Continue
+`ARCH-096-1` only through real iterator/region producers and consumers; do not
+fabricate the still-unreachable class/thread/effect shapes or add placeholder
+semantic facts.
+
+**`SPN-API-1` is complete at `d077563`.** Four public non-prelude
+`std.collections` iterator/chunk `@view` types use ordinary `Iterator` and
+shared/mutable reborrows. Their monotonic cursors permit only disjoint yielded
+mutable items/chunks; NLL restores the parent; partial final chunks work;
+zero-width chunks assert in every profile; and safe typed raw-pointer
+extraction adds no region-retention edge. Twenty SPN-4..10/TST-25 sources cover
+public identity, generics, provenance, conflicts/coexistence, failure, pointer
+authority, and generated-C erasure. Provenance-edge and cursor-advance
+mutations both made adversarial cases fail before being restored.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -350,13 +358,15 @@ suppressing their destructor; `std.mem.align_of[T]` uses the canonical layout
 descriptor after generic substitution. The later `[THR-6]` `@must_drop`
 rejection remains a dependency gap, and this slice does not invent that marker.
 
-**`SPN-API-1` advanced at `1aaa98f` and `24d8fbc`.** `Span` and `MutSpan` now implement the
+**`SPN-API-1` advanced at `1aaa98f` and `24d8fbc`, then completed at
+`d077563`.** `Span` and `MutSpan` first implemented the
 specified checked `split_at`; mutable named receivers are reborrowed, direct
 view-producing expressions remain valid, and both result halves retain the
 original owner provenance. Array and Span splits share one MIR check shape and
 one C result constructor. Explicit `MutSpan.reborrow()` now uses the same
 receiver-borrow and provenance facts without copying or moving the parent.
-`chunks`, iterators, and raw-pointer access remain.
+H6 checkpoint subsequently added the named iterator/chunk families and typed
+raw-pointer extraction described in §5.
 
 **Concrete `Box[T]` is complete at `de641fb`, with the final region correction
 at `0fdd9b6`.** The implemented slice is deliberately bounded to sized payloads
@@ -447,10 +457,10 @@ semantic/API decision is currently open.**
   `fn hash[H: Hasher](self, mut h: H)`: `H` is inferred from the concrete
   context and normally monomorphized, `DefaultHasher implements Hasher`, and
   `Hash.hash` introduces no implicit or mandatory dynamic dispatch.
-* **ODR-014 — CLOSED.** H6 defines four named public, non-prelude
+* **ODR-014 — CLOSED and implemented.** H6 defines four named public, non-prelude
   `std.collections` iterator/chunk `@view` types, exact shared/mutable reborrow
   and `Iterator.Item` contracts, all-profile zero-size panic, safe raw-pointer
-  extraction, and unsafe-only pointer use. `SPN-API-1` is now unblocked.
+  extraction, and unsafe-only pointer use. `SPN-API-1` completed at `d077563`.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms

@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 102 rule directories and 359 Ember
+- the conformance runner passes across 110 rule directories and 379 Ember
   source files;
 - all six adopted-specification gates pass;
 - 83 recorded compiler defects are closed;
@@ -62,6 +62,13 @@ views, and destroys `T` before freeing exactly one allocation. Existential
 `Box[dyn I]`, custom allocators, allocation-effect accounting, and `Send`
 integration remain assigned to their dependent phases.
 
+The H6 Span surface is complete at `d077563`: four public named iterator/chunk
+view types use the existing `Iterator`, borrow, region, and NLL machinery;
+mutable items and chunks retain disjoint storage ranges; zero-width chunks
+panic in every profile; and safe typed raw-pointer extraction does not extend
+the source lifetime. The public source declarations live in `std.collections`;
+compiler-known lowering is only the current bootstrap implementation.
+
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
 compiler.
@@ -78,7 +85,9 @@ The reference compiler currently includes substantial support for:
   associated types, and monomorphization;
 - ownership, moves, non-lexical borrows, mutable references, region-carrying
   views, checked shared/mutable Span splitting, explicit mutable-span
-  reborrowing, deterministic destruction, drop flags, and partial moves;
+  reborrowing, named shared/mutable Span iteration and chunking, safe raw-
+  pointer extraction with unsafe-only use, deterministic destruction, drop
+  flags, and partial moves;
 - capturing closures through statically monomorphized callable bounds;
 - compiler-known `Array`, `String`, `Span`, `MutSpan`, `Box`, `Cell`, `RefCell`, and
   Arena primitives, plus the public `std.mem.UnsafeCell` boundary;
@@ -94,8 +103,7 @@ The reference compiler currently includes substantial support for:
   including operation ordering and exact occurrence counts.
 
 Important incomplete areas include the remainder of Phase 2 diagnostics and
-rule coverage, H6's now-specified Span iterator/chunk/raw-pointer API,
-existential/custom-allocator Box forms, general automatic/derived `Hash` generation and
+rule coverage, existential/custom-allocator Box forms, general automatic/derived `Hash` generation and
 ordinary `Map`/`Set`, the canonical semantic-fact migration, objects and
 managed ownership, effects and comptime, complete FFI, concurrency/data-oriented
 facilities, the interpreter, hot reload, and the final performance and

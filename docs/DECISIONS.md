@@ -1213,3 +1213,14 @@ semantic change.
 ODR-014, and the preserved owner ruling form the authority chain. H6 is a
 frozen development target, not an implementation claim or adopted repository
 source.
+
+**Implementation evidence.** Commit `d077563` implements this contract through
+the existing Iterator, borrow, region, MIR-assert, and raw-pointer paths. The
+four public types are declared in `std.collections`; compiler-known lowering
+is only the bootstrap representation. Twenty new SPN-4..10/TST-25 Ember
+sources cover identity, generics, NLL/provenance, parent conflicts, coexisting
+disjoint mutable items/chunks, partial and zero-width chunks, pointer
+authority/non-retention, and generated-C erasure. Removing the iterator result
+provenance edge or the chunk cursor advance makes its adversarial test fail.
+No new ownership category, opaque return, runtime region metadata, or unsafe
+boundary was introduced.

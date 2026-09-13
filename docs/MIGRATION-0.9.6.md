@@ -260,6 +260,20 @@ static views are accepted, while local-array and Arena-backed views are
 E3063. Coverage is now 102 conformance directories and 359 Ember sources;
 `Box[dyn I]`, custom allocators, `Alloc` effects, and `Send` remain later work.
 
+The H6 Span checkpoint is `d077563`. `SPN-API-1` is complete: the four named,
+public, non-prelude iterator/chunk `@view` types are source-declared in
+`std.collections` and use the existing `Iterator` interface; shared and mutable
+operations form ordinary reborrows; NLL restores the parent; iterator/chunk
+cursors establish monotonic, disjoint yielded mutable ranges; zero-width
+chunks take an explicit all-profile MIR assertion; and safe typed raw-pointer
+extraction neither accesses storage nor retains its region. Twenty new sources
+cover `[SPN-4]`–`[SPN-10]` and `[TST-25]`, including generic substitution,
+provenance, parent conflicts, coexisting disjoint items/chunks, partial final
+chunks, pointer authority/non-retention, and generated-C erasure. Deliberately
+removing result provenance or cursor advancement makes the relevant
+adversarial case fail. Coverage is now 110 conformance directories and 379
+Ember sources; 189 Rust tests remain green.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -367,15 +381,12 @@ the completed `ARN-COLL-1` checkpoint. Other H1–H6 rules still lack complete
 adoption evidence, so this progress is not evidence that the frozen target has
 been adopted.
 
-H2 intentionally has many rules without conformance directories. In
-particular, Arena collections and the H1 architecture/equivalence requirements
-lack complete executable evidence. Their absence is an
-implementation/conformance gap, not a reason to weaken the specification.
-Against the adopted-source ratchet, the alternate rule-index gate reports
-exactly **120 new adoption problems**: 119 rule IDs without conformance
-directories and the inherited H10 diagnostic name E3065 without a registry
-entry. The inventory/definition audit is sound, but the alternate conformance/
-diagnostic gate is intentionally not green yet.
+H2 intentionally has many rules without conformance directories. Arena
+collection evidence now exists under `ARN-COLL-1`; the H1 architecture and
+equivalence requirements still lack complete executable evidence. Their
+absence is an implementation/conformance gap, not a reason to weaken the
+specification. The alternate conformance/diagnostic gate is intentionally not
+green yet.
 
 Running the same audit directly against frozen H3 reports:
 
@@ -387,12 +398,20 @@ Running the same audit directly against frozen H3 reports:
     0 orphaned amendments
 
 H3 adds exactly `[HASH-1]` through `[HASH-4]` over H2. The classified dangling
-reference and named-code inventories are unchanged. Against the adopted-source
-ratchet, the current working tree reports exactly **120 new adoption problems**:
-119 rule IDs without conformance directories (including the four new hashing
-rules) and inherited E3065 without a registry entry. Missing hashing evidence
-is implementation/conformance work, not permission to weaken the public
-protocol or freeze a mixing algorithm.
+reference and named-code inventories are unchanged. Hashing evidence now
+exists for the implemented ArenaMap surface. Missing later general hashing
+evidence remains implementation/conformance work, not permission to weaken the
+public protocol or freeze a mixing algorithm.
+
+The current H6 alternate-source audit reports 980 rule IDs, 874 stated
+definitions, 207 named diagnostics, 208 registered diagnostics, no duplicate
+definitions, and no orphaned amendments. Against the adopted-source ratchet it
+reports **118 new adoption problems**: 117 target rules without conformance
+directories plus inherited E3065 without a registry entry. The four raw
+reference candidates retain their established classification; no new dangling
+normative reference was introduced. This alternate gate is expected to remain
+red until implementation/conformance catches up and does not affect the six
+gates against the adopted source.
 
 The H1 cut-time fenced-source audit found 44 Ember blocks: 19 parsed and 25 did
 not. Its one new failure relative to the adopted-source baseline was Appendix
@@ -434,10 +453,14 @@ proved.
    boundary, consuming extraction, `@static_safe` exclusion, and adversarial
    `[UNS-10]`–`[UNS-10b]` coverage without bypassing ordinary borrowing or
    retrofitting compiler-known Cell/RefCell.
-8. **Complete multi-region and callable summaries through H1 facts.** Cover
+8. **Completed — complete the H6 Span API.** `d077563` implements the exact
+   ODR-014 iterator, chunk, reborrow, zero-size, and raw-pointer contract using
+   existing Iterator/borrow/region/MIR machinery, with mutation-sensitive
+   `[TST-25]` evidence and no proof metadata in generated C.
+9. **Complete multi-region and callable summaries through H1 facts.** Cover
    exact, audited-declared, unknown, generic, separate-compilation, dynamic,
    and hot-reload cases with coupled invalidation and runtime erasure.
-9. **Add the version selector and run adoption validation.** `VER-096-1` may
+10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
 
@@ -499,10 +522,10 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Complete `SPN-API-1` using H6's exact owner-selected iterator, chunk,
-mutability, zero-size, and raw-pointer contracts. Reuse the existing Iterator,
-borrow/provenance, checked bounds, and raw-pointer machinery. Preserve ordinary
-NLL and storage-identity disjointness, mutate each adversarial test red once,
-and inspect generated C for metadata erasure. Continue `ARCH-096-1` through
-the real facts this work exposes; do not add opaque-return syntax, a parallel
-view abstraction, or an implementation-defined unsafe boundary.
+Continue `DIA-UI-1` with E3020/B2, now that H6 Span iteration provides a real
+“mutate while iterating” producer. Require the exact rendered B2 help and a
+compiling `.fixed.em` companion; mutate the new case red once, and distinguish
+the dedicated loop/iterator diagnostic from generic shared/mutable overlap.
+Then continue `ARCH-096-1` incrementally through real iterator and region
+facts. Do not fabricate the remaining class/thread/effect diagnostic shapes,
+add placeholder facts, or start a big-bang semantic-state rewrite.

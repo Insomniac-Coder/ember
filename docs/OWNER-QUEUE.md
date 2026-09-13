@@ -120,7 +120,8 @@ introduced.
     Authority:  Owner ruling preserved as ODR-014_Span_MutSpan_API_completion.md
     Revision:   Ember 0.9.6_Hardened_6
     ADR:        ADR-035
-    Result:     Closed; [SPN-4]–[SPN-10] and [TST-25] are authoritative for H6
+    Result:     Closed; [SPN-4]–[SPN-10] and [TST-25] are authoritative for H6;
+                implementation and mutation-sensitive evidence landed in d077563
 
 **Historical alternatives considered before the ruling.**
 
