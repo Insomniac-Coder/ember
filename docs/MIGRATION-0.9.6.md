@@ -298,6 +298,23 @@ reverted. Coverage is now 117 conformance directories and 392 Ember sources;
 callable summaries, `[LT-21]` field replacement, `E3065/B14`, invalidation,
 the complete escape/storage/enum/generic matrix, or MIR summary verification.
 
+The direct callable-summary checkpoint is `90059c8`. Direct bodies now infer
+exact result-field provenance and parameter-field access to a fixpoint;
+transitive wrappers preserve those relations, the known split builtins publish
+exact two-field provenance, and opaque multi-region results report E3065/B14.
+Unknown access remains conservative, and a one-region call assigned into one
+field is classified from that exact destination projection rather than the
+containing aggregate. E3064/B13 is now reserved historical identity, not H6
+target behavior. Four independent mutation tests prove result routing, access
+precision, E3065, and destination-projection classification; generated C
+again contains no proof metadata. Coverage is now 120 conformance directories
+and 399 Ember sources; 189 Rust tests remain green.
+
+This does not complete H1's summary architecture. The contracts are still
+whole-program analysis values rather than serialized MIR/interface metadata;
+`[VERIFY-3]` verification, `[LT-40]` cache/invalidation coupling, non-direct
+dispatch, and the full escape/storage/enum/generic matrix remain.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -313,8 +330,10 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   not permission for a big-bang rewrite.
 - **`VER-096-1` is complete:** selector recognition is implemented and tested.
   This does not adopt H1 or enable a newer contract for older selectors.
-- H1's exact callable access/provenance summary, invalidation, dynamic target,
-  stale-metadata, and runtime-erasure requirements are not fully implemented.
+- H1's exact direct callable access/provenance behavior is implemented at
+  `90059c8`, including E3065/B14 and runtime erasure. Persisted summary
+  metadata, verification, invalidation, dynamic targets, stale-metadata
+  handling, and the wider dispatch matrix remain incomplete.
 - The H1 equivalence matrix across references, spans, view fields, Arena
   results, RefCell guards, and FFI views has no complete conformance evidence.
 
@@ -348,10 +367,11 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Hash` and ordinary `Map`/`Set` remain later-phase work.
 - **`ARN-LATE-1`:** effect, `@must_drop`, `Send`/`Sync`, and `ThreadArena`
   obligations remain assigned to their later phases.
-- 0.9.5 inferred multi-region view structs are partially implemented at
-  `c913fbd`: direct aggregate slots, field projection, and field-sensitive NLL
-  are executable. Callable field/provenance summaries, field replacement,
-  `E3065/B14`, invalidation, and the full conformance matrix remain; H1's
+- 0.9.5 inferred multi-region view structs are partially implemented through
+  `c913fbd` and `90059c8`: direct aggregate slots, field projection,
+  field-sensitive NLL, direct callable field/provenance summaries, and
+  E3065/B14 are executable. Persisted/verified summaries, invalidation,
+  non-direct dispatch, and the full conformance matrix remain; H1's
   architecture text is not itself implementation evidence.
 - **`UnsafeCell` is complete at `a02c0a5`.** It remains distinct from
   compiler-known `Cell`/`RefCell` and from Arena. Its `!Sync` and conditional
@@ -430,14 +450,16 @@ evidence remains implementation/conformance work, not permission to weaken the
 public protocol or freeze a mixing algorithm.
 
 The current H6 alternate-source audit reports 980 rule IDs, 874 stated
-definitions, 207 named diagnostics, 208 registered diagnostics, no duplicate
+definitions, 207 named diagnostics, 209 registered diagnostics, no duplicate
 definitions, and no orphaned amendments. Against the adopted-source ratchet it
-reports **118 new adoption problems**: 117 target rules without conformance
-directories plus inherited E3065 without a registry entry. The four raw
-reference candidates retain their established classification; no new dangling
-normative reference was introduced. This alternate gate is expected to remain
-red until implementation/conformance catches up and does not affect the six
-gates against the adopted source.
+reports **110 new adoption problems**, all target rules without their own
+conformance directory. E3065 is now registered and has executable LT-22 plus
+B14 evidence, so the former registry gap is closed; that does not imply all of
+`[DIA-19]` or the wider target matrix is conformant. The four raw reference
+candidates retain their established classification; no new dangling normative
+reference was introduced. This alternate gate is expected to remain red until
+implementation/conformance catches up and does not affect the six gates
+against the adopted source.
 
 The H1 cut-time fenced-source audit found 44 Ember blocks: 19 parsed and 25 did
 not. Its one new failure relative to the adopted-source baseline was Appendix
@@ -483,12 +505,15 @@ proved.
    ODR-014 iterator, chunk, reborrow, zero-size, and raw-pointer contract using
    existing Iterator/borrow/region/MIR machinery, with mutation-sensitive
    `[TST-25]` evidence and no proof metadata in generated C.
-9. **Complete multi-region and callable summaries through H1 facts.** The
-   direct region-vector/field-NLL core is complete at `c913fbd`; next add
-   `[LT-22]`/`[LT-35]` callable field/provenance summaries and `E3065/B14`, then
-   cover audited-declared, unknown, generic, separate-compilation, dynamic,
-   hot-reload, field-replacement, escape/storage, and verifier cases with
-   coupled invalidation and runtime erasure.
+9. **In progress — complete multi-region and callable summaries through H1
+   facts.** The direct region-vector/field-NLL core is complete at `c913fbd`;
+   `90059c8` adds analysis-local direct-call `[LT-22]`/`[LT-35]` result/access
+   summaries, known split-result relations, and `E3065/B14` for opaque
+   multi-region results. Next persist and verify those summaries in MIR and
+   interface artifacts and couple them to `[LT-40]` invalidation, then cover
+   audited-declared, unknown, generic, separate-compilation, dynamic,
+   hot-reload, field-replacement, escape/storage, and verifier cases while
+   preserving runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -551,11 +576,12 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement `[LT-22]`/`[LT-35]` callable field/provenance summaries and
-`E3065/B14` on the `c913fbd` region-vector core, then add summary invalidation
-and MIR verifier checks. Preserve conservative all-slot behavior for unknown
-calls and ordinary E3021 for precise matching-field conflicts; do not retain
-legacy E3064 as target behavior. Keep `[LT-21]` field replacement, the
+Persist `90059c8`'s analysis-local `[LT-22]`/`[LT-35]` direct callable
+field/provenance summaries in verified MIR/interface metadata, then add
+`[LT-40]` summary invalidation. Preserve conservative all-slot behavior for
+unknown calls and ordinary E3021 for precise matching-field conflicts;
+E3064 remains a reserved historical identity rather than target behavior.
+Keep `[LT-21]` field replacement, the
 escape/storage/enum/generic matrix, FFI/coroutine boundaries, and runtime
 erasure explicit in the remaining work. Do not fabricate class/thread/effect
 diagnostic shapes, add placeholder facts, or start a big-bang rewrite.

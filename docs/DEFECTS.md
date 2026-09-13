@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-13 — direct callable region summaries
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-115 | **Calling a function through a function-value local did not count as reading that local.** The unused analysis inspected call arguments and the destination but ignored an indirect call's callee operand, so a value used exactly as `operation(21)` received false lint `L1001` | `[LNT-1]`, `[CLO-3]` | **fixed** | `90059c8` marks the `FuncRef::Indirect` operand as read through the same path as every other operand. **Verified:** `tests/conformance/LNT-1/accept_called_function_value_is_used.em` calls a bound function value and prints 42 without the lint; reverting only the callee read reproduces `L1001`. The specification was already clear and did not change |
+
+---
+
 ## 2026-09-13 — for-loop borrowing and B2 diagnostics
 
 | # | Defect | Rule | Status | Fixed in |
@@ -178,7 +186,7 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 | D-008 | `ember fmt` deleted a doc comment on a method | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-009 | `ember fmt` deleted a doc comment on an enum variant | `[FMT-1]` | **fixed** | `28aa05d` |
 | D-010 | The AST printer showed a variant as its bare name, so `[FMT-1]`'s round-trip test could not see D-009 | `[FMT-1]`, `[TST-1]` | **fixed** | `28aa05d` |
-| D-011 | `E3064` (two independent regions in one view struct) is registered and emitted by nothing | `[LT-2]`, `[DIA-7a]` | **fixed** | **`E3064` was reachable all along and these programs were being reported as B3.** A `@view struct` bundling two views holds *both* loans for as long as any part of it is live, so touching it keeps the shorter one alive even where only the longer-lived field is read — which is exactly `[DIA-7a]`'s shape B13. The rejection was already right; the *classification* was wrong, and so was the advice: B3 says shorten the borrow's last use, and the use keeping the loan alive is of the other field. The conflict now reads the type of the local holding the loan and reports `E3064` with B13's help when it bundles two views. `tests/conformance/LT-2/` holds the reject and, beside it, the program B13's help prescribes — compiled and run, because a help that does not work is worse than none |
+| D-011 | Under the adopted one-region `[LT-2]` model, `E3064` (two independent regions in one view struct) was registered but emitted by nothing | `[LT-2]`, `[DIA-7a]` | **fixed** | The adopted-source compiler originally classified the reachable intersection conflict as generic B3; the fix made it E3064/B13. The frozen H6 target later superseded that one-region model with field-sensitive region vectors, so `90059c8` removes the rejection and reserves the stable diagnostic identity instead of reusing it. Current H6 behavior is ordinary E3021 for a real live-field conflict or E3065/B14 when a multi-region result lacks sound field provenance. This preserves the history without presenting obsolete target behavior as current |
 
 ## 2026-09-09 — v0.8.3, the standard library and range types
 
@@ -266,11 +274,10 @@ parse(x)`; a doc comment is a comment and the rule is unambiguous. Likewise
 `[DIA-3]` for D-004: the label is a MUST and the compiler emitted none. Both are
 recorded in the errata's closing section so the question is not re-asked.
 
-**D-011 is open and deliberately unwritten.** `[LT-2]` gives a struct built
-from several references the *intersection* of their regions, so the compiler
-narrows rather than refusing, and no program has been found that reaches the
-error. Writing the diagnostic before there is a program that needs it would
-enforce the rule in a shape nobody asked for.
+**D-011 is historical, not open.** Its adopted-source E3064/B13 behavior was
+implemented and verified, then superseded by H6's owner-approved multi-region
+model. E3064 remains reserved so old logs keep their meaning; the current
+target uses field-sensitive regions and E3065/B14 at an opaque result boundary.
 
 ---
 

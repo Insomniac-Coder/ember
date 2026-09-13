@@ -35,10 +35,10 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 117 rule directories and 392 Ember
+- the conformance runner passes across 120 rule directories and 399 Ember
   source files;
 - all six adopted-specification gates pass;
-- 84 recorded compiler defects are closed;
+- 85 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open; ODR-014 is closed by H6.
 
@@ -75,15 +75,16 @@ yields shared references, leaves the Array usable afterward, and reports
 E3020/B2 for conflicting mutation rather than moving the collection or falling
 back to a generic overlapping-loan diagnostic.
 
-The first multi-region-view core is complete at `c913fbd`: region inference
-uses compile-time-only field slots for direct structs, nested structs, tuples,
-and fixed arrays; aggregate construction preserves each field's provenance;
-and field-sensitive NLL permits one source borrow to end while another field
-remains live. Same-source and matching-field conflicts remain rejected, guard
-drops retain their runtime borrow source, and generated C contains no region
-metadata. Callable field/provenance summaries, field replacement, the complete
-escape/storage matrix, `E3065/B14`, invalidation, and verifier integration are
-not yet complete.
+The direct-call multi-region slice is complete at `90059c8`, building on
+`c913fbd`'s field-sensitive region vectors. Direct function summaries now
+retain exact result-field provenance and parameter-field access, transitive
+wrappers reach a fixpoint, known split operations publish exact result
+relations, and opaque multi-region results fail with `E3065/B14` rather than
+being widened to the obsolete one-region intersection. Field replacement uses
+the destination projection rather than the containing local, and generated C
+contains no region metadata. Summary serialization/verification and
+invalidation, non-direct dispatch, and the complete escape/storage matrix
+remain incomplete; unknown calls stay conservative.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -289,9 +290,9 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: implement `[LT-22]`/`[LT-35]` callable
-field/provenance summaries and `E3065/B14` on top of the region-vector core;
-then add invalidation and verifier boundaries, complete the remaining
+The immediate order is narrower: carry the direct `[LT-22]`/`[LT-35]`
+field/provenance summaries into verified MIR/interface metadata and add
+`[LT-40]` invalidation; then complete the remaining
 multi-region/Phase 2 matrix, and continue the `[DIA-7..10]`/`[DIA-13]`
 diagnostic catalogue as its currently unreachable mechanisms become real.
 

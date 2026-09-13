@@ -288,14 +288,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `c913fbd` (`Add field-sensitive multi-region inference`), following `e0ba765` (canonical Array-loop borrowing/E3020), `d077563` (complete H6 Span API), and `7958259` (H6/ODR-014 contract) |
-| Recent commits | `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `90059c8` (`Add direct callable region summaries`), following `c913fbd` (field-sensitive region vectors), `e0ba765` (canonical Array-loop borrowing/E3020), and `d077563` (complete H6 Span API) |
+| Recent commits | `90059c8` direct callable region summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | Clean at the implementation checkpoint; this handoff/ledger update is the only subsequent documentation scope before its own commit |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 117 top-level rule directories, 392 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 84 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
+| Conformance | 120 top-level rule directories, 399 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 85 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -919,8 +919,8 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Implement `[LT-22]`/`[LT-35]` callable field/provenance summaries and
-`E3065/B14` on the `c913fbd` region-vector core.**
+**Persist `90059c8`'s direct `[LT-22]`/`[LT-35]` callable summaries as
+verified MIR/interface metadata and implement `[LT-40]` invalidation.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -930,9 +930,10 @@ Array-loop borrowing are complete at `e0ba765`; §0.48 records D-070, the exact
 snapshot and fixed companion, and the two mutation checks. Do not fabricate
 still-unreachable class/thread/effect shapes.
 The direct multi-region aggregate/NLL core is complete at `c913fbd`; §0.49
-records its exact evidence and remaining boundary. Keep architecture migration
-incremental through real producers and consumers; do not create placeholder
-facts or attempt a big-bang rewrite.
+records its exact evidence. Direct result/access summaries and E3065/B14 are
+complete at `90059c8`; §0.50 records their evidence and the remaining artifact
+boundary. Keep architecture migration incremental through real producers and
+consumers; do not create placeholder facts or attempt a big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
 remaining multi-region and Phase 2 ownership/lifetime coverage before
@@ -2878,13 +2879,81 @@ lvalue as write-through rather than rebind. `[LT-22]`/`[LT-35]` summaries,
 enum/Option/Result/generic, escape/storage, FFI, closure, interface, coroutine,
 and hot-reload matrices remain open.
 
-**Exact next task:** add callable result-provenance and parameter field-access
-summaries for direct functions first, emit E3065/B14 when a declared summary
-is violated, preserve conservative all-slot behavior for unknown calls, and
-verify summaries against actual MIR accesses. Then extend the same facts to
-generic, interface/dynamic, closure/coroutine, separate-compilation, and
-invalidation paths. Do not claim full multi-region conformance or remove the
-temporary conservative path before those consumers are real.
+The direct-function part of this next task is complete in §0.50. Its remaining
+verified-metadata, invalidation, and non-direct-dispatch boundary is still the
+current task.
+
+### 0.50 Direct callable region summaries complete — 2026-09-13
+
+Implementation commit `90059c8` adds the first executable `[LT-22]`/`[LT-35]`
+call boundary on top of §0.49's region vectors. Analysis infers one
+`CallRegionContract` per direct body to a fixpoint. The result half maps each
+borrowed result projection to the exact argument projection or narrow Arena
+source from which it derives. The access half records the operations actually
+performed through each borrowed parameter projection. A direct caller
+therefore retains only the source fields the callee can access, and a
+transitive direct wrapper preserves the field relation rather than collapsing
+it to all sources.
+
+The compiler-known `Array.split_at_mut` and Span splitting paths publish both
+result fields as borrowing argument zero. All genuinely opaque multi-region
+result boundaries now report `E3065`, shape B14; a direct caller of a body
+already invalidated by the same first opaque boundary is suppressed so one
+cause does not create a cascade. Unknown calls otherwise remain conservative
+for access. The decision to require a multi-region result relation is based on
+the exact destination projection: assigning a one-region call result into one
+field of a multi-region local remains legal. E3064/B13 has been removed as
+target behavior and retained only as a stable, reserved historical identity.
+
+Adversarial tests proved four separate mechanisms by mutation:
+
+1. disabling exact result summaries reintroduced the old false rejection;
+2. widening an exact access summary to all fields made an unrelated-field
+   positive program report E3021;
+3. disabling E3065 allowed an opaque multi-region result to compile; and
+4. testing the containing local instead of the exact destination projection
+   falsely rejected a one-region result assigned to one field.
+
+Every mutation was reverted. Direct generated-C inspection showed an ordinary
+two-Span struct and no region, provenance, or access-summary payload. The full
+workspace is green at 189 tests, 120 conformance directories, and 399 Ember
+sources; UI snapshots pass; debug and release builds are warning-free; and all
+six adopted-source gates pass. The test build retains only the pre-existing
+lexer test-name warning.
+
+The same work exposed D-115: an indirect call's function-value operand was not
+counted as a read, producing false `L1001`. `unused.rs` now treats the callee
+operand like every other operand, and the LNT-1 regression case calls the
+value and prints 42. This was a compiler defect; no specification or ADR
+changed.
+
+The repository now carries
+`docs/spec-source/development-target.json`, which pins the frozen H6 target by
+path and SHA-256. Normal rule-index checks still use the adopted
+`ember-spec.md`; only diagnostic-registry citations may resolve in the pinned
+target, only when that target also names the code. Hash mismatch, path escape,
+an unrelated code, and absence from both documents all fail unit tests. This
+bridge does not adopt H6 or let target prose override the current normative
+source. `error_pages.py` likewise executes examples only for codes the
+compiler really emits: a page for a reserved identity is historical evidence,
+not permission to fabricate a trigger. The conformance/code ratchets still
+make accidental emitter removal fail elsewhere.
+
+This checkpoint remains deliberately partial. Contracts are analysis-local
+and recomputed in the whole-program borrow pass; they are not yet carried in
+MIR or interface artifacts, verified at an artifact boundary under
+`[VERIFY-3]`, or invalidated under `[LT-40]`. Generic/interface/virtual/dynamic,
+separate-compilation, closure/coroutine/FFI/hot-reload, and the full
+escape/storage/enum matrix remain incomplete. `Publish` exists in the internal
+operation vocabulary but does not yet have a dedicated producer. These are
+implementation gaps, not permission to infer new semantics.
+
+**Exact next task:** define one canonical serialized summary representation in
+MIR/interface metadata, verify it against the body that produced it, reject a
+stale or malformed summary at the consumer boundary, and couple summary/cache
+identity to `[LT-40]` invalidation. Preserve the current direct-call behavior
+and conservative unknown-call fallback while doing so; do not claim the wider
+dispatch matrix before it has adversarial coverage.
 
 ## The task list — where to begin
 
@@ -2905,9 +2974,10 @@ explicit `MutSpan.reborrow()`; §0.44 closes `TUP-DST-1`; §0.45 records the H5
 target cut; §0.46 completes the bounded concrete Box slice; and §0.47 records
 H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
 §0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing. The active
-Phase 2 boundary is now §0.49's field-sensitive region-vector core, followed
-by callable result/access summaries, E3065/B14, invalidation, verifier checks,
-and the remaining multi-region matrix before target adoption.
+Phase 2 boundary is now §0.50: §0.49's field-sensitive region-vector core and
+direct callable result/access summaries plus E3065/B14 are executable;
+persisted verified summaries, invalidation, non-direct dispatch, and the
+remaining multi-region matrix precede target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner

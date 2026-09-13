@@ -18,10 +18,10 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `c913fbd` on `main`, following
-`e0ba765` for canonical Array-loop borrowing, `d077563` for the H6 Span
-implementation, and `7958259` for the H6/ODR-014
-contract. All are pushed to `origin/main`
+**Last committed implementation baseline:** `90059c8` on `main`, following
+`c913fbd` for field-sensitive region vectors, `e0ba765` for canonical
+Array-loop borrowing, `d077563` for the H6 Span implementation, and `7958259`
+for the H6/ODR-014 contract. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -34,10 +34,11 @@ treating this sentence as live Git state.
       python tools/spec_check.py           fenced `ember` blocks parse
       python tools/error_pages.py          every documented fix compiles
       python tools/check_branding.py       no hard-coded project names
-      python tools/split_spec.py --check   docs/spec/ is the split of the source
+      python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
+                                             docs/spec/ is the split of the source
 
- 117 top-level conformance rule directories, 392 `.em` files including support
- modules. 84 defects recorded, **none open**.
+ 120 top-level conformance rule directories, 399 `.em` files including support
+ modules. 85 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -236,14 +237,34 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Region-vector core complete; callable summaries are next
+## 5. Direct callable summaries complete; verified metadata is next
 
-**Exact next task: implement `[LT-22]`/`[LT-35]` callable field/provenance
-summaries and `E3065/B14` on the `c913fbd` region-vector core.** Then add
-summary invalidation and verifier boundaries in the order in
+**Exact next task: persist the direct `[LT-22]`/`[LT-35]` callable
+field/provenance summaries as verified MIR/interface metadata, then implement
+`[LT-40]` summary invalidation.** Continue in the order in
 `MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
 class/thread/effect diagnostic shapes, add placeholder semantic facts, or
 attempt a big-bang rewrite.
+
+**The direct callable-summary slice is complete at `90059c8`.** Building on
+`c913fbd`, analysis infers exact result-field provenance and parameter-field
+access for direct bodies to a fixpoint. Transitive wrappers preserve the
+relation, known split builtins publish both result fields as borrowing their
+source, and an opaque multi-region result is `E3065/B14` rather than an
+invented intersection or `static` relation. Calls use only the fields their
+summary accesses; unresolved calls remain conservative. Destination
+projection, not the containing local's full region vector, decides whether a
+call needs a multi-region result summary. This keeps a one-region result
+assigned into one field legal. E3064/B13 is retained only as a historical,
+reserved diagnostic identity.
+
+Mutation checks separately proved result routing, access precision, E3065,
+and projected-destination handling are load-bearing. Generated C for the
+two-Span aggregate contains no provenance metadata. The summaries are still
+analysis-local: they are not yet serialized in MIR/interface artifacts,
+verified at the consumer boundary, or coupled to `[LT-40]` invalidation.
+Generic/interface/virtual/dynamic/FFI/closure/coroutine and the complete
+escape/storage matrices remain open.
 
 **The first multi-region core is complete at `c913fbd`.** Analysis allocates a
 compile-time-only region slot for each borrowed field, preserves slots through
@@ -253,11 +274,9 @@ independently; same-source and active matching-field conflicts remain E3021;
 fixed arrays conservatively retain every element region; guard destruction
 still retains RefCell state; and generated C erases all region metadata.
 Mutation probes prove aggregate routing, field selection, and fixed-array
-provenance are load-bearing. This is not complete multi-region conformance:
-calls still use conservative all-source/all-result flow, legacy E3064 remains
-reachable only on that migration path, direct field replacement is not yet
-lowered as rebind, and callable summaries, E3065, invalidation, escape/storage,
-enum/generic, coroutine/FFI, and verifier coverage remain.
+provenance are load-bearing. This remains the lower-level foundation for the
+`90059c8` direct-call slice; neither checkpoint by itself proves complete
+multi-region conformance.
 
 **E3020/B2 is complete at `e0ba765`.** Direct Array iteration now borrows the
 Array through the existing shared-Span producer, yields `ref T`, and releases
