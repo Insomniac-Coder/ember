@@ -34,7 +34,7 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 183 Rust tests pass;
+- all 188 Rust tests pass;
 - the conformance runner passes across 95 rule directories and 305 Ember
   source files;
 - all six adopted-specification gates pass;
@@ -46,8 +46,11 @@ At the latest verified checkpoint:
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
 `Eq + Hash` ArenaMap keys, read-only resident keys, named iterators, capacity
 handling, Arena provenance, ordinary ownership, and single-allocation behavior
-are executable. The active milestone is now `ARCH-096-1`, the incremental
-migration to v0.9.6's canonical semantic-fact and verified-MIR architecture.
+are executable. The first `ARCH-096-1` slice is complete at `66d0d43`:
+definite-initialization now produces verified shared facts, and the C backend
+can consume only a structurally and provenance-verified MIR/type pair. The
+active feature milestone is now `UnsafeCell`; the remaining architecture
+migration continues incrementally around real feature work.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -246,9 +249,10 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: continue `ARCH-096-1` through real producers,
-consumers, and verifier boundaries; implement `UnsafeCell`; close the remaining
-Phase 2 tests and diagnostics; and only then advance to later phases.
+The immediate order is narrower: implement `UnsafeCell`; continue
+`ARCH-096-1` through real producers, consumers, and verifier boundaries; close
+the remaining Phase 2 tests and diagnostics; and only then advance to later
+phases.
 
 ## Contributing
 

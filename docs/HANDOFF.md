@@ -283,11 +283,11 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `825eac53385bf58c2e311ecce58629f2d5a8ef0f` (`Complete H4 ArenaMap hashing boundary`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `66d0d43d75782306199c3ae3132cc44dcd9129b9` (`Add verified semantic fact boundaries`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
-| `cargo test --workspace` | **183 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; `cargo build` is warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
+| `cargo test --workspace` | **188 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 95 top-level rule directories, 305 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 72 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
@@ -902,39 +902,39 @@ aliasing question at all, and the borrow checker was **not weakened**.
 `[UNS-10]`–`[UNS-10b]` define its deliberately narrow unsafe boundary. ADR-019
 still chooses compiler-known `Cell`/`RefCell` lowering; their builtins are not
 evidence that an arbitrary package may bypass `[BRW-1]`. Implement
-`UnsafeCell` later as its own Gate B task and do not infer any semantics beyond
+`UnsafeCell` next as its own Gate B task and do not infer any semantics beyond
 the owner-approved rules.
 
 ### 0.14 The next task
 
-**Resume `ARCH-096-1`: the incremental canonical semantic-fact migration.**
+**Implement `UnsafeCell`.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
-record. Choose one existing fact with a real producer and real consumers,
-thread it through the shared H1 representation and the MIR verifier, and prove
-accepted/rejected behavior unchanged before deleting any parallel state. Do
-not create placeholder facts and do not attempt a big-bang rewrite. Preserve
-the exact diagnostics, all current ownership/region behavior, runtime erasure,
-and the distinct ordinary-assignment, `Cell.set`, and `MaybeUninit.write`
-orderings. After this architecture slice, implement `UnsafeCell`, then close
-the remaining Phase 2 diagnostics and conformance exits.
+record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
+verified record. Implement the owner-approved `[UNS-10]` surface without
+weakening borrowing, regions, validity, synchronization, or `@static_safe`.
+Keep architecture migration incremental through real producers and consumers;
+do not create placeholder facts or attempt a big-bang rewrite. Preserve exact
+diagnostics, runtime erasure, and the distinct ordinary-assignment, `Cell.set`,
+and `MaybeUninit.write` orderings. Then close the remaining Phase 2 diagnostics
+and conformance exits.
 
 Read first:
 
 1. `docs/spec-source/ember-spec.md` and frozen H4 — especially H1's canonical
    semantic-fact architecture, MIR boundary, equivalence matrix, and runtime
    erasure requirements;
-2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.28–0.33;
+2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.28–0.34;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
 4. the current fact definitions and producers in `compiler/ember_types`,
    `compiler/ember_typeck`, `compiler/ember_analysis`, HIR/MIR lowering and
    `compiler/ember_mir/src/verify.rs`.
 
-After the next `ARCH-096-1` slice, the next milestone is **UnsafeCell**, then
-the remaining Phase 2 exit work and 0.9.5/H1 multi-region-view work in the
-order recorded by `MIGRATION-0.9.6.md`. `VER-096-1` is complete, but accepting
-a version selector alone is not H4 adoption or conformance.
+After **UnsafeCell**, continue the remaining `ARCH-096-1` migration and Phase 2
+exit work, then the 0.9.5/H1 multi-region-view work in the order recorded by
+`MIGRATION-0.9.6.md`. `VER-096-1` is complete, but accepting a version selector
+alone is not H4 adoption or conformance.
 
 ### 0.15 The principles, in one place
 
@@ -2270,6 +2270,54 @@ differential and adversarial tests before removing duplicate state. Then
 implement `UnsafeCell` and continue the remaining Phase 2 exits. Do not edit
 frozen H4; any genuine new specification gap requires H5.
 
+### 0.34 First verified `ARCH-096-1` boundary — 2026-09-13
+
+This section supersedes §0.33's implementation-status and exact-next-task
+statements. H4 remains frozen and the adopted normative source remains
+`ember-spec.md` (`0.8.5_Hardened_1`). The architecture implementation landed
+as `66d0d43d75782306199c3ae3132cc44dcd9129b9` (`Add verified semantic fact
+boundaries`).
+
+**Canonical initialization facts are now load-bearing.** Initial MIR produces
+one `InitializationFacts` record per body, retaining reachable block-entry and
+block-exit states over the shared `InitializationState` lattice. The verifier
+checks the canonical entry seed, each MIR transfer result, and every
+predecessor join before diagnostics consume the facts. Diagnostics no longer
+run their own fixpoint. Deliberately corrupted exit and join facts are unit
+tests, so the verifier boundary is evidence rather than a comment.
+
+**Verified MIR is now type-enforced at the C backend boundary.** After all
+analyses and final standard-body reachability pruning, structural and
+view-provenance verification runs unconditionally in debug and release. It
+returns an opaque `VerifiedMir` borrowing the exact body slice and exact
+`TypeTable` that were checked. `ember_codegen_c::emit` accepts that token
+instead of raw bodies/types; safe Rust cannot mutate or substitute either
+while emission uses the proof. Corruption tests separately prove that a
+missing source span and a provenance-free view cannot cross the boundary.
+
+This is an implementation-architecture checkpoint, not a language change.
+No accepted or rejected Ember program changed, no specification or ADR was
+edited, and no defect or owner question was opened. `ARCH-096-1` remains open:
+`OwnershipGraph`, `EffectSet`, complete borrow/ownership fact migration,
+callable access/provenance summaries and invalidation, runtime-erasure proof,
+and the full equivalence matrix still require implementation.
+
+**Verified state:** warning-free debug and release workspace builds;
+`cargo test --workspace --locked` reports 188 tests green, including the full
+conformance walk over the unchanged 95 rule directories and 305 `.em` files.
+All six adopted-source gates and the Appendix check pass. The ledger remains
+at 72 closed defects, no open defect, four open deviations (D1–D4), and no
+open owner semantic/API decision.
+
+**Exact next task: implement `UnsafeCell`.** Follow the owner-approved
+`[UNS-10]` contract exactly: lowest-level interior mutability, move-only,
+always `!Sync`, `Send` only with `T: Send`, shared-access mutation only through
+the unsafe raw-pointer boundary, no safe references or runtime borrow checks,
+no lifetime/region bypass, no special ABI/effect/reload semantics, and no use
+inside `@static_safe`. Continue the remaining `ARCH-096-1` migration only
+through real producers and consumers exposed by this and later work. Any new
+semantic ambiguity requires owner review and H5; do not edit frozen H4.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2278,9 +2326,11 @@ are complete (§0.22–§0.25). Sections 0.26–0.27 close ODR-009 and freeze H1
 §0.28 cuts H1 and closes ODR-010; §0.29 records the completed generic-method
 and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 §0.31 records H3 and the ODR-013 stop; §0.32 records the owner resolution and
-H4 cut; §0.33 records the completed `ARN-COLL-1` implementation. The active
-task is now `ARCH-096-1`, followed by UnsafeCell, Phase 2 completion, and the
-multi-region work before the current target can be explicitly adopted.
+H4 cut; §0.33 records the completed `ARN-COLL-1` implementation; §0.34 records
+the first verified `ARCH-096-1` fact/backend boundary. The active task is now
+UnsafeCell, with the remaining canonical-fact migration continuing
+incrementally, followed by Phase 2 completion and the multi-region work before
+the current target can be explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before

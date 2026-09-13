@@ -145,6 +145,16 @@ the test build retains one pre-existing test-name style warning. All six
 adopted-source gates are green. These figures are repository evidence, not H4
 conformance counts.
 
+The subsequent architecture checkpoint is `66d0d43`. It raises the workspace
+total to 188 tests while retaining the same 95 conformance directories and 305
+Ember source files. Definite initialization now produces one retained
+`InitializationFacts` fixpoint, verifies its entry seeds, block transfers, and
+predecessor joins, then drives diagnostics from that record. The C backend now
+accepts only an opaque `VerifiedMir` that binds the exact body slice and type
+table checked by unconditional structural and view-provenance verification
+after final body pruning. This is an incremental `ARCH-096-1` checkpoint, not
+complete H4 adoption.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -287,7 +297,7 @@ proved.
    loans/regions, access summaries, initialization/drop flags, layouts, and
    effects. Add adversarial tests for every behavior that a representation
    migration could silently change.
-2. **Introduce the minimal canonical fact spine.** Start with `TypeIdentity`,
+2. **In progress — introduce the minimal canonical fact spine.** Start with `TypeIdentity`,
    place/storage identity, `BorrowCapability`, and `InitializationState` needed
    by the active Arena work. Keep provenance distinct from storage overlap and
    keep proof metadata compile-time-only.
@@ -301,11 +311,11 @@ proved.
 5. **Completed — `alloc_array`, `alloc_uninit`, and `[TST-23]`.** Preserve Arena
    provenance and `!needs_drop`; test successful default construction and
    abort-only panic without inventing unwinding or observing post-panic state.
-6. **Active — complete custom hashing.** ODR-011 through ODR-013 are closed.
-   Implement the static generic `H: Hasher` protocol, concrete move-only
-   `DefaultHasher`, and custom `Eq + Hash` key dispatch. Preserve the implemented
-   fixed-capacity Arena view representation; do not expose mutable keys, add an
-   implicit dynamic-interface coercion, or freeze the mixing algorithm.
+6. **Completed — custom hashing and Arena collections.** ODR-011 through
+   ODR-013 are closed; `825eac5` implements the static generic `H: Hasher`
+   protocol, concrete move-only `DefaultHasher`, and custom `Eq + Hash` key
+   dispatch while preserving fixed capacity, read-only keys, and an
+   implementation-defined mixer.
 7. **Implement `UnsafeCell`, then remaining Phase 2 exit work.** Do not use it
    to bypass ordinary borrowing or retrofit compiler-known Cell/RefCell.
 8. **Complete multi-region and callable summaries through H1 facts.** Cover
@@ -367,11 +377,10 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Resume **`ARCH-096-1`** with one incremental canonical-fact slice: identify the
-existing producer and every consumer, route the fact through the shared
-representation and MIR verifier, prove accepted/rejected behavior is unchanged
-with differential and adversarial tests, and only then remove duplicate state.
-After that slice, implement `UnsafeCell` and continue the remaining Phase 2
-exit work. Do not perform a big-bang architecture rewrite, adopt H4, freeze the
-hash mixer, broaden `Zeroable` or `Hash` by inference, or add a second
-initialization/interface-dispatch mechanism.
+Implement **`UnsafeCell`** against the owner-approved `[UNS-10]` contract. Keep
+it move-only and `!Sync`; permit shared-access mutation only through the exact
+unsafe raw-access boundary; preserve lifetime/region, validity, type, bounds,
+and `@static_safe` enforcement; and do not suggest it in ordinary diagnostics.
+Continue `ARCH-096-1` incrementally as real UnsafeCell and later features
+produce facts—never as a big-bang rewrite. Do not adopt H4, freeze the hash
+mixer, broaden `Zeroable` or `Hash` by inference, or add a second unsafe tier.

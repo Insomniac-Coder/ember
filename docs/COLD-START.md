@@ -18,13 +18,13 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `825eac5` on `main`, followed by
+**Last committed implementation baseline:** `66d0d43` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
-    183 tests green      cargo test --workspace
+    188 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -221,13 +221,14 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: continue the 0.9.6 canonical-fact migration
+## 5. Next task: implement `UnsafeCell`
 
-**Exact next task: `ARCH-096-1`.** Migrate one real semantic fact from its
-current producer through every consumer and the MIR verifier, with differential
-and adversarial evidence before deleting parallel state. Do not start with a
-large structural rewrite. `UnsafeCell` follows this architecture slice, then
-the remaining Phase 2 exit work.
+**Exact next task: `UnsafeCell`.** Implement the owner-approved `[UNS-10]`
+lowest-level interior-mutability primitive without weakening ordinary borrow,
+region, validity, synchronization, or `@static_safe` rules. The first
+`ARCH-096-1` slice is complete at `66d0d43`; continue the remaining canonical
+fact migration incrementally around real feature producers and consumers,
+then close the remaining Phase 2 exit work.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
