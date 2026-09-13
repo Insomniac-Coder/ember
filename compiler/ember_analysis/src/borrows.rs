@@ -33,8 +33,7 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    BasicBlockId, Body, Builtin, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue,
-    StmtKind,
+    Body, Builtin, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue, StmtKind,
     Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
@@ -222,7 +221,10 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
     if !types.is_view(body.return_ty()) {
         return;
     }
-    let Some(region) = regions.local_region(ember_mir::RETURN_LOCAL) else { return };
+    let return_regions = regions.local_regions(ember_mir::RETURN_LOCAL);
+    if return_regions.is_empty() {
+        return;
+    }
     let allowed = allowed_origins(body, types);
     let Some(span) = body
         .blocks
@@ -233,9 +235,9 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
         return;
     };
 
-    let mut offenders: Vec<LocalId> = regions
-        .origins(region)
+    let mut offenders: Vec<LocalId> = return_regions
         .iter()
+        .flat_map(|slot| regions.origins(slot.region))
         .filter_map(|origin| match origin {
             // A borrow of a by-value parameter is not an elision question at
             // all: nothing in the caller outlives it. `check_escapes` reports
@@ -249,6 +251,7 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
         })
         .collect();
     offenders.sort();
+    offenders.dedup();
 
     for local in offenders {
         let decl = body.local(local);
@@ -347,8 +350,7 @@ fn check_body(
     is_method: &dyn Fn(&FuncRef) -> bool,
     sink: &mut Sink,
 ) {
-    let live = liveness(body);
-    let regions = Regions::infer(body, types, &live, elision);
+    let regions = Regions::infer(body, types, elision);
     check_box_storage_regions(body, types, &regions, sink);
     // Before the loans: a function that hands back a parameter has no loan of
     // its own, and `[LT-1a]` is about exactly that function.
@@ -644,12 +646,6 @@ fn collect_loans(
         for (index, stmt) in block.stmts.iter().enumerate() {
             let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
             let Rvalue::Ref { place: borrowed, mutable } = rvalue else { continue };
-            // A borrow written straight into a projection rather than a whole
-            // local is a view field; those arrive with `[TYP-15]` and block E's
-            // region work, and are not tracked here.
-            if !place.projection.is_empty() {
-                continue;
-            }
             let created_at = Point { block: block_index, index };
             let Some(region) = regions.loan_region(created_at) else { continue };
             let permission = if *mutable {
@@ -1072,7 +1068,7 @@ fn check_point(
             // `[LT-2]` — when a view struct bundling two views is what holds
             // the loan, this is shape B13 and not B3, and `[DIA-7a]` keys it
             // to `E3064`.
-            let bundled = bundles_two_views(body, types, holder);
+            let bundled = bundles_two_views(body, types, regions, loan, holder);
             // `[BRW-4]` — when the conflicting access is a method call's
             // receiver autoref, disjoint-field access is defeated by the call:
             // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
@@ -1263,27 +1259,30 @@ fn keeper(
     }
 }
 
-/// `[LT-2]`, shape B13 — whether the thing keeping this loan alive is a view
-/// struct bundling **more than one** view.
+/// Temporary B13 migration check for calls that still lack the
+/// field-sensitive provenance summaries required by `[LT-22]`/`[LT-35]`.
 ///
-/// That is the whole of `[LT-2]`'s one-region model made visible: "constructing
-/// a view struct from several references gives it the intersection of their
-/// regions", and "multiple independent regions inside one struct are not
-/// expressible in v1". So a struct holding two views holds *both* loans for as
-/// long as any part of it is live, and touching the struct at all keeps the
-/// shorter one alive — even where only the longer-lived field is ever read.
-///
-/// The rejection is right either way; what changes is the advice. `[DIA-7a]`
-/// keys `E3064` to this shape, whose help is to stop bundling, and that is the
-/// fix — where B3's "shorten its last use" is not, because the use that keeps
-/// the loan alive may be of the *other* field entirely.
-///
-/// D-011 recorded `E3064` as "registered and emitted by nothing". It was
-/// reachable all along: these programs were being rejected as B3.
-fn bundles_two_views(body: &Body, types: &TypeTable, holder: Option<LocalId>) -> bool {
+/// H6 reserves legacy `E3064/B13`; direct construction and projection now use
+/// the independent region slots required by `[LT-14]`–`[LT-20]` and therefore
+/// either succeed or report the ordinary matching-field conflict (`E3021`).
+/// Until callable summaries exist, however, a call returning a multi-view
+/// aggregate conservatively connects every tied input to every result field.
+/// This predicate limits the old diagnostic to that detectable conservative
+/// flow so the incremental compiler remains honest about what it cannot yet
+/// prove. Completing callable summaries must remove this emission path; it is
+/// not target conformance and must not be generalized to precise field flow.
+fn bundles_two_views(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    loan: &Loan,
+    holder: Option<LocalId>,
+) -> bool {
     let Some(holder) = holder else { return false };
     let TyKind::Struct(id) = *types.kind(body.local(holder).ty) else { return false };
     types.struct_def(id).fields.iter().filter(|f| types.is_view(f.ty)).count() >= 2
+        && regions.has_conservative_field_flow(loan.capability.region)
+        && regions.reached_slot_count(loan.capability.region, holder) >= 2
 }
 
 /// Every point at which a local's value is read, by the span of the statement
@@ -1552,142 +1551,5 @@ fn rvalue_reads(rvalue: &Rvalue, out: &mut Vec<(Place, Access)>) {
         Rvalue::Ref { place, mutable } => {
             out.push((place.clone(), Access::Borrow { mutable: *mutable }))
         }
-    }
-}
-
-/// §4.7 step 3 — backward liveness over the CFG, to a fixpoint. A local is
-/// live at a point if some path from it reaches a read before a write.
-fn liveness(body: &Body) -> HashMap<Point, HashSet<LocalId>> {
-    let mut live_out: HashMap<usize, HashSet<LocalId>> = HashMap::new();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for index in (0..body.blocks.len()).rev() {
-            let mut out = HashSet::new();
-            for successor in successors(&body.blocks[index].terminator) {
-                // A block's live-out is the union of its successors' live-in.
-                if let Some(entry) = live_in(body, successor.0 as usize, &live_out) {
-                    out.extend(entry);
-                }
-            }
-            if live_out.get(&index).map(|e| e != &out).unwrap_or(true) {
-                live_out.insert(index, out);
-                changed = true;
-            }
-        }
-    }
-
-    // Walk each block backwards from its live-out to give every point a set.
-    let mut points = HashMap::new();
-    for (index, block) in body.blocks.iter().enumerate() {
-        let mut live: HashSet<LocalId> = live_out.get(&index).cloned().unwrap_or_default();
-        terminator_transfer(&block.terminator, &mut live);
-        points.insert(Point { block: index, index: block.stmts.len() }, live.clone());
-        for (i, stmt) in block.stmts.iter().enumerate().rev() {
-            stmt_transfer(&stmt.kind, &mut live);
-            points.insert(Point { block: index, index: i }, live.clone());
-        }
-    }
-    points
-}
-
-fn live_in(
-    body: &Body,
-    block: usize,
-    live_out: &HashMap<usize, HashSet<LocalId>>,
-) -> Option<HashSet<LocalId>> {
-    let b = body.blocks.get(block)?;
-    let mut live: HashSet<LocalId> = live_out.get(&block).cloned().unwrap_or_default();
-    terminator_transfer(&b.terminator, &mut live);
-    for stmt in b.stmts.iter().rev() {
-        stmt_transfer(&stmt.kind, &mut live);
-    }
-    Some(live)
-}
-
-fn successors(terminator: &Terminator) -> Vec<BasicBlockId> {
-    match terminator {
-        Terminator::Goto(bb) => vec![*bb],
-        Terminator::SwitchInt { targets, otherwise, .. } => {
-            let mut out: Vec<BasicBlockId> = targets.iter().map(|(_, bb)| *bb).collect();
-            out.push(*otherwise);
-            out
-        }
-        Terminator::Call { next, .. } | Terminator::Assert { next, .. } => vec![*next],
-        Terminator::Return | Terminator::Unreachable => Vec::new(),
-    }
-}
-
-fn stmt_transfer(kind: &StmtKind, live: &mut HashSet<LocalId>) {
-    match kind {
-        StmtKind::Assign { place, rvalue } => {
-            if place.projection.is_empty() {
-                live.remove(&place.local);
-            } else {
-                live.insert(place.local);
-            }
-            let mut reads = Vec::new();
-            rvalue_reads(rvalue, &mut reads);
-            for (p, _) in reads {
-                live.insert(p.local);
-            }
-        }
-        StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-            live.remove(&dest.local);
-            live.remove(&overflow.local);
-            let mut reads = Vec::new();
-            operand_read(lhs, &mut reads);
-            operand_read(rhs, &mut reads);
-            for (p, _) in reads {
-                live.insert(p.local);
-            }
-        }
-        StmtKind::Drop { place, .. } => {
-            live.insert(place.local);
-        }
-        StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => {
-            live.remove(l);
-        }
-        StmtKind::Nop => {}
-    }
-}
-
-fn terminator_transfer(terminator: &Terminator, live: &mut HashSet<LocalId>) {
-    match terminator {
-        Terminator::SwitchInt { discr, .. } => {
-            let mut reads = Vec::new();
-            operand_read(discr, &mut reads);
-            for (p, _) in reads {
-                live.insert(p.local);
-            }
-        }
-        Terminator::Call { args, dest, .. } => {
-            live.remove(&dest.local);
-            for arg in args {
-                let mut reads = Vec::new();
-                operand_read(arg, &mut reads);
-                for (p, _) in reads {
-                    live.insert(p.local);
-                }
-            }
-        }
-        Terminator::Assert { cond, msg, .. } => {
-            let mut reads = Vec::new();
-            operand_read(cond, &mut reads);
-            if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
-                operand_read(file, &mut reads);
-                operand_read(line, &mut reads);
-            }
-            for (p, _) in reads {
-                live.insert(p.local);
-            }
-        }
-        // The return slot is read by the caller, so it is live at every
-        // `Return`. Without this a borrow that leaves the frame looks dead
-        // exactly where it matters, and §4.7 step 6 never fires.
-        Terminator::Return => {
-            live.insert(ember_mir::RETURN_LOCAL);
-        }
-        Terminator::Goto(_) | Terminator::Unreachable => {}
     }
 }
