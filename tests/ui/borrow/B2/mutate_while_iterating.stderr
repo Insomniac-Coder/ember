@@ -1,0 +1,13 @@
+error[E3020]: cannot mutate `values` while it is borrowed by this loop
+ --> tests/ui/borrow/B2/mutate_while_iterating.em:6:9
+  |
+5 |     for value in values:
+  |                  ------ `values` borrowed here for the whole loop
+6 |         values.push(3)
+  |         ^^^^^^^^^^^^^^ mutable borrow here
+  |
+  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)

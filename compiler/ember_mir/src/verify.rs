@@ -226,6 +226,7 @@ mod tests {
             span: Span::DUMMY,
             borrows: None,
             borrowed_params: Vec::new(),
+            for_iterators: Vec::new(),
         }
     }
 
@@ -532,6 +533,7 @@ mod view_invariant_tests {
             span: Span::DUMMY,
             borrows: None,
             borrowed_params: Vec::new(),
+            for_iterators: Vec::new(),
         };
         (body, types)
     }

@@ -65,6 +65,11 @@ pub struct Body {
     /// Only `Borrow` is listed: `Owned` takes ownership, and `Mut` arrives as
     /// `ref mut`, whose moves already carry a `Deref` projection.
     pub borrowed_params: Vec<LocalId>,
+    /// `[CTL-2]` — iterator locals synthesized specifically for source `for`
+    /// loops. HIR has already desugared those loops to ordinary control flow;
+    /// retaining this semantic fact lets diagnostics distinguish E3020/B2
+    /// from a manually held iterator's ordinary E3021/B3 overlap.
+    pub for_iterators: Vec<LocalId>,
 }
 
 impl Body {

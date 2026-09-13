@@ -1061,6 +1061,14 @@ fn check_point(
             // borrow lives in one, the advice is about the expression, not
             // about a local they cannot see.
             let (borrower, later, holder) = keeper(body, regions, reads, loan, span);
+            // `[CTL-2]` survives `for` desugaring as an explicit semantic
+            // fact on the synthesized iterator local. A mutable access to the
+            // iterable while that local holds this loan is E3020/B2. A
+            // manually created iterator remains an ordinary E3021/B3 loan;
+            // inferring this distinction from `__it` or source spans would be
+            // both fragile and user-spellable.
+            let iteration_borrow = matches!(access, Access::Write | Access::Borrow { mutable: true })
+                && loan_held_by_for_iterator(body, regions, loan);
             // `[LT-2]` — when a view struct bundling two views is what holds
             // the loan, this is shape B13 and not B3, and `[DIA-7a]` keys it
             // to `E3064`.
@@ -1079,6 +1087,11 @@ fn check_point(
             };
             let (code, message) = if loan.arena_scope {
                 (codes::E3096, format!("`{name}` is scoped here"))
+            } else if iteration_borrow {
+                (
+                    codes::E3020,
+                    format!("cannot mutate `{name}` while it is borrowed by this loop"),
+                )
             } else if bundled {
                 (
                     codes::E3064,
@@ -1109,10 +1122,36 @@ fn check_point(
                 .as_deref()
                 .unwrap_or("array");
             let mut diagnostic = Diagnostic::error(code, span, message)
-                .primary_label("conflicting access here")
-                .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"));
-            if let Some(later) = later {
+                .primary_label(if iteration_borrow {
+                    "mutable borrow here"
+                } else {
+                    "conflicting access here"
+                })
+                .secondary(
+                    loan.span,
+                    if iteration_borrow {
+                        format!("`{name}` borrowed here for the whole loop")
+                    } else {
+                        format!("{kind}borrow of `{name}` starts here")
+                    },
+                );
+            if !iteration_borrow && let Some(later) = later {
                 diagnostic = diagnostic.secondary(later, "borrow later used here");
+            }
+            if iteration_borrow {
+                sink.emit_classified(
+                    diagnostic
+                        .help(
+                            "collect the indices or values first, then mutate; use `retain` or \
+                             `drain` when the operation fits",
+                        )
+                        .help(
+                            "or iterate over a fixed index range and mutate only after taking \
+                             the current value",
+                        )
+                        .note("a `for` loop borrows the iterable until the loop ends (CTL-2)"),
+                );
+                continue;
             }
             sink.emit_classified(
                 diagnostic
@@ -1173,6 +1212,17 @@ fn check_point(
             );
         }
     }
+}
+
+/// `[CTL-2]`, shape B2 — whether a loan is retained by the compiler-created
+/// iterator for a source `for` loop. Region propagation, rather than a direct
+/// local equality check, is required because `values.as_span().iter()` carries
+/// the owner's loan through both view constructors before reaching `__it`.
+fn loan_held_by_for_iterator(body: &Body, regions: &Regions, loan: &Loan) -> bool {
+    regions
+        .holders(loan.capability.region)
+        .iter()
+        .any(|holder| body.for_iterators.contains(holder))
 }
 
 /// `[DIA-3]` — which reference keeps this loan alive at a conflict, and where

@@ -4898,7 +4898,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn declare(&mut self, name: Option<Symbol>, ty: Ty, span: Span) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
-        self.locals.push(LocalDecl { name, ty, span });
+        self.locals.push(LocalDecl { name, ty, span, for_iterator: false });
         if let Some(name) = name {
             self.scopes.last_mut().expect("a scope is open").insert(name, id);
         }
@@ -6001,18 +6001,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         })
     }
 
-    /// `for x in xs` over an `Array[T]`:
+    /// `[CTL-1]` — `for x in xs` over an `Array[T]` borrows the place for the
+    /// whole loop and yields `ref T`:
     ///
     /// ```text
-    /// __xs = xs
+    /// __xs: Span[T] = xs
     /// for __i in 0..__xs.len():
     ///     x = __xs[__i]
     ///     <body>
     /// ```
     ///
-    /// A counted loop, so iterating a collection costs an index and a bounds
-    /// check rather than an iterator object — the same shape `[CTL-3]` asks
-    /// for over a range.
+    /// The hidden span makes the borrow and yielded-reference types explicit
+    /// while retaining the counted-loop lowering `[CTL-3]` asks for. Moving
+    /// the Array into `__xs` would violate `[CTL-1]` and turn an in-loop
+    /// mutation into E3050 instead of E3020 (D-070).
     fn check_for_array(
         &mut self,
         label: Option<ast::Ident>,
@@ -6025,35 +6027,52 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Option<Stmt> {
         let (iterable, elem) = source;
         let usize_ty = self.common.usize;
+        let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+        let iterable_span = self.view_of(
+            iterable,
+            span_ty,
+            false,
+            Builtin::SpanFrom { mutable: false },
+        );
         self.scopes.push(HashMap::new());
-        let xs_local = self.declare(Some(Symbol::intern("__xs")), iterable.ty, span);
+        let xs_local = self.declare(Some(Symbol::intern("__xs")), span_ty, span);
+        self.locals[xs_local.0 as usize].for_iterator = true;
         let index_local = self.declare(Some(Symbol::intern("__i")), usize_ty, span);
 
         let xs = |ty: Ty| Expr { ty, kind: ExprKind::Local(xs_local), span };
         let length = Expr {
             ty: usize_ty,
             kind: ExprKind::Builtin {
-                which: Builtin::ArrayLen,
-                args: vec![xs(iterable.ty)],
+                which: Builtin::SpanLen,
+                args: vec![xs(span_ty)],
             },
             span,
         };
 
-        // The loop variable is the element, read at the index.
+        // The loop variable is a shared reference to the element at the
+        // current index, as `[CTL-1]` requires for a borrowed place.
         self.scopes.push(HashMap::new());
-        let item_local = self.declare(binding_name(pattern), elem, pattern.span);
+        let item_ty = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+        let item_local = self.declare(binding_name(pattern), item_ty, pattern.span);
         self.loop_labels.push(label.map(|l| l.name));
         let mut inner = vec![Stmt::Let {
             local: item_local,
             init: Some(Expr {
-                ty: elem,
-                kind: ExprKind::Index {
-                    base: Box::new(xs(iterable.ty)),
-                    index: Box::new(Expr {
-                        ty: usize_ty,
-                        kind: ExprKind::Local(index_local),
+                ty: item_ty,
+                kind: ExprKind::Ref {
+                    place: Box::new(Expr {
+                        ty: elem,
+                        kind: ExprKind::Index {
+                            base: Box::new(xs(span_ty)),
+                            index: Box::new(Expr {
+                                ty: usize_ty,
+                                kind: ExprKind::Local(index_local),
+                                span,
+                            }),
+                        },
                         span,
                     }),
+                    mutable: false,
                 },
                 span,
             }),
@@ -6068,7 +6087,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         Some(Stmt::Block(Block {
             stmts: vec![
-                Stmt::Let { local: xs_local, init: Some(iterable) },
+                Stmt::Let { local: xs_local, init: Some(iterable_span) },
                 Stmt::ForRange {
                     local: index_local,
                     start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
@@ -6119,6 +6138,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // The iterator itself is a local, because `next` mutates it.
         self.scopes.push(HashMap::new());
         let it_local = self.declare(Some(Symbol::intern("__it")), iterable.ty, iter.span);
+        self.locals[it_local.0 as usize].for_iterator = true;
         let bool_ty = self.common.bool_;
         let done_local = self.declare(Some(Symbol::intern("__done")), bool_ty, iter.span);
 

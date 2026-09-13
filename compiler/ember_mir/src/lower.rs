@@ -279,6 +279,14 @@ impl<'a> Builder<'a> {
             .filter(|(_, p)| p.mode == hir::Mode::Borrow)
             .map(|(i, _)| LocalId((i + 1) as u32))
             .collect();
+        let for_iterators: Vec<LocalId> = self
+            .function
+            .locals
+            .iter()
+            .enumerate()
+            .filter(|(_, decl)| decl.for_iterator)
+            .map(|(index, _)| self.local_map[index])
+            .collect();
         Body {
             name: self.function.name.to_string(),
             symbol: self.function.symbol.clone(),
@@ -288,6 +296,7 @@ impl<'a> Builder<'a> {
             span: self.function.span,
             borrows: self.function.borrows.clone(),
             borrowed_params,
+            for_iterators,
         }
     }
 

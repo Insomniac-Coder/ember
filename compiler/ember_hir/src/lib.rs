@@ -59,6 +59,11 @@ pub struct LocalDecl {
     pub name: Option<Symbol>,
     pub ty: Ty,
     pub span: Span,
+    /// `[CTL-2]` — this local is the iterator synthesized for a source `for`
+    /// loop. The distinction survives desugaring so borrow diagnostics can
+    /// report mutation of the loop's iterable as E3020/B2 instead of guessing
+    /// from the compiler-private local's spelling.
+    pub for_iterator: bool,
 }
 
 #[derive(Debug)]

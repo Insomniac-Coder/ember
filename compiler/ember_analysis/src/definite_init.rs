@@ -496,6 +496,7 @@ mod tests {
             span,
             borrows: None,
             borrowed_params: Vec::new(),
+            for_iterators: Vec::new(),
         }
     }
 
