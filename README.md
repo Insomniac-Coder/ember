@@ -34,7 +34,7 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 200 Rust tests pass;
+- all 205 Rust tests pass;
 - the conformance runner passes across 123 rule directories and 412 Ember
   source files;
 - all six adopted-specification gates pass;
@@ -90,9 +90,15 @@ canonical `EMIF` interface artifacts for callable metadata and derives BLAKE3
 interface/cache identities through imports. `7bcca7f` makes that section
 import-visible under `[MOD-2]`: `pub` and `pub(package)` summaries invalidate
 importers, while a private callable relation stays local. The compiler still
-rechecks the whole loaded program: public signatures/types/layout/effect
-sections, item-granular reuse, non-direct dispatch, and the complete
-escape/storage matrix remain incomplete; unknown calls stay conservative.
+rechecks the whole loaded program. `6ad9834` extends that same artifact to
+schema 4: import-visible top-level declarations now carry canonical resolved
+parameter/result types, `borrowed`/`mut`/`owned` modes, `@borrows`, unsafe/ABI
+status, and generic bounds (including implicit Callable bounds). This includes
+an uninstantiated public generic, whose declaration is now cached without
+pretending it has an emitted MIR body. Visible-member declarations still use
+the existing body-derived bridge; layouts, effects, inline eligibility,
+item-granular reuse, non-direct dispatch, and the complete escape/storage
+matrix remain incomplete; unknown calls stay conservative.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the

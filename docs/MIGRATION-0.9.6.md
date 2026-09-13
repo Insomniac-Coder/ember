@@ -352,6 +352,19 @@ callable-summary visibility boundary: public signatures/types, layouts,
 effects, inline bodies, and item-granular reuse still need real producers and
 consumers.
 
+`6ad9834` advances that same artifact to schema 4 without adopting H6 or
+changing language semantics. The type checker now emits resolved declaration
+facts for every visible top-level function; `EMIF` records canonical parameter
+and result types, `borrowed`/`mut`/`owned` modes, `@borrows`, unsafe/ABI facts,
+generic parameter positions, resolved bounds, and implicit Callable/
+CallableOnce shapes. This is declaration-first: a public generic is serialized
+even with no emitted specialization, and has no fake callable-region metadata.
+The regression changes a public generic bound and proves the importer key
+changes; direct mode/ABI/unsafe and ordinary public signature changes are also
+round-tripped. Existing visible-member records remain body-derived pending the
+same source-declaration collector for members, generic methods, interfaces,
+and extensions. Layout/effect/inline sections and safe reuse remain open.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -556,8 +569,10 @@ proved.
    direct method/generic/monomorphized-interface cases, and closes `[LT-21]`
    point-sensitive replacement. `9ade1d0` adds the first real interface/cache
    artifact and `[LT-40]` identity invalidation. `7bcca7f` makes its callable
-   section import-precise. Next add canonical public signatures/types before
-   using it for safe reuse, then cover audited-declared, unknown,
+   section import-precise, and `6ad9834` adds declaration-first top-level
+   signatures and generic bounds. Next extend the same source declaration
+   path to visible members/generic methods/interfaces/extensions before using
+   it for safe reuse, then cover audited-declared, unknown,
    separate-compilation, dynamic, hot-reload, escape/storage, and remaining
    verifier cases while preserving runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
@@ -622,11 +637,12 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Add a canonical public-function signature/type section to `7bcca7f`'s
-validated artifact, then use the resulting BLAKE3 interface identity for safe
-incremental reuse. Preserve conservative all-slot behavior for unknown calls
+Extend `6ad9834`'s declaration-first EMIF contract to visible members,
+generic methods, interface members, and extensions, then prove that a member
+generic-bound or signature change invalidates importers while a private member
+body change does not. Preserve conservative all-slot behavior for unknown calls
 and ordinary E3021 for precise matching-field conflicts; E3064 remains a
-reserved historical identity rather than target behavior. Then extend the
-non-direct, escape/storage/enum, FFI/coroutine, and hot-reload matrices without
-leaking proof metadata into runtime layout. Do not fabricate class/thread/effect
-diagnostic shapes, add placeholder facts, or start a big-bang rewrite.
+reserved historical identity rather than target behavior. Do not start cache
+reuse, layouts/effects/inline sections, or a big-bang rewrite as part of that
+slice. Then extend the non-direct, escape/storage/enum, FFI/coroutine, and
+hot-reload matrices without leaking proof metadata into runtime layout.
