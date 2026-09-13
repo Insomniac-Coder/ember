@@ -1562,7 +1562,7 @@ impl<'a> Builder<'a> {
                 );
             }
             hir::ExprKind::Builtin {
-                which: hir::Builtin::ArenaMapGet { key, value, mutable },
+                which: hir::Builtin::ArenaMapGet { key, value, mutable, equals },
                 args,
             } => {
                 self.lower_arena_map_get(
@@ -1572,12 +1572,13 @@ impl<'a> Builder<'a> {
                     *key,
                     *value,
                     *mutable,
+                    *equals,
                     expr.ty,
                     expr.span,
                 );
             }
             hir::ExprKind::Builtin {
-                which: hir::Builtin::ArenaMapContains { key },
+                which: hir::Builtin::ArenaMapContains { key, equals },
                 args,
             } => {
                 self.lower_arena_map_contains(
@@ -1585,11 +1586,12 @@ impl<'a> Builder<'a> {
                     &args[0],
                     &args[1],
                     *key,
+                    *equals,
                     expr.span,
                 );
             }
             hir::ExprKind::Builtin {
-                which: hir::Builtin::ArenaMapInsert { key, value },
+                which: hir::Builtin::ArenaMapInsert { key, value, equals },
                 args,
             } => {
                 self.lower_arena_map_insert(
@@ -1599,12 +1601,13 @@ impl<'a> Builder<'a> {
                     &args[2],
                     *key,
                     *value,
+                    *equals,
                     expr.ty,
                     expr.span,
                 );
             }
             hir::ExprKind::Builtin {
-                which: hir::Builtin::ArenaMapRemove { key, value },
+                which: hir::Builtin::ArenaMapRemove { key, value, equals },
                 args,
             } => {
                 self.lower_arena_map_remove(
@@ -1613,6 +1616,7 @@ impl<'a> Builder<'a> {
                     &args[1],
                     *key,
                     *value,
+                    *equals,
                     expr.ty,
                     expr.span,
                 );
@@ -2701,13 +2705,15 @@ impl<'a> Builder<'a> {
 
     /// Emit the compact-prefix linear search used by the current fixed map.
     /// `[ARN-5d]` does not prescribe a bucket algorithm; this is deterministic
-    /// for unchanged state and uses the ordinary key equality semantics for
-    /// the compiler-known key set accepted by type checking.
+    /// for unchanged state. Scalar keys use the compiler-known equality
+    /// operation; user-defined keys call the exact `Eq.eq` implementation
+    /// selected during type checking.
     fn emit_arena_map_search(
         &mut self,
         base: &Place,
         wanted: Operand,
         key: Ty,
+        equals: Option<hir::DefId>,
         span: ember_span::Span,
     ) -> (LocalId, BasicBlockId, BasicBlockId) {
         let cursor = self.temp(self.usize_ty, span);
@@ -2744,14 +2750,26 @@ impl<'a> Builder<'a> {
         self.current = compare;
         let equal = self.temp(self.bool_ty, span);
         let existing = Self::arena_map_slot(base, cursor).field(1).field(0);
-        self.push(StmtKind::Assign {
-            place: Place::local(equal),
-            rvalue: Rvalue::BinaryOp {
-                op: BinOp::Eq,
-                lhs: Operand::Copy(existing),
-                rhs: wanted,
-            },
-        });
+        if let Some(equals) = equals {
+            let symbol = self.program.function(equals).symbol.clone();
+            let after_call = self.new_block();
+            self.terminate(Terminator::Call {
+                func: FuncRef::Direct { symbol },
+                args: vec![Operand::Copy(existing), wanted],
+                dest: Place::local(equal),
+                next: after_call,
+            });
+            self.current = after_call;
+        } else {
+            self.push(StmtKind::Assign {
+                place: Place::local(equal),
+                rvalue: Rvalue::BinaryOp {
+                    op: BinOp::Eq,
+                    lhs: Operand::Copy(existing),
+                    rhs: wanted,
+                },
+            });
+        }
         self.terminate(Terminator::SwitchInt {
             discr: Operand::Copy(Place::local(equal)),
             targets: vec![(0, advance)],
@@ -2815,13 +2833,14 @@ impl<'a> Builder<'a> {
         key: Ty,
         _value: Ty,
         mutable: bool,
+        equals: Option<hir::DefId>,
         result_ty: Ty,
         span: ember_span::Span,
     ) {
         let base = self.lower_arena_array_receiver(receiver);
         let wanted = self.lower_operand_borrowed(wanted);
         let (cursor, found, missing) =
-            self.emit_arena_map_search(&base, wanted, key, span);
+            self.emit_arena_map_search(&base, wanted, key, equals, span);
         let join = self.new_block();
 
         self.current = found;
@@ -2858,11 +2877,13 @@ impl<'a> Builder<'a> {
         receiver: &'a hir::Expr,
         wanted: &'a hir::Expr,
         key: Ty,
+        equals: Option<hir::DefId>,
         span: ember_span::Span,
     ) {
         let base = self.lower_arena_array_receiver(receiver);
         let wanted = self.lower_operand_borrowed(wanted);
-        let (_, found, missing) = self.emit_arena_map_search(&base, wanted, key, span);
+        let (_, found, missing) =
+            self.emit_arena_map_search(&base, wanted, key, equals, span);
         let join = self.new_block();
         self.current = found;
         self.push(StmtKind::Assign {
@@ -2887,6 +2908,7 @@ impl<'a> Builder<'a> {
         value: &'a hir::Expr,
         key: Ty,
         value_ty: Ty,
+        equals: Option<hir::DefId>,
         result_ty: Ty,
         span: ember_span::Span,
     ) {
@@ -2894,8 +2916,12 @@ impl<'a> Builder<'a> {
         // Calls evaluate all arguments before the body searches or mutates.
         let wanted = self.lower_operand(wanted);
         let value = self.lower_operand(value);
+        let wanted_for_search = match &wanted {
+            Operand::Move(place) => Operand::Copy(place.clone()),
+            other => other.clone(),
+        };
         let (cursor, found, missing) =
-            self.emit_arena_map_search(&base, wanted.clone(), key, span);
+            self.emit_arena_map_search(&base, wanted_for_search, key, equals, span);
         let join = self.new_block();
 
         self.current = found;
@@ -2903,7 +2929,7 @@ impl<'a> Builder<'a> {
         let value_place = Self::arena_map_slot(&base, cursor).field(2).field(0);
         self.push(StmtKind::Assign {
             place: Place::local(old_value),
-            rvalue: Rvalue::Use(Operand::Copy(value_place.clone())),
+            rvalue: Rvalue::Use(self.read(value_place.clone(), value_ty)),
         });
         self.push(StmtKind::Assign {
             place: value_place,
@@ -2917,7 +2943,7 @@ impl<'a> Builder<'a> {
         self.assign_option(
             Place::local(old_option),
             option_ty,
-            Some(Operand::Copy(Place::local(old_value))),
+            Some(self.read(Place::local(old_value), value_ty)),
         );
         self.assign_result_ok(dest.clone(), result_ty, Operand::Move(Place::local(old_option)));
         self.terminate(Terminator::Goto(join));
@@ -2988,21 +3014,22 @@ impl<'a> Builder<'a> {
         wanted: &'a hir::Expr,
         key: Ty,
         value_ty: Ty,
+        equals: Option<hir::DefId>,
         result_ty: Ty,
         span: ember_span::Span,
     ) {
         let base = self.lower_arena_array_receiver(receiver);
         let wanted = self.lower_operand_borrowed(wanted);
-        let (cursor, found, missing) = self.emit_arena_map_search(&base, wanted, key, span);
+        let (cursor, found, missing) =
+            self.emit_arena_map_search(&base, wanted, key, equals, span);
         let join = self.new_block();
 
         self.current = found;
         let old_value = self.temp_unowned(value_ty, span);
+        let old_value_place = Self::arena_map_slot(&base, cursor).field(2).field(0);
         self.push(StmtKind::Assign {
             place: Place::local(old_value),
-            rvalue: Rvalue::Use(Operand::Copy(
-                Self::arena_map_slot(&base, cursor).field(2).field(0),
-            )),
+            rvalue: Rvalue::Use(self.read(old_value_place, value_ty)),
         });
         let scan = self.temp(self.usize_ty, span);
         self.push(StmtKind::Assign {
@@ -3045,13 +3072,15 @@ impl<'a> Builder<'a> {
         self.current = shift;
         let from = Self::arena_map_slot(&base, next);
         let to = Self::arena_map_slot(&base, scan);
+        let from_key = from.clone().field(1).field(0);
+        let from_value = from.field(2).field(0);
         self.push(StmtKind::Assign {
             place: to.clone().field(1).field(0),
-            rvalue: Rvalue::Use(Operand::Copy(from.clone().field(1).field(0))),
+            rvalue: Rvalue::Use(self.read(from_key, key)),
         });
         self.push(StmtKind::Assign {
             place: to.field(2).field(0),
-            rvalue: Rvalue::Use(Operand::Copy(from.field(2).field(0))),
+            rvalue: Rvalue::Use(self.read(from_value, value_ty)),
         });
         self.push(StmtKind::Assign {
             place: Place::local(scan),
@@ -3078,7 +3107,7 @@ impl<'a> Builder<'a> {
         self.assign_option(
             dest.clone(),
             result_ty,
-            Some(Operand::Copy(Place::local(old_value))),
+            Some(self.read(Place::local(old_value), value_ty)),
         );
         self.terminate(Terminator::Goto(join));
 

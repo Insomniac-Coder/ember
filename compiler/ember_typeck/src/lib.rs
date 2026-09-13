@@ -75,6 +75,7 @@ pub fn check(
         checker.current_module = index;
         checker.declare_names(&loaded.module);
     }
+    checker.bind_prelude(modules);
     checker.bind_imports(modules);
     // Type collection is whole-program and explicitly phased. Imported type
     // names are already bound above, but an imported nominal/generic type did
@@ -492,16 +493,20 @@ impl<'a> Checker<'a> {
     /// silently accepting resource storage with no destructor bookkeeping.
     fn emit_concrete_instantiation_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
         for diagnostic in diagnostics {
-            if diagnostic.code != Some(codes::E3090) {
-                continue;
-            }
             let duplicate = self.sink.diagnostics().iter().any(|existing| {
                 existing.code == diagnostic.code
                     && existing.primary.span == diagnostic.primary.span
                     && existing.message == diagnostic.message
             });
             if !duplicate {
-                self.sink.emit_classified(diagnostic);
+                if diagnostic
+                    .code
+                    .is_some_and(|code| code.subsystem == ember_diag::codes::Subsystem::Ownership)
+                {
+                    self.sink.emit_classified(diagnostic);
+                } else {
+                    self.sink.emit(diagnostic);
+                }
             }
         }
     }
@@ -1137,6 +1142,37 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[MOD-5]` — install only the source-backed names that the normative
+    /// prelude exports. Merely loading `std.core` and `std.collections` must
+    /// not leak every public declaration into user modules: in particular,
+    /// `Hasher`, `DefaultHasher`, and the Arena collection types remain
+    /// explicit imports. A local declaration wins, and an explicit import is
+    /// bound afterwards and may deliberately replace the prelude spelling.
+    fn bind_prelude(&mut self, modules: &[LoadedModule]) {
+        const EXPORTS: &[(&str, &[&str])] = &[
+            ("std.core", &["Eq", "Ord", "Default", "Iterator"]),
+            ("std.collections", &["Hash"]),
+        ];
+        let by_path: HashMap<String, usize> =
+            modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
+
+        for &(path, names) in EXPORTS {
+            let Some(&module) = by_path.get(path) else { continue };
+            for &name in names {
+                let name = Symbol::intern(name);
+                if !public_item(&modules[module].module, name)
+                    .is_some_and(|visibility| visibility != ast::VisKind::Private)
+                {
+                    continue;
+                }
+                let qualified = Symbol::intern(&format!("{path}.{name}"));
+                for visible in &mut self.visible {
+                    visible.entry(name).or_insert(qualified);
+                }
+            }
+        }
+    }
+
     /// `[MOD-3]` — bind what each module imported. `[MOD-2]` — only a `pub`
     /// item may be imported.
     fn bind_imports(&mut self, modules: &[LoadedModule]) {
@@ -1767,8 +1803,16 @@ impl<'a> Checker<'a> {
                     }
                     // `[IFC-1]` — `extend T:` with no `implements` adds
                     // inherent methods. With `implements`, the methods belong
-                    // to that interface.
-                    let interface = decl.implements.first().and_then(interface_name);
+                    // to that interface. Store the resolved interface identity,
+                    // not the spelling written at this site: an explicit import
+                    // and a prelude binding can give the same definition two
+                    // spellings (`Ord` and `std.core.Ord`), but they must never
+                    // become two interfaces during ambiguity checking.
+                    let interface = decl
+                        .implements
+                        .first()
+                        .and_then(interface_name)
+                        .map(|name| self.resolve_name(name));
                     self.collect_members(
                         ty,
                         &decl.members,
@@ -7576,6 +7620,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .get(index as usize)
                 .is_some_and(|param| param.bounds.contains(&interface));
         }
+        // `[ENM-3]`, `[HASH-4]` — scalar/range/unit-enum equality and
+        // hashing are compiler-known standard capabilities. They must satisfy
+        // ordinary generic bounds too; accepting `ArenaMap[i32, V]` directly
+        // while rejecting the same type through `K: Eq + Hash` would make
+        // generic substitution change the language contract.
+        if self.has_builtin_eq_hash(ty)
+            && matches!(interface.as_str(), "std.core.Eq" | "std.collections.Hash")
+        {
+            return true;
+        }
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
         }
@@ -9820,16 +9874,69 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Built-in keys whose `Eq + Hash` semantics are already compiler-known.
     /// The fixed map may choose a linear implementation, but its public bound
-    /// remains the ordinary Map bound. User-defined keys become available
-    /// when the staged `Hasher`/`Hash` standard-interface surface is complete;
-    /// they are rejected rather than compared bytewise or by guessed rules.
-    fn is_builtin_map_key(&self, ty: Ty) -> bool {
+    /// remains the ordinary Map bound. Every other key must carry explicit
+    /// `Eq` and `Hash` implementations; it is never compared bytewise or by a
+    /// guessed structural rule.
+    fn has_builtin_eq_hash(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Str => true,
             TyKind::Range(_) => true,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => false,
         }
+    }
+
+    /// `[HASH-4]` — select the equality operation for one ArenaMap key. The
+    /// public requirement is always `Eq + Hash`, even though this fixed-size
+    /// implementation is permitted to use a linear search and therefore does
+    /// not need to cache hash buckets. Primitive/range/unit-enum equality is
+    /// compiler-known; every other concrete key carries the exact `Eq.eq`
+    /// implementation into HIR rather than falling back to byte comparison.
+    fn arena_map_equality(&mut self, ty: Ty, span: Span) -> Option<Option<DefId>> {
+        if self.has_builtin_eq_hash(ty) {
+            return Some(None);
+        }
+
+        let eq = Symbol::intern("std.core.Eq");
+        let hash = Symbol::intern("std.collections.Hash");
+        let has_eq = self.implements(ty, eq);
+        let has_hash = self.implements(ty, hash);
+        if !has_eq || !has_hash {
+            let requirement = match (has_eq, has_hash) {
+                (false, false) => "Eq + Hash",
+                (false, true) => "Eq",
+                (true, false) => "Hash",
+                (true, true) => unreachable!(),
+            };
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2040,
+                    span,
+                    format!(
+                        "`{}` does not implement `{requirement}`, which ArenaMap keys require",
+                        self.types.display(ty)
+                    ),
+                )
+                .help("implement the missing standard interface for the key type")
+                .note("ArenaMap[K, V] requires K: Eq + Hash [ARN-5d, HASH-4]"),
+            );
+            return None;
+        }
+
+        // An opaque generic key is checked through its bounds now and is
+        // rechecked with its concrete type when the generic body is
+        // instantiated. Only that concrete pass needs a callable DefId.
+        if matches!(self.types.kind(ty), TyKind::Param { .. }) {
+            return Some(None);
+        }
+
+        let method = Symbol::intern("eq");
+        self.methods.get(&(ty, method)).map(|entry| Some(entry.def)).or_else(|| {
+            // `check_implementations` has already emitted the precise missing
+            // member/signature diagnostic. Return an error expression here so
+            // lowering never guesses equality for an incomplete impl.
+            None
+        })
     }
 
     fn instantiate_named_generic(&mut self, name: &str, args: &[Ty], span: Span) -> Ty {
@@ -10226,19 +10333,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return error;
         }
-        if !self.is_builtin_map_key(key) {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2040,
-                    span,
-                    format!(
-                        "`{}` does not yet have a usable `Eq + Hash` implementation",
-                        self.types.display(key)
-                    ),
-                )
-                .help("use a built-in integral, bool, char, range, str, or unit-enum key for now")
-                .note("user-defined Hash keys wait for the standard Hasher interface substrate; no comparison semantics are guessed"),
-            );
+        if self.arena_map_equality(key, span).is_none() {
             return error;
         }
         let arena_ty = self.arena_ty();
@@ -10307,6 +10402,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return error;
         }
+        let Some(equals) = self.arena_map_equality(key, span) else {
+            return error;
+        };
         match method {
             "len" | "capacity" | "is_empty" => {
                 let field = if method == "capacity" { 3 } else { 2 };
@@ -10341,7 +10439,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Expr {
                     ty: result,
                     kind: ExprKind::Builtin {
-                        which: Builtin::ArenaMapGet { key, value, mutable },
+                        which: Builtin::ArenaMapGet { key, value, mutable, equals },
                         args: vec![receiver, wanted],
                     },
                     span,
@@ -10353,7 +10451,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Expr {
                     ty: self.common.bool_,
                     kind: ExprKind::Builtin {
-                        which: Builtin::ArenaMapContains { key },
+                        which: Builtin::ArenaMapContains { key, equals },
                         args: vec![receiver, wanted],
                     },
                     span,
@@ -10372,7 +10470,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Expr {
                     ty: result,
                     kind: ExprKind::Builtin {
-                        which: Builtin::ArenaMapInsert { key, value },
+                        which: Builtin::ArenaMapInsert { key, value, equals },
                         args: vec![receiver, key_value, mapped],
                     },
                     span,
@@ -10385,7 +10483,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Expr {
                     ty: result,
                     kind: ExprKind::Builtin {
-                        which: Builtin::ArenaMapRemove { key, value },
+                        which: Builtin::ArenaMapRemove { key, value, equals },
                         args: vec![receiver, wanted],
                     },
                     span,

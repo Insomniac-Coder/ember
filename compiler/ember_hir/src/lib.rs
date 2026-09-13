@@ -444,13 +444,16 @@ pub enum Builtin {
     /// `[ARN-5a]`, `[ARN-5d]` — reserve one zeroed slot allocation and build
     /// an empty fixed-capacity ArenaMap view.
     ArenaMapWithCapacity { key: Ty, value: Ty, map: Ty },
-    /// `[ARN-5d]` — deterministic lookup over the compact occupied prefix.
-    ArenaMapGet { key: Ty, value: Ty, mutable: bool },
-    ArenaMapContains { key: Ty },
+    /// `[ARN-5d]`, `[HASH-4]` — deterministic lookup over the compact
+    /// occupied prefix. A user-defined key carries the concrete `Eq.eq`
+    /// implementation selected by type checking; compiler-known scalar keys
+    /// use `None` and lower to a direct scalar comparison.
+    ArenaMapGet { key: Ty, value: Ty, mutable: bool, equals: Option<DefId> },
+    ArenaMapContains { key: Ty, equals: Option<DefId> },
     /// `[ARN-5b]`, `[ARN-5d]` — replace in place or append without growth.
-    ArenaMapInsert { key: Ty, value: Ty },
+    ArenaMapInsert { key: Ty, value: Ty, equals: Option<DefId> },
     /// `[ARN-5d]` — optional value move-out and compact suffix shift.
-    ArenaMapRemove { key: Ty, value: Ty },
+    ArenaMapRemove { key: Ty, value: Ty, equals: Option<DefId> },
     ArenaMapClear,
     /// `[ARN-5d]` — advance the named map iterator and yield key/value views.
     ArenaMapIterNext { key: Ty, value: Ty },

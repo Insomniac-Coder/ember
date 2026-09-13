@@ -43,6 +43,143 @@ fn main() -> ExitCode {
     }
 }
 
+/// Keep implicit standard-library loading from changing unrelated generated
+/// programs. `[MOD-5]` makes source-backed prelude interfaces available even
+/// without an import, but availability is not reachability: an unused
+/// `DefaultHasher` body must not inject bounds/overflow panic paths into every
+/// executable. All user/package bodies remain present for the current
+/// compilation-unit model; only unreferenced `std` bodies are removed.
+///
+/// Direct calls and function constants form the current executable call graph.
+/// Standard `drop` bodies remain roots because drop glue names them from type
+/// information rather than through an explicit MIR call terminator.
+fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let by_symbol: BTreeMap<String, usize> = bodies
+        .iter()
+        .enumerate()
+        .map(|(index, body)| (body.symbol.clone(), index))
+        .collect();
+    let mut keep = BTreeSet::new();
+    let mut pending = Vec::new();
+
+    for body in bodies.iter() {
+        let standard = body.symbol.starts_with(&std_prefix);
+        let drop_glue = body.name == "drop" || body.name.ends_with(".drop");
+        if (!standard || drop_glue) && keep.insert(body.symbol.clone()) {
+            pending.push(body.symbol.clone());
+        }
+    }
+
+    while let Some(symbol) = pending.pop() {
+        let Some(&index) = by_symbol.get(&symbol) else { continue };
+        let mut referenced = BTreeSet::new();
+        collect_body_function_symbols(&bodies[index], &mut referenced);
+        for target in referenced {
+            if by_symbol.contains_key(&target) && keep.insert(target.clone()) {
+                pending.push(target);
+            }
+        }
+    }
+
+    bodies.retain(|body| !body.symbol.starts_with(&std_prefix) || keep.contains(&body.symbol));
+}
+
+fn collect_body_function_symbols(
+    body: &ember_mir::Body,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                ember_mir::StmtKind::Assign { rvalue, .. } => {
+                    collect_rvalue_function_symbols(rvalue, out);
+                }
+                ember_mir::StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    collect_operand_function_symbols(lhs, out);
+                    collect_operand_function_symbols(rhs, out);
+                }
+                ember_mir::StmtKind::StorageLive(_)
+                | ember_mir::StmtKind::StorageDead(_)
+                | ember_mir::StmtKind::Drop { .. }
+                | ember_mir::StmtKind::Nop => {}
+            }
+        }
+        match &block.terminator {
+            ember_mir::Terminator::SwitchInt { discr, .. } => {
+                collect_operand_function_symbols(discr, out);
+            }
+            ember_mir::Terminator::Call { func, args, .. } => {
+                match func {
+                    ember_mir::FuncRef::Direct { symbol } => {
+                        out.insert(symbol.clone());
+                    }
+                    ember_mir::FuncRef::Indirect(operand) => {
+                        collect_operand_function_symbols(operand, out);
+                    }
+                    ember_mir::FuncRef::Builtin { .. } => {}
+                }
+                for arg in args {
+                    collect_operand_function_symbols(arg, out);
+                }
+            }
+            ember_mir::Terminator::Assert { cond, msg, .. } => {
+                collect_operand_function_symbols(cond, out);
+                match msg {
+                    ember_mir::AssertKind::Bounds { len, index } => {
+                        collect_operand_function_symbols(len, out);
+                        collect_operand_function_symbols(index, out);
+                    }
+                    ember_mir::AssertKind::RefCellBorrow { file, line } => {
+                        collect_operand_function_symbols(file, out);
+                        collect_operand_function_symbols(line, out);
+                    }
+                    ember_mir::AssertKind::Overflow(_)
+                    | ember_mir::AssertKind::DivisionByZero
+                    | ember_mir::AssertKind::SignedDivisionOverflow
+                    | ember_mir::AssertKind::ShiftTooLarge => {}
+                }
+            }
+            ember_mir::Terminator::Goto(_)
+            | ember_mir::Terminator::Return
+            | ember_mir::Terminator::Unreachable => {}
+        }
+    }
+}
+
+fn collect_rvalue_function_symbols(
+    rvalue: &ember_mir::Rvalue,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    match rvalue {
+        ember_mir::Rvalue::Use(operand)
+        | ember_mir::Rvalue::UnaryOp { operand, .. }
+        | ember_mir::Rvalue::Cast { operand, .. } => collect_operand_function_symbols(operand, out),
+        ember_mir::Rvalue::BinaryOp { lhs, rhs, .. } => {
+            collect_operand_function_symbols(lhs, out);
+            collect_operand_function_symbols(rhs, out);
+        }
+        ember_mir::Rvalue::Aggregate { operands, .. } => {
+            for operand in operands {
+                collect_operand_function_symbols(operand, out);
+            }
+        }
+        ember_mir::Rvalue::Repeat { value, .. } => collect_operand_function_symbols(value, out),
+        ember_mir::Rvalue::Discriminant(_) | ember_mir::Rvalue::Ref { .. } => {}
+    }
+}
+
+fn collect_operand_function_symbols(
+    operand: &ember_mir::Operand,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    if let ember_mir::Operand::Const(ember_mir::Const::Fn(symbol)) = operand {
+        out.insert(symbol.clone());
+    }
+}
+
 #[derive(Default)]
 struct Options {
     profile: Profile,
@@ -250,7 +387,37 @@ fn load_modules(
 ) -> Vec<ember_typeck::LoadedModule> {
     let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: Vec<(Vec<String>, ember_ast::Module)> = vec![(Vec::new(), root)];
+    let mut queue: Vec<(Vec<String>, ember_ast::Module)> = Vec::new();
+
+    // `[MOD-5]` — source-backed prelude interfaces must exist even when the
+    // user did not write an import. Loading a module does not make all of its
+    // public items visible; type checking separately installs only the names
+    // in the normative prelude list. Keep the root last so this LIFO worklist
+    // still makes it module zero and preserves the command-line entry point.
+    for module in ["core", "collections"] {
+        let names = vec![ember_branding::STD_PACKAGE.to_string(), module.to_string()];
+        let key = names.join(".");
+        let Some(file_path) = resolve_module(root_dir, &names) else {
+            continue;
+        };
+        let file = match map.load(&file_path) {
+            Ok(file) => file,
+            Err(error) => {
+                sink.emit(ember_diag::Diagnostic::error(
+                    ember_diag::codes::E1010,
+                    ember_span::Span::DUMMY,
+                    format!("cannot read `{}`: {error}", file_path.display()),
+                ));
+                continue;
+            }
+        };
+        let text = map.file(file).text.clone();
+        let lexed = ember_lexer::lex(file, &text, sink);
+        let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+        seen.insert(key);
+        queue.push((names, parsed));
+    }
+    queue.push((Vec::new(), root));
 
     while let Some((path, module)) = queue.pop() {
         // Every import this module names, before it is moved into the list.
@@ -447,7 +614,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Ok(finish(&sink, &map, options));
     }
 
-    // Emit C.
+    // Emit C. Source-backed prelude modules are always available to name
+    // resolution, but their unused implementation bodies are not part of an
+    // executable's observable generated program.
+    if program.main.is_some() {
+        retain_referenced_standard_bodies(&mut bodies);
+    }
     let module_name = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let emitted = ember_codegen_c::emit(&bodies, &types, &map, &module_name, program.main.is_some());
     if options.emit.as_deref() == Some("c") {
