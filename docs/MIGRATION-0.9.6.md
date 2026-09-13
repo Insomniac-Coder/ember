@@ -146,7 +146,8 @@ adopted-source gates are green. These figures are repository evidence, not H4
 conformance counts.
 
 The subsequent architecture checkpoint is `66d0d43`. It raises the workspace
-total to 188 tests while retaining the same 95 conformance directories and 305
+total to 188 tests. The UnsafeCell checkpoint `a02c0a5` retains that Rust-test
+count and raises executable coverage to 98 conformance directories and 320
 Ember source files. Definite initialization now produces one retained
 `InitializationFacts` fixpoint, verifies its entry seeds, block transfers, and
 predecessor joins, then drives diagnostics from that record. The C backend now
@@ -208,8 +209,10 @@ preparatory "Phase 0" is not part of this current nine-phase count.
 - 0.9.5 inferred multi-region view structs, callable field/provenance summaries,
   and their full conformance matrix are not implemented merely because H1
   consolidates their architecture.
-- `UnsafeCell` is specified but unimplemented. It remains distinct from
-  compiler-known `Cell`/`RefCell` and from Arena.
+- **`UnsafeCell` is complete at `a02c0a5`.** It remains distinct from
+  compiler-known `Cell`/`RefCell` and from Arena. Its `!Sync` and conditional
+  `Send` behavior remains blocked only on the later threading-trait machinery,
+  an intentional dependency gap rather than a compiler defect.
 - Phase 2 UI/diagnostic snapshots and other long-standing exit work remain.
 
 The four open deviations remain D1–D4. D5 is closed and D6 withdrawn. There is
@@ -316,8 +319,11 @@ proved.
    protocol, concrete move-only `DefaultHasher`, and custom `Eq + Hash` key
    dispatch while preserving fixed capacity, read-only keys, and an
    implementation-defined mixer.
-7. **Implement `UnsafeCell`, then remaining Phase 2 exit work.** Do not use it
-   to bypass ordinary borrowing or retrofit compiler-known Cell/RefCell.
+7. **Completed — implement `UnsafeCell`.** `a02c0a5` provides the public
+   `std.mem` identity, move-only ordinary representation, unsafe raw-access
+   boundary, consuming extraction, `@static_safe` exclusion, and adversarial
+   `[UNS-10]`–`[UNS-10b]` coverage without bypassing ordinary borrowing or
+   retrofitting compiler-known Cell/RefCell.
 8. **Complete multi-region and callable summaries through H1 facts.** Cover
    exact, audited-declared, unknown, generic, separate-compilation, dynamic,
    and hot-reload cases with coupled invalidation and runtime erasure.
@@ -377,10 +383,10 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement **`UnsafeCell`** against the owner-approved `[UNS-10]` contract. Keep
-it move-only and `!Sync`; permit shared-access mutation only through the exact
-unsafe raw-access boundary; preserve lifetime/region, validity, type, bounds,
-and `@static_safe` enforcement; and do not suggest it in ordinary diagnostics.
-Continue `ARCH-096-1` incrementally as real UnsafeCell and later features
-produce facts—never as a big-bang rewrite. Do not adopt H4, freeze the hash
-mixer, broaden `Zeroable` or `Hash` by inference, or add a second unsafe tier.
+Implement **`[DIA-7..10]` and `[DIA-13]` rendered diagnostic-shape coverage in
+`tests/ui/`**. Use the existing catalogue as the contract: each required shape
+gets a failing source/snapshot and a compilable `.fixed.em` companion, and any
+wrong-code or wrong-help result is classified as a compiler or test defect
+rather than papered over. Continue `ARCH-096-1` incrementally through real
+producers and consumers. Do not adopt H4, freeze the hash mixer, broaden
+`Zeroable` or `Hash` by inference, or add a second unsafe tier.

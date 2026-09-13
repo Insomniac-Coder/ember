@@ -283,14 +283,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `66d0d43d75782306199c3ae3132cc44dcd9129b9` (`Add verified semantic fact boundaries`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `a02c0a50b700e25aa18d6162c9a6e9671d1fd147` (`Implement H4 UnsafeCell safety boundary`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **188 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 95 top-level rule directories, 305 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 72 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
+| Conformance | 98 top-level rule directories, 320 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 73 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -807,7 +807,7 @@ withdrawn.
 | # | What | Status |
 |---|---|---|
 | **ERR-042** | originally claimed nine undefined rule ids | **withdrawn.** The inventory was stale and the remaining six definitions were structurally invisible to the extractor; ODR-002/RIDX-1 fixed the tool without changing rule prose |
-| **ERR-043** | originally found `UnsafeCell` named without semantics | **decided.** Owner ruling S2 / ADR-022 added `[UNS-10]`–`[UNS-10b]` in 0.8.5; implementation remains future Gate B work |
+| **ERR-043** | originally found `UnsafeCell` named without semantics | **decided and implemented.** Owner ruling S2 / ADR-022 added `[UNS-10]`–`[UNS-10b]` in 0.8.5; implementation and conformance landed at `a02c0a5` |
 | **ERR-029** | ten editorial instructions embedded in rule bodies, including a truncated `[RNG-8]` head | **decided.** The instructions read as carried out; `[RNG-8]`'s head was recovered verbatim from both preserved 0.6 sources and declared as source recovery |
 
 **ODR-011 / ERR-052 — CLOSED.** H2 records fixed-capacity,
@@ -870,7 +870,7 @@ descriptions below are preserved as found; each carries its resolution.**
    `.github/workflows/ci.yml` as "error pages compile as documented"; docs and
    CI now agree on six enforced gates.**
 
-### 0.13 Interior mutability — keep the three apart
+### 0.13 Interior mutability and Arena — keep their invariants apart
 
 * **`Cell[T]`** — interior mutability. Replaces the **whole value**, hands out
   **no reference**. Nothing has to be proved and there is **no runtime state**.
@@ -879,6 +879,11 @@ descriptions below are preserved as found; each carries its resolution.**
   `[BRW-1]`'s question is asked **at run time** against a borrow counter
   (`[CELL-5]`..`[CELL-8]`). Built, including guard-region/drop behavior and
   every-profile checks; `[CELL-8]`'s `!Sync` marker awaits threading.
+* **`UnsafeCell[T]`** — lowest-level interior mutability for expert library
+  code. Shared-access mutation crosses an explicit unsafe raw-pointer boundary;
+  it supplies no safe references, runtime check, synchronization, global borrow
+  exemption, or special ABI/effect/reload behavior. Built at `a02c0a5`; its
+  threading traits await `CELL-SYNC-1`.
 * **`Arena`** — **a region allocator, not an interior-mutability primitive.**
   Its mutation happens to reach through a shared borrow, but what it must prove
   is a **region** rather than an alias, which `[ARN-1]` does **statically**.
@@ -898,43 +903,47 @@ three by exempting a type from `[BRW-1]` has not implemented it."* `Cell` is
 sound here for exactly that reason: nothing escapes, so the write is not an
 aliasing question at all, and the borrow checker was **not weakened**.
 
-**`UnsafeCell` is specified but unimplemented.** Owner ruling S2 / ADR-022 and
-`[UNS-10]`–`[UNS-10b]` define its deliberately narrow unsafe boundary. ADR-019
-still chooses compiler-known `Cell`/`RefCell` lowering; their builtins are not
-evidence that an arbitrary package may bypass `[BRW-1]`. Implement
-`UnsafeCell` next as its own Gate B task and do not infer any semantics beyond
-the owner-approved rules.
+**`UnsafeCell` is implemented independently.** Owner ruling S2 / ADR-022 and
+`[UNS-10]`–`[UNS-10b]` define its deliberately narrow unsafe boundary;
+`a02c0a5` makes that boundary executable. ADR-019 still chooses compiler-known
+`Cell`/`RefCell` lowering; their builtins are not evidence that an arbitrary
+package may bypass `[BRW-1]`, and the new primitive was not used to retrofit
+them. Threading-trait enforcement remains an intentional `CELL-SYNC-1`
+dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Implement `UnsafeCell`.**
+**Implement `[DIA-7..10]` and `[DIA-13]` rendered diagnostic-shape coverage in
+`tests/ui/`.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
-verified record. Implement the owner-approved `[UNS-10]` surface without
-weakening borrowing, regions, validity, synchronization, or `@static_safe`.
-Keep architecture migration incremental through real producers and consumers;
-do not create placeholder facts or attempt a big-bang rewrite. Preserve exact
-diagnostics, runtime erasure, and the distinct ordinary-assignment, `Cell.set`,
-and `MaybeUninit.write` orderings. Then close the remaining Phase 2 diagnostics
-and conformance exits.
+verified record. `UnsafeCell` is complete at `a02c0a5`; §0.35 records it. Build
+the diagnostic suite from the existing shape catalogue, with one failing
+rendered snapshot and a compilable `.fixed.em` companion for each required
+shape. Keep architecture migration incremental through real producers and
+consumers; do not create placeholder facts or attempt a big-bang rewrite.
+Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
+assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
+remaining Phase 2 ownership/lifetime coverage before advancing to multi-region
+views.
 
 Read first:
 
 1. `docs/spec-source/ember-spec.md` and frozen H4 — especially H1's canonical
    semantic-fact architecture, MIR boundary, equivalence matrix, and runtime
    erasure requirements;
-2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.28–0.34;
+2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.28–0.35;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
 4. the current fact definitions and producers in `compiler/ember_types`,
    `compiler/ember_typeck`, `compiler/ember_analysis`, HIR/MIR lowering and
    `compiler/ember_mir/src/verify.rs`.
 
-After **UnsafeCell**, continue the remaining `ARCH-096-1` migration and Phase 2
-exit work, then the 0.9.5/H1 multi-region-view work in the order recorded by
-`MIGRATION-0.9.6.md`. `VER-096-1` is complete, but accepting a version selector
-alone is not H4 adoption or conformance.
+Alongside the diagnostic work, continue the remaining `ARCH-096-1` migration
+through real producers and consumers, then the 0.9.5/H1 multi-region-view work
+in the order recorded by `MIGRATION-0.9.6.md`. `VER-096-1` is complete, but
+accepting a version selector alone is not H4 adoption or conformance.
 
 ### 0.15 The principles, in one place
 
@@ -2093,7 +2102,8 @@ canonical-mode reconciliation are preserved at
 The adopted normative source remains `ember-spec.md` (`0.8.5_Hardened_1`);
 freezing H3 does not adopt it.
 
-**ODR-012 is closed, but ODR-013 is open.** H3 records public `Hash` and
+**Historical H3 checkpoint, superseded by §0.32: ODR-012 was closed while
+ODR-013 was still open.** H3 records public `Hash` and
 `Hasher` interfaces, concrete `DefaultHasher`, Eq/hash coherence, a consuming
 `finish(owned self)`, no retention of supplied spans, no safe mutable resident
 key, and no frozen mixing algorithm. The implementation audit then found that
@@ -2318,6 +2328,56 @@ inside `@static_safe`. Continue the remaining `ARCH-096-1` migration only
 through real producers and consumers exposed by this and later work. Any new
 semantic ambiguity requires owner review and H5; do not edit frozen H4.
 
+### 0.35 H4 `UnsafeCell` implementation checkpoint — 2026-09-13
+
+This section supersedes §0.34's exact-next-task statement. Implementation
+commit `a02c0a50b700e25aa18d6162c9a6e9671d1fd147` (`Implement H4 UnsafeCell
+safety boundary`) is pushed to `origin/main`. Frozen H4 and the adopted
+0.8.5 specification were not edited.
+
+**What is executable.** `std.mem` publicly exports `UnsafeCell[T]` without a
+prelude export. The compiler represents it as an ordinary private one-field
+type, always move-only even for `T: Copy`, with ordinary field destruction.
+`get(self) -> *mut T` takes a shared borrow and crosses the existing unsafe
+raw-pointer boundary; it creates neither a safe mutable reference nor runtime
+borrow state. `into_inner(owned self) -> T` consumes the wrapper and transfers
+the payload without a second drop. The generated C uses a portable private
+field name and removes C `const` only at the exact raw-pointer operation.
+
+**What remains enforced.** Import visibility, private payload access,
+`[TYP-15a]` view-storage restrictions, ordinary alias checking inside an
+`unsafe` block, use-after-move, nested/direct/body-local `@static_safe`
+exclusion through E3105, and the prohibition on diagnostics suggesting
+`UnsafeCell` all have adversarial tests. Expression-local temporary borrowing
+is accepted under the ordinary borrowed-receiver rule; retaining its raw
+pointer beyond validity remains the unsafe author's `[UNS-4]` obligation.
+
+**What is intentionally not claimed.** The compiler still has no executable
+`Send`/`Sync` or threading model. `UnsafeCell: !Sync` and
+`UnsafeCell[T]: Send` iff `T: Send` therefore remain an intentional
+`CELL-SYNC-1` dependency gap, not a compiler defect. `Cell` and `RefCell` stay
+on ADR-019's compiler-known lowering and were not rebuilt over `UnsafeCell`.
+
+**Defect found and fixed.** D-059: method body checking read attributes from
+the enclosing type rather than the method member. A method-level
+`@static_safe` could therefore lose its contract. Every ordinary, generic, and
+monomorphized method path now carries the member's attributes; the E3105 method
+probe goes red if that fix is reverted. The specification was already correct.
+
+**Verified state.** Warning-free debug and release workspace builds; 188 Rust
+tests green, including the full conformance walk over 98 rule directories and
+320 `.em` files; release-mode executable probes green; all six adopted-source
+gates green. The ledger now has 73 closed defects, no open defect, four open
+deviations (D1–D4), and no open owner semantic/API decision.
+
+**Exact next task:** implement `[DIA-7..10]` and `[DIA-13]` rendered
+diagnostic-shape coverage in `tests/ui/`. Start from the existing diagnostic
+shape catalogue. For each required shape, preserve one failing source and exact
+rendered snapshot plus a compilable `.fixed.em` companion. Treat a wrong code,
+label, or repair as a compiler/test defect; do not alter H4 or invent a new
+diagnostic. Continue `ARCH-096-1` only where this or later work exposes a real
+producer and consumer.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2327,10 +2387,11 @@ are complete (§0.22–§0.25). Sections 0.26–0.27 close ODR-009 and freeze H1
 and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 §0.31 records H3 and the ODR-013 stop; §0.32 records the owner resolution and
 H4 cut; §0.33 records the completed `ARN-COLL-1` implementation; §0.34 records
-the first verified `ARCH-096-1` fact/backend boundary. The active task is now
-UnsafeCell, with the remaining canonical-fact migration continuing
-incrementally, followed by Phase 2 completion and the multi-region work before
-the current target can be explicitly adopted.
+the first verified `ARCH-096-1` fact/backend boundary; §0.35 records completed
+UnsafeCell. The active task is now the Phase 2 diagnostic-shape snapshot suite,
+with the remaining canonical-fact migration continuing incrementally, followed
+by Phase 2 rule closure and the multi-region work before the current target can
+be explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before

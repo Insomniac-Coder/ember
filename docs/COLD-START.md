@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `66d0d43` on `main`, followed by
+**Last committed implementation baseline:** `a02c0a5` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
@@ -34,8 +34,8 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 95 top-level conformance rule directories, 305 `.em` files including support
- modules. 72 defects recorded, **none open**.
+ 98 top-level conformance rule directories, 320 `.em` files including support
+ modules. 73 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -221,14 +221,14 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: implement `UnsafeCell`
+## 5. UnsafeCell complete; next task is diagnostic-shape coverage
 
-**Exact next task: `UnsafeCell`.** Implement the owner-approved `[UNS-10]`
-lowest-level interior-mutability primitive without weakening ordinary borrow,
-region, validity, synchronization, or `@static_safe` rules. The first
-`ARCH-096-1` slice is complete at `66d0d43`; continue the remaining canonical
-fact migration incrementally around real feature producers and consumers,
-then close the remaining Phase 2 exit work.
+**Exact next task: `[DIA-7..10]` and `[DIA-13]` rendered diagnostic-shape
+coverage in `tests/ui/`.** Establish one failing snapshot and compilable fixed
+companion per required ownership/borrow shape, beginning with the existing
+shape catalogue rather than inventing diagnostics. Keep the first
+`ARCH-096-1` boundary from `66d0d43` load-bearing and continue that migration
+incrementally when a real producer and consumer are available.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -320,10 +320,16 @@ implemented without softening the rule.
 
 **Open compiler defects:** none.
 
-**`UnsafeCell` is specified and unbuilt** — `[UNS-10]`/`[UNS-10a]`/`[UNS-10b]`,
-0.8.5. **Do not build `RefCell` on it**; ADR-019's compiler-known route stands.
+**`UnsafeCell` is implemented at `a02c0a5`.** `[UNS-10]`/`[UNS-10a]`/
+`[UNS-10b]` now cover its public `std.mem` identity, move-only one-field
+representation, unsafe shared raw access, consuming extraction, ordinary drop,
+view-storage prohibition, `@static_safe` exclusion, and diagnostic restraint.
+It does not weaken ordinary borrowing or create runtime borrow state. The
+`!Sync` and conditional `Send` statements remain an intentional dependency gap
+under `CELL-SYNC-1` until threading traits exist. **Do not rebuild `RefCell` on
+it**; ADR-019's compiler-known route stands.
 
-## 6. After that: `[DIA-7..10]` and `tests/ui/`
+## 6. `[DIA-7..10]`, `[DIA-13]`, and `tests/ui/`
 
 A Phase 2 *exit* criterion and currently zero. `compiler/ember_diag/src/shapes.rs`
 holds every shape; `[DIA-13]` wants a rendered snapshot per shape plus

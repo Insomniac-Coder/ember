@@ -737,11 +737,14 @@ raw-pointer accessor was chosen. `get(self) -> *mut T` needs `unsafe` under
 `UnsafeCell` — which is the property that keeps it inside the existing machinery
 instead of beside it.
 
-**What is not built.** All of it. `[UNS-10]`, `[UNS-10a]` and `[UNS-10b]` are
-0.8.5 specification with no implementation, baselined under `[TST-4c]`'s one
-permitted reason. `E3105` is registered ahead of its emitter so `[DIA-6a]`
-holds. Building it is not part of `RefCell`, and `RefCell` must not be built on
-it: ADR-019's route stands until interface generics can express these in Ember.
+**Implementation status at decision time.** None of `[UNS-10]`, `[UNS-10a]`
+or `[UNS-10b]` was built when this ADR was written. They were baselined under
+`[TST-4c]`, with E3105 registered ahead of its emitter. Implementation commit
+`a02c0a5` later completed the public type, narrow raw-pointer boundary,
+consuming extraction, `@static_safe` rejection, and conformance coverage; the
+baselines shrank accordingly. Threading-trait enforcement remains blocked on
+`CELL-SYNC-1`. Building `UnsafeCell` did not rebuild `RefCell` on top of it:
+ADR-019's route still stands.
 
 ## ADR-023 — Each issued specification-hardening pass advances `Hardened_N`
 

@@ -35,10 +35,10 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 188 Rust tests pass;
-- the conformance runner passes across 95 rule directories and 305 Ember
+- the conformance runner passes across 98 rule directories and 320 Ember
   source files;
 - all six adopted-specification gates pass;
-- 72 recorded compiler defects are closed;
+- 73 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open.
 
@@ -49,8 +49,10 @@ handling, Arena provenance, ordinary ownership, and single-allocation behavior
 are executable. The first `ARCH-096-1` slice is complete at `66d0d43`:
 definite-initialization now produces verified shared facts, and the C backend
 can consume only a structurally and provenance-verified MIR/type pair. The
-active feature milestone is now `UnsafeCell`; the remaining architecture
-migration continues incrementally around real feature work.
+`UnsafeCell` is complete at `a02c0a5`: its narrow unsafe raw-pointer boundary,
+move-only representation, ordinary destruction, `@static_safe` exclusion, and
+diagnostic restraint are executable. The remaining architecture migration
+continues incrementally around real feature work.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -70,7 +72,7 @@ The reference compiler currently includes substantial support for:
   views, deterministic destruction, drop flags, and partial moves;
 - capturing closures through statically monomorphized callable bounds;
 - compiler-known `Array`, `String`, `Span`, `MutSpan`, `Cell`, `RefCell`, and
-  Arena primitives;
+  Arena primitives, plus the public `std.mem.UnsafeCell` boundary;
 - Arena allocation, scopes, reset/rewind, `MaybeUninit`, conservative
   `Zeroable`, `alloc_array`, `alloc_uninit`, and fixed-capacity Arena
   collections;
@@ -80,7 +82,7 @@ The reference compiler currently includes substantial support for:
   including operation ordering and exact occurrence counts.
 
 Important incomplete areas include the remainder of Phase 2 diagnostics and
-rule coverage, `UnsafeCell`, general automatic/derived `Hash` generation and
+rule coverage, general automatic/derived `Hash` generation and
 ordinary `Map`/`Set`, the canonical semantic-fact migration, objects and
 managed ownership, effects and comptime, complete FFI, concurrency/data-oriented
 facilities, the interpreter, hot reload, and the final performance and
@@ -249,10 +251,10 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: implement `UnsafeCell`; continue
-`ARCH-096-1` through real producers, consumers, and verifier boundaries; close
-the remaining Phase 2 tests and diagnostics; and only then advance to later
-phases.
+The immediate order is narrower: build the `[DIA-7..10]`/`[DIA-13]`
+diagnostic-shape snapshot suite in `tests/ui`; continue `ARCH-096-1` through
+real producers, consumers, and verifier boundaries; close the remaining Phase
+2 rule coverage; and only then advance to later phases.
 
 ## Contributing
 
