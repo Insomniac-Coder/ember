@@ -347,6 +347,24 @@ pub enum Builtin {
     SpanSplitAt { elem: Ty, pair: Ty, mutable: bool },
     /// `[SPN-3]` — explicitly reborrow a move-only mutable span.
     SpanReborrow,
+    /// `[SPN-5]`, `[SPN-6]` — form a shared `Span[T]` reborrow from a
+    /// `MutSpan[T]`. The result remains tied to the source, so holding a
+    /// shared iterator/chunk iterator freezes conflicting mutation without
+    /// consuming the original mutable view.
+    SpanSharedReborrow,
+    /// `[SPN-5]` — advance a named Span element iterator and yield the next
+    /// shared or mutable element reference.
+    SpanIterNext { elem: Ty, mutable: bool },
+    /// `[SPN-6]`, `[SPN-7]` — check a non-zero width and construct the named
+    /// shared or mutable chunk iterator. `iterator` is the ordinary public
+    /// library struct type receiving the source/cursor/width fields.
+    SpanChunksNew { iterator: Ty, mutable: bool },
+    /// `[SPN-6]` — advance a chunk cursor and yield one final-partial-capable
+    /// shared or mutable subspan.
+    SpanChunksNext { elem: Ty, mutable: bool },
+    /// `[SPN-8]`, `[SPN-9]` — safely extract a raw pointer from a Span. The
+    /// pointer result deliberately carries no safe borrow or lifetime tie.
+    SpanAsPtr { mutable: bool },
     /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
@@ -546,6 +564,15 @@ impl Builtin {
             Builtin::ArraySplitAtMut { .. } => "split_at_mut",
             Builtin::SpanSplitAt { .. } => "split_at",
             Builtin::SpanReborrow => "reborrow",
+            Builtin::SpanSharedReborrow => "reborrow",
+            Builtin::SpanIterNext { .. } => "next",
+            Builtin::SpanChunksNew { mutable, .. } => {
+                if mutable { "chunks_mut" } else { "chunks" }
+            }
+            Builtin::SpanChunksNext { .. } => "next",
+            Builtin::SpanAsPtr { mutable } => {
+                if mutable { "as_mut_ptr" } else { "as_ptr" }
+            }
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",

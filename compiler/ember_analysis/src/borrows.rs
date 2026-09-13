@@ -127,7 +127,11 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
                 | Builtin::ArenaScope { .. }
                 | Builtin::ArraySplitAtMut { .. }
                 | Builtin::SpanSplitAt { .. }
-                | Builtin::SpanReborrow,
+                | Builtin::SpanReborrow
+                | Builtin::SpanSharedReborrow
+                | Builtin::SpanChunksNew { .. }
+                | Builtin::SpanIterNext { .. }
+                | Builtin::SpanChunksNext { .. },
             ..
         } => Elision::Named(vec![0]),
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the

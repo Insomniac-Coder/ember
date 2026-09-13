@@ -1571,6 +1571,45 @@ impl<'a> Builder<'a> {
                 );
             }
             hir::ExprKind::Builtin {
+                which: hir::Builtin::SpanIterNext { elem, mutable },
+                args,
+            } => {
+                self.lower_span_iter_next(
+                    place,
+                    &args[0],
+                    *elem,
+                    *mutable,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::SpanChunksNew { iterator, mutable },
+                args,
+            } => {
+                self.lower_span_chunks_new(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *iterator,
+                    *mutable,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::SpanChunksNext { elem, mutable },
+                args,
+            } => {
+                self.lower_span_chunks_next(
+                    place,
+                    &args[0],
+                    *elem,
+                    *mutable,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
                 which: hir::Builtin::MemReplace { elem },
                 args,
             } => {
@@ -3522,6 +3561,290 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto(join_bb));
 
         self.current = join_bb;
+    }
+
+    /// `[SPN-5]` — advance a named Span iterator. The public `next(mut self)`
+    /// contract mutates only the private cursor; the yielded item is tied to
+    /// the stored source view. Mutable iteration is a `[BRW-5]`-sanctioned
+    /// traversal: cursor monotonicity makes distinct yielded elements
+    /// disjoint, so lowering must not conservatively borrow the entire
+    /// iterator across the yielded reference's lifetime.
+    fn lower_span_iter_next(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        elem: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let TyKind::Struct(iterator_id) = *self.types.kind(receiver.ty) else {
+            unreachable!("a Span iterator is a public struct")
+        };
+        let source_ty = self.types.struct_def(iterator_id).fields[0].ty;
+        let iterator = self.lower_place(receiver);
+        let source = iterator.clone().field(0);
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(1))),
+        });
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(source.clone().field(1)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("a Span iterator returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        self.push(StmtKind::Assign {
+            place: iterator.field(1),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        let item_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let item = self.temp(item_ty, span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::SpanIterNext { elem, mutable },
+                arg_ty: source_ty,
+            },
+            args: vec![
+                Operand::Copy(source),
+                Operand::Copy(Place::local(cursor)),
+            ],
+            dest: Place::local(item),
+            next,
+        });
+        self.current = next;
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(item))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    /// `[SPN-6]`, `[SPN-7]` — validate the width once and build the ordinary
+    /// public chunk-iterator struct. A zero width uses the existing bounds
+    /// panic path in every profile, so it is an explicit MIR effect.
+    fn lower_span_chunks_new(
+        &mut self,
+        dest: Place,
+        source: &'a hir::Expr,
+        width: &'a hir::Expr,
+        iterator: Ty,
+        _mutable: bool,
+        span: ember_span::Span,
+    ) {
+        let source = self.lower_operand(source);
+        let width_local = self.temp(self.usize_ty, width.span);
+        self.push(StmtKind::StorageLive(width_local));
+        let width_value = self.lower_operand(width);
+        self.push(StmtKind::Assign {
+            place: Place::local(width_local),
+            rvalue: Rvalue::Use(width_value),
+        });
+        let non_zero = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(non_zero),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Ne,
+                lhs: Operand::Copy(Place::local(width_local)),
+                rhs: Operand::Const(Const::Int { value: 0, ty: self.usize_ty }),
+            },
+        });
+        let after_check = self.new_block();
+        self.terminate(Terminator::Assert {
+            cond: Operand::Copy(Place::local(non_zero)),
+            expected: true,
+            msg: AssertKind::Bounds {
+                len: Operand::Copy(Place::local(width_local)),
+                index: Operand::Const(Const::Int { value: 0, ty: self.usize_ty }),
+            },
+            next: after_check,
+            span,
+        });
+        self.current = after_check;
+        let TyKind::Struct(iterator_id) = *self.types.kind(iterator) else {
+            unreachable!("a Span chunk iterator is a public struct")
+        };
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Struct(iterator_id),
+                operands: vec![
+                    source,
+                    Operand::Const(Const::Int { value: 0, ty: self.usize_ty }),
+                    Operand::Copy(Place::local(width_local)),
+                ],
+            },
+        });
+    }
+
+    /// `[SPN-6]` — advance by `min(width, len - cursor)` and publish one
+    /// subspan. Computing from the remaining length avoids overflow, and the
+    /// monotonic cursor proves that mutable chunks never overlap.
+    fn lower_span_chunks_next(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        elem: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let TyKind::Struct(iterator_id) = *self.types.kind(receiver.ty) else {
+            unreachable!("a Span chunk iterator is a public struct")
+        };
+        let source_ty = self.types.struct_def(iterator_id).fields[0].ty;
+        let iterator = self.lower_place(receiver);
+        let source = iterator.clone().field(0);
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(1))),
+        });
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(source.clone().field(1)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("a Span chunk iterator returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        let remaining = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(remaining),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(source.clone().field(1)),
+                rhs: Operand::Copy(Place::local(cursor)),
+            },
+        });
+        let use_width = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(use_width),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(iterator.clone().field(2)),
+                rhs: Operand::Copy(Place::local(remaining)),
+            },
+        });
+        let full = self.new_block();
+        let partial = self.new_block();
+        let length_ready = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(use_width)),
+            targets: vec![(0, partial)],
+            otherwise: full,
+        });
+        let chunk_len = self.temp(self.usize_ty, span);
+        self.current = full;
+        self.push(StmtKind::Assign {
+            place: Place::local(chunk_len),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(2))),
+        });
+        self.terminate(Terminator::Goto(length_ready));
+        self.current = partial;
+        self.push(StmtKind::Assign {
+            place: Place::local(chunk_len),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(remaining))),
+        });
+        self.terminate(Terminator::Goto(length_ready));
+
+        self.current = length_ready;
+        self.push(StmtKind::Assign {
+            place: iterator.field(1),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(chunk_len)),
+            },
+        });
+        let item_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let item = self.temp(item_ty, span);
+        let after_build = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::SpanChunksNext { elem, mutable },
+                arg_ty: source_ty,
+            },
+            args: vec![
+                Operand::Copy(source),
+                Operand::Copy(Place::local(cursor)),
+                Operand::Copy(Place::local(chunk_len)),
+            ],
+            dest: Place::local(item),
+            next: after_build,
+        });
+        self.current = after_build;
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(item))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
     }
 
     /// `[BRW-5]` — `array.split_at_mut(index)`.

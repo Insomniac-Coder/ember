@@ -30,8 +30,9 @@ pub interface Default:
     fn default() -> Self
 
 ## Part IV §8's canonical associated-type iterator contract. Named standard
-## iterators, including the Arena-backed collection iterators, implement this
-## interface rather than introducing a second iterator abstraction.
+## iterators, including the Arena-backed collection and Span iterators,
+## implement this interface rather than introducing a second iterator
+## abstraction.
 pub interface Iterator:
     type Item
     fn next(mut self) -> Option[Item]

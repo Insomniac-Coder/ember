@@ -149,6 +149,34 @@ pub struct ArenaArrayIterMut[T]:
     owner: ref mut ArenaArray[T]
     index: usize
 
+## `[SPN-4]`–`[SPN-6]` — the public identities and representations of the
+## canonical Span iterators. Each stores one reborrowed source view plus an
+## advancing cursor; chunk iterators additionally retain their non-zero
+## width. The compiler currently lowers `next` and construction while the
+## generic standard-library substrate is completed, as for the Arena-backed
+## iterators above.
+@view
+pub struct SpanIter[T]:
+    source: Span[T]
+    index: usize
+
+@view
+pub struct MutSpanIter[T]:
+    source: MutSpan[T]
+    index: usize
+
+@view
+pub struct SpanChunks[T]:
+    source: Span[T]
+    index: usize
+    width: usize
+
+@view
+pub struct MutSpanChunks[T]:
+    source: MutSpan[T]
+    index: usize
+    width: usize
+
 ## Occupancy is separate from the two uninitialized carriers. This lets an
 ## empty fixed-capacity map reserve all backing bytes in one Arena allocation
 ## without manufacturing invalid `K` or `V` values.

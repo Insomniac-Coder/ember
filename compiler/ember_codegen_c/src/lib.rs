@@ -1056,7 +1056,8 @@ impl Emitter<'_> {
                     | Builtin::ArenaMapInsert { .. }
                     | Builtin::ArenaMapRemove { .. }
                     | Builtin::ArenaMapClear
-                    | Builtin::ArenaMapIterNext { .. } => {
+                    | Builtin::ArenaMapIterNext { .. }
+                    | Builtin::SpanChunksNew { .. } => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
                             which.name()
@@ -1236,6 +1237,60 @@ impl Emitter<'_> {
                         return format!(
                             "(({RT}mutspan){{ {source}.ptr, {source}.len }})"
                         );
+                    }
+                    Builtin::SpanSharedReborrow => {
+                        let source = self.span_value_expression(&rendered[0], *arg_ty);
+                        return format!("(({RT}span){{ {source}.ptr, {source}.len }})");
+                    }
+                    // `[SPN-5]` — MIR has checked the cursor and advanced it
+                    // before this representation-level extraction. The
+                    // iterator's monotonic cursor is the disjointness proof
+                    // for mutable items.
+                    Builtin::SpanIterNext { elem, mutable } => {
+                        let elem = self.c_type(*elem);
+                        let source = &rendered[0];
+                        let pointer = if *mutable {
+                            format!("(({elem}*)({source}).ptr)")
+                        } else {
+                            format!("((const {elem}*)({source}).ptr)")
+                        };
+                        return format!("&({pointer})[{}]", rendered[1]);
+                    }
+                    // `[SPN-6]` — MIR computed the bounded, non-zero advance;
+                    // C emission only forms the half-open subview and avoids
+                    // arithmetic on a null pointer when the start is zero.
+                    Builtin::SpanChunksNext { elem, mutable } => {
+                        let elem = self.c_type(*elem);
+                        let source = &rendered[0];
+                        let view = if *mutable {
+                            format!("{RT}mutspan")
+                        } else {
+                            format!("{RT}span")
+                        };
+                        let tail = if *mutable {
+                            format!("(void*)((({elem}*)({source}).ptr) + {})", rendered[1])
+                        } else {
+                            format!(
+                                "(const void*)(((const {elem}*)({source}).ptr) + {})",
+                                rendered[1]
+                            )
+                        };
+                        return format!(
+                            "(({view}){{ ({} == 0 ? ({}).ptr : {tail}), {} }})",
+                            rendered[1], source, rendered[2]
+                        );
+                    }
+                    // `[SPN-8]`, `[SPN-9]` — extraction is safe and does not
+                    // create a reference. The result is a raw pointer whose
+                    // later use remains governed by `unsafe`.
+                    Builtin::SpanAsPtr { mutable } => {
+                        let source = self.span_value_expression(&rendered[0], *arg_ty);
+                        let elem = self.c_type(self.span_element(*arg_ty));
+                        return if *mutable {
+                            format!("(({elem}*){source}.ptr)")
+                        } else {
+                            format!("((const {elem}*){source}.ptr)")
+                        };
                     }
                     Builtin::StringAsStr => {
                         // The argument is a borrow of the string, so it

@@ -171,6 +171,14 @@ struct CallableBound {
     once: bool,
 }
 
+/// The four owner-approved `[SPN-4]` iterator identities share one lowering
+/// path while keeping their public nominal types distinct.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SpanIteratorKind {
+    Elements { mutable: bool },
+    Chunks { mutable: bool },
+}
+
 /// `[TYP-16]` — a struct declared with type parameters. Its fields are
 /// resolved once with the parameters opaque, so instantiating one is a
 /// substitution rather than another walk of the declaration.
@@ -6117,9 +6125,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `__it.next()`, checked through ordinary method resolution so that a
         // type without one is reported the same way any missing method is.
         let receiver = Expr { ty: iterable.ty, kind: ExprKind::Local(it_local), span: iter.span };
-        let (item_option, call) = if let Some((elem, mutable)) =
-            self.arena_array_iterator(iterable.ty)
-        {
+        let (item_option, call) = if let Some((elem, kind)) = self.span_iterator(iterable.ty) {
+            let item = match kind {
+                SpanIteratorKind::Elements { mutable } => {
+                    self.types.intern(TyKind::Ref { mutable, inner: elem })
+                }
+                SpanIteratorKind::Chunks { mutable } => {
+                    self.types.intern(TyKind::Span { elem, mutable })
+                }
+            };
+            let item_option = self.option_of(item);
+            let which = match kind {
+                SpanIteratorKind::Elements { mutable } => {
+                    Builtin::SpanIterNext { elem, mutable }
+                }
+                SpanIteratorKind::Chunks { mutable } => {
+                    Builtin::SpanChunksNext { elem, mutable }
+                }
+            };
+            (
+                item_option,
+                Expr {
+                    ty: item_option,
+                    kind: ExprKind::Builtin { which, args: vec![receiver] },
+                    span: iter.span,
+                },
+            )
+        } else if let Some((elem, mutable)) = self.arena_array_iterator(iterable.ty) {
             let item = self.types.intern(TyKind::Ref { mutable, inner: elem });
             let item_option = self.option_of(item);
             let receiver = self.pass_receiver(receiver, Mode::Mut, iter.span);
@@ -8385,14 +8417,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
         }
-        // `[ARN-5c]`, `[ARN-5d]` — the three compiler-lowered, named
-        // Arena-backed iterators implement the one standard associated-type
-        // Iterator contract. Their `next` operations are synthesized directly
-        // so they can preserve the element-view provenance in HIR/MIR; that
-        // implementation detail must not make them fail an ordinary
-        // `I: Iterator` bound.
+        // `[ARN-5c]`, `[ARN-5d]`, `[SPN-4]` — the compiler-lowered, named
+        // Arena-backed and Span iterators implement the one standard
+        // associated-type Iterator contract. Their `next` operations are
+        // synthesized directly so they can preserve view provenance in
+        // HIR/MIR; that temporary implementation detail must not make the
+        // ordinary library types fail an `I: Iterator` bound.
         if interface.as_str() == "std.core.Iterator"
-            && (self.arena_array_iterator(ty).is_some()
+            && (self.span_iterator(ty).is_some()
+                || self.arena_array_iterator(ty).is_some()
                 || self.arena_map_iterator(ty).is_some())
         {
             return true;
@@ -9456,6 +9489,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 args,
                 span,
             );
+        }
+        if let Some((elem, kind)) = self.span_iterator(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_span_iterator_method(receiver, elem, kind, name, args, span);
         }
         if let Some((key, value)) = self.arena_map_parts(receiver.ty) {
             if !explicit.is_empty() {
@@ -10757,6 +10801,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    fn span_iterator(&self, ty: Ty) -> Option<(Ty, SpanIteratorKind)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        if args.len() != 1 {
+            return None;
+        }
+        let kind = match origin.as_str() {
+            "std.collections.SpanIter" => SpanIteratorKind::Elements { mutable: false },
+            "std.collections.MutSpanIter" => SpanIteratorKind::Elements { mutable: true },
+            "std.collections.SpanChunks" => SpanIteratorKind::Chunks { mutable: false },
+            "std.collections.MutSpanChunks" => SpanIteratorKind::Chunks { mutable: true },
+            _ => return None,
+        };
+        Some((args[0], kind))
+    }
+
     fn arena_map_parts(&self, ty: Ty) -> Option<(Ty, Ty)> {
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
@@ -11174,6 +11234,63 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 which: Builtin::ArenaArrayIterNext { elem, mutable },
                 args: vec![receiver],
             },
+            span,
+        }
+    }
+
+    fn synth_span_iterator_method(
+        &mut self,
+        receiver: Expr,
+        elem: Ty,
+        kind: SpanIteratorKind,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("next") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`{}` has no method named `{}`",
+                    self.types.display(receiver.ty),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`next` takes no arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        self.reject_readonly_write(&receiver, span);
+        let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
+        if !through_shared_ref {
+            self.reject_borrowed_parameter_write(&receiver, span, false);
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "`next` needs an iterator variable to advance");
+            return error;
+        }
+        let (item, which) = match kind {
+            SpanIteratorKind::Elements { mutable } => (
+                self.types.intern(TyKind::Ref { mutable, inner: elem }),
+                Builtin::SpanIterNext { elem, mutable },
+            ),
+            SpanIteratorKind::Chunks { mutable } => (
+                self.types.intern(TyKind::Span { elem, mutable }),
+                Builtin::SpanChunksNext { elem, mutable },
+            ),
+        };
+        let result = self.option_of(item);
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin { which, args: vec![receiver] },
             span,
         }
     }
@@ -11963,12 +12080,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    /// `[SPN-2]`, `[SPN-3]` — the methods on `Span[T]` and `MutSpan[T]`.
-    ///
-    /// Part VII §7 names the full set (`.len()`, `.iter()`, `.iter_mut()`,
-    /// `.split_at(i)`, `.chunks(n)`, `.as_ptr()`); this is the part the
-    /// compiler can answer without closures or an `Iterator` written in Ember,
-    /// and a name it does not know is an error rather than a silent miss.
+    /// `[SPN-2]`–`[SPN-9]` — the methods on `Span[T]` and `MutSpan[T]`.
+    /// The four named iterator/chunk identities are declared by
+    /// `std.collections`; synthesis here is temporary implementation machinery
+    /// for their source-bounded construction and deterministic lowering.
     fn synth_span_method(
         &mut self,
         receiver: Expr,
@@ -12012,6 +12127,127 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ty: view,
                 kind: ExprKind::Builtin {
                     which: Builtin::SpanReborrow,
+                    args: vec![receiver],
+                },
+                span,
+            };
+        }
+        if matches!(name.name.as_str(), "iter" | "iter_mut") {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes 0 arguments, found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let wants_mut = name.name.is("iter_mut");
+            if wants_mut && !mutable {
+                self.error(codes::E2020, name.span, "`Span` has no method `iter_mut`");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let source = if mutable {
+                self.reborrow_span(receiver, elem, wants_mut, span)
+            } else {
+                receiver
+            };
+            let iterator = self.instantiate_named_generic(
+                if wants_mut {
+                    "std.collections.MutSpanIter"
+                } else {
+                    "std.collections.SpanIter"
+                },
+                &[elem],
+                span,
+            );
+            let TyKind::Struct(iterator_id) = *self.types.kind(iterator) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            return Expr {
+                ty: iterator,
+                kind: ExprKind::StructLit {
+                    struct_id: iterator_id,
+                    fields: vec![
+                        source,
+                        Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+                    ],
+                },
+                span,
+            };
+        }
+        if matches!(name.name.as_str(), "chunks" | "chunks_mut") {
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes 1 argument, found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let wants_mut = name.name.is("chunks_mut");
+            if wants_mut && !mutable {
+                self.error(codes::E2020, name.span, "`Span` has no method `chunks_mut`");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let source = if mutable {
+                self.reborrow_span(receiver, elem, wants_mut, span)
+            } else {
+                receiver
+            };
+            let width = self.check_expr(&args[0].value, usize_ty);
+            let iterator = self.instantiate_named_generic(
+                if wants_mut {
+                    "std.collections.MutSpanChunks"
+                } else {
+                    "std.collections.SpanChunks"
+                },
+                &[elem],
+                span,
+            );
+            return Expr {
+                ty: iterator,
+                kind: ExprKind::Builtin {
+                    which: Builtin::SpanChunksNew { iterator, mutable: wants_mut },
+                    args: vec![source, width],
+                },
+                span,
+            };
+        }
+        if matches!(name.name.as_str(), "as_ptr" | "as_mut_ptr") {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes 0 arguments, found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let wants_mut = name.name.is("as_mut_ptr");
+            if wants_mut && !mutable {
+                self.error(codes::E2020, name.span, "`Span` has no method `as_mut_ptr`");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let receiver = if wants_mut {
+                if is_place(&receiver.kind) {
+                    self.pass_receiver(receiver, Mode::Mut, span)
+                } else if self.viewed_place(&receiver) {
+                    receiver
+                } else {
+                    self.error(
+                        codes::E2140,
+                        span,
+                        "`as_mut_ptr` needs a mutable span variable or a view of a mutable place",
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+            } else {
+                receiver
+            };
+            let pointer = self.types.intern(TyKind::Ptr { mutable: wants_mut, inner: elem });
+            return Expr {
+                ty: pointer,
+                kind: ExprKind::Builtin {
+                    which: Builtin::SpanAsPtr { mutable: wants_mut },
                     args: vec![receiver],
                 },
                 span,
@@ -12115,6 +12351,43 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
         Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span }
+    }
+
+    /// `[SPN-5]`, `[SPN-6]` — derive the source view stored by a named
+    /// iterator from a `MutSpan` without consuming the caller's view. Shared
+    /// iteration takes a shared reborrow; mutable iteration uses the existing
+    /// explicit mutable-reborrow operation from `[SPN-3]`.
+    fn reborrow_span(&mut self, receiver: Expr, elem: Ty, mutable: bool, span: Span) -> Expr {
+        let receiver = if is_place(&receiver.kind) {
+            if mutable {
+                self.pass_receiver(receiver, Mode::Mut, span)
+            } else {
+                let ty = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+                Expr {
+                    ty,
+                    kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+                    span,
+                }
+            }
+        } else if self.viewed_place(&receiver) {
+            receiver
+        } else {
+            self.error(
+                codes::E2140,
+                span,
+                "this operation needs a mutable span variable or a view of a mutable place",
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let view = self.types.intern(TyKind::Span { elem, mutable });
+        Expr {
+            ty: view,
+            kind: ExprKind::Builtin {
+                which: if mutable { Builtin::SpanReborrow } else { Builtin::SpanSharedReborrow },
+                args: vec![receiver],
+            },
+            span,
+        }
     }
 
     /// `[ARN-9]` — initialization operations on
