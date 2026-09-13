@@ -12,6 +12,8 @@ Run:  python tools/test_rule_index.py
 """
 
 import json
+import hashlib
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -266,6 +268,73 @@ class ScopePins(unittest.TestCase):
         defs = rule_index.rule_definitions(rule_index.spec_lines())
         duplicates = {k: v for k, v in defs.items() if len(v) > 1}
         self.assertEqual({}, duplicates)
+
+
+class DevelopmentTargetBridge(unittest.TestCase):
+    def make_target(self, root, text, *, digest=None, path="target.md"):
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8", newline="\n")
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        manifest = root / "development-target.json"
+        manifest.write_text(
+            json.dumps(
+                {"schema": 1, "path": path, "sha256": digest or actual},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return manifest
+
+    def test_target_rule_is_valid_only_for_code_named_by_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.make_target(
+                root,
+                "* `[FUT-1]` Future diagnostic rule.\n`E3998` uses it.\n",
+            )
+            target = rule_index.load_development_target(manifest, root)
+            self.assertEqual(
+                [],
+                rule_index.registry_rule_failures(
+                    {"E3998": "[FUT-1]"}, set(), target
+                ),
+            )
+            self.assertEqual(
+                1,
+                len(
+                    rule_index.registry_rule_failures(
+                        {"E3997": "[FUT-1]"}, set(), target
+                    )
+                ),
+            )
+
+    def test_hash_mismatch_is_a_hard_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.make_target(root, "* `[FUT-1]` Rule.\n", digest="0" * 64)
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                rule_index.load_development_target(manifest, root)
+
+    def test_rule_absent_from_both_sources_is_rejected(self):
+        failures = rule_index.registry_rule_failures(
+            {"E3999": "[MISSING-1]"}, {"CURRENT-1"}, None
+        )
+        self.assertEqual(1, len(failures))
+        self.assertIn("neither the adopted specification", failures[0])
+
+    def test_manifest_path_cannot_escape_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "development-target.json"
+            manifest.write_text(
+                json.dumps({"schema": 1, "path": "../outside.md", "sha256": "0" * 64}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "escapes the repository"):
+                rule_index.load_development_target(manifest, root)
 
 
 if __name__ == "__main__":

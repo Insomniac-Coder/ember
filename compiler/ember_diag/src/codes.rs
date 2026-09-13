@@ -240,6 +240,7 @@ codes! {
     E3042 = (Error, 3042, Ownership, "[EXP-6]", "partial move then use of the whole value");
     E3063 = (Error, 3063, Ownership, "[TYP-15]", "stored view may not outlive its source");
     E3064 = (Error, 3064, Ownership, "[LT-2]", "two independent regions in one view struct");
+    E3065 = (Error, 3065, Ownership, "[LT-22], [LT-35], [LT-36], [LT-37], [LT-38], [LT-39], [LT-40], [VERIFY-3]", "multi-region result provenance");
     E3095 = (Error, 3095, Ownership, "[DSJ-4]", "disjointness is not establishable for these operands");
     E3096 = (Error, 3096, Ownership, "[ARN-6]", "arena is scoped here");
     E3050 = (Error, 3050, Ownership, "[BRW-7]", "use of an uninitialised or moved place");

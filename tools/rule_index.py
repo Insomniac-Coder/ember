@@ -14,6 +14,9 @@ compiler drift apart. This is that tool. It runs six checks:
 3. **Rule has a conformance directory** (`[TST-4]`).
 4. **Every code named in the document is in the registry**, and every registry
    entry cites a rule that exists (`[DIA-6a]`, both directions).
+   During an adoption migration, a registry citation may instead resolve in
+   the hash-pinned frozen development target, but only when that target also
+   names the diagnostic code. All other checks still use the adopted source.
 5. **Every code has an error page** under `docs/errors/` (`[DIA-6]`).
 6. **Every E3xxx code is keyed to a diagnostic shape** (`[DIA-7a]`).
 7. **Every registered code has a conformance test that asserts it**
@@ -51,6 +54,7 @@ state. This is the same shape `[TST-7]` uses for its `,ignore` blocks.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -62,6 +66,7 @@ CONFORMANCE = ROOT / "tests" / "conformance"
 ERROR_PAGES = ROOT / "docs" / "errors"
 REGISTRY_RS = ROOT / "compiler" / "ember_diag" / "src" / "codes.rs"
 BASELINE = ROOT / "tools" / "rule_index_baseline.json"
+DEVELOPMENT_TARGET_MANIFEST = ROOT / "docs" / "spec-source" / "development-target.json"
 
 # `[XXII.4]` fixes the extractor's pattern. The trailing letter admits
 # amendment ids (`[LEX-11a]`), the hyphenated class admits `[CG-C-3]`.
@@ -318,6 +323,84 @@ def codes_named_in_spec(text):
     return sorted({f"{k}{n}" for k, n in CODE.findall(stripped)})
 
 
+def load_development_target(manifest_path=DEVELOPMENT_TARGET_MANIFEST, root=ROOT):
+    """Load and authenticate the optional frozen development target.
+
+    The adopted `ember-spec.md` remains the normative input for every normal
+    rule-index check. This manifest exists for one deliberately narrower
+    question: a compiler under migration may register a diagnostic required by
+    an immutable future target before that target is eligible for adoption.
+    Such a registry citation is accepted only when both the diagnostic code and
+    every cited rule occur in the hash-pinned target. The target therefore
+    cannot silently replace the adopted specification or relax unknown-rule
+    detection.
+    """
+    manifest_path = Path(manifest_path)
+    root = Path(root).resolve()
+    if not manifest_path.exists():
+        return None
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {manifest_path}: {exc}") from exc
+
+    if manifest.get("schema") != 1:
+        raise ValueError("development-target manifest must use schema 1")
+    relative = manifest.get("path")
+    expected = manifest.get("sha256")
+    if not isinstance(relative, str) or not relative:
+        raise ValueError("development-target manifest has no non-empty path")
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9A-Fa-f]{64}", expected):
+        raise ValueError("development-target manifest has no valid SHA-256")
+
+    target_path = (root / relative).resolve()
+    try:
+        target_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("development-target path escapes the repository") from exc
+    if not target_path.is_file():
+        raise ValueError(f"development target not found at {target_path}")
+
+    payload = target_path.read_bytes()
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual.lower() != expected.lower():
+        raise ValueError(
+            f"development target hash mismatch for {target_path}: "
+            f"expected {expected.upper()}, found {actual.upper()}"
+        )
+    text = payload.decode("utf-8")
+    return {
+        "path": target_path,
+        "sha256": actual.upper(),
+        "rules": set(all_rule_ids(text)),
+        "codes": set(codes_named_in_spec(text)),
+    }
+
+
+def registry_rule_failures(registry, adopted_rules, development_target=None):
+    """Return registry citations absent from all applicable authorities.
+
+    A future-target rule is applicable only to a code that target itself names.
+    This prevents a coincidental rule id in the target from legitimising an
+    unrelated compiler diagnostic.
+    """
+    failures = []
+    target_rules = development_target["rules"] if development_target else set()
+    target_codes = development_target["codes"] if development_target else set()
+    for code, rule in sorted(registry.items()):
+        for rid in RULE_ID.findall(rule):
+            if rid in adopted_rules:
+                continue
+            if code in target_codes and rid in target_rules:
+                continue
+            failures.append(
+                f"[DIA-6a] {code} cites `[{rid}]`, which is in neither the adopted "
+                "specification nor a matching hash-pinned development target"
+            )
+    return failures
+
+
 def load_baseline():
     if BASELINE.exists():
         return json.loads(BASELINE.read_text(encoding="utf-8"))
@@ -358,6 +441,12 @@ def main():
     text = "\n".join(lines)
     failures = []
     known = load_baseline()
+    development_target = None
+    if spec_path == SPEC.resolve():
+        try:
+            development_target = load_development_target()
+        except ValueError as exc:
+            failures.append(f"development-target manifest: {exc}")
 
     # --- 1. duplicate rule ids (`[XXII.4]`) --------------------------------
     defs = rule_definitions(lines)
@@ -400,16 +489,14 @@ def main():
     missing_pages = sorted(c for c in registry if c not in pages)
 
     # `[DIA-6a]`, the other direction: a registry entry citing a rule that is
-    # not in the specification. This one is never baselined — it means the
-    # compiler is enforcing something the document does not say.
+    # absent from both the adopted specification and, for a diagnostic the
+    # target itself names, the authenticated frozen development target. This
+    # one is never baselined — it means the compiler is enforcing something no
+    # applicable contract says. The target exception is intentionally limited
+    # to registry citations; it does not adopt that document for any other
+    # check.
     rule_set = set(rules)
-    for code, rule in sorted(registry.items()):
-        cited = RULE_ID.findall(rule)
-        for rid in cited:
-            if rid not in rule_set:
-                failures.append(
-                    f"[DIA-6a] {code} cites `[{rid}]`, which is in no part of the specification"
-                )
+    failures.extend(registry_rule_failures(registry, rule_set, development_target))
 
     if args.write_baseline:
         # `[TST-4c]` — "The baseline shrinks and never grows: rule_index.py
@@ -476,6 +563,12 @@ def main():
           f"{len(known['codes_not_in_registry'])} codes not in the registry, "
           f"{len(known.get('dangling_references', []))} dangling references, "
           f"{len(known.get('codes_without_tests', []))} codes without tests")
+    if development_target:
+        print(
+            "development target (registry citations only): "
+            f"{development_target['path'].relative_to(ROOT)} "
+            f"SHA-256 {development_target['sha256']}"
+        )
 
     if args.report:
         print("\n-- duplicate rule definitions --")

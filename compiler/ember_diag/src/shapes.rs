@@ -69,6 +69,8 @@ pub enum Shape {
     B12,
     /// two independent regions in one view struct
     B13,
+    /// returned multi-region view has no sound field-to-source relation
+    B14,
     /// static exclusivity conflict
     X1,
     /// `@static_safe` violated
@@ -110,6 +112,7 @@ impl Shape {
             Shape::B11 => "two views whose ranges cannot be related",
             Shape::B12 => "a view stored where it outlives its source",
             Shape::B13 => "a view struct needing two independent regions",
+            Shape::B14 => "a multi-region result whose field provenance cannot be inferred",
             Shape::X1 => "two overlapping long-term accesses through one handle local",
             Shape::S1 => "a `@static_safe` function carries a dynamic aliasing check",
             Shape::A1 => "an arena view outliving its arena",
@@ -147,6 +150,7 @@ pub fn shape_for(code: codes::Code) -> Option<Shape> {
         3062 => Shape::B6,
         3063 => Shape::B12,
         3064 => Shape::B13,
+        3065 => Shape::B14,
         3070 => Shape::O7,
         3080 => Shape::X1,
         3095 => Shape::B11,

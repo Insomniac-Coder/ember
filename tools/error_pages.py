@@ -175,6 +175,7 @@ def main() -> int:
     pages = sorted(p for p in PAGES.glob("*.md") if re.fullmatch(r"[EWL]\d{4}", p.stem))
     have = {p.stem for p in pages}
     emitted = emitted_codes()
+    executable_pages = [page for page in pages if page.stem in emitted]
     registered = registered_codes()
     missing = sorted(c for c in emitted & registered if c not in have)
     known = load_baseline()
@@ -202,13 +203,23 @@ def main() -> int:
     problems = []
     with tempfile.TemporaryDirectory(prefix="ember-error-pages-") as tmp:
         work = Path(tmp)
-        for page in pages:
+        # A preserved page for a reserved/non-emitted code is historical
+        # documentation, not an executable diagnostic contract. Requiring a
+        # trigger for such a code would force the compiler to emit a diagnostic
+        # its target explicitly reserves. `emitted_codes` is also guarded by
+        # the rule-index conformance-test ratchet, so an accidentally removed
+        # emitter cannot disappear silently merely because this gate skips its
+        # old page.
+        for page in executable_pages:
             problems.extend(check_page(page, work))
     for code in missing:
         if code not in known:
             problems.append(f"[DIA-6] {code} is emitted by the compiler and has no docs/errors/{code}.md")
 
-    print(f"{len(pages)} error page(s), {len(missing)} emitted code(s) without one ({len(known)} known)")
+    print(
+        f"{len(pages)} error page(s), {len(executable_pages)} executable, "
+        f"{len(missing)} emitted code(s) without one ({len(known)} known)"
+    )
     if problems:
         print(f"\n{len(problems)} problem(s):\n")
         for problem in problems:

@@ -42,7 +42,11 @@ use ember_span::Span;
 use crate::facts::{
     AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
-use crate::regions::{Elision, Origin, Point, Regions};
+use crate::regions::{
+    CallAccessContract, CallRegionContract, CallResultContract, Elision, Origin,
+    ParameterFieldAccess, Point, RegionAccessKind, Regions, ResultFieldProvenance,
+    ResultProvenanceSummary, ResultRegionSource,
+};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
@@ -100,10 +104,35 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
             methods.insert(body.symbol.as_str());
         }
     }
-    let elision = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol } => {
-            signatures.get(symbol.as_str()).cloned().unwrap_or(Elision::Everything)
-        }
+    let summaries = infer_callable_summaries(bodies, types, &signatures);
+    let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
+    let invalid_result_bodies =
+        infer_invalid_result_bodies(bodies, types, &call_contract);
+    let is_method = |func: &FuncRef| match func {
+        FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
+        _ => false,
+    };
+    for body in bodies {
+        check_body(
+            body,
+            types,
+            &call_contract,
+            &invalid_result_bodies,
+            &is_method,
+            sink,
+        );
+    }
+}
+
+/// The pre-0.9.5 whole-result relation, retained both for one-region results
+/// and as the mandatory conservative fallback for calls with no exact
+/// field-to-source summary.
+fn legacy_elision(func: &FuncRef, signatures: &HashMap<&str, Elision>) -> Elision {
+    match func {
+        FuncRef::Direct { symbol } => signatures
+            .get(symbol.as_str())
+            .cloned()
+            .unwrap_or(Elision::Everything),
         // A builtin is `println`, `format` or an arithmetic helper: none of
         // them hands back a view of an argument.
         // `[SPN-1]` — a view built from a container points **into** it, so
@@ -148,14 +177,234 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         // callee, so the permissive reading of `[LT-1]` rule 3 is taken
         // and the result is treated as borrowing every view argument.
         FuncRef::Indirect(_) => Elision::Everything,
-    };
-    let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
-        _ => false,
-    };
-    for body in bodies {
-        check_body(body, types, &elision, &is_method, sink);
     }
+}
+
+fn conservative_contract(elision: Elision) -> CallRegionContract {
+    CallRegionContract {
+        access: CallAccessContract::All,
+        result: CallResultContract::Legacy(elision),
+    }
+}
+
+fn contract_for(
+    func: &FuncRef,
+    summaries: &HashMap<String, CallRegionContract>,
+    signatures: &HashMap<&str, Elision>,
+) -> CallRegionContract {
+    if let FuncRef::Direct { symbol } = func
+        && let Some(summary) = summaries.get(symbol.as_str())
+    {
+        return summary.clone();
+    }
+    if let Some(contract) = builtin_contract(func) {
+        return contract;
+    }
+    conservative_contract(legacy_elision(func, signatures))
+}
+
+/// Compiler-known calls whose multi-field result provenance is part of their
+/// existing semantic contract. Both halves of a split borrow the same source
+/// view even though `[BRW-5]` gives them disjoint storage identities.
+fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
+    let FuncRef::Builtin {
+        which: Builtin::ArraySplitAtMut { .. } | Builtin::SpanSplitAt { .. },
+        ..
+    } = func
+    else {
+        return None;
+    };
+    let field = |index| ResultFieldProvenance {
+        result_projection: vec![Projection::Field(index)],
+        sources: vec![ResultRegionSource::View {
+            argument: 0,
+            projection: Vec::new(),
+        }],
+    };
+    Some(CallRegionContract {
+        access: CallAccessContract::All,
+        result: CallResultContract::Fields(ResultProvenanceSummary {
+            fields: vec![field(0), field(1)],
+        }),
+    })
+}
+
+/// Infer exact direct-function result provenance to a fixpoint. A wrapper may
+/// depend on a callee declared later, so one source-order pass is insufficient.
+/// Unknown and recursive relations remain absent and are conservatively
+/// checked (and, when returned, diagnosed as B14) rather than guessed.
+fn infer_callable_summaries(
+    bodies: &[Body],
+    types: &TypeTable,
+    signatures: &HashMap<&str, Elision>,
+) -> HashMap<String, CallRegionContract> {
+    let mut summaries: HashMap<String, CallRegionContract> = HashMap::new();
+    for _ in 0..=bodies.len() {
+        let contract = |func: &FuncRef| contract_for(func, &summaries, signatures);
+        let mut next = HashMap::new();
+        for body in bodies {
+            let regions = Regions::infer(body, types, &contract);
+            next.insert(
+                body.symbol.clone(),
+                inferred_callable_summary(body, types, &regions),
+            );
+        }
+        if next == summaries {
+            return summaries;
+        }
+        summaries = next;
+    }
+    summaries
+}
+
+fn inferred_callable_summary(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+) -> CallRegionContract {
+    let mut accesses = Vec::new();
+    for (local, _) in body.args() {
+        let whole_value_move = regions.local_regions(local).len() > 1
+            && !body.borrowed_params.contains(&local);
+        for slot in regions.local_regions(local) {
+            let mut operations: Vec<RegionAccessKind> =
+                regions.accesses(slot.region).iter().copied().collect();
+            if whole_value_move && !operations.contains(&RegionAccessKind::Move) {
+                operations.push(RegionAccessKind::Move);
+            }
+            operations.sort();
+            if !operations.is_empty() {
+                accesses.push(ParameterFieldAccess {
+                    argument: local.0 as usize - 1,
+                    projection: slot.projection.clone(),
+                    operations,
+                });
+            }
+        }
+    }
+
+    CallRegionContract {
+        access: CallAccessContract::Fields(accesses),
+        result: match inferred_result_summary(body, types, regions) {
+            Some(summary) => CallResultContract::Fields(summary),
+            None => CallResultContract::Legacy(elision_of(body, types)),
+        },
+    }
+}
+
+fn inferred_result_summary(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+) -> Option<ResultProvenanceSummary> {
+    let result_slots = regions.local_regions(ember_mir::RETURN_LOCAL);
+    if result_slots.len() < 2
+        || result_slots
+            .iter()
+            .any(|slot| regions.has_imprecise_provenance(slot.region))
+        || result_slots.iter().any(|slot| {
+            regions
+                .origins(slot.region)
+                .iter()
+                .any(|origin| matches!(origin, Origin::Local(_)))
+        })
+    {
+        return None;
+    }
+
+    let mut fields = Vec::with_capacity(result_slots.len());
+    for result in result_slots {
+        let mut sources = Vec::new();
+        for (local, decl) in body.args() {
+            let argument = local.0 as usize - 1;
+            let parameter_slots = regions.local_regions(local);
+            if parameter_slots.is_empty() {
+                if is_growing_arena_ty(types, decl.ty)
+                    && regions.origins(result.region).contains(&Origin::Param(local))
+                {
+                    sources.push(ResultRegionSource::Arena { argument });
+                }
+                continue;
+            }
+            for parameter in parameter_slots {
+                if regions.reaches_slot(parameter.region, result.region) {
+                    sources.push(ResultRegionSource::View {
+                        argument,
+                        projection: parameter.projection.clone(),
+                    });
+                }
+            }
+        }
+        fields.push(ResultFieldProvenance {
+            result_projection: result.projection.clone(),
+            sources,
+        });
+    }
+    Some(ResultProvenanceSummary { fields })
+}
+
+/// Find bodies whose result summary is invalid because they transitively
+/// depend on a genuinely opaque multi-region result. Diagnostics are emitted
+/// at the first opaque boundary; callers of an already-invalid body are not
+/// flooded with the same recovery error. A direct recursive cycle with no
+/// opaque root is deliberately not included and remains diagnosable.
+fn infer_invalid_result_bodies(
+    bodies: &[Body],
+    types: &TypeTable,
+    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+) -> HashSet<String> {
+    let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
+    let regions: Vec<Regions> = bodies
+        .iter()
+        .map(|body| Regions::infer(body, types, call_contract))
+        .collect();
+    let mut invalid = HashSet::new();
+
+    for (body, regions) in bodies.iter().zip(&regions) {
+        if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+            !matches!(
+                func,
+                FuncRef::Direct { symbol } if known.contains(symbol.as_str())
+            )
+        }) {
+            invalid.insert(body.symbol.clone());
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (body, regions) in bodies.iter().zip(&regions) {
+            if invalid.contains(&body.symbol) {
+                continue;
+            }
+            if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+                matches!(
+                    func,
+                    FuncRef::Direct { symbol } if invalid.contains(symbol.as_str())
+                )
+            }) {
+                invalid.insert(body.symbol.clone());
+                changed = true;
+            }
+        }
+    }
+    invalid
+}
+
+fn unresolved_multi_result_calls<'a>(
+    body: &'a Body,
+    regions: &'a Regions,
+    call_contract: &'a dyn Fn(&FuncRef) -> CallRegionContract,
+) -> impl Iterator<Item = &'a FuncRef> + 'a {
+    body.blocks.iter().filter_map(move |block| {
+        let Terminator::Call { func, dest, .. } = &block.terminator else {
+            return None;
+        };
+        (regions.place_regions(dest).len() >= 2
+            && matches!(call_contract(func).result, CallResultContract::Legacy(_)))
+        .then_some(func)
+    })
 }
 
 /// `[LT-1]` — what a call to this function ties its result to.
@@ -290,6 +539,55 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
     }
 }
 
+/// `[LT-22]`, shape B14 — every call producing a multi-region result must have
+/// an exact field-to-input provenance relation. An opaque/recursive result
+/// edge is rejected at that boundary rather than widened to the legacy
+/// intersection or treated as static.
+fn check_multi_result_summary(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    invalid_result_bodies: &HashSet<String>,
+    sink: &mut Sink,
+) {
+    for block in &body.blocks {
+        let Terminator::Call { func, dest, .. } = &block.terminator else {
+            continue;
+        };
+        if regions.place_regions(dest).len() < 2
+            || matches!(call_contract(func).result, CallResultContract::Fields(_))
+            || matches!(
+                func,
+                FuncRef::Direct { symbol } if invalid_result_bodies.contains(symbol.as_str())
+            )
+        {
+            continue;
+        }
+        let result = types.display(place_ty(body, types, dest));
+        sink.emit_classified(
+            Diagnostic::error(
+                codes::E3065,
+                block.terminator_span,
+                format!(
+                    "the returned `{result}` has field provenance that cannot be inferred soundly"
+                ),
+            )
+            .primary_label("multi-region result returned here")
+            .secondary(
+                body.span,
+                "this function must expose one source relation per borrowed result field",
+            )
+            .help(
+                "return an owned value, return the views separately, or use an applicable existing `@borrows` contract",
+            )
+            .note(
+                "the compiler will not force an intersection or invent a `static` region (LT-22)",
+            ),
+        );
+    }
+}
+
 /// `[TYP-15]`, `[LT-3]` — a Box has no bounding region, so a view may enter it
 /// only when every carried region is static. This check belongs after region
 /// inference: spelling the same static view through a local or a zero-input
@@ -340,22 +638,38 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         FuncRef::Direct { symbol } => symbol.as_str() == body.symbol.as_str() && is_method_body(body),
         _ => false,
     };
-    check_body(body, types, &|_| Elision::Everything, &is_method, sink);
+    check_body(
+        body,
+        types,
+        &|_| conservative_contract(Elision::Everything),
+        &HashSet::new(),
+        &is_method,
+        sink,
+    );
 }
 
 fn check_body(
     body: &Body,
     types: &TypeTable,
-    elision: &dyn Fn(&FuncRef) -> Elision,
+    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    invalid_result_bodies: &HashSet<String>,
     is_method: &dyn Fn(&FuncRef) -> bool,
     sink: &mut Sink,
 ) {
-    let regions = Regions::infer(body, types, elision);
+    let regions = Regions::infer(body, types, call_contract);
     check_box_storage_regions(body, types, &regions, sink);
     // Before the loans: a function that hands back a parameter has no loan of
     // its own, and `[LT-1a]` is about exactly that function.
     check_return_regions(body, types, &regions, sink);
-    let loans = collect_loans(body, types, &regions, elision);
+    check_multi_result_summary(
+        body,
+        types,
+        &regions,
+        call_contract,
+        invalid_result_bodies,
+        sink,
+    );
+    let loans = collect_loans(body, types, &regions, call_contract);
     if loans.is_empty() {
         return;
     }
@@ -639,7 +953,7 @@ fn collect_loans(
     body: &Body,
     types: &TypeTable,
     regions: &Regions,
-    elision: &dyn Fn(&FuncRef) -> Elision,
+    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
 ) -> Vec<Loan> {
     let mut loans = Vec::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
@@ -683,7 +997,7 @@ fn collect_loans(
         let Some(region) = regions.local_region(dest.local) else {
             continue;
         };
-        let tied = elision(func);
+        let tied = call_contract(func);
         for (argument, operand) in args.iter().enumerate() {
             if !tied.ties(argument) {
                 continue;
@@ -1056,7 +1370,7 @@ fn check_point(
             // `[DIA-2]` — never name a temporary at the user. When the
             // borrow lives in one, the advice is about the expression, not
             // about a local they cannot see.
-            let (borrower, later, holder) = keeper(body, regions, reads, loan, span);
+            let (borrower, later) = keeper(body, regions, reads, loan, span);
             // `[CTL-2]` survives `for` desugaring as an explicit semantic
             // fact on the synthesized iterator local. A mutable access to the
             // iterable while that local holds this loan is E3020/B2. A
@@ -1065,17 +1379,13 @@ fn check_point(
             // both fragile and user-spellable.
             let iteration_borrow = matches!(access, Access::Write | Access::Borrow { mutable: true })
                 && loan_held_by_for_iterator(body, regions, loan);
-            // `[LT-2]` — when a view struct bundling two views is what holds
-            // the loan, this is shape B13 and not B3, and `[DIA-7a]` keys it
-            // to `E3064`.
-            let bundled = bundles_two_views(body, types, regions, loan, holder);
             // `[BRW-4]` — when the conflicting access is a method call's
             // receiver autoref, disjoint-field access is defeated by the call:
             // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
             // function's `mut` argument lowers through the same temporary, so
             // the consuming call must be to a method body — otherwise a
             // whole-place `mut` argument misreports as B8 rather than B1.
-            let method_root = if !bundled && loan_mutable && matches!(access, Access::Borrow { mutable: true }) {
+            let method_root = if loan_mutable && matches!(access, Access::Borrow { mutable: true }) {
                 method_autoref_target(body, point, is_method)
                     .map(|taken| place_name(body, types, &taken))
             } else {
@@ -1087,11 +1397,6 @@ fn check_point(
                 (
                     codes::E3020,
                     format!("cannot mutate `{name}` while it is borrowed by this loop"),
-                )
-            } else if bundled {
-                (
-                    codes::E3064,
-                    format!("`{name}` is borrowed through a view struct that bundles two views"),
                 )
             } else if let Some(taken) = method_root.as_deref() {
                 (
@@ -1154,41 +1459,33 @@ fn check_point(
                     .help(match (
                         &borrower,
                         loan.arena_scope,
-                        bundled,
                         method_root.as_deref(),
                         indexed_conflict,
                         exact_mutable_conflict,
                     ) {
-                        (_, true, _, _, _, _) => String::from(
+                        (_, true, _, _, _) => String::from(
                             "allocate from `scope` instead, or take this allocation before opening the scope",
-                        ),
-                        // `[DIA-7a]` shape B13's help, which is a different fix
-                        // from B3's: the use keeping the loan alive may be of
-                        // the *other* field, so shortening it is no answer.
-                        (_, _, true, _, _, _) => String::from(
-                            "pass the two views as separate parameters rather than bundling \
-                             them; or copy the shorter-lived data into an owned field",
                         ),
                         // `[DIA-7a]` shape B8's help: the call takes all of
                         // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, _, Some(_), _, _) => String::from(
+                        (_, _, Some(_), _, _) => String::from(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
-                        (_, _, _, _, true, _) => format!(
+                        (_, _, _, true, _) => format!(
                             "use `{owner}.split_at_mut(k)` to obtain two non-overlapping mutable \
                              spans; `chunks_mut`, `iter_mut`, and `columns_mut` cover other \
                              structural access patterns"
                         ),
-                        (_, _, _, _, _, true) => String::from(
+                        (_, _, _, _, true) => String::from(
                             "use one mutable access rather than borrowing the same place twice; \
                              use `split_at_mut` when the intended operands are disjoint parts of one owner"
                         ),
-                        (Some(name), _, _, _, _, _) => format!(
+                        (Some(name), _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _, _, _, _) => format!(
+                        (None, _, _, _, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
@@ -1196,8 +1493,6 @@ fn check_point(
                     })
                     .note(if loan.arena_scope {
                         "a ScopedArena holds its parent's mutable borrow for the scope's whole region (ARN-6)"
-                    } else if bundled {
-                        "a view struct has one region: the intersection of its fields' (LT-2)"
                     } else if method_root.is_some() {
                         "a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)"
                     } else if indexed_conflict {
@@ -1234,7 +1529,7 @@ fn keeper(
     reads: &HashMap<LocalId, Vec<Span>>,
     loan: &Loan,
     conflict: Span,
-) -> (Option<String>, Option<Span>, Option<LocalId>) {
+) -> (Option<String>, Option<Span>) {
     let mut best: Option<(LocalId, Span)> = None;
     for holder in regions.holders(loan.capability.region) {
         if body.local(*holder).name.is_none() {
@@ -1251,38 +1546,12 @@ fn keeper(
         }
     }
     match best {
-        Some((holder, span)) => (body.local(holder).name.clone(), Some(span), Some(holder)),
+        Some((holder, span)) => (body.local(holder).name.clone(), Some(span)),
         // No later read: the borrow is kept alive by something else — a loop
         // back edge, or the return slot — and the local it was written into is
         // still the honest thing to name.
-        None => (body.local(loan.borrower).name.clone(), None, Some(loan.borrower)),
+        None => (body.local(loan.borrower).name.clone(), None),
     }
-}
-
-/// Temporary B13 migration check for calls that still lack the
-/// field-sensitive provenance summaries required by `[LT-22]`/`[LT-35]`.
-///
-/// H6 reserves legacy `E3064/B13`; direct construction and projection now use
-/// the independent region slots required by `[LT-14]`–`[LT-20]` and therefore
-/// either succeed or report the ordinary matching-field conflict (`E3021`).
-/// Until callable summaries exist, however, a call returning a multi-view
-/// aggregate conservatively connects every tied input to every result field.
-/// This predicate limits the old diagnostic to that detectable conservative
-/// flow so the incremental compiler remains honest about what it cannot yet
-/// prove. Completing callable summaries must remove this emission path; it is
-/// not target conformance and must not be generalized to precise field flow.
-fn bundles_two_views(
-    body: &Body,
-    types: &TypeTable,
-    regions: &Regions,
-    loan: &Loan,
-    holder: Option<LocalId>,
-) -> bool {
-    let Some(holder) = holder else { return false };
-    let TyKind::Struct(id) = *types.kind(body.local(holder).ty) else { return false };
-    types.struct_def(id).fields.iter().filter(|f| types.is_view(f.ty)).count() >= 2
-        && regions.has_conservative_field_flow(loan.capability.region)
-        && regions.reached_slot_count(loan.capability.region, holder) >= 2
 }
 
 /// Every point at which a local's value is read, by the span of the statement

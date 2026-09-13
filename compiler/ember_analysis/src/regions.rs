@@ -92,6 +92,100 @@ pub struct ViewRegionSlot {
     pub region: RegionVid,
 }
 
+/// One input region named by an inferred multi-region result slot.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum ResultRegionSource {
+    /// A particular borrowed field of a view-typed argument.
+    View { argument: usize, projection: Vec<Projection> },
+    /// `[LT-4a]`'s narrow non-view Arena provenance source.
+    Arena { argument: usize },
+}
+
+/// `[LT-22]` — the input regions from which one returned borrowed field is
+/// derived. Both paths are relative to their public function types, not MIR
+/// locals, so the record can be applied at any direct call site.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ResultFieldProvenance {
+    pub result_projection: Vec<Projection>,
+    pub sources: Vec<ResultRegionSource>,
+}
+
+/// An exact inferred field-to-source relation for a multi-region result.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ResultProvenanceSummary {
+    pub fields: Vec<ResultFieldProvenance>,
+}
+
+/// The operations a callable may perform through a borrowed field.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum RegionAccessKind {
+    Read,
+    Write,
+    BorrowShared,
+    BorrowMut,
+    Move,
+    Return,
+    Publish,
+}
+
+const ALL_REGION_ACCESSES: &[RegionAccessKind] = &[
+    RegionAccessKind::Read,
+    RegionAccessKind::Write,
+    RegionAccessKind::BorrowShared,
+    RegionAccessKind::BorrowMut,
+    RegionAccessKind::Move,
+    RegionAccessKind::Return,
+    RegionAccessKind::Publish,
+];
+
+/// The exact operations a direct callable may perform through one parameter
+/// field. The projection is relative to the parameter's public type.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ParameterFieldAccess {
+    pub argument: usize,
+    pub projection: Vec<Projection>,
+    pub operations: Vec<RegionAccessKind>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CallAccessContract {
+    /// Opaque/unresolved dispatch: every field and operation is possible.
+    All,
+    /// Verified direct-call accesses. An empty vector means no view field is
+    /// accessed and is distinct from unknown.
+    Fields(Vec<ParameterFieldAccess>),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CallResultContract {
+    /// One-region elision, or the conservative fallback while a multi-region
+    /// result relation cannot be inferred.
+    Legacy(Elision),
+    /// Exact `[LT-22]` field-to-source provenance.
+    Fields(ResultProvenanceSummary),
+}
+
+/// The complete region information available at one call boundary.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallRegionContract {
+    pub access: CallAccessContract,
+    pub result: CallResultContract,
+}
+
+impl CallRegionContract {
+    pub fn ties(&self, argument: usize) -> bool {
+        match &self.result {
+            CallResultContract::Legacy(elision) => elision.ties(argument),
+            CallResultContract::Fields(summary) => summary.fields.iter().any(|field| {
+                field.sources.iter().any(|source| match source {
+                    ResultRegionSource::View { argument: source, .. }
+                    | ResultRegionSource::Arena { argument: source } => *source == argument,
+                })
+            }),
+        }
+    }
+}
+
 /// The inferred regions of one function body.
 pub struct Regions {
     /// `points[vid]` — where the region is live.
@@ -103,15 +197,18 @@ pub struct Regions {
     /// is still to be read.
     holders: Vec<HashSet<LocalId>>,
     /// Local/result region slots reachable from each region. Unlike
-    /// `holders`, this preserves which fields carry a loan and lets the
-    /// diagnostic layer distinguish a precise field flow from a conservative
-    /// all-fields callable summary.
+    /// `holders`, this preserves which fields carry a loan for result-summary
+    /// inference.
     carried_slots: Vec<HashSet<RegionVid>>,
-    /// Whether a region reaches multiple result fields only because a call
-    /// lacks a verified field-sensitive summary. This is temporary migration
-    /// evidence for the reserved legacy B13 path; direct same-source fields
-    /// are precise and must not be mislabeled as independent-region failure.
-    conservative_field_flow: Vec<bool>,
+    /// Operations performed through each region slot. These flow backwards
+    /// over the same assignment graph as liveness so a parameter summary sees
+    /// accesses through copies, projections, and returned aliases.
+    accesses: Vec<HashSet<RegionAccessKind>>,
+    /// A result slot reached through a call for which no exact field-level
+    /// provenance summary was available. This taint flows forwards with the
+    /// value and makes `[LT-22]` reject a wrapper instead of publishing the
+    /// old all-fields intersection as if it were inferred precision.
+    imprecise_provenance: Vec<bool>,
     /// The region vector of each local. Primitive views have one empty-path
     /// slot; a multi-region `@view struct` has one slot per borrowed field.
     /// Keeping this out of `Ty` preserves nominal identity and runtime erasure.
@@ -136,13 +233,13 @@ impl Regions {
     /// close the constraint graph.
     ///
     /// Region-slot liveness is computed internally because whole-local
-    /// liveness cannot express `[LT-20]`/`[LT-24]` field shortening. `elision`
-    /// answers, for a call, which of the callee's view-typed arguments its
-    /// result may borrow (`[LT-1]`).
+    /// liveness cannot express `[LT-20]`/`[LT-24]` field shortening. The call
+    /// contract answers which parameter fields are accessed and how each
+    /// result field is tied to the callee's inputs.
     pub fn infer(
         body: &Body,
         types: &TypeTable,
-        elision: &dyn Fn(&FuncRef) -> Elision,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) -> Regions {
         let mut local_regions = Vec::with_capacity(body.locals.len());
         let mut next = 0;
@@ -175,7 +272,8 @@ impl Regions {
             origins: vec![HashSet::new(); next],
             holders: vec![HashSet::new(); next],
             carried_slots,
-            conservative_field_flow: vec![false; next],
+            accesses: vec![HashSet::new(); next],
+            imprecise_provenance: vec![false; next],
             local_regions,
             drop_requires_regions: body.locals.iter().map(|decl| types.needs_drop(decl.ty)).collect(),
             loan_region,
@@ -191,7 +289,7 @@ impl Regions {
         // a containing/whole-value place) can next be read. This is the
         // field-sensitive NLL fact `[LT-20]` requires; using whole-local
         // liveness here is the old intersection model.
-        for (point, live_slots) in regions.slot_liveness(body) {
+        for (point, live_slots) in regions.slot_liveness(body, call_contract) {
             for region in live_slots {
                 regions.points[region].insert(point);
             }
@@ -206,7 +304,8 @@ impl Regions {
             }
         }
 
-        let flows = regions.collect_flows(body, types, elision);
+        regions.collect_accesses(body, call_contract);
+        let flows = regions.collect_flows(body, types, call_contract);
         regions.close(&flows);
         regions
     }
@@ -242,16 +341,18 @@ impl Regions {
         &self.holders[region]
     }
 
-    /// How many distinct region slots of `local` this region can reach.
-    pub fn reached_slot_count(&self, region: RegionVid, local: LocalId) -> usize {
-        self.local_regions[local.0 as usize]
-            .iter()
-            .filter(|slot| self.carried_slots[region].contains(&slot.region))
-            .count()
+    /// Whether `from` carries the value represented by `to` after closing the
+    /// assignment/call graph.
+    pub fn reaches_slot(&self, from: RegionVid, to: RegionVid) -> bool {
+        self.carried_slots[from].contains(&to)
     }
 
-    pub fn has_conservative_field_flow(&self, region: RegionVid) -> bool {
-        self.conservative_field_flow[region]
+    pub fn has_imprecise_provenance(&self, region: RegionVid) -> bool {
+        self.imprecise_provenance[region]
+    }
+
+    pub fn accesses(&self, region: RegionVid) -> &HashSet<RegionAccessKind> {
+        &self.accesses[region]
     }
 
     /// `[LT-3]` — whether a view operand is proven to carry only the static
@@ -270,13 +371,131 @@ impl Regions {
         }
     }
 
+    /// `[LT-35]` — seed the field operations actually present in this MIR.
+    /// Assignment flows later carry these facts back to the parameter slots
+    /// from which an accessed local or returned field was derived.
+    fn collect_accesses(
+        &mut self,
+        body: &Body,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } => {
+                        self.rvalue_accesses(rvalue);
+                        // Replacing a view value changes local provenance but
+                        // does not access its referent. A projection beyond a
+                        // view leaf writes through it and is a real operation.
+                        if self.assigned_place_regions(place).is_empty() {
+                            self.mark_place_access(place, RegionAccessKind::Write);
+                        }
+                    }
+                    StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                        self.mark_operand_access(lhs);
+                        self.mark_operand_access(rhs);
+                    }
+                    StmtKind::Drop { place, .. }
+                        if self.drop_requires_regions[place.local.0 as usize] =>
+                    {
+                        self.mark_place_access(place, RegionAccessKind::Read);
+                    }
+                    StmtKind::StorageLive(_)
+                    | StmtKind::StorageDead(_)
+                    | StmtKind::Drop { .. }
+                    | StmtKind::Nop => {}
+                }
+            }
+
+            match &block.terminator {
+                Terminator::SwitchInt { discr, .. } => self.mark_operand_access(discr),
+                Terminator::Call { func, args, .. } => match call_contract(func).access {
+                    CallAccessContract::All => {
+                        for argument in args {
+                            for region in self.operand_regions(argument) {
+                                self.accesses[region].extend(ALL_REGION_ACCESSES);
+                            }
+                        }
+                    }
+                    CallAccessContract::Fields(accesses) => {
+                        for access in accesses {
+                            let Some(argument) = args.get(access.argument) else { continue };
+                            for region in
+                                self.operand_regions_at(argument, &access.projection)
+                            {
+                                self.accesses[region].extend(access.operations.iter().copied());
+                            }
+                        }
+                    }
+                },
+                Terminator::Assert { cond, msg, .. } => {
+                    self.mark_operand_access(cond);
+                    if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                        self.mark_operand_access(file);
+                        self.mark_operand_access(line);
+                    }
+                }
+                Terminator::Return => {
+                    for slot in &self.local_regions[ember_mir::RETURN_LOCAL.0 as usize] {
+                        self.accesses[slot.region].insert(RegionAccessKind::Return);
+                    }
+                }
+                Terminator::Goto(_) | Terminator::Unreachable => {}
+            }
+        }
+    }
+
+    fn rvalue_accesses(&mut self, rvalue: &Rvalue) {
+        match rvalue {
+            Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } => {
+                self.mark_operand_access(operand)
+            }
+            Rvalue::Cast { operand, .. } => self.mark_operand_access(operand),
+            Rvalue::BinaryOp { lhs, rhs, .. } => {
+                self.mark_operand_access(lhs);
+                self.mark_operand_access(rhs);
+            }
+            Rvalue::Aggregate { operands, .. } => {
+                for operand in operands {
+                    self.mark_operand_access(operand);
+                }
+            }
+            Rvalue::Repeat { value, .. } => self.mark_operand_access(value),
+            Rvalue::Discriminant(place) => {
+                self.mark_place_access(place, RegionAccessKind::Read)
+            }
+            Rvalue::Ref { place, mutable } => self.mark_place_access(
+                place,
+                if *mutable {
+                    RegionAccessKind::BorrowMut
+                } else {
+                    RegionAccessKind::BorrowShared
+                },
+            ),
+        }
+    }
+
+    fn mark_operand_access(&mut self, operand: &Operand) {
+        match operand {
+            Operand::Copy(place) => self.mark_place_access(place, RegionAccessKind::Read),
+            Operand::Move(place) => self.mark_place_access(place, RegionAccessKind::Move),
+            Operand::Const(_) => {}
+        }
+    }
+
+    fn mark_place_access(&mut self, place: &Place, access: RegionAccessKind) {
+        for region in self.place_regions(place) {
+            self.accesses[region].insert(access);
+        }
+    }
+
     /// §4.7 step 2 — one walk of the body, collecting every assignment that
     /// moves a reference from one place to another.
     fn collect_flows(
         &mut self,
         body: &Body,
         types: &TypeTable,
-        elision: &dyn Fn(&FuncRef) -> Elision,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) -> Vec<Flow> {
         let mut flows = Vec::new();
         let mut seeds: Vec<(RegionVid, Origin)> = Vec::new();
@@ -370,40 +589,74 @@ impl Regions {
             if let Terminator::Call { func, args, dest, .. } = &block.terminator {
                 let destinations = self.assigned_place_regions(dest);
                 if !destinations.is_empty() {
-                    let tied = elision(func);
-                    for (index, arg) in args.iter().enumerate() {
-                        if !tied.ties(index) {
-                            continue;
-                        }
-                        let sources = self.operand_regions(arg);
-                        if !sources.is_empty() {
-                            // `[LT-35]` — without a field-sensitive callable
-                            // summary a call must conservatively require every
-                            // source and result slot. Narrowing is added only
-                            // when verified summary metadata exists.
-                            connect_all(&mut flows, &sources, &destinations);
-                            if destinations.len() > 1 {
-                                for source in sources {
-                                    self.conservative_field_flow[source] = true;
+                    match call_contract(func).result {
+                        CallResultContract::Fields(summary) => {
+                            for field in summary.fields {
+                                let mut result = dest.clone();
+                                result.projection.extend(field.result_projection);
+                                let field_destinations = self.assigned_place_regions(&result);
+                                for source in field.sources {
+                                    match source {
+                                        ResultRegionSource::View { argument, projection } => {
+                                            let Some(arg) = args.get(argument) else { continue };
+                                            connect_all(
+                                                &mut flows,
+                                                &self.operand_regions_at(arg, &projection),
+                                                &field_destinations,
+                                            );
+                                        }
+                                        ResultRegionSource::Arena { argument } => {
+                                            let Some(Operand::Copy(place) | Operand::Move(place)) =
+                                                args.get(argument)
+                                            else {
+                                                continue;
+                                            };
+                                            for to in &field_destinations {
+                                                seeds.push((
+                                                    *to,
+                                                    match body.local(place.local).kind {
+                                                        LocalKind::Arg => Origin::Param(place.local),
+                                                        _ => Origin::Local(place.local),
+                                                    },
+                                                ));
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        } else if let Operand::Copy(place) | Operand::Move(place) = arg
-                            && is_growing_arena(types, body.local(place.local).ty)
-                        {
-                            // `[LT-1a]`, `[LT-4a]` — Arena is the one
-                            // non-view parameter that may source returned
-                            // provenance. It has no local region variable of
-                            // its own, so seed the result directly rather than
-                            // treating the absence of a view-region edge as
-                            // static provenance.
-                            for to in &destinations {
-                                seeds.push((
-                                    *to,
-                                    match body.local(place.local).kind {
-                                        LocalKind::Arg => Origin::Param(place.local),
-                                        _ => Origin::Local(place.local),
-                                    },
-                                ));
+                        }
+                        CallResultContract::Legacy(tied) => {
+                            if destinations.len() > 1 {
+                                for destination in &destinations {
+                                    self.imprecise_provenance[*destination] = true;
+                                }
+                            }
+                            for (index, arg) in args.iter().enumerate() {
+                                if !tied.ties(index) {
+                                    continue;
+                                }
+                                let sources = self.operand_regions(arg);
+                                if !sources.is_empty() {
+                                    // `[LT-35]` — without a field-sensitive
+                                    // callable summary a call conservatively
+                                    // requires every source and result slot.
+                                    connect_all(&mut flows, &sources, &destinations);
+                                } else if let Operand::Copy(place) | Operand::Move(place) = arg
+                                    && is_growing_arena(types, body.local(place.local).ty)
+                                {
+                                    // `[LT-1a]`, `[LT-4a]` — Arena is the one
+                                    // non-view parameter that may source
+                                    // returned provenance.
+                                    for to in &destinations {
+                                        seeds.push((
+                                            *to,
+                                            match body.local(place.local).kind {
+                                                LocalKind::Arg => Origin::Param(place.local),
+                                                _ => Origin::Local(place.local),
+                                            },
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
@@ -450,10 +703,19 @@ impl Regions {
                     self.carried_slots[flow.from].extend(slots);
                     changed = true;
                 }
-                if self.conservative_field_flow[flow.to]
-                    && !self.conservative_field_flow[flow.from]
+                if self.imprecise_provenance[flow.from]
+                    && !self.imprecise_provenance[flow.to]
                 {
-                    self.conservative_field_flow[flow.from] = true;
+                    self.imprecise_provenance[flow.to] = true;
+                    changed = true;
+                }
+                let accesses: Vec<RegionAccessKind> = self.accesses[flow.to]
+                    .iter()
+                    .filter(|access| !self.accesses[flow.from].contains(*access))
+                    .copied()
+                    .collect();
+                if !accesses.is_empty() {
+                    self.accesses[flow.from].extend(accesses);
                     changed = true;
                 }
                 let origins: Vec<Origin> = self.origins[flow.from]
@@ -509,11 +771,30 @@ impl Regions {
         }
     }
 
+    fn operand_regions_at(
+        &self,
+        operand: &Operand,
+        relative_projection: &[Projection],
+    ) -> Vec<RegionVid> {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                let mut projected = place.clone();
+                projected.projection.extend_from_slice(relative_projection);
+                self.place_regions(&projected)
+            }
+            Operand::Const(_) => Vec::new(),
+        }
+    }
+
     /// `[LT-20]`, `[LT-24]` — backwards liveness over region slots rather
     /// than whole locals. This permits `pair.left` to die while `pair.right`
     /// remains usable, without changing ordinary local liveness used by the
     /// ownership passes.
-    fn slot_liveness(&self, body: &Body) -> HashMap<Point, HashSet<RegionVid>> {
+    fn slot_liveness(
+        &self,
+        body: &Body,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> HashMap<Point, HashSet<RegionVid>> {
         let mut live_out: HashMap<usize, HashSet<RegionVid>> = HashMap::new();
         let mut changed = true;
         while changed {
@@ -521,7 +802,9 @@ impl Regions {
             for index in (0..body.blocks.len()).rev() {
                 let mut out = HashSet::new();
                 for successor in region_successors(&body.blocks[index].terminator) {
-                    if let Some(entry) = self.slot_live_in(body, successor.0 as usize, &live_out) {
+                    if let Some(entry) =
+                        self.slot_live_in(body, successor.0 as usize, &live_out, call_contract)
+                    {
                         out.extend(entry);
                     }
                 }
@@ -535,7 +818,7 @@ impl Regions {
         let mut points = HashMap::new();
         for (block_index, block) in body.blocks.iter().enumerate() {
             let mut live = live_out.get(&block_index).cloned().unwrap_or_default();
-            self.terminator_liveness(&block.terminator, &mut live);
+            self.terminator_liveness(&block.terminator, &mut live, call_contract);
             points.insert(
                 Point { block: block_index, index: block.stmts.len() },
                 live.clone(),
@@ -553,10 +836,11 @@ impl Regions {
         body: &Body,
         block_index: usize,
         live_out: &HashMap<usize, HashSet<RegionVid>>,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) -> Option<HashSet<RegionVid>> {
         let block = body.blocks.get(block_index)?;
         let mut live = live_out.get(&block_index).cloned().unwrap_or_default();
-        self.terminator_liveness(&block.terminator, &mut live);
+        self.terminator_liveness(&block.terminator, &mut live, call_contract);
         for stmt in block.stmts.iter().rev() {
             self.statement_liveness(&stmt.kind, &mut live);
         }
@@ -592,13 +876,28 @@ impl Regions {
         }
     }
 
-    fn terminator_liveness(&self, terminator: &Terminator, live: &mut HashSet<RegionVid>) {
+    fn terminator_liveness(
+        &self,
+        terminator: &Terminator,
+        live: &mut HashSet<RegionVid>,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) {
         match terminator {
             Terminator::SwitchInt { discr, .. } => self.operand_liveness(discr, live),
-            Terminator::Call { args, dest, .. } => {
+            Terminator::Call { func, args, dest, .. } => {
                 self.write_place_liveness(dest, live);
-                for arg in args {
-                    self.operand_liveness(arg, live);
+                match call_contract(func).access {
+                    CallAccessContract::All => {
+                        for arg in args {
+                            self.operand_liveness(arg, live);
+                        }
+                    }
+                    CallAccessContract::Fields(accesses) => {
+                        for access in accesses {
+                            let Some(argument) = args.get(access.argument) else { continue };
+                            live.extend(self.operand_regions_at(argument, &access.projection));
+                        }
+                    }
                 }
             }
             Terminator::Assert { cond, msg, .. } => {
@@ -795,7 +1094,7 @@ fn is_growing_arena(types: &TypeTable, ty: ember_types::Ty) -> bool {
 }
 
 /// `[LT-1]` — which of a callee's arguments its returned view may point into.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Elision {
     /// The callee returns no view, so its result borrows nothing.
     Nothing,

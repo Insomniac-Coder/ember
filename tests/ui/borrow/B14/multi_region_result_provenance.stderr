@@ -1,0 +1,13 @@
+error[E3065]: the returned `Pair` has field provenance that cannot be inferred soundly
+ --> tests/ui/borrow/B14/multi_region_result_provenance.em:8:20
+  |
+6 | fn apply(f: fn(Span[i32], Span[i32]) -> Pair,
+  | --------------------------------------------- this function must expose one source relation per borrowed result field
+7 |          left: Span[i32], right: Span[i32]) -> Pair:
+8 |     return f(left, right)
+  |                    ^^^^^ multi-region result returned here
+  |
+  = help: return an owned value, return the views separately, or use an applicable existing `@borrows` contract
+  = note: the compiler will not force an intersection or invent a `static` region (LT-22)
+
+error: could not compile due to 1 error(s)
