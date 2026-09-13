@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ember_build::interface::ModuleInterfaceArtifact;
+use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
@@ -727,7 +727,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     std::fs::create_dir_all(&test_root).expect("create LT-40 package");
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub fn signature_only(value: i32) -> i32:\n    return value\n\npub unsafe extern \"C\" fn abi_only(value: i32) -> i32:\n    return value\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n",
     )
     .expect("write initial helper");
     std::fs::write(
@@ -753,17 +753,25 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     check("initial");
     let before_root = cached_interface(&out_dir, "root");
     let before_helper = cached_interface(&out_dir, "helper");
-    assert_eq!(before_helper.callables.len(), 2);
+    assert_eq!(before_helper.callables.len(), 4);
     assert!(before_helper
         .callables
         .contains_key(&ember_branding::mangled("helper.select")));
     assert!(before_helper
         .callables
         .contains_key(&ember_branding::mangled("helper.package_select")));
+    let signature = &before_helper.callables[&ember_branding::mangled("helper.signature_only")]
+        .signature;
+    assert_eq!(signature.parameters.len(), 1);
+    assert_eq!(signature.parameters[0].ty, "i32");
+    assert_eq!(signature.result, "i32");
+    let abi = &before_helper.callables["abi_only"].signature;
+    assert!(abi.is_unsafe);
+    assert_eq!(abi.abi.as_deref(), Some("C"));
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub fn signature_only(value: i32) -> i32:\n    return value\n\npub unsafe extern \"C\" fn abi_only(value: i32) -> i32:\n    return value\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
     )
     .expect("change private callable summary");
     check("after private summary change");
@@ -776,7 +784,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub fn signature_only(value: i32) -> i32:\n    return value\n\npub unsafe extern \"C\" fn abi_only(value: i32) -> i32:\n    return value\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
     )
     .expect("change package-visible callable summary");
     check("after package-visible summary change");
@@ -788,7 +796,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub fn signature_only(value: i32) -> i32:\n    return value\n\npub unsafe extern \"C\" fn abi_only(value: i32) -> i32:\n    return value\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
     )
     .expect("change public callable summary");
     check("after public summary change");
@@ -797,6 +805,147 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
 
     assert_ne!(after_package_helper.interface_hash, after_public_helper.interface_hash);
     assert_ne!(after_package_root.cache_key, after_public_root.cache_key);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub fn signature_only(value: i64) -> i64:\n    return value\n\npub unsafe extern \"C\" fn abi_only(value: i32) -> i32:\n    return value\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+    )
+    .expect("change public callable signature");
+    check("after public signature change");
+    let after_signature_root = cached_interface(&out_dir, "root");
+    let after_signature_helper = cached_interface(&out_dir, "helper");
+
+    assert_ne!(after_public_helper.interface_hash, after_signature_helper.interface_hash);
+    assert_ne!(after_public_root.cache_key, after_signature_root.cache_key);
+    let signature = &after_signature_helper.callables
+        [&ember_branding::mangled("helper.signature_only")]
+        .signature;
+    assert_eq!(signature.parameters[0].ty, "i64");
+    assert_eq!(signature.result, "i64");
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
+/// `[FN-1]` / `[FFI-5]` / `[BLD-2]` — the cache records declaration modes,
+/// rather than MIR's implementation `ref mut` spelling, and retains the ABI
+/// and unsafe call boundary as caller-visible signature facts.
+#[test]
+fn callable_signature_modes_unsafe_and_abi_cross_the_interface_boundary() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-callable-signature-{}",
+        std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let source = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create callable-signature package");
+    std::fs::write(
+        test_root.join(&source),
+        "pub fn replace(mut value: i32, owned replacement: i32) -> i32:\n    value = replacement\n    return value\n\npub unsafe extern \"C\" fn native_boundary(value: i32) -> i32:\n    return value\n\nfn main():\n    println(1)\n",
+    )
+    .expect("write callable-signature source");
+
+    let output = Command::new(EMBER)
+        .args(["check", &source, "--out-dir", &out_dir.to_string_lossy()])
+        .current_dir(&test_root)
+        .env(ember_branding::std_path_var(), workspace.join("std"))
+        .output()
+        .expect("the Ember compiler runs for callable signatures");
+    assert!(
+        output.status.success(),
+        "callable-signature check failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let artifact = cached_interface(&out_dir, "root");
+    let replace = &artifact.callables[&ember_branding::mangled("replace")].signature;
+    assert_eq!(replace.parameters.len(), 2);
+    assert_eq!(replace.parameters[0].mode, CallableParameterMode::Mut);
+    assert_eq!(replace.parameters[0].ty, "i32");
+    assert_eq!(replace.parameters[1].mode, CallableParameterMode::Owned);
+    assert_eq!(replace.parameters[1].ty, "i32");
+    assert_eq!(replace.result, "i32");
+    assert!(!replace.is_unsafe);
+    assert_eq!(replace.abi, None);
+
+    let native = &artifact.callables["native_boundary"].signature;
+    assert_eq!(native.parameters[0].mode, CallableParameterMode::Borrow);
+    assert!(native.is_unsafe);
+    assert_eq!(native.abi.as_deref(), Some("C"));
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
+/// `[TYP-16]` / `[TYP-17]` / `[BLD-2]` — a public generic declaration is an
+/// interface even before (or independently of) a monomorphized MIR body. A
+/// bound change must invalidate importers without treating one specialization
+/// as the declaration's whole contract.
+#[test]
+fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_body() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-generic-interface-{}",
+        std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create generic-interface package");
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn identity[T: Eq](value: T) -> T:\n    return value\n",
+    )
+    .expect("write initial generic helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import identity\n\nfn main():\n    println(identity(1))\n",
+    )
+    .expect("write generic importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for generic interfaces");
+        assert!(
+            output.status.success(),
+            "{label} generic-interface check failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    check("initial");
+    let before_helper = cached_interface(&out_dir, "helper");
+    let before_root = cached_interface(&out_dir, "root");
+    let identity = &before_helper.callables[&ember_branding::mangled("helper.identity")];
+    assert!(identity.metadata.is_none());
+    assert_eq!(identity.signature.generics.len(), 1);
+    assert_eq!(identity.signature.generics[0].bounds.len(), 1);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn identity[T: Hash](value: T) -> T:\n    return value\n",
+    )
+    .expect("change generic bound");
+    check("after generic bound change");
+    let after_helper = cached_interface(&out_dir, "helper");
+    let after_root = cached_interface(&out_dir, "root");
+
+    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(before_root.cache_key, after_root.cache_key);
+    let identity = &after_helper.callables[&ember_branding::mangled("helper.identity")];
+    assert!(identity.metadata.is_none());
+    assert_eq!(identity.signature.generics.len(), 1);
+    assert_eq!(identity.signature.generics[0].bounds.len(), 1);
+    assert_ne!(
+        before_helper.callables[&ember_branding::mangled("helper.identity")]
+            .signature
+            .generics[0]
+            .bounds,
+        identity.signature.generics[0].bounds
+    );
     let _ = std::fs::remove_dir_all(&test_root);
 }
 

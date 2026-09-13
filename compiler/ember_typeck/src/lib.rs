@@ -36,13 +36,59 @@ pub struct LoadedModule {
     pub module: ast::Module,
 }
 
+/// The semantically resolved declaration surface a build artifact may expose
+/// to importers. Unlike HIR/MIR bodies, this exists for a generic function
+/// even when no concrete instantiation is emitted in this compilation.
+#[derive(Clone, Debug)]
+pub struct CallableDeclaration {
+    pub span: Span,
+    pub symbol: String,
+    pub parameters: Vec<CallableDeclarationParameter>,
+    pub result: Ty,
+    pub borrows: Option<Vec<usize>>,
+    pub generics: Vec<CallableDeclarationGeneric>,
+    pub is_unsafe: bool,
+    pub abi: Option<String>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct CallableDeclarationParameter {
+    pub mode: Mode,
+    pub ty: Ty,
+}
+
+#[derive(Clone, Debug)]
+pub struct CallableDeclarationGeneric {
+    /// Interface names after import/name resolution, not the spelling local
+    /// to the declaring source file.
+    pub bounds: Vec<String>,
+    /// The implicit static `Callable`/`CallableOnce` bound that a parameter
+    /// written as `fn(A) -> R` introduces under `[CLO-3]`/`[CLO-6]`.
+    pub callable: Option<CallableDeclarationCallableBound>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CallableDeclarationCallableBound {
+    pub parameters: Vec<Ty>,
+    pub result: Ty,
+    pub once: bool,
+}
+
+/// The checker result separates executable HIR from the source declaration
+/// interface. Generic declarations deliberately have no emitted HIR body
+/// until instantiated, but their type/bound contract is still importer-visible.
+pub struct CheckOutput {
+    pub program: Program,
+    pub callable_declarations: Vec<CallableDeclaration>,
+}
+
 pub fn check(
     modules: &[LoadedModule],
     types: &mut TypeTable,
     common: &CommonTypes,
     sink: &mut Sink,
     default_overflow: OverflowPolicy,
-) -> Program {
+) -> CheckOutput {
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
@@ -126,7 +172,11 @@ pub fn check(
     // name in source, so they are gathered as they are checked and appended
     // here rather than found by walking the modules again.
     functions.extend(std::mem::take(&mut checker.lambdas));
-    Program { functions, main }
+    let callable_declarations = checker.callable_declarations(modules);
+    CheckOutput {
+        program: Program { functions, main },
+        callable_declarations,
+    }
 }
 
 struct Signature {
@@ -1095,6 +1145,75 @@ impl<'a> Checker<'a> {
         let param_ty = self.types.intern(TyKind::Param { index, name });
         generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound) });
         param_ty
+    }
+
+    /// Build the import-visible top-level callable declaration set from the
+    /// same resolved signatures body checking uses. This is intentionally not
+    /// reconstructed from diagnostic strings or raw source: generic bounds
+    /// have already been name-resolved and parameter types already carry
+    /// their opaque generic identities here.
+    fn callable_declarations(&self, modules: &[LoadedModule]) -> Vec<CallableDeclaration> {
+        let mut declarations = Vec::new();
+        for (module_index, loaded) in modules.iter().enumerate() {
+            let prefix = &self.prefixes[module_index];
+            for item in &loaded.module.items {
+                let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+                if item.vis.kind == ast::VisKind::Private {
+                    continue;
+                }
+                let qualified = if prefix.is_empty() {
+                    decl.name.name
+                } else {
+                    Symbol::intern(&format!("{prefix}.{}", decl.name.name))
+                };
+                let Some(&def) = self.fn_ids.get(&qualified) else {
+                    // A prior declaration error owns the diagnostic. Do not
+                    // manufacture a partial interface from a rejected item.
+                    continue;
+                };
+                let signature = &self.signatures[def.0 as usize];
+                let symbol = match &decl.abi {
+                    Some(_) => decl.name.name.to_string(),
+                    None => mangle(qualified, qualified.is("main")),
+                };
+                declarations.push(CallableDeclaration {
+                    span: item.span,
+                    symbol,
+                    parameters: signature
+                        .params
+                        .iter()
+                        .map(|(_, ty, mode, _)| CallableDeclarationParameter {
+                            mode: *mode,
+                            ty: *ty,
+                        })
+                        .collect(),
+                    result: signature.ret,
+                    borrows: signature.borrows.clone(),
+                    generics: signature
+                        .generics
+                        .iter()
+                        .map(|parameter| CallableDeclarationGeneric {
+                            bounds: parameter
+                                .bounds
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect(),
+                            callable: parameter.callable.as_ref().map(|bound| {
+                                CallableDeclarationCallableBound {
+                                    parameters: bound.params.clone(),
+                                    result: bound.ret,
+                                    once: bound.once,
+                                }
+                            }),
+                        })
+                        .collect(),
+                    is_unsafe: decl.is_unsafe,
+                    abi: decl.abi.clone(),
+                });
+            }
+        }
+        declarations.sort_by(|left, right| left.symbol.cmp(&right.symbol));
+        declarations
     }
 
     /// The qualified form of a name declared in the module being walked.
@@ -4302,6 +4421,8 @@ impl<'a> Checker<'a> {
                 def,
                 name,
                 symbol,
+                is_unsafe: decl.is_unsafe,
+                abi: decl.abi.clone(),
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -4632,6 +4753,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name,
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
+            is_unsafe: decl.is_unsafe,
+            abi: decl.abi.clone(),
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -4842,6 +4965,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name,
             symbol: method_symbol(&self.types.display(owner), name),
+            is_unsafe: decl.is_unsafe,
+            abi: decl.abi.clone(),
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -10094,6 +10219,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name: Symbol::intern(&symbol),
             symbol,
+            is_unsafe: false,
+            abi: None,
             params: (0..arity)
                 .map(|i| Param { local: LocalId(i as u32), mode: Mode::Borrow })
                 .collect(),

@@ -2097,6 +2097,8 @@ mod callable_region_metadata_tests {
         Body {
             name: "empty".to_string(),
             symbol: "empty".to_string(),
+            is_unsafe: false,
+            abi: None,
             locals: vec![LocalDecl {
                 ty: common.void,
                 kind: LocalKind::Return,
@@ -2109,6 +2111,7 @@ mod callable_region_metadata_tests {
                 terminator_span: span,
             }],
             arg_count: 0,
+            param_modes: Vec::new(),
             span,
             borrows: None,
             borrowed_params: Vec::new(),

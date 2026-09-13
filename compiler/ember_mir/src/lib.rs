@@ -12,6 +12,10 @@ pub mod lower;
 pub mod verify;
 
 pub use lower::lower;
+/// Exact source-level parameter mode retained by MIR for callable contracts.
+/// Consumers of MIR should name this boundary fact rather than depending on
+/// HIR solely to construct or inspect a MIR body.
+pub use ember_hir::Mode as ParameterMode;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BasicBlockId(pub u32);
@@ -49,9 +53,19 @@ pub struct Body {
     pub name: String,
     /// The mangled C symbol (`[MNG-1]`).
     pub symbol: String,
+    /// The declaration's explicit unsafe-call boundary.
+    pub is_unsafe: bool,
+    /// The declared external ABI, if any; `None` denotes Ember's ordinary
+    /// callable ABI.
+    pub abi: Option<String>,
     pub locals: Vec<LocalDecl>,
     pub blocks: Vec<BasicBlock>,
     pub arg_count: usize,
+    /// `[FN-1]` — the exact declared mode for every parameter, in the same
+    /// order as locals `1..=arg_count`. `borrowed_params` remains the compact
+    /// move-checker subset; it cannot distinguish `mut` from `owned` and is
+    /// therefore insufficient for a public callable signature.
+    pub param_modes: Vec<ParameterMode>,
     pub span: Span,
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names. `None` means
     /// `[LT-1]`'s elision decides which parameters the return may point into.

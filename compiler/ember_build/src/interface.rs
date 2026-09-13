@@ -2,9 +2,9 @@
 //!
 //! The current compiler still checks a whole loaded module graph on every
 //! invocation. This module does not pretend otherwise. It establishes the
-//! first real artifact boundary: callable-region contracts are serialized,
-//! reread, independently validated, and included in the dependency identity
-//! that a later item-granular cache can reuse.
+//! first real artifact boundary: resolved callable signatures and region
+//! contracts are serialized, reread, independently validated, and included
+//! in the dependency identity that a later item-granular cache can reuse.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -12,10 +12,11 @@ use std::path::{Path, PathBuf};
 use ember_mir::{CallableRegionMetadata, CallableRegionMetadataCodecError};
 
 const MAGIC: &[u8; 4] = b"EMIF";
-// Schema v2 narrows the callable section from every analyzed body to import-
-// visible bodies. A v1 record is not malformed; it is an incompatible tooling
-// cache entry and is safely invalidated before it can be consumed.
-const SCHEMA_VERSION: u32 = 2;
+// Schema v4 makes callable declarations authoritative even when a generic has
+// no emitted body in this compilation. Older records are incompatible tooling
+// cache entries, not malformed semantic metadata, and are safely invalidated
+// before they can be consumed.
+const SCHEMA_VERSION: u32 = 4;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -37,16 +38,139 @@ impl InterfaceHash {
     }
 }
 
+/// The passing mode of one callable parameter. This is deliberately separate
+/// from its resolved type: `mut Span[T]` is an exclusive call boundary, while
+/// `owned Span[T]` consumes the value.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CallableParameterMode {
+    Borrow,
+    Mut,
+    Owned,
+}
+
+/// One parameter in an import-visible resolved callable signature.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableParameter {
+    pub mode: CallableParameterMode,
+    /// A compiler-owned canonical spelling, never diagnostic display text.
+    pub ty: String,
+}
+
+/// One declared generic parameter, represented by position rather than its
+/// source spelling. Bound order is canonicalized because intersection bounds
+/// have no source-order semantics.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableGenericParameter {
+    pub bounds: Vec<String>,
+    /// A source `fn(A) -> R` parameter creates the existing implicit static
+    /// Callable/CallableOnce bound; its shape is caller-visible too.
+    pub callable: Option<CallableGenericCallableBound>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableGenericCallableBound {
+    pub parameters: Vec<String>,
+    pub result: String,
+    pub once: bool,
+}
+
+/// The resolved, monomorphic callable facts currently available at the EMIF
+/// boundary. Generic declaration binders/bounds, type layouts, effects, and
+/// inline-body eligibility require their own verified producers and are not
+/// silently approximated here.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableSignature {
+    pub parameters: Vec<CallableParameter>,
+    pub result: String,
+    pub generics: Vec<CallableGenericParameter>,
+    /// Zero-based parameter positions explicitly named by `@borrows`, or
+    /// `None` when ordinary elision remains the contract.
+    pub borrows: Option<Vec<usize>>,
+    pub is_unsafe: bool,
+    /// `None` denotes Ember's ordinary ABI.
+    pub abi: Option<String>,
+}
+
+impl CallableSignature {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.result.is_empty() {
+            return Err("callable result type is empty");
+        }
+        if self.parameters.iter().any(|parameter| parameter.ty.is_empty()) {
+            return Err("callable parameter type is empty");
+        }
+        if self.abi.as_deref().is_some_and(str::is_empty) {
+            return Err("callable ABI is empty");
+        }
+        for generic in &self.generics {
+            if generic.bounds.iter().any(String::is_empty) {
+                return Err("callable generic bound is empty");
+            }
+            if generic
+                .bounds
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            {
+                return Err("callable generic bounds are not strictly ascending");
+            }
+            if let Some(callable) = &generic.callable {
+                if callable.result.is_empty()
+                    || callable.parameters.iter().any(String::is_empty)
+                {
+                    return Err("implicit callable bound has an empty type");
+                }
+            }
+        }
+        if let Some(borrows) = &self.borrows {
+            let mut previous = None;
+            for &position in borrows {
+                if position >= self.parameters.len() {
+                    return Err("`@borrows` position exceeds parameter count");
+                }
+                if previous.is_some_and(|last| last >= position) {
+                    return Err("`@borrows` positions are not strictly ascending");
+                }
+                previous = Some(position);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The whole import-visible contract for one callable. Region summaries and
+/// signatures share a single atom so stale metadata can never be matched to a
+/// different declaration shape.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableInterfaceContract {
+    pub signature: CallableSignature,
+    /// Present only when this compilation has an executable non-generic body
+    /// for the declaration. A generic declaration remains a complete source
+    /// interface without pretending an uninstantiated MIR body exists.
+    pub metadata: Option<CallableRegionMetadata>,
+}
+
+impl CallableInterfaceContract {
+    fn validate(&self) -> Result<(), &'static str> {
+        self.signature.validate()?;
+        if self
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| !metadata.fingerprint_is_valid())
+        {
+            return Err("callable-region metadata fingerprint is invalid");
+        }
+        Ok(())
+    }
+}
+
 /// One import-visible callable contract exported by the current
 /// interface-artifact slice. This includes `pub(package)` names used within
 /// the package as well as `pub` names visible to dependants, but excludes
 /// module-private bodies.
-/// A future signature/type/effect section will extend the same artifact
-/// schema; it must not create a parallel cache file.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CallableInterfaceRecord {
     pub symbol: String,
-    pub metadata: CallableRegionMetadata,
+    pub contract: CallableInterfaceContract,
 }
 
 /// Input gathered by the driver after semantic analysis but before the final
@@ -62,10 +186,10 @@ pub struct ModuleInterfaceInput {
     pub callables: Vec<CallableInterfaceRecord>,
 }
 
-/// The schema-v2 module artifact. Its interface hash presently contains the
-/// canonical callable-region section; source/cache identity already has the
-/// shape required to absorb signatures, layouts, effects, and inline bodies
-/// as those compiler facts obtain real producers.
+/// The schema-v3 module artifact. Its interface hash contains resolved
+/// import-visible callable signatures and callable-region contracts;
+/// source/cache identity already has the shape required to absorb layouts,
+/// effects, and inline bodies as those compiler facts obtain real producers.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModuleInterfaceArtifact {
     pub module: String,
@@ -74,7 +198,7 @@ pub struct ModuleInterfaceArtifact {
     pub package_config: String,
     pub source_hash: InterfaceHash,
     pub dependencies: BTreeMap<String, InterfaceHash>,
-    pub callables: BTreeMap<String, CallableRegionMetadata>,
+    pub callables: BTreeMap<String, CallableInterfaceContract>,
     pub interface_hash: InterfaceHash,
     pub cache_key: InterfaceHash,
 }
@@ -145,14 +269,15 @@ pub fn build_artifacts(
     for input in inputs {
         let mut callables = BTreeMap::new();
         for callable in &input.callables {
-            if !callable.metadata.fingerprint_is_valid() {
-                return Err(InterfaceArtifactError::InvalidCallableMetadata {
+            if let Err(reason) = callable.contract.validate() {
+                return Err(InterfaceArtifactError::InvalidCallableContract {
                     module: input.module.clone(),
                     symbol: callable.symbol.clone(),
+                    reason,
                 });
             }
             if callables
-                .insert(callable.symbol.clone(), callable.metadata.clone())
+                .insert(callable.symbol.clone(), callable.contract.clone())
                 .is_some()
             {
                 return Err(InterfaceArtifactError::DuplicateCallable {
@@ -334,12 +459,9 @@ impl ModuleInterfaceArtifact {
             out.extend_from_slice(&hash.bytes());
         }
         push_count(&mut out, self.callables.len());
-        for (symbol, metadata) in &self.callables {
+        for (symbol, contract) in &self.callables {
             push_string(&mut out, symbol);
-            let metadata = metadata
-                .to_interface_bytes()
-                .map_err(InterfaceArtifactError::Metadata)?;
-            push_bytes(&mut out, &metadata);
+            push_callable_contract(&mut out, contract)?;
         }
         Ok(out)
     }
@@ -373,10 +495,8 @@ impl ModuleInterfaceArtifact {
         let mut callables = BTreeMap::new();
         for _ in 0..callable_count {
             let symbol = reader.string()?;
-            let bytes = reader.bytes()?;
-            let metadata = CallableRegionMetadata::from_interface_bytes(bytes)
-                .map_err(InterfaceArtifactError::Metadata)?;
-            if callables.insert(symbol, metadata).is_some() {
+            let contract = read_callable_contract(&mut reader)?;
+            if callables.insert(symbol, contract).is_some() {
                 return Err(InterfaceArtifactError::NonCanonical);
             }
         }
@@ -402,6 +522,15 @@ impl ModuleInterfaceArtifact {
     }
 
     fn validate(&self) -> Result<(), InterfaceArtifactError> {
+        for (symbol, contract) in &self.callables {
+            contract.validate().map_err(|reason| {
+                InterfaceArtifactError::InvalidCallableContract {
+                    module: self.module.clone(),
+                    symbol: symbol.clone(),
+                    reason,
+                }
+            })?;
+        }
         let expected = interface_hash(&self.module, &self.callables)?;
         if expected != self.interface_hash {
             return Err(InterfaceArtifactError::StaleInterfaceHash {
@@ -416,7 +545,7 @@ impl ModuleInterfaceArtifact {
 struct PreliminaryArtifact {
     source_hash: InterfaceHash,
     interface_hash: InterfaceHash,
-    callables: BTreeMap<String, CallableRegionMetadata>,
+    callables: BTreeMap<String, CallableInterfaceContract>,
 }
 
 fn collect_transitive_dependencies(
@@ -443,17 +572,16 @@ fn collect_transitive_dependencies(
 
 fn interface_hash(
     module: &str,
-    callables: &BTreeMap<String, CallableRegionMetadata>,
+    callables: &BTreeMap<String, CallableInterfaceContract>,
 ) -> Result<InterfaceHash, InterfaceArtifactError> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"ember-interface-v1:callable-regions\0");
+    hasher.update(b"ember-interface-v3:callable-declarations-and-regions\0");
     hash_string(&mut hasher, module);
     hash_count(&mut hasher, callables.len());
-    for (symbol, metadata) in callables {
+    for (symbol, contract) in callables {
         hash_string(&mut hasher, symbol);
-        let bytes = metadata
-            .to_interface_bytes()
-            .map_err(InterfaceArtifactError::Metadata)?;
+        let mut bytes = Vec::new();
+        push_callable_contract(&mut bytes, contract)?;
         hash_bytes(&mut hasher, &bytes);
     }
     Ok(InterfaceHash(*hasher.finalize().as_bytes()))
@@ -511,6 +639,179 @@ fn push_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
+fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
+    push_count(out, signature.parameters.len());
+    for parameter in &signature.parameters {
+        out.push(match parameter.mode {
+            CallableParameterMode::Borrow => 0,
+            CallableParameterMode::Mut => 1,
+            CallableParameterMode::Owned => 2,
+        });
+        push_string(out, &parameter.ty);
+    }
+    push_string(out, &signature.result);
+    push_count(out, signature.generics.len());
+    for generic in &signature.generics {
+        push_count(out, generic.bounds.len());
+        for bound in &generic.bounds {
+            push_string(out, bound);
+        }
+        match &generic.callable {
+            Some(callable) => {
+                out.push(1);
+                push_count(out, callable.parameters.len());
+                for parameter in &callable.parameters {
+                    push_string(out, parameter);
+                }
+                push_string(out, &callable.result);
+                out.push(u8::from(callable.once));
+            }
+            None => out.push(0),
+        }
+    }
+    out.push(u8::from(signature.is_unsafe));
+    match &signature.abi {
+        Some(abi) => {
+            out.push(1);
+            push_string(out, abi);
+        }
+        None => out.push(0),
+    }
+    match &signature.borrows {
+        Some(positions) => {
+            out.push(1);
+            push_count(out, positions.len());
+            for position in positions {
+                push_count(out, *position);
+            }
+        }
+        None => out.push(0),
+    }
+}
+
+fn push_callable_contract(
+    out: &mut Vec<u8>,
+    contract: &CallableInterfaceContract,
+) -> Result<(), InterfaceArtifactError> {
+    push_callable_signature(out, &contract.signature);
+    match &contract.metadata {
+        Some(metadata) => {
+            out.push(1);
+            let metadata = metadata
+                .to_interface_bytes()
+                .map_err(InterfaceArtifactError::Metadata)?;
+            push_bytes(out, &metadata);
+        }
+        None => out.push(0),
+    }
+    Ok(())
+}
+
+fn read_callable_signature(
+    reader: &mut ArtifactReader<'_>,
+) -> Result<CallableSignature, InterfaceArtifactError> {
+    let parameter_count = reader.count()?;
+    let mut parameters = Vec::with_capacity(parameter_count);
+    for _ in 0..parameter_count {
+        let mode = match reader.u8()? {
+            0 => CallableParameterMode::Borrow,
+            1 => CallableParameterMode::Mut,
+            2 => CallableParameterMode::Owned,
+            _ => return Err(InterfaceArtifactError::NonCanonical),
+        };
+        parameters.push(CallableParameter { mode, ty: reader.string()? });
+    }
+    let result = reader.string()?;
+    let generic_count = reader.count()?;
+    let mut generics = Vec::with_capacity(generic_count);
+    for _ in 0..generic_count {
+        let bound_count = reader.count()?;
+        let mut bounds = Vec::with_capacity(bound_count);
+        for _ in 0..bound_count {
+            bounds.push(reader.string()?);
+        }
+        let callable = match reader.u8()? {
+            0 => None,
+            1 => {
+                let parameter_count = reader.count()?;
+                let mut parameters = Vec::with_capacity(parameter_count);
+                for _ in 0..parameter_count {
+                    parameters.push(reader.string()?);
+                }
+                let result = reader.string()?;
+                let once = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(InterfaceArtifactError::NonCanonical),
+                };
+                Some(CallableGenericCallableBound {
+                    parameters,
+                    result,
+                    once,
+                })
+            }
+            _ => return Err(InterfaceArtifactError::NonCanonical),
+        };
+        generics.push(CallableGenericParameter { bounds, callable });
+    }
+    let is_unsafe = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let abi = match reader.u8()? {
+        0 => None,
+        1 => Some(reader.string()?),
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let borrows = match reader.u8()? {
+        0 => None,
+        1 => {
+            let count = reader.count()?;
+            let mut positions = Vec::with_capacity(count);
+            for _ in 0..count {
+                positions.push(reader.count()?);
+            }
+            Some(positions)
+        }
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let signature = CallableSignature {
+        parameters,
+        result,
+        generics,
+        borrows,
+        is_unsafe,
+        abi,
+    };
+    signature
+        .validate()
+        .map_err(|_| InterfaceArtifactError::NonCanonical)?;
+    Ok(signature)
+}
+
+fn read_callable_contract(
+    reader: &mut ArtifactReader<'_>,
+) -> Result<CallableInterfaceContract, InterfaceArtifactError> {
+    let signature = read_callable_signature(reader)?;
+    let metadata = match reader.u8()? {
+        0 => None,
+        1 => {
+            let bytes = reader.bytes()?;
+            Some(
+                CallableRegionMetadata::from_interface_bytes(bytes)
+                    .map_err(InterfaceArtifactError::Metadata)?,
+            )
+        }
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let contract = CallableInterfaceContract { signature, metadata };
+    contract
+        .validate()
+        .map_err(|_| InterfaceArtifactError::NonCanonical)?;
+    Ok(contract)
+}
+
 struct ArtifactReader<'a> {
     bytes: &'a [u8],
     position: usize,
@@ -544,6 +845,10 @@ impl<'a> ArtifactReader<'a> {
 
     fn u32(&mut self) -> Result<u32, InterfaceArtifactError> {
         Ok(u32::from_le_bytes(self.fixed()?))
+    }
+
+    fn u8(&mut self) -> Result<u8, InterfaceArtifactError> {
+        Ok(self.fixed::<1>()?[0])
     }
 
     fn u64(&mut self) -> Result<u64, InterfaceArtifactError> {
@@ -594,9 +899,10 @@ pub enum InterfaceArtifactError {
         module: String,
         symbol: String,
     },
-    InvalidCallableMetadata {
+    InvalidCallableContract {
         module: String,
         symbol: String,
+        reason: &'static str,
     },
     Metadata(CallableRegionMetadataCodecError),
     BadMagic,
@@ -640,9 +946,13 @@ impl std::fmt::Display for InterfaceArtifactError {
                     "interface module `{module}` records callable `{symbol}` twice"
                 )
             }
-            Self::InvalidCallableMetadata { module, symbol } => write!(
+            Self::InvalidCallableContract {
+                module,
+                symbol,
+                reason,
+            } => write!(
                 f,
-                "interface module `{module}` records stale callable-region metadata for `{symbol}`"
+                "interface module `{module}` records invalid callable contract for `{symbol}`: {reason}"
             ),
             Self::Metadata(error) => write!(f, "callable-region artifact: {error}"),
             Self::BadMagic => write!(f, "not an Ember module-interface artifact"),
@@ -702,6 +1012,20 @@ mod tests {
         )
     }
 
+    fn signature(parameter_ty: &str) -> CallableSignature {
+        CallableSignature {
+            parameters: vec![CallableParameter {
+                mode: CallableParameterMode::Borrow,
+                ty: parameter_ty.to_string(),
+            }],
+            result: "Span[i32]".to_string(),
+            generics: Vec::new(),
+            borrows: Some(vec![0]),
+            is_unsafe: false,
+            abi: None,
+        }
+    }
+
     fn input(
         module: &str,
         source: &str,
@@ -719,7 +1043,10 @@ mod tests {
                 .collect(),
             callables: vec![CallableInterfaceRecord {
                 symbol: format!("em_{module}_f"),
-                metadata: metadata(field),
+                contract: CallableInterfaceContract {
+                    signature: signature("Span[i32]"),
+                    metadata: Some(metadata(field)),
+                },
             }],
         }
     }
@@ -761,6 +1088,35 @@ mod tests {
     }
 
     #[test]
+    fn changing_a_dependency_signature_invalidates_the_callers_cache_key() {
+        let before = build_artifacts(
+            &[
+                input("root", "root", &["dep"], 0),
+                input("dep", "dep", &[], 0),
+            ],
+            "test",
+        )
+        .unwrap();
+        let mut changed_dependency = input("dep", "dep", &[], 0);
+        changed_dependency.callables[0].contract.signature.parameters[0].mode =
+            CallableParameterMode::Owned;
+        let after = build_artifacts(
+            &[input("root", "root", &["dep"], 0), changed_dependency],
+            "test",
+        )
+        .unwrap();
+        let before_root = before
+            .iter()
+            .find(|artifact| artifact.module == "root")
+            .unwrap();
+        let after_root = after
+            .iter()
+            .find(|artifact| artifact.module == "root")
+            .unwrap();
+        assert_ne!(before_root.cache_key, after_root.cache_key);
+    }
+
+    #[test]
     fn unchanged_artifacts_reuse_but_stale_contents_are_a_hard_failure() {
         let test_identity = InterfaceHash::of_bytes(
             std::thread::current()
@@ -784,7 +1140,13 @@ mod tests {
         let mut stale = fresh.clone();
         stale[0]
             .callables
-            .insert(ember_branding::mangled("root.f"), metadata(1));
+            .insert(
+                ember_branding::mangled("root.f"),
+            CallableInterfaceContract {
+                signature: signature("Span[i32]"),
+                metadata: Some(metadata(1)),
+                },
+            );
         let error = match prepare_interface_cache(&directory, &stale) {
             Ok(_) => panic!("stale interface metadata was accepted"),
             Err(error) => error,

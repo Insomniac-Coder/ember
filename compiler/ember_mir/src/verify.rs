@@ -130,6 +130,13 @@ pub fn verify(body: &Body) -> Vec<Violation> {
             body.locals.len()
         ));
     }
+    if body.param_modes.len() != body.arg_count {
+        v.fail(format!(
+            "arg_count is {} but parameter-mode metadata has {} entries",
+            body.arg_count,
+            body.param_modes.len()
+        ));
+    }
     if body.blocks.is_empty() {
         v.fail("a body must have at least one basic block".to_string());
         return v.violations;
@@ -231,6 +238,8 @@ mod tests {
         Body {
             name: "t".to_string(),
             symbol: ember_branding::mangled("t"),
+            is_unsafe: false,
+            abi: None,
             locals: vec![LocalDecl {
                 ty: ember_types::TypeTable::new().1.void,
                 name: None,
@@ -243,6 +252,7 @@ mod tests {
                 terminator_span,
             }],
             arg_count: 0,
+            param_modes: Vec::new(),
             span: Span::DUMMY,
             borrows: None,
             borrowed_params: Vec::new(),
@@ -293,6 +303,26 @@ mod tests {
             Span::new(ember_span::FileId(0), 0, 1),
         ));
         assert!(violations.is_empty(), "got {violations:?}");
+    }
+
+    #[test]
+    fn parameter_mode_metadata_is_a_verified_callable_fact() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let mut body = body_with(Vec::new(), span);
+        body.arg_count = 1;
+        body.locals.push(LocalDecl {
+            ty: ember_types::TypeTable::new().1.i32,
+            name: Some("value".to_string()),
+            kind: LocalKind::Arg,
+            span,
+        });
+        let violations = verify(&body);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("parameter-mode metadata")),
+            "missing parameter-mode metadata crossed verification: {violations:?}"
+        );
     }
 
     #[test]
@@ -733,6 +763,8 @@ mod view_invariant_tests {
         let body = Body {
             name: "t".to_string(),
             symbol: ember_branding::mangled("t"),
+            is_unsafe: false,
+            abi: None,
             locals: vec![
                 LocalDecl {
                     ty: env_ty,
@@ -759,6 +791,7 @@ mod view_invariant_tests {
                 terminator_span: span,
             }],
             arg_count: 0,
+            param_modes: Vec::new(),
             span: Span::DUMMY,
             borrows: None,
             borrowed_params: Vec::new(),

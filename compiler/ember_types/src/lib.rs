@@ -21,6 +21,30 @@ pub struct Ty(u32);
 /// contract explicit without creating a second type universe.
 pub type TypeIdentity = Ty;
 
+/// A type cannot enter an interface artifact until type checking has resolved
+/// it to a real semantic identity. This deliberately rejects the diagnostic-
+/// only placeholder kinds instead of serializing their presentation text.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CanonicalTypeError {
+    InferenceVariable,
+    IntegerLiteral,
+    FloatLiteral,
+    Error,
+}
+
+impl fmt::Display for CanonicalTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CanonicalTypeError::InferenceVariable => "unresolved inference variable",
+            CanonicalTypeError::IntegerLiteral => "unresolved integer literal type",
+            CanonicalTypeError::FloatLiteral => "unresolved float literal type",
+            CanonicalTypeError::Error => "error type",
+        })
+    }
+}
+
+impl std::error::Error for CanonicalTypeError {}
+
 /// Index of a user-declared struct in the type table.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct StructId(pub u32);
@@ -1076,6 +1100,100 @@ impl TypeTable {
             TyKind::Error => "<error>".into(),
         }
     }
+
+    /// A stable semantic spelling for a resolved type in compiler artifacts.
+    /// Unlike [`Self::display`], this is not diagnostic prose: generic
+    /// parameters use their binder index, `Array[u8]` does not acquire the
+    /// diagnostic-only `String` nickname, and unresolved placeholder kinds are
+    /// rejected. Nominal names are the checker-owned qualified names stored in
+    /// the type table, so two modules' `Thing` types cannot collide.
+    pub fn canonical_name(&self, ty: Ty) -> Result<String, CanonicalTypeError> {
+        Ok(match self.kind(ty) {
+            TyKind::Bool => "bool".into(),
+            TyKind::Char => "char".into(),
+            TyKind::Int(kind) => match kind {
+                IntTy::I8 => "i8",
+                IntTy::I16 => "i16",
+                IntTy::I32 => "i32",
+                IntTy::I64 => "i64",
+                IntTy::I128 => "i128",
+                IntTy::Isize => "isize",
+            }
+            .into(),
+            TyKind::Uint(kind) => match kind {
+                UintTy::U8 => "u8",
+                UintTy::U16 => "u16",
+                UintTy::U32 => "u32",
+                UintTy::U64 => "u64",
+                UintTy::U128 => "u128",
+                UintTy::Usize => "usize",
+            }
+            .into(),
+            TyKind::Float(kind) => match kind {
+                FloatTy::F16 => "f16",
+                FloatTy::F32 => "f32",
+                FloatTy::F64 => "f64",
+            }
+            .into(),
+            TyKind::Void => "void".into(),
+            TyKind::Never => "!".into(),
+            TyKind::Str => "str".into(),
+            TyKind::Span { elem, mutable } => format!(
+                "{}[{}]",
+                if *mutable { "MutSpan" } else { "Span" },
+                self.canonical_name(*elem)?
+            ),
+            TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
+            TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
+            TyKind::Range(id) => self.range_def(*id).name.to_string(),
+            TyKind::Tuple(items) => {
+                let mut out = String::from("(");
+                for (index, item) in items.iter().enumerate() {
+                    if index != 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&self.canonical_name(*item)?);
+                }
+                if items.len() == 1 {
+                    out.push(',');
+                }
+                out.push(')');
+                out
+            }
+            TyKind::Ref { mutable, inner } => format!(
+                "{}{}",
+                if *mutable { "ref mut " } else { "ref " },
+                self.canonical_name(*inner)?
+            ),
+            TyKind::Ptr { mutable, inner } => format!(
+                "{}{}",
+                if *mutable { "*mut " } else { "*" },
+                self.canonical_name(*inner)?
+            ),
+            TyKind::Array { elem, len } => {
+                format!("[{};{len}]", self.canonical_name(*elem)?)
+            }
+            TyKind::Vec { elem } => format!("Array[{}]", self.canonical_name(*elem)?),
+            TyKind::Fn { params, ret } => {
+                let mut out = String::from("fn(");
+                for (index, param) in params.iter().enumerate() {
+                    if index != 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&self.canonical_name(*param)?);
+                }
+                out.push_str(")->");
+                out.push_str(&self.canonical_name(*ret)?);
+                out
+            }
+            TyKind::Param { index, .. } => format!("$P{index}"),
+            TyKind::Assoc { name } => format!("Self.{name}"),
+            TyKind::Infer(_) => return Err(CanonicalTypeError::InferenceVariable),
+            TyKind::IntLit => return Err(CanonicalTypeError::IntegerLiteral),
+            TyKind::FloatLit => return Err(CanonicalTypeError::FloatLiteral),
+            TyKind::Error => return Err(CanonicalTypeError::Error),
+        })
+    }
 }
 
 impl fmt::Debug for Ty {
@@ -1215,6 +1333,26 @@ mod tests {
         let (mut table, common) = TypeTable::new();
         assert_eq!(table.intern(TyKind::Int(IntTy::I32)), common.i32);
         assert_ne!(common.i32, common.u32);
+    }
+
+    #[test]
+    fn canonical_artifact_names_are_resolved_and_not_diagnostic_aliases() {
+        let (mut table, common) = TypeTable::new();
+        let bytes = table.intern(TyKind::Vec { elem: common.u8 });
+        let span = table.intern(TyKind::Span {
+            elem: common.i32,
+            mutable: false,
+        });
+        let unresolved = table.intern(TyKind::Infer(InferId(17)));
+
+        // `display` preserves source-friendly aliases such as `String`; an
+        // interface identity must retain the actual semantic constructor.
+        assert_eq!(table.canonical_name(bytes).unwrap(), "Array[u8]");
+        assert_eq!(table.canonical_name(span).unwrap(), "Span[i32]");
+        assert_eq!(
+            table.canonical_name(unresolved),
+            Err(CanonicalTypeError::InferenceVariable)
+        );
     }
 
     #[test]

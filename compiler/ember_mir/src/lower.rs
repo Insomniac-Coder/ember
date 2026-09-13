@@ -290,9 +290,12 @@ impl<'a> Builder<'a> {
         Body {
             name: self.function.name.to_string(),
             symbol: self.function.symbol.clone(),
+            is_unsafe: self.function.is_unsafe,
+            abi: self.function.abi.clone(),
             locals: self.locals,
             blocks: self.blocks,
             arg_count: self.arg_count,
+            param_modes: self.function.params.iter().map(|param| param.mode).collect(),
             span: self.function.span,
             borrows: self.function.borrows.clone(),
             borrowed_params,

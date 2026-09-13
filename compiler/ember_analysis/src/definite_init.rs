@@ -437,6 +437,8 @@ mod tests {
         Body {
             name: "facts".to_string(),
             symbol: "facts".to_string(),
+            is_unsafe: false,
+            abi: None,
             locals: vec![
                 LocalDecl {
                     ty: common.void,
@@ -493,6 +495,7 @@ mod tests {
                 },
             ],
             arg_count: 1,
+            param_modes: vec![ember_mir::ParameterMode::Borrow],
             span,
             borrows: None,
             borrowed_params: Vec::new(),

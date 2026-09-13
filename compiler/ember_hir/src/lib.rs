@@ -79,6 +79,13 @@ pub struct Function {
     /// The mangled symbol this function gets in the emitted C (`[MNG-1]`), or
     /// the name given by `@export` (`[MNG-2]`).
     pub symbol: String,
+    /// Whether calling this function crosses Ember's explicit unsafe boundary.
+    /// This remains part of an import-visible callable contract even when the
+    /// body itself is otherwise unchanged.
+    pub is_unsafe: bool,
+    /// The declared external ABI, when this definition has one. `None` means
+    /// Ember's ordinary callable ABI.
+    pub abi: Option<String>,
     pub params: Vec<Param>,
     pub locals: Vec<LocalDecl>,
     pub ret: Ty,

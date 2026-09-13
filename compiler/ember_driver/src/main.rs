@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ember_build::interface::{
-    CallableInterfaceRecord, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
+    CallableGenericCallableBound, CallableGenericParameter, CallableInterfaceContract,
+    CallableInterfaceRecord, CallableParameter, CallableParameterMode, CallableSignature,
+    ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
     build_artifacts, cache_directory, compiler_identity, prepare_interface_cache,
     round_trip_artifacts,
 };
@@ -520,6 +522,7 @@ fn load_modules(
 fn prepare_callable_interface_cache(
     input: &Path,
     modules: &[ember_typeck::LoadedModule],
+    declarations: &[ember_typeck::CallableDeclaration],
     map: &SourceMap,
     bodies: &mut [ember_mir::Body],
     types: &TypeTable,
@@ -527,7 +530,8 @@ fn prepare_callable_interface_cache(
 ) -> Result<PreparedInterfaceCache, String> {
     ember_analysis::install_callable_regions_all(bodies, types);
 
-    let (inputs, import_visible_symbols) = module_interface_inputs(modules, map, bodies, options)?;
+    let (inputs, import_visible_contracts) =
+        module_interface_inputs(modules, declarations, map, bodies, types, options)?;
     let fresh = build_artifacts(&inputs, &compiler_identity()).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
     })?;
@@ -555,17 +559,25 @@ fn prepare_callable_interface_cache(
     install_callable_metadata_from_artifacts(
         bodies,
         prepared.artifacts(),
-        &import_visible_symbols,
+        &import_visible_contracts,
     )?;
     Ok(prepared)
 }
 
 fn module_interface_inputs(
     modules: &[ember_typeck::LoadedModule],
+    declarations: &[ember_typeck::CallableDeclaration],
     map: &SourceMap,
     bodies: &[ember_mir::Body],
+    types: &TypeTable,
     options: &Options,
-) -> Result<(Vec<ModuleInterfaceInput>, std::collections::BTreeSet<String>), String> {
+) -> Result<
+    (
+        Vec<ModuleInterfaceInput>,
+        std::collections::BTreeMap<String, CallableInterfaceContract>,
+    ),
+    String,
+> {
     use std::collections::{BTreeMap, BTreeSet};
 
     let module_names: BTreeMap<ember_span::FileId, String> = modules
@@ -573,15 +585,72 @@ fn module_interface_inputs(
         .map(|loaded| (loaded.module.span.file, module_identity(&loaded.path)))
         .collect();
     let known_modules: BTreeSet<String> = module_names.values().cloned().collect();
-    let mut records_by_file: BTreeMap<ember_span::FileId, Vec<CallableInterfaceRecord>> =
-        BTreeMap::new();
+    let mut records_by_file: BTreeMap<
+        ember_span::FileId,
+        BTreeMap<String, CallableInterfaceContract>,
+    > = BTreeMap::new();
     let import_visible_spans = import_visible_callable_spans(modules);
-    let mut import_visible_symbols = BTreeSet::new();
+    let mut import_visible_contracts = BTreeMap::new();
+    let mut declarations_by_span = BTreeMap::new();
+
+    // The declaration surface is installed before looking at executable
+    // bodies. A public generic therefore participates in interface identity
+    // even when no concrete instantiation is emitted in this compilation.
+    for declaration in declarations {
+        if !module_names.contains_key(&declaration.span.file) {
+            return Err(format!(
+                "internal compiler error: [BLD-2] declaration `{}` has no source module for its interface artifact",
+                declaration.symbol
+            ));
+        }
+        let signature = declaration_signature(declaration, types)?;
+        let contract = CallableInterfaceContract {
+            signature,
+            metadata: None,
+        };
+        if import_visible_contracts
+            .insert(declaration.symbol.clone(), contract.clone())
+            .is_some()
+        {
+            return Err(format!(
+                "internal compiler error: [BLD-2] import-visible callable `{}` has more than one declaration contract",
+                declaration.symbol
+            ));
+        }
+        let records = records_by_file.entry(declaration.span.file).or_default();
+        if records
+            .insert(declaration.symbol.clone(), contract)
+            .is_some()
+        {
+            return Err(format!(
+                "internal compiler error: [BLD-2] source module declares callable `{}` twice",
+                declaration.symbol
+            ));
+        }
+        if declarations_by_span
+            .insert(span_key(declaration.span), declaration)
+            .is_some()
+        {
+            return Err(format!(
+                "internal compiler error: [BLD-2] more than one callable declaration shares source span {:?}",
+                declaration.span
+            ));
+        }
+    }
+
     for body in bodies {
-        if !import_visible_spans.contains(&span_key(body.span)) {
+        let source_declaration = declarations_by_span.get(&span_key(body.span)).copied();
+        if source_declaration.is_none() && !import_visible_spans.contains(&span_key(body.span)) {
             // The fresh MIR record remains installed for this compilation's
             // whole-program verification, but a private body is not part of
             // the import interface hash under `[BLD-2]`.
+            continue;
+        }
+        // A generic source declaration has no executable body until it is
+        // instantiated. The instantiated MIR symbol is deliberately not its
+        // source declaration's identity, so it cannot replace the generic
+        // interface contract with a concrete specialization.
+        if source_declaration.is_some_and(|declaration| declaration.symbol != body.symbol) {
             continue;
         }
         let metadata = body.callable_regions.as_ref().ok_or_else(|| {
@@ -596,20 +665,59 @@ fn module_interface_inputs(
                 body.symbol
             ));
         }
+        let signature = match source_declaration {
+            Some(declaration) => declaration_signature(declaration, types)?,
+            None => callable_signature(body, types)?,
+        };
         if !module_names.contains_key(&body.span.file) {
             return Err(format!(
                 "internal compiler error: [BLD-2] callable `{}` has no source module for its interface artifact",
                 body.symbol
             ));
         }
-        records_by_file
-            .entry(body.span.file)
-            .or_default()
-            .push(CallableInterfaceRecord {
-                symbol: body.symbol.clone(),
-                metadata: metadata.clone(),
-            });
-        import_visible_symbols.insert(body.symbol.clone());
+        let contract = CallableInterfaceContract {
+            signature,
+            metadata: Some(metadata.clone()),
+        };
+        if source_declaration.is_some() {
+            let expected = import_visible_contracts.get_mut(&body.symbol).ok_or_else(|| {
+                format!(
+                    "internal compiler error: [BLD-2] callable body `{}` has no declaration contract",
+                    body.symbol
+                )
+            })?;
+            if expected.signature != contract.signature {
+                return Err(format!(
+                    "internal compiler error: [BLD-2] callable body `{}` disagrees with its resolved declaration signature",
+                    body.symbol
+                ));
+            }
+            expected.metadata = contract.metadata.clone();
+            let records = records_by_file.entry(body.span.file).or_default();
+            let stored = records.get_mut(&body.symbol).ok_or_else(|| {
+                format!(
+                    "internal compiler error: [BLD-2] callable body `{}` has no module declaration record",
+                    body.symbol
+                )
+            })?;
+            *stored = contract;
+        } else {
+            // Members remain on the legacy body-derived path until their
+            // declaration collector is widened too. They still retain a full
+            // verified concrete signature and region contract; this fallback
+            // must not erase existing visible-method coverage.
+            let records = records_by_file.entry(body.span.file).or_default();
+            if records.insert(body.symbol.clone(), contract.clone()).is_some()
+                || import_visible_contracts
+                    .insert(body.symbol.clone(), contract)
+                    .is_some()
+            {
+                return Err(format!(
+                    "internal compiler error: [BLD-2] import-visible member callable `{}` has more than one contract",
+                    body.symbol
+                ));
+            }
+        }
     }
 
     let implicit_prelude: Vec<String> = ["std.core", "std.collections"]
@@ -661,7 +769,10 @@ fn module_interface_inputs(
             direct_dependencies: dependencies.into_iter().collect(),
             callables: records_by_file
                 .remove(&loaded.module.span.file)
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(symbol, contract)| CallableInterfaceRecord { symbol, contract })
+                .collect(),
         });
     }
     if let Some((file, records)) = records_by_file.into_iter().next() {
@@ -671,48 +782,210 @@ fn module_interface_inputs(
             file.0
         ));
     }
-    Ok((inputs, import_visible_symbols))
+    Ok((inputs, import_visible_contracts))
 }
 
 fn install_callable_metadata_from_artifacts(
     bodies: &mut [ember_mir::Body],
     artifacts: &[ModuleInterfaceArtifact],
-    expected_symbols: &std::collections::BTreeSet<String>,
+    expected_contracts: &std::collections::BTreeMap<String, CallableInterfaceContract>,
 ) -> Result<(), String> {
     use std::collections::BTreeMap;
 
-    let mut records: BTreeMap<String, ember_mir::CallableRegionMetadata> = BTreeMap::new();
+    let mut records: BTreeMap<String, CallableInterfaceContract> = BTreeMap::new();
     for artifact in artifacts {
-        for (symbol, metadata) in &artifact.callables {
-            if records.insert(symbol.clone(), metadata.clone()).is_some() {
+        for (symbol, contract) in &artifact.callables {
+            if records.insert(symbol.clone(), contract.clone()).is_some() {
                 return Err(format!(
                     "internal compiler error: [LT-40] callable `{symbol}` is present in more than one interface artifact"
                 ));
             }
         }
     }
-    for symbol in expected_symbols {
-        if !records.contains_key(symbol) {
+    for (symbol, expected) in expected_contracts {
+        let Some(actual) = records.get(symbol) else {
             return Err(format!(
                 "internal compiler error: [LT-40] interface artifact omits import-visible callable `{symbol}`"
+            ));
+        };
+        if actual != expected {
+            return Err(format!(
+                "internal compiler error: [LT-40] interface artifact contract for `{symbol}` disagrees with current verified facts"
             ));
         }
     }
     for body in bodies {
-        if let Some(metadata) = records.remove(&body.symbol) {
+        if let Some(contract) = records.get(&body.symbol) {
             // Public/package-visible contracts cross the artifact boundary.
             // Private bodies retain the freshly derived record that produced
             // this compilation, so all current whole-program checks remain
             // exact without publishing private implementation detail.
-            body.callable_regions = Some(metadata);
+            if let Some(metadata) = &contract.metadata {
+                body.callable_regions = Some(metadata.clone());
+            }
         }
     }
-    if let Some((symbol, _)) = records.into_iter().next() {
+    if let Some((symbol, _)) = records
+        .into_iter()
+        .find(|(symbol, _)| !expected_contracts.contains_key(symbol))
+    {
         return Err(format!(
             "internal compiler error: [LT-40] interface artifact contains stale callable `{symbol}`"
         ));
     }
     Ok(())
+}
+
+/// Produce the resolved callable facts that can safely cross the first EMIF
+/// signature boundary. MIR locals use `ref mut T` to implement a `mut T`
+/// parameter, but the public contract records its ordinary declaration form:
+/// mode `mut` plus the pointee `T`.
+fn callable_signature(body: &ember_mir::Body, types: &TypeTable) -> Result<CallableSignature, String> {
+    use ember_hir::Mode;
+    use ember_types::TyKind;
+
+    if body.param_modes.len() != body.arg_count {
+        return Err(format!(
+            "internal compiler error: [FN-1] callable `{}` has {} parameter mode(s) for {} argument(s)",
+            body.symbol,
+            body.param_modes.len(),
+            body.arg_count
+        ));
+    }
+    let parameters = body
+        .args()
+        .zip(&body.param_modes)
+        .map(|((_, local), mode)| {
+            let (mode, ty) = match mode {
+                Mode::Borrow => (CallableParameterMode::Borrow, local.ty),
+                Mode::Owned => (CallableParameterMode::Owned, local.ty),
+                Mode::Mut => match types.kind(local.ty) {
+                    TyKind::Ref { mutable: true, inner } => (CallableParameterMode::Mut, *inner),
+                    _ => {
+                        return Err(format!(
+                            "internal compiler error: [FN-1] mutable callable `{}` has no mutable-reference parameter representation",
+                            body.symbol
+                        ));
+                    }
+                },
+            };
+            let ty = types.canonical_name(ty).map_err(|error| {
+                format!(
+                    "internal compiler error: [BLD-2] callable `{}` has a non-canonical parameter type: {error}",
+                    body.symbol
+                )
+            })?;
+            Ok(CallableParameter { mode, ty })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let result = types.canonical_name(body.return_ty()).map_err(|error| {
+        format!(
+            "internal compiler error: [BLD-2] callable `{}` has a non-canonical result type: {error}",
+            body.symbol
+        )
+    })?;
+    let borrows = body.borrows.as_ref().map(|positions| {
+        let mut positions = positions.clone();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    });
+    Ok(CallableSignature {
+        parameters,
+        result,
+        generics: Vec::new(),
+        borrows,
+        is_unsafe: body.is_unsafe,
+        abi: body.abi.clone(),
+    })
+}
+
+/// Convert a type-checker declaration fact into EMIF's canonical source
+/// contract. Bounds are sorted/deduplicated because their intersection has no
+/// source-order semantics; generic parameter positions remain significant.
+fn declaration_signature(
+    declaration: &ember_typeck::CallableDeclaration,
+    types: &TypeTable,
+) -> Result<CallableSignature, String> {
+    use ember_hir::Mode;
+
+    let parameters = declaration
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let mode = match parameter.mode {
+                Mode::Borrow => CallableParameterMode::Borrow,
+                Mode::Mut => CallableParameterMode::Mut,
+                Mode::Owned => CallableParameterMode::Owned,
+            };
+            let ty = types.canonical_name(parameter.ty).map_err(|error| {
+                format!(
+                    "internal compiler error: [BLD-2] declaration `{}` has a non-canonical parameter type: {error}",
+                    declaration.symbol
+                )
+            })?;
+            Ok(CallableParameter { mode, ty })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let result = types.canonical_name(declaration.result).map_err(|error| {
+        format!(
+            "internal compiler error: [BLD-2] declaration `{}` has a non-canonical result type: {error}",
+            declaration.symbol
+        )
+    })?;
+    let generics = declaration
+        .generics
+        .iter()
+        .map(|generic| {
+            let mut bounds = generic.bounds.clone();
+            bounds.sort();
+            bounds.dedup();
+            let callable = generic
+                .callable
+                .as_ref()
+                .map(|bound| -> Result<CallableGenericCallableBound, String> {
+                    let parameters = bound
+                        .parameters
+                        .iter()
+                        .map(|ty| {
+                            types.canonical_name(*ty).map_err(|error| {
+                                format!(
+                                    "internal compiler error: [BLD-2] declaration `{}` has a non-canonical Callable bound parameter: {error}",
+                                    declaration.symbol
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let result = types.canonical_name(bound.result).map_err(|error| {
+                        format!(
+                            "internal compiler error: [BLD-2] declaration `{}` has a non-canonical Callable bound result: {error}",
+                            declaration.symbol
+                        )
+                    })?;
+                    Ok(CallableGenericCallableBound {
+                        parameters,
+                        result,
+                        once: bound.once,
+                    })
+                })
+                .transpose()?;
+            Ok(CallableGenericParameter { bounds, callable })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let borrows = declaration.borrows.as_ref().map(|positions| {
+        let mut positions = positions.clone();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    });
+    Ok(CallableSignature {
+        parameters,
+        result,
+        generics,
+        borrows,
+        is_unsafe: declaration.is_unsafe,
+        abi: declaration.abi.clone(),
+    })
 }
 
 /// `[MOD-2]` / `[BLD-2]` — spans of callable declarations observable by an
@@ -869,15 +1142,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Check.
     let (mut types, common) = TypeTable::new();
     // [TYP-8] -- the profile chooses the default overflow policy.
-    let program = ember_typeck::check(
+    let checked = ember_typeck::check(
         &modules,
         &mut types,
         &common,
         &mut sink,
         overflow_policy(options.profile),
     );
+    let program = &checked.program;
     if options.emit.as_deref() == Some("hir") {
-        print!("{}", ember_hir::dump(&program, &types));
+        print!("{}", ember_hir::dump(program, &types));
         return Ok(finish(&sink, &map, options));
     }
     if sink.has_errors() {
@@ -886,7 +1160,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
-    let mut bodies = ember_mir::lower(&program, &types, &common, &map);
+    let mut bodies = ember_mir::lower(program, &types, &common, &map);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }
@@ -910,8 +1184,15 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // artifact, then become the only contracts borrow checking consumes. The
     // cache write itself waits until the complete semantic verification below
     // succeeds, so an erroneous program never overwrites a verified record.
-    let interface_cache =
-        prepare_callable_interface_cache(input, &modules, &map, &mut bodies, &types, options)?;
+    let interface_cache = prepare_callable_interface_cache(
+        input,
+        &modules,
+        &checked.callable_declarations,
+        &map,
+        &mut bodies,
+        &types,
+        options,
+    )?;
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
