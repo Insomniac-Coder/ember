@@ -1,0 +1,10 @@
+error[E3041]: `values` is moved in a loop
+ --> tests/ui/borrow/O3/move_in_loop.em:9:25
+  |
+9 |         println(consume(values))
+  |                         ^^^^^^ moved here, and the loop comes back
+  |
+  = help: move the declaration inside the loop, clone it for each iteration, or use `mem.take` when replacing it on every pass
+  = note: the first iteration moves it and the second finds it gone; a value moved in a loop must be put back before the next iteration [OWN-4]
+
+error: could not compile due to 1 error(s)

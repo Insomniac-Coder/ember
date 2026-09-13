@@ -1,0 +1,10 @@
+error[E3090]: `Array[i32]` needs `drop` and cannot be allocated with `Arena.alloc`
+ --> tests/ui/borrow/A1/arena_needs_drop.em:4:26
+  |
+4 |     stored = arena.alloc(values)
+  |                          ^^^^^^ this value's destructor would never run
+  |
+  = help: use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally
+  = note: arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)
+
+error: could not compile due to 1 error(s)

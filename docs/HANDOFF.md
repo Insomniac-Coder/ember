@@ -2378,6 +2378,41 @@ label, or repair as a compiler/test defect; do not alter H4 or invent a new
 diagnostic. Continue `ARCH-096-1` only where this or later work exposes a real
 producer and consumer.
 
+### 0.36 Diagnostic UI foundation — 2026-09-13
+
+The first `[DIA-13]` slice is executable rather than documentary.
+`compiler/ember_driver/tests/ui.rs` recursively discovers
+`tests/ui/borrow/<shape>/<case>.em`, requires an exact `.stderr` snapshot and a
+`.fixed.em` companion, verifies the rendered error code through the canonical
+`ember_diag::shapes::shape_for` mapping, checks that primary help names a
+shape-required concrete construct, rejects orphan companions, and compiles the
+fixed program. Paths and line endings are normalized, but diagnostic content
+is otherwise exact.
+
+Thirteen of the 25 code-keyed ownership shapes now have honest cases: O1, O3,
+O4, O6, O7, B3, B4, B6, B7, B8, B12, B13, and A1. Every fixed companion was
+compiled, not inferred. This is **partial `[DIA-13]` coverage**, not a claim
+that the rule is complete: O2/O5/O8/O9/B2/B5/B9/B10/B11/X1/S1 have no current
+producer, B1 is blocked by D-062/SPN-API-1, R1 still needs the
+`ember explain --borrow` overlay, and §XX.6.2's N1–N12 basic classifier and
+snapshots remain.
+
+The first two cases exposed why `[PHIL-8a]` requires compiling the repair.
+D-060: E3070 prescribed `mem.drop(x)`, but `std.mem` had no such function.
+`std.mem.drop[T](owned value: T)` now implements the existing `[DRP-1]`
+contract through ordinary owned-parameter scope-end destruction, and the
+conformance probe observes exactly one drop. D-061: E3041 carried the correct
+O3 code but not O3's required repair set; its primary help now names moving the
+declaration inside the loop, cloning per iteration, and `mem.take` for a value
+replaced each pass. Neither finding changed the specification.
+
+D-062 remains open and must not be hidden by a snapshot: E3022/B1 currently
+gets the generic B3 "shorten the borrow" help. The catalogue requires a
+concrete disjointness API, while all such Span/Array APIs remain the explicit
+`SPN-API-1` implementation gap. Implement a real sanctioned repair, then add
+the B1 before/fixed/snapshot triplet. Do not bless output whose fix cannot
+compile.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer

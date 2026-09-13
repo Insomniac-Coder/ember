@@ -1,0 +1,10 @@
+error[E3040]: `values` has been moved out of
+ --> tests/ui/borrow/O1/use_after_move.em:8:18
+  |
+8 |     println(take(values))
+  |                  ^^^^^^ used here after the move
+  |
+  = help: clone the value, or borrow it instead of moving it
+  = note: a move gives the value away; the old owner cannot use it again
+
+error: could not compile due to 1 error(s)

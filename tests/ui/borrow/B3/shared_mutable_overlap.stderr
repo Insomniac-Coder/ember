@@ -1,0 +1,14 @@
+error[E3021]: `value` cannot be written while it is borrowed
+ --> tests/ui/borrow/B3/shared_mutable_overlap.em:4:13
+  |
+3 |     view: ref i32 = ref value
+  |                     --------- borrow of `value` starts here
+4 |     value = 5
+  |             ^ conflicting access here
+5 |     println(view)
+  |             ---- borrow later used here
+  |
+  = help: end the borrow before this: `view` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)

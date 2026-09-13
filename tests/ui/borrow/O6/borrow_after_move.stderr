@@ -1,0 +1,13 @@
+error[E3050]: `values` is borrowed after it has been moved out of
+ --> tests/ui/borrow/O6/borrow_after_move.em:6:28
+  |
+2 |     values: Array[i32] = Array[i32]()
+  |     --------------------------------- `values` is declared here
+...
+6 |     view: ref Array[i32] = ref values
+  |                            ^^^^^^^^^^ borrowed here
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+
+error: could not compile due to 1 error(s)

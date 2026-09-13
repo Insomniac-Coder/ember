@@ -1,0 +1,12 @@
+error[E3062]: the returned view points into `values`, which `@borrows` does not name
+ --> tests/ui/borrow/B6/return_wrong_parameter.em:3:12
+  |
+2 | fn choose(arena: Arena, values: Span[i32]) -> Span[i32]:
+  |                         ----------------- `values` is the parameter it points into
+3 |     return values
+  |            ^^^^^^ returned here
+  |
+  = help: add `values` to `@borrows`, or return a view of `arena`
+  = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error: could not compile due to 1 error(s)

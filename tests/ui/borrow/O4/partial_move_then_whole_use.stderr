@@ -1,0 +1,13 @@
+error[E3042]: `pair` is partially moved
+  --> tests/ui/borrow/O4/partial_move_then_whole_use.em:18:13
+   |
+15 |     pair = Pair(Part(1), Part(2))
+   |     ----------------------------- `pair` is declared here
+...
+18 |     consume(pair)
+   |             ^^^^ used here as a whole after one of its fields was moved
+   |
+   = help: reassign the moved field, or destructure the whole struct up front
+   = note: moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]
+
+error: could not compile due to 1 error(s)

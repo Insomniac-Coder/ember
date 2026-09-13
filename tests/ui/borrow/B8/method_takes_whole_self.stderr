@@ -1,0 +1,14 @@
+error[E3025]: cannot call a method on `pair` while `pair.x` is mutably borrowed
+  --> tests/ui/borrow/B8/method_takes_whole_self.em:11:5
+   |
+10 |     view: ref mut i32 = ref mut pair.x
+   |                         -------------- mutable borrow of `pair.x` starts here
+11 |     pair.set_y(10)
+   |     ^^^^ conflicting access here
+12 |     println(view)
+   |             ---- borrow later used here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)
+
+error: could not compile due to 1 error(s)

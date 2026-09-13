@@ -1,0 +1,11 @@
+error[E3023]: cannot mutate borrowed parameter `values`
+ --> tests/ui/borrow/B4/borrowed_parameter_mutation.em:2:5
+  |
+1 | fn append_one(values: Array[i32]):
+  |               ------------------ `values` is borrowed here
+2 |     values.push(1)
+  |     ^^^^^^^^^^^^^^ this write needs mutable access
+  |
+  = help: restructure to a single owner and declare this parameter `mut values: Array[i32]`
+
+error: could not compile due to 1 error(s)

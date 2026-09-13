@@ -1,0 +1,10 @@
+error[E3070]: `R`'s `drop` may not be called explicitly
+  --> tests/ui/borrow/O7/explicit_drop_call.em:11:7
+   |
+11 |     r.drop()
+   |       ^^^^ this would run the destructor a second time
+   |
+   = help: `mem.drop(owned x)` ends the value's life early; the destructor then runs once, here
+   = note: `drop` is invoked exactly once per value, at the end of its life [DRP-1]
+
+error: could not compile due to 1 error(s)

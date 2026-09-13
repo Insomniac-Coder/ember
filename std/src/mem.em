@@ -7,3 +7,9 @@
 
 pub struct UnsafeCell[T]:
     value: T
+
+## `[DRP-1]` — the public, safe spelling for ending a value's life early.
+## Taking the value through an `owned` parameter transfers it into this frame;
+## ordinary scope-end destruction then runs its destructor exactly once.
+pub fn drop[T](owned value: T):
+    pass

@@ -1191,8 +1191,8 @@ impl Reporter<'_> {
                 "moved in a loop must be put back before the next iteration [OWN-4]"
             ))
             .help(concat!(
-                "reassign it before the end of the loop body on every path, or borrow ",
-                "it instead of moving it, or move a clone"
+                "move the declaration inside the loop, clone it for each iteration, or use ",
+                "`mem.take` when replacing it on every pass"
             ))
         } else {
             let message = if state.is_moved() {
