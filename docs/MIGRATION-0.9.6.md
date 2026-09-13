@@ -339,6 +339,19 @@ rechecks: no item/generic-instantiation reuse follows from this checkpoint.
 Non-direct dispatch and the full escape/storage/enum/generic matrix also
 remain.
 
+`7bcca7f` makes the callable section import-precise under the existing
+`[MOD-2]` AST visibility authority. It serializes `pub` and `pub(package)`
+callables (including eligible visible members), leaves module-private records
+fresh and local to the current whole-program verification, and moves the
+artifact to schema 2. A schema-1 file is incompatible tooling cache data and
+is invalidated before it can be consumed; malformed, stale, and
+body-disagreeing schema-2 records remain hard errors. The regression proves a
+private relation change preserves the helper interface/importer key while
+package-visible and public changes invalidate both. This completes only the
+callable-summary visibility boundary: public signatures/types, layouts,
+effects, inline bodies, and item-granular reuse still need real producers and
+consumers.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -358,9 +371,11 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `90059c8`, including E3065/B14 and runtime erasure. `af7c525` installs and
   verifies canonical fingerprinted MIR metadata and closes point-sensitive
   `[LT-21]` replacement. `9ade1d0` serializes/validates that metadata and
-  couples imported-summary changes to BLAKE3 cache identity. Export-precise
-  interfaces, actual item/generic reuse, dynamic targets, and the wider
-  dispatch matrix remain incomplete.
+  couples imported-summary changes to BLAKE3 cache identity. `7bcca7f`
+  narrows the callable section to `pub`/`pub(package)` import-visible records
+  and safely invalidates legacy schema-1 cache data. Public signatures/types,
+  layouts/effects/inline bodies, actual item/generic reuse, dynamic targets,
+  and the wider dispatch matrix remain incomplete.
 - The H1 equivalence matrix across references, spans, view fields, Arena
   results, RefCell guards, and FFI views has no complete conformance evidence.
 
@@ -540,10 +555,11 @@ proved.
    fingerprinted MIR metadata, verifies producer/consumer agreement, covers
    direct method/generic/monomorphized-interface cases, and closes `[LT-21]`
    point-sensitive replacement. `9ade1d0` adds the first real interface/cache
-   artifact and `[LT-40]` identity invalidation. Next make its public interface
-   export-precise and use it for safe reuse, then cover audited-declared,
-   unknown, separate-compilation, dynamic, hot-reload, escape/storage, and
-   remaining verifier cases while preserving runtime erasure.
+   artifact and `[LT-40]` identity invalidation. `7bcca7f` makes its callable
+   section import-precise. Next add canonical public signatures/types before
+   using it for safe reuse, then cover audited-declared, unknown,
+   separate-compilation, dynamic, hot-reload, escape/storage, and remaining
+   verifier cases while preserving runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -606,11 +622,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Make `9ade1d0`'s validated callable-summary section export-precise, then use
-its BLAKE3 cache identity for safe incremental reuse. Preserve conservative
-all-slot behavior for unknown calls and ordinary E3021 for precise
-matching-field conflicts; E3064 remains a reserved historical identity rather
-than target behavior. Then extend the non-direct, escape/storage/enum,
-FFI/coroutine, and hot-reload matrices without leaking proof metadata into
-runtime layout. Do not fabricate class/thread/effect diagnostic shapes, add
-placeholder facts, or start a big-bang rewrite.
+Add a canonical public-function signature/type section to `7bcca7f`'s
+validated artifact, then use the resulting BLAKE3 interface identity for safe
+incremental reuse. Preserve conservative all-slot behavior for unknown calls
+and ordinary E3021 for precise matching-field conflicts; E3064 remains a
+reserved historical identity rather than target behavior. Then extend the
+non-direct, escape/storage/enum, FFI/coroutine, and hot-reload matrices without
+leaking proof metadata into runtime layout. Do not fabricate class/thread/effect
+diagnostic shapes, add placeholder facts, or start a big-bang rewrite.

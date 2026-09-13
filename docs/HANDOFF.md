@@ -288,11 +288,11 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `9ade1d0` (`Add verified callable interface cache artifacts`), following `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
-| Recent commits | `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | Clean immediately after source checkpoint `9ade1d0`; this handoff synchronization is documentation-only. Always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | `7bcca7f` (`Scope callable cache summaries to visible interfaces`), following `9ade1d0` (validated EMIF artifact/identity), `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
+| Recent commits | `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Working tree | Clean immediately after source checkpoint `7bcca7f`; this handoff synchronization is documentation-only. Always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** |
-| `cargo test --workspace` | **199 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
+| `cargo test --workspace` | **200 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 123 top-level rule directories, 412 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 86 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
@@ -919,9 +919,10 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Make `9ade1d0`'s validated callable-summary interface section export-precise
-and use its BLAKE3 cache identity for safe incremental reuse, then continue
-the non-direct and remaining multi-region conformance matrix.**
+**Add a canonical public function-signature/type section to `7bcca7f`'s
+validated callable interface artifact before using its BLAKE3 identity for safe
+incremental reuse, then continue the non-direct and remaining multi-region
+conformance matrix.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -936,10 +937,11 @@ complete at `90059c8`; §0.50 records their first evidence. `af7c525` installs
 canonical, fingerprinted metadata in every MIR body, makes borrow checking
 consume it, independently rederives and verifies it before code generation,
 and closes `[LT-21]` field replacement through point-sensitive provenance;
-§0.51 records the exact in-MIR boundary, and §0.52 records its serialized
-`EMIF`/cache continuation. Keep architecture migration incremental through
-real producers and consumers; do not create placeholder facts or attempt a
-big-bang rewrite.
+§0.51 records the exact in-MIR boundary, §0.52 records its serialized
+`EMIF`/cache continuation, and §0.53 narrows that callable section to
+import-visible records. Keep architecture migration incremental through real
+producers and consumers; do not create placeholder facts or attempt a big-bang
+rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
 remaining multi-region and Phase 2 ownership/lifetime coverage before
@@ -3072,12 +3074,59 @@ Rust tests, 123 conformance directories, and 412 Ember sources; debug/release
 builds are warning-free; all six adopted-source gates pass. The test build
 retains only the pre-existing lexer test-name style warning.
 
-**Exact next task:** make the callable-summary artifact export-precise and use
-its validated BLAKE3 key for safe incremental reuse. Preserve the current
-hard-error validation boundary, whole-program correctness, generated-C erasure,
-conservative unknown-call behavior, E3021 matching-field conflicts, and
-reserved E3064/B13 identity. Then extend the non-direct and remaining
-multi-region matrix only with adversarial evidence.
+**Exact next task at that checkpoint:** make the callable-summary artifact
+export-precise and use its validated BLAKE3 key for safe incremental reuse.
+Preserve the current hard-error validation boundary, whole-program correctness,
+generated-C erasure, conservative unknown-call behavior, E3021 matching-field
+conflicts, and reserved E3064/B13 identity. Then extend the non-direct and
+remaining multi-region matrix only with adversarial evidence.
+
+### 0.53 Import-visible callable cache sections — 2026-09-13
+
+Implementation commit `7bcca7f` completes §0.52's callable visibility step
+without creating a second compiler visibility model. The driver derives a
+source-span set directly from `LoadedModule` AST items under `[MOD-2]`:
+top-level `pub` and `pub(package)` functions, non-private members of visible
+struct/class/enum/interface items, and non-private extension members. Only
+MIR bodies sourced by those spans enter the `EMIF` callable section. Generic
+instantiations retain their originating declaration span and therefore follow
+the same selection; private closures and module-private declarations do not
+silently become exports.
+
+Private bodies still retain the fresh canonical metadata derived earlier in
+this compilation, so the existing whole-program borrow/code-generation checks
+remain exact. Import-visible records make the encode/decode/artifact round trip
+and are required at the consumer boundary. Any missing expected visible record
+or any artifact-only record is a hard error. This keeps the public artifact
+precise without weakening the validator into an unknown-call fallback.
+
+Schema 2 records this narrower section. Schema 1 is recognized as a
+well-formed but incompatible tooling cache entry: it is invalidated and
+rewritten before consumption. Invalid tags, malformed bytes, stale
+fingerprints, noncanonical bytes, and body-disagreeing schema-2 records remain
+hard compiler errors. The compiler-version cache input includes the artifact
+schema identity so the tooling boundary is explicit.
+
+The LT-40 integration regression runs three changes against one imported
+module: a private callable result relation changes only its module source key;
+a `pub(package)` relation changes the module interface and importer key; and a
+`pub` relation does the same. It additionally asserts that only the two
+import-visible callable symbols are serialized. The complete workspace is
+green at 200 Rust tests, 123 conformance directories, and 412 Ember sources;
+debug/release builds are warning-free; all six adopted-source gates pass.
+
+No specification, decision, owner-queue, or defect entry changed. This is an
+implementation completion of the existing `[MOD-2]`, `[BLD-2]`, `[LT-40]`,
+`[MIR-REG-1]`, and `[VERIFY-3]` boundary, not a new semantic rule. It remains
+only the callable-summary portion of the required interface: source-declared
+public signatures/types, layouts, effects, inline bodies, and safe
+item-granular reuse are still unimplemented.
+
+**Exact next task:** define one canonical public function-signature/type
+representation from existing compiler facts, serialize and validate it in the
+same `EMIF` artifact, and prove a public signature change invalidates importers
+while private implementation-only changes do not. Do not use cache reuse to
+skip semantic work until that representation and consumer boundary exist.
 
 ## The task list — where to begin
 
@@ -3100,11 +3149,12 @@ H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
 §0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing; §0.49
 installs the field-sensitive region-vector core; §0.50 adds direct callable
 result/access summaries and E3065/B14; §0.51 persists and verifies those
-summaries in MIR while closing D-116's field-replacement defect; and §0.52
+summaries in MIR while closing D-116's field-replacement defect; §0.52
 serializes/validates them in the first real `EMIF` cache artifact and couples
-dependency summary changes to `[LT-40]` cache identity. Export-precise
-interfaces, actual reuse, non-direct dispatch, and the remaining multi-region
-matrix precede target adoption.
+dependency summary changes to `[LT-40]` cache identity; and §0.53 scopes the
+callable section to import-visible `pub`/`pub(package)` records. Public
+signature/type/layout/effect/inline sections, actual reuse, non-direct
+dispatch, and the remaining multi-region matrix precede target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner

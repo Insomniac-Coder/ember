@@ -34,7 +34,7 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 199 Rust tests pass;
+- all 200 Rust tests pass;
 - the conformance runner passes across 123 rule directories and 412 Ember
   source files;
 - all six adopted-specification gates pass;
@@ -85,11 +85,12 @@ fingerprinted deterministically, consumed by borrow checking, independently
 rederived, and rejected before code generation when missing, corrupt, or
 semantically stale. `[LT-21]` field replacement now recomputes provenance at
 the assignment, including through CFG joins and returned wrappers (D-116).
-Generated C contains no region metadata. `9ade1d0` additionally writes and
-validates canonical `EMIF` interface artifacts for callable metadata, derives
-BLAKE3 interface/cache identities through imports, and invalidates an
-importer's key when a dependency summary changes. The compiler still rechecks
-the whole loaded program: exported-interface precision, signatures/types/layout
+Generated C contains no region metadata. `9ade1d0` writes and validates
+canonical `EMIF` interface artifacts for callable metadata and derives BLAKE3
+interface/cache identities through imports. `7bcca7f` makes that section
+import-visible under `[MOD-2]`: `pub` and `pub(package)` summaries invalidate
+importers, while a private callable relation stays local. The compiler still
+rechecks the whole loaded program: public signatures/types/layout/effect
 sections, item-granular reuse, non-direct dispatch, and the complete
 escape/storage matrix remain incomplete; unknown calls stay conservative.
 
@@ -297,11 +298,11 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: make the validated callable-summary artifact
-export-precise and use its cache key for safe incremental reuse; then complete
-the remaining multi-region/Phase 2 matrix, and continue the
-`[DIA-7..10]`/`[DIA-13]` diagnostic catalogue as its currently unreachable
-mechanisms become real.
+The immediate order is narrower: add a canonical public-signature section to
+the validated interface artifact before using its cache key for safe
+incremental reuse; then complete the remaining multi-region/Phase 2 matrix,
+and continue the `[DIA-7..10]`/`[DIA-13]` diagnostic catalogue as its
+currently unreachable mechanisms become real.
 
 ## Contributing
 

@@ -18,15 +18,16 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `9ade1d0` on `main`, following
-`af7c525` for verified in-MIR callable metadata, `90059c8` for direct callable
-summaries, `c913fbd` for field-sensitive region vectors, `e0ba765` for canonical
-Array-loop borrowing, and `d077563` for the H6 Span implementation. All are pushed to `origin/main`
+**Last committed implementation baseline:** `7bcca7f` on `main`, following
+`9ade1d0` for validated callable interface artifacts, `af7c525` for verified
+in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
+for field-sensitive region vectors, `e0ba765` for canonical Array-loop
+borrowing, and `d077563` for the H6 Span implementation. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
-    199 tests green      cargo test --workspace
+    200 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -237,13 +238,13 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Validated callable interface artifact complete; precise reuse is next
+## 5. Import-visible callable interface artifact complete; signatures are next
 
-**Exact next task: make the callable-summary section export-precise and use
-the validated BLAKE3 cache identity for safe incremental reuse.** Continue in
-the order in `MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
-class/thread/effect diagnostic shapes, add placeholder semantic facts, or
-attempt a big-bang rewrite.
+**Exact next task: add a canonical public-signature section to the validated
+interface artifact before using its BLAKE3 cache identity for safe incremental
+reuse.** Continue in the order in `MIGRATION-0.9.6.md`. Do not fabricate the
+still-unreachable class/thread/effect diagnostic shapes, add placeholder
+semantic facts, or attempt a big-bang rewrite.
 
 **The direct callable-summary slice is complete at `90059c8`.** Building on
 `c913fbd`, analysis infers exact result-field provenance and parameter-field
@@ -282,6 +283,19 @@ every currently compiled direct body rather than an exact export-only public
 interface, the compiler still rechecks the whole loaded program, and there is
 no item-granular or generic-instantiation reuse. Virtual/dynamic/FFI/closure/
 coroutine and the complete escape/storage matrices remain open.
+
+`7bcca7f` narrows schema-1's conservative callable section to the precise
+import-visible boundary that current source modules can establish without a
+second visibility model. `pub` and `pub(package)` top-level functions,
+non-private members of visible named items, and non-private extension members
+are serialized; module-private bodies retain their freshly derived MIR facts
+only for the current whole-program check. A private summary change now changes
+that module's source cache key but preserves both its interface hash and an
+importer's key. A `pub(package)` or `pub` summary change changes both.
+Schema-1 entries are recognized as incompatible tooling cache data and
+invalidated before use; malformed, stale, or semantically false current-schema
+records remain hard errors. The next missing public interface data is
+signatures/types, then layouts/effects/inline bodies and actual reuse.
 
 **D-116 is fixed in the same checkpoint.** `[LT-21]` field replacement now
 uses a forward point-sensitive value/provenance fixpoint: an assignment
