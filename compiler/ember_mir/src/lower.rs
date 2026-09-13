@@ -1394,6 +1394,19 @@ impl<'a> Builder<'a> {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
             hir::ExprKind::Builtin {
+                which: hir::Builtin::ArraySplitAtMut { elem, pair },
+                args,
+            } => {
+                self.lower_array_split_at_mut(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    *pair,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
                 which: hir::Builtin::MaybeUninitWrite { inner },
                 args,
             } => {
@@ -3306,6 +3319,75 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto(join_bb));
 
         self.current = join_bb;
+    }
+
+    /// `[BRW-5]` — `array.split_at_mut(index)`.
+    ///
+    /// Evaluate the receiver and boundary once, expose the ordinary
+    /// `index <= len` bounds check as an MIR `Assert`, then let the backend
+    /// construct the two representation-level views. The builtin call is
+    /// still a view producer tied to its first (explicit borrow) argument, so
+    /// region analysis keeps the Array borrowed for both returned spans.
+    fn lower_array_split_at_mut(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        elem: Ty,
+        pair: Ty,
+        span: ember_span::Span,
+    ) {
+        debug_assert_eq!(self.locals[dest.local.0 as usize].ty, pair);
+        let receiver_op = self.lower_operand_borrowed(receiver);
+        let receiver_place = match &receiver_op {
+            Operand::Copy(place) | Operand::Move(place) => place.clone(),
+            Operand::Const(_) => unreachable!("a split receiver is an explicit mutable borrow"),
+        };
+        let boundary = self.temp(self.usize_ty, index.span);
+        let boundary_op = self.lower_operand(index);
+        self.at(index.span);
+        self.push(StmtKind::StorageLive(boundary));
+        self.push(StmtKind::Assign {
+            place: Place::local(boundary),
+            rvalue: Rvalue::Use(boundary_op),
+        });
+
+        let mut array = receiver_place;
+        array.projection.push(Projection::Deref);
+        let len = array.field(1);
+        let in_range = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(in_range),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Le,
+                lhs: Operand::Copy(Place::local(boundary)),
+                rhs: Operand::Copy(len.clone()),
+            },
+        });
+        let after_check = self.new_block();
+        self.terminate(Terminator::Assert {
+            cond: Operand::Copy(Place::local(in_range)),
+            expected: true,
+            msg: AssertKind::Bounds {
+                len: Operand::Copy(len),
+                index: Operand::Copy(Place::local(boundary)),
+            },
+            next: after_check,
+            span,
+        });
+        self.current = after_check;
+
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::ArraySplitAtMut { elem, pair },
+                arg_ty: receiver.ty,
+            },
+            args: vec![receiver_op, Operand::Copy(Place::local(boundary))],
+            dest,
+            next,
+        });
+        self.current = next;
     }
 
     /// `[RNG-3]` — `T.checked(v)`.

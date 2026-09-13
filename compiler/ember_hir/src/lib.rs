@@ -310,6 +310,11 @@ pub enum Builtin {
     /// `MutSpan[T]`. Not a conversion: the view points into the container, and
     /// the borrow checker keeps the container borrowed for the view's region.
     SpanFrom { mutable: bool },
+    /// `[BRW-5]`, `[SPN-3]` — split one mutable borrow of an `Array[T]` into
+    /// two disjoint `MutSpan[T]` values at a checked boundary. The tuple type
+    /// travels with the builtin so the C backend can construct the structural
+    /// result without inventing a public helper ABI.
+    ArraySplitAtMut { elem: Ty, pair: Ty },
     /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
@@ -500,6 +505,7 @@ impl Builtin {
             Builtin::SpanFrom { mutable } => {
                 if mutable { "as_mut_span" } else { "as_span" }
             }
+            Builtin::ArraySplitAtMut { .. } => "split_at_mut",
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",

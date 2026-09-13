@@ -11565,6 +11565,42 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let usize_ty = self.common.usize;
         let str_ty = self.common.str_;
 
+        // `[BRW-5]`'s primary structural repair for two mutable indexed
+        // borrows. The receiver is borrowed once; the result carries that
+        // provenance as two disjoint `MutSpan`s. This is deliberately not
+        // expressed as two independent `as_mut_span` calls, which would be
+        // rejected correctly as overlapping mutable borrows.
+        if name.name.is("split_at_mut") && !is_string {
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`split_at_mut` takes 1 argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !is_place(&receiver.kind) {
+                self.error(
+                    codes::E2140,
+                    span,
+                    "`split_at_mut` needs an Array variable to borrow",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let index = self.check_expr(&args[0].value, usize_ty);
+            let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+            let view = self.types.intern(TyKind::Span { elem, mutable: true });
+            let pair = self.types.intern(TyKind::Tuple(vec![view, view]));
+            return Expr {
+                ty: pair,
+                kind: ExprKind::Builtin {
+                    which: Builtin::ArraySplitAtMut { elem, pair },
+                    args: vec![receiver, index],
+                },
+                span,
+            };
+        }
+
         // `[STD-*]`'s Array table names `as_span` and `as_mut_span`, and Part
         // VII §7 writes `buf.as_mut_span()` in its own worked example. They are
         // the explicit spelling of `[SPN-1]`'s coercion and go through the one

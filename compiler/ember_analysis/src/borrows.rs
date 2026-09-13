@@ -120,7 +120,8 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
                 | Builtin::ArenaAllocArrayDefault { .. }
                 | Builtin::FixedArenaAlloc { .. }
                 | Builtin::ScopedArenaAlloc { .. }
-                | Builtin::ArenaScope { .. },
+                | Builtin::ArenaScope { .. }
+                | Builtin::ArraySplitAtMut { .. },
             ..
         } => Elision::Named(vec![0]),
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
@@ -1017,6 +1018,20 @@ fn check_point(
                 (code, message)
             };
             let kind = if loan_mutable { "mutable " } else { "" };
+            let indexed_conflict = code == codes::E3022
+                && loan_place
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, Projection::Index(_) | Projection::ConstIndex(_)))
+                && place
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, Projection::Index(_) | Projection::ConstIndex(_)));
+            let owner = body
+                .local(loan_place.local)
+                .name
+                .as_deref()
+                .unwrap_or("array");
             let mut diagnostic = Diagnostic::error(code, span, message)
                 .primary_label("conflicting access here")
                 .secondary(loan.span, format!("{kind}borrow of `{name}` starts here"));
@@ -1025,28 +1040,39 @@ fn check_point(
             }
             sink.emit_classified(
                 diagnostic
-                    .help(match (&borrower, loan.arena_scope, bundled, method_root.as_deref()) {
-                        (_, true, _, _) => String::from(
+                    .help(match (
+                        &borrower,
+                        loan.arena_scope,
+                        bundled,
+                        method_root.as_deref(),
+                        indexed_conflict,
+                    ) {
+                        (_, true, _, _, _) => String::from(
                             "allocate from `scope` instead, or take this allocation before opening the scope",
                         ),
                         // `[DIA-7a]` shape B13's help, which is a different fix
                         // from B3's: the use keeping the loan alive may be of
                         // the *other* field, so shortening it is no answer.
-                        (_, _, true, _) => String::from(
+                        (_, _, true, _, _) => String::from(
                             "pass the two views as separate parameters rather than bundling \
                              them; or copy the shorter-lived data into an owned field",
                         ),
                         // `[DIA-7a]` shape B8's help: the call takes all of
                         // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, _, Some(_)) => String::from(
+                        (_, _, _, Some(_), _) => String::from(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
-                        (Some(name), _, _, _) => format!(
+                        (_, _, _, _, true) => format!(
+                            "use `{owner}.split_at_mut(k)` to obtain two non-overlapping mutable \
+                             spans; `chunks_mut`, `iter_mut`, and `columns_mut` cover other \
+                             structural access patterns"
+                        ),
+                        (Some(name), _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _, _) => format!(
+                        (None, _, _, _, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
@@ -1058,6 +1084,8 @@ fn check_point(
                         "a view struct has one region: the intersection of its fields' (LT-2)"
                     } else if method_root.is_some() {
                         "a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)"
+                    } else if indexed_conflict {
+                        "computed indices may overlap; a structural split proves non-overlap (BRW-5)"
                     } else {
                         "a borrow lasts until its last use, not to the end of the scope (BRW-2)"
                     }),

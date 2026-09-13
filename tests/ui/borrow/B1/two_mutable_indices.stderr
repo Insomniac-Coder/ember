@@ -1,0 +1,14 @@
+error[E3022]: `values[…]` is already mutably borrowed
+ --> tests/ui/borrow/B1/two_mutable_indices.em:8:42
+  |
+7 |     first: ref mut i32 = ref mut values[i]
+  |                                         - mutable borrow of `values[…]` starts here
+8 |     second: ref mut i32 = ref mut values[j]
+  |                                          ^ conflicting access here
+9 |     first = 10
+  |             -- borrow later used here
+  |
+  = help: use `values.split_at_mut(k)` to obtain two non-overlapping mutable spans; `chunks_mut`, `iter_mut`, and `columns_mut` cover other structural access patterns
+  = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)
+
+error: could not compile due to 1 error(s)

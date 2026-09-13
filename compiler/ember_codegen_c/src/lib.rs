@@ -1050,6 +1050,24 @@ impl Emitter<'_> {
                     Builtin::ArrayLen | Builtin::StringLen => {
                         return format!("({}).len", rendered[0]);
                     }
+                    // `[BRW-5]` — the MIR assertion has already established
+                    // `boundary <= len`. Build two views over the disjoint
+                    // half-open ranges `[0, boundary)` and `[boundary, len)`.
+                    // Avoid even `null + 0` for an empty Array: C does not
+                    // make pointer arithmetic on a null allocation portable.
+                    Builtin::ArraySplitAtMut { elem, pair } => {
+                        let pair = self.c_type(*pair);
+                        let elem = self.c_type(*elem);
+                        let view = format!("{RT}mutspan");
+                        let array = format!("(*{})", rendered[0]);
+                        let boundary = &rendered[1];
+                        return format!(
+                            "({pair}){{ ({view}){{ {array}.ptr, {boundary} }}, \
+                             ({view}){{ ({boundary} == 0 ? {array}.ptr : \
+                             (void*)((({elem}*){array}.ptr) + {boundary})), \
+                             {array}.len - {boundary} }} }}"
+                        );
+                    }
                     Builtin::StringAsStr => {
                         // The argument is a borrow of the string, so it
                         // arrives as a pointer (as with `SpanFrom` above).

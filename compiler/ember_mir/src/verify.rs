@@ -373,6 +373,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                     | Builtin::FixedArenaAlloc { .. }
                     | Builtin::ScopedArenaAlloc { .. }
                     | Builtin::ArenaScope { .. }
+                    | Builtin::ArraySplitAtMut { .. }
             ) {
                 continue;
             };
