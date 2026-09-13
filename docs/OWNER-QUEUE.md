@@ -29,6 +29,10 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-007 | **CLOSED** — mode vector is compiler-known `Callable` metadata | Language / callable abstraction | — | **No** — ruled 2026-09-12 |
 | ODR-008 | **CLOSED** — `Arena` is a narrow `@borrows` provenance source | Language / region provenance | — | **No** — ruled 2026-09-12 |
 | ODR-009 | **CLOSED** — H10 defines Arena initialization completely | Language / unsafe initialization / API | — | **No** — ruled 2026-09-12 |
+| ODR-010 | **CLOSED** — abort-only panic needs no observable Arena rollback | Language / Arena failure semantics | — | **No** — ruled 2026-09-13 |
+| ODR-011 | **CLOSED** — complete fixed-capacity Arena collection contract | Language / standard-library API / regions | — | **No** — ruled by owner |
+| ODR-012 | **CLOSED** — public hashing protocol and Map key boundary | Standard-library API / equality coherence | — | **No** — ruled 2026-09-13 |
+| ODR-013 | **CLOSED** — static generic `H: Hasher` parameter | Language / callable-interface ABI | — | **No** — ruled 2026-09-13 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -36,18 +40,277 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-009 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **There is no open owner semantic
-decision.** H8 records the complete helper-mode and callable-abstraction
+ODR-001, ODR-002, and ODR-004 through ODR-013 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **No owner semantic/API decision is
+currently open.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
-Arena allocation and initialization contract. Full H8/H9/H10
-implementation and conformance remain outstanding, although the Arena core and
-H9 wrapper-provenance path now have executable evidence. Those gaps are not
-owner questions and did not block the now-closed D-042 compiler work.
+Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
+abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
+Arena-backed collection contract; and H3 records the public hashing contract.
+Full H8/H9/H10/H1/H2/H3
+implementation and conformance remain outstanding. Arena core, H9 wrapper
+provenance, H10 initialization, `[TST-23]`, and `GEN-METHOD-1` now have
+executable evidence; Arena-backed collections are actively being implemented.
+Other gaps are implementation/conformance work, not owner questions.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
 editorial cleanup that can safely wait.
+
+---
+
+## ODR-013 — `Hasher` interface parameter representation — **CLOSED**
+
+    ID:        ODR-013
+    Status:    CLOSED — resolved by the owner and incorporated in 0.9.6_Hardened_4
+    Category:  LANGUAGE / CALLABLE-INTERFACE ABI
+    Priority:  —
+    Location:  Ember_v0.9.6_Hardened_3.md [HASH-1] with [TYP-22], [FN-1], [TYP-17]
+
+    Existing wording: "fn hash(self, mut h: Hasher)"
+
+    Conflict: A concrete DefaultHasher must be passed to Hash.hash, but [TYP-22]
+              makes `dyn I` unsized behind explicit indirection and permits bare
+              interface `I` only in class-handle position. DefaultHasher is not
+              specified as a class handle. The signature therefore does not
+              identify a legal concrete-to-interface representation.
+
+    Possible interpretations:
+      A. Static protocol: `fn hash[H: Hasher](self, mut h: H)`.
+      B. Dynamic protocol: explicitly pass a mutable `dyn Hasher` view using
+         the exact indirection/mode spelling selected by the owner.
+      C. Another owner-specified representation that fits existing interface
+         and receiver-mode rules.
+
+    Semantic impact:                  YES — accepted implementations, dispatch, ABI, monomorphisation
+    Blocks implementation:            NO — the generic contract is executable
+    Blocks conformance:               NO — the required static-dispatch evidence is defined
+    Blocks specification freeze:      NO — H3 remains an immutable finding record
+    Blocks normative specification adoption: NO — implementation/adoption gates remain
+    Requires owner semantic decision: NO
+
+    Resolution: Static generic `fn hash[H: Hasher](self, mut h: H)`; concrete
+                hasher inference and ordinary monomorphization; DefaultHasher
+                implements Hasher; no mandatory dynamic dispatch
+    Authority:  Owner ODR-013 ruling supplied 2026-09-13; ADR-033; HC-096-04
+    Revision:   Ember 0.9.6_Hardened_4
+    Result:     Closed; H4 [HASH-1] is authoritative within the development target
+
+    Recommended option: A — generic `H: Hasher`. It permits a concrete
+                        move-only struct, uses existing generic/interface
+                        machinery, keeps dispatch static, and introduces no
+                        new unsized mutable-interface parameter ABI.
+
+**Why this is not an implementation detail.** Choosing static generic dispatch
+changes the public method signature and monomorphization obligations. Choosing
+dynamic dispatch changes the source spelling, object representation, call ABI,
+and possibly which implementations are dyn-compatible. A compiler-only
+coercion from a struct to bare `Hasher` would create a third interface model
+contrary to `[TYP-22]`.
+
+**Owner answer.** The owner selected option A exactly: the hasher parameter is
+statically generic, `H` is inferred from the concrete argument and normally
+monomorphized, and `DefaultHasher implements Hasher`. `Hash.hash` itself is not
+a dynamic API; a future explicit `dyn Hasher` API remains a separate decision.
+
+**Historical stop.** The agent stopped before baking an unapproved dispatch/ABI
+choice into HIR, MIR, code generation, and conformance. The owner ruling now
+closes that stop. H4 normalizes the supplied diff's angle brackets around the
+ordinary parameter list to Ember's existing parenthesized grammar; this does
+not alter the selected generic semantics. ERR-054 records the same chain.
+
+---
+
+## ODR-012 — `Hasher` public API and Map key invariant — **CLOSED**
+
+    ID:        ODR-012
+    Status:    CLOSED — resolved by the owner and incorporated in 0.9.6_Hardened_3
+    Category:  STANDARD-LIBRARY API / EQUALITY COHERENCE
+    Priority:  —
+    Location:  Ember_v0.9.6_Hardened_2.md interface Hash, [ARN-5a], [ARN-5d], [TST-24]
+
+    Existing wording: "interface Hash: fn hash(self, mut h: Hasher)"
+
+    Semantic impact:                  YES — public protocol, custom-key acceptance, Map invariant
+    Blocks implementation:            NO — the complete contract is now executable
+    Blocks conformance:               NO — H3 extends [TST-24]'s required matrix
+    Blocks specification freeze:      NO — H2 remains immutable
+    Blocks normative specification adoption: NO — implementation/adoption gates remain
+    Requires owner semantic decision: NO
+
+    Resolution: Public Hash/Hasher protocol, concrete DefaultHasher, Eq/hash coherence,
+                implementation-defined mixing, and read-only resident keys
+    Authority:  Owner ODR-012 ruling supplied 2026-09-13; ADR-032; HC-096-03
+    Revision:   Ember 0.9.6_Hardened_3
+    Result:     Closed; [HASH-1]–[HASH-4] are authoritative within H3
+
+**Conflict discovered during implementation.** H2 required `K: Eq + Hash`
+for both ordinary and Arena-backed Maps, and inherited a `Hash` interface whose
+method accepted a `Hasher`. The complete specification lineage defined no
+`Hasher` type, methods, construction/finalization behavior, standard-module
+owner, default implementation, or Eq/hash coherence requirement. Implementing
+custom keys would therefore have required an invented ABI and behavioral
+contract.
+
+**Owner resolution.** `std.collections` publicly exports `Hash`, `Hasher`, and
+`DefaultHasher`. Existing `[MOD-5]` keeps `Hash` in the prelude; the latter two
+names are not added. `Hasher` is stateful and move-only, supports the canonical
+byte/integer write surface, and is consumed by `finish`. Equal values must hash
+equally; supplied spans cannot be retained. Map/Set use `DefaultHasher`, but its
+mixing algorithm is not frozen. Safe Map lookup and iteration expose keys only
+read-only, never as `ref mut K`.
+
+The supplied sketch's `finish(self)` spelling conflicted with its explicit
+statement that finalization consumes the move-only context. Existing receiver
+modes settle the spelling without a new semantic choice: H3 writes
+`finish(owned self)`. The owner authority is preserved in
+`docs/spec-source/as-received/ODR-012_Hasher_public_API_and_hashing_contract.md`.
+
+No further owner decision is required. Arbitrary custom-key compiler support
+and conformance are implementation work against H3, not permission to freeze a
+particular hashing algorithm.
+
+---
+
+## ODR-011 — `ArenaArray` / `ArenaMap` public contract — **CLOSED**
+
+    ID:        ODR-011
+    Status:    CLOSED — resolved by the owner and incorporated in 0.9.6_Hardened_2
+    Category:  LANGUAGE / STANDARD-LIBRARY API / REGIONS
+    Priority:  —
+    Location:  Ember_v0.9.6_Hardened_1.md [ARN-5], [TYP-15], [ARN-1]–[ARN-4];
+               Part XII §1 standard-library table
+
+    Existing wording: "ArenaArray[T], ArenaMap[K,V] are container variants
+                       whose backing storage is an arena view; they are view
+                       types (@view) and follow [TYP-15]."
+
+    Semantic impact:                  YES — public API, accepted programs, mutation, regions, failure
+    Blocks implementation:            NO — the complete contract is executable
+    Blocks conformance:               NO — [TST-24] defines the required matrix
+    Blocks specification freeze:      NO — H1 remains an immutable target
+    Blocks normative specification adoption: NO — implementation/adoption gates remain
+    Requires owner semantic decision: NO
+
+    Resolution: Fixed-capacity, single-allocation Arena-backed view collections
+    Authority:  Owner ODR-011 ruling and explicit completion approval; ADR-031; HC-096-02
+    Revision:   Ember 0.9.6_Hardened_2
+    Result:     Closed; [ARN-5]–[ARN-5g] and [TST-24] are authoritative for H2
+
+**Conflict.** `[ARN-5]` establishes the representation/lifetime category but
+does not define how either container is created or used. The standard-library
+table mentions `ArenaArray` but omits `ArenaMap`. No normative text fixes:
+
+1. constructor signatures and how the supplying Arena's region reaches the
+   result;
+2. whether growth is supported, fixed-capacity, or fallible, and what happens
+   when reserved arena capacity is exhausted;
+3. the minimum read/write/iteration/removal surface and its parameter modes;
+4. whether growth invalidates element views and how that interacts with
+   outstanding borrows;
+5. `ArenaMap`'s key equality/hash capabilities, duplicate-key behavior, and
+   iteration guarantees; or
+6. whether either container may hold a `needs_drop` element and, if so, who
+   owns and runs destruction.
+
+**Owner direction received.** The owner selected fixed-capacity,
+single-allocation `ArenaArray`/`ArenaMap` views; shared-Arena
+`with_capacity` construction with `@borrows(arena)`; no growth, reallocation,
+or hidden cursor mutation; recoverable capacity exhaustion; `!needs_drop`
+keys/elements/values; ordinary borrowing; index-order Array iteration; and
+unspecified-but-stable Map iteration for unchanged state/configuration. The
+minimum Array and Map operations and duplicate-key replacement behavior were
+also supplied. These decisions are accepted and must not be reopened.
+
+**Residual owner details that were subsequently resolved.**
+
+1. `CapacityError` is the public unit-only `std.collections` enum with sole
+   variant `Full`; capacity failure returns `Err(CapacityError.Full)`. It is
+   not a prelude name.
+2. The public named `@view` types `ArenaArrayIter`,
+   `ArenaArrayIterMut`, and `ArenaMapIter` implement the existing
+   associated-type `Iterator[Item = ...]` interface. No opaque/dynamic return
+   or second iterator model is introduced.
+3. Both `with_capacity` constructors return an empty container with
+   `len() == 0`.
+
+Existing `mut self` semantics conservatively make every mutating collection
+operation conflict with a live element borrow. That is derived from ordinary
+`[BRW-*]` rules and the supplied ban on container-specific invalidation, not
+a fourth owner question.
+
+**Superseded initial interpretations.**
+
+1. Arena-backed counterparts of `Array`/`Map` with explicit Arena-borrowing
+   constructors and growth that allocates replacement storage from the same
+   arena. This is familiar, but needs exact invalidation, failure, and drop
+   rules.
+2. Fixed-capacity views created from arena-allocated storage. This gives a
+   simpler lifetime/failure model but a narrower accepted-program/API surface.
+3. Builder-only construction followed by an immutable arena-backed view. This
+   minimizes mutation but is materially different from a container variant.
+
+**Recommendation for the residual.** Put a concrete unit-like
+`CapacityError` in the same public standard-library module as both
+collections, keep it out of the prelude unless explicitly desired, and define
+named arena-backed iterator view types implementing the existing
+`Iterator[Item = ...]` contract. Confirm empty construction. Preserve
+`[ARN-5]`'s non-owning `@view` identity and do not implement an owning
+`Array`/`Map` wrapper with a hidden Arena pointer.
+
+**Why this could not be resolved safely by the agent.** The remaining choices
+change names and values programs can construct/import and the public types
+returned by iteration. Those are observable language/library semantics, not a
+compiler mechanism choice.
+
+**Final resolution.** The owner approved the recommendation exactly:
+`std.collections` owns all six public names, none enters the prelude,
+`CapacityError.Full` is canonical, construction is empty, and iteration uses
+named Arena-backed view types through the existing associated-type interface.
+ADR-031 and HC-096-02 carry this into frozen H2. No further owner decision is
+required.
+
+---
+
+## ODR-010 — Arena rollback under abort-only panic — **CLOSED**
+
+    ID:        ODR-010
+    Status:    CLOSED — resolved by the owner and incorporated in 0.9.6_Hardened_1
+    Category:  LANGUAGE / ARENA FAILURE SEMANTICS
+    Priority:  —
+    Location:  Ember_v0.9.5_Hardened_10.md [ARN-10], [PAN-1], Default.default();
+               Ember_v0.9.6_Hardened_1.md [ARN-10]
+
+    Semantic impact:                  YES — clarifies the observable failure/rollback contract
+    Blocks implementation:            NO — the ambiguity is resolved
+    Blocks conformance:               NO — the required evidence is stated
+    Blocks H10 identity freeze:        NO — H10 remains immutable
+    Blocks normative specification adoption: NO — other adoption gates remain
+    Requires owner semantic decision: NO
+
+    Resolution: Abort-only v1 panic does not require observable Arena rollback or unwinding
+    Authority:  Owner ruling supplied 2026-09-13; ADR-030; HC-096-01
+    Revision:   Ember 0.9.6_Hardened_1
+    Result:     Closed. The amended [ARN-10] is authoritative within the
+                frozen development target; no [ARN-10a] was introduced.
+
+**Owner resolution.** `Default.default() -> Self` has no recoverable failure
+channel in v1. If it panics, `[PAN-1]` terminates the process through `abort()`;
+there is no continuation from which Arena state can be observed, and the
+compiler must not invent unwinding merely to restore the cursor. Rollback is
+required only when a separately specified API defines both a recoverable
+construction-failure path and transactional rollback. Such a path cannot make
+a partially initialized result reachable. Ordinary `alloc_array[T]` retains
+its `!needs_drop(T)` requirement, so rollback does not run element destructors.
+
+**Conformance boundary.** Evidence must cover successful default construction,
+termination through the v1 abort path, no reached continuation, no invented
+unwinding, and no observation of post-panic Arena state. A future recoverable
+construction API is governed and tested by its own explicit rollback contract.
+
+**Historical conflict.** H10 used “fails or panics” while its `Default` and
+panic contracts supplied no recoverable failure or unwind path. ERR-051
+preserves that ambiguity and the owner resolution without mutating H10.
 
 ---
 
@@ -75,8 +338,9 @@ editorial cleanup that can safely wait.
 
 **Owner resolution.** `alloc_array` deterministically prefers `Zeroable`, then
 `Default`, and reports existing E2040 when neither is available; ordinary bulk
-allocation always requires `!needs_drop(T)` and `Default` construction rolls
-the Arena cursor back transactionally. `Zeroable` means exactly that the
+allocation always requires `!needs_drop(T)`. H10 originally described
+`Default` construction as transactional; ODR-010 and H1 clarify that the v1
+abort path creates no observable rollback or unwinding obligation. `Zeroable` means exactly that the
 all-zero object representation is a valid initialized `T`; automatic proof is
 recursive and manual implementation, if exposed, is unsafe and audited.
 
@@ -722,3 +986,4 @@ reopening it.
 | **ODR-007** — `fn`/`Callable` mode bridge | Preserve the complete mode vector as compiler-known canonical type metadata | Owner ruling 2026-09-12; **ADR-027** | 0.9.5_Hardened_8 | Closed; no runtime mode bookkeeping or second ownership system |
 | **ODR-008** — Arena-backed return provenance | Permit narrow `@borrows(arena)` only for a view backed by that Arena | Owner ruling 2026-09-12; **ADR-028** | 0.9.5_Hardened_9 | Closed; Arena remains non-view and arbitrary non-view parameters remain forbidden |
 | **ODR-009** — Arena bulk-initialization contract | Define deterministic initialization, `Zeroable` validity, canonical `MaybeUninit` transitions, rollback, and phase ordering | Owner rulings 2026-09-12; **ADR-029 / HC-095-09** | 0.9.5_Hardened_10 | Closed; implementation and conformance remain ordinary tracked work |
+| **ODR-010** — Arena rollback under abort-only panic | Clarify that v1 abort has no observable rollback/unwind obligation; transactional rollback requires an explicitly recoverable API contract | Owner ruling 2026-09-13; **ADR-030 / HC-096-01** | 0.9.6_Hardened_1 | Closed; no `[ARN-10a]`; implementation and conformance remain ordinary tracked work |

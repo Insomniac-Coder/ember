@@ -276,6 +276,18 @@ void* ember_try_alloc(size_t size, size_t align);
  * ABI protocol or change the version number. */
 void* ember_arena_new(size_t initial_capacity);
 void* ember_arena_alloc_copy(void* arena, size_t size, size_t align, const void* value);
+void* ember_arena_alloc_uninit(
+    void* arena,
+    size_t count,
+    size_t elem_size,
+    size_t align
+);
+void* ember_arena_alloc_zeroed(
+    void* arena,
+    size_t count,
+    size_t elem_size,
+    size_t align
+);
 void ember_arena_reset(void* arena);
 void ember_arena_free(void* arena);
 void* ember_arena_mark(void* arena);

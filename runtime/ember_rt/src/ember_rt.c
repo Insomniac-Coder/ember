@@ -207,9 +207,9 @@ static void* arena_chunk_take(ember_arena_chunk* chunk, size_t size, size_t alig
     return chunk->data + offset;
 }
 
-void* ember_arena_alloc_copy(void* opaque, size_t size, size_t align, const void* value) {
+static void* arena_alloc_raw(void* opaque, size_t size, size_t align) {
     ember_arena_state* arena = (ember_arena_state*)opaque;
-    if (arena == NULL || value == NULL || !arena_power_of_two(align)) {
+    if (arena == NULL || !arena_power_of_two(align)) {
         ember_loc loc = { "<arena>", 0, 0 };
         ember_panic("invalid arena allocation", 24, loc);
     }
@@ -222,7 +222,6 @@ void* ember_arena_alloc_copy(void* opaque, size_t size, size_t align, const void
         void* slot = arena_chunk_take(chunk, size, align);
         if (slot != NULL) {
             arena->current = chunk;
-            memcpy(slot, value, size);
             return slot;
         }
         chunk = chunk->next;
@@ -246,7 +245,48 @@ void* ember_arena_alloc_copy(void* opaque, size_t size, size_t align, const void
         ember_loc loc = { "<arena>", 0, 0 };
         ember_panic("arena allocation overflow", 25, loc);
     }
-    memcpy(slot, value, size);
+    return slot;
+}
+
+void* ember_arena_alloc_copy(void* opaque, size_t size, size_t align, const void* value) {
+    if (value == NULL) {
+        ember_loc loc = { "<arena>", 0, 0 };
+        ember_panic("invalid arena allocation", 24, loc);
+    }
+    size_t copy_size = size == 0 ? 1 : size;
+    void* slot = arena_alloc_raw(opaque, size, align);
+    memcpy(slot, value, copy_size);
+    return slot;
+}
+
+void* ember_arena_alloc_uninit(
+    void* opaque,
+    size_t count,
+    size_t elem_size,
+    size_t align
+) {
+    if (elem_size != 0 && count > SIZE_MAX / elem_size) {
+        ember_loc loc = { "<arena>", 0, 0 };
+        ember_panic("arena allocation overflow", 25, loc);
+    }
+    return arena_alloc_raw(opaque, count * elem_size, align);
+}
+
+void* ember_arena_alloc_zeroed(
+    void* opaque,
+    size_t count,
+    size_t elem_size,
+    size_t align
+) {
+    if (elem_size != 0 && count > SIZE_MAX / elem_size) {
+        ember_loc loc = { "<arena>", 0, 0 };
+        ember_panic("arena allocation overflow", 25, loc);
+    }
+    size_t bytes = count * elem_size;
+    void* slot = arena_alloc_raw(opaque, bytes, align);
+    if (bytes != 0) {
+        memset(slot, 0, bytes);
+    }
     return slot;
 }
 

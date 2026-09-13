@@ -734,9 +734,30 @@ impl Printer<'_> {
                 let args: Vec<String> = args.iter().map(|a| self.arg(a)).collect();
                 format!("{}({})", self.expr_pure(callee), args.join(", "))
             }
-            ast::ExprKind::MethodCall { recv, name, args, .. } => {
+            ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
                 let args: Vec<String> = args.iter().map(|a| self.arg(a)).collect();
-                format!("{}.{}({})", self.expr_pure(recv), name.name, args.join(", "))
+                let generic_args = if generic_args.is_empty() {
+                    String::new()
+                } else {
+                    let rendered: Vec<String> = generic_args
+                        .iter()
+                        .map(|arg| match arg {
+                            ast::GenericArg::Type(ty) => self.type_expr(ty),
+                            ast::GenericArg::Const(expr) => self.expr_pure(expr),
+                            ast::GenericArg::Assoc { name, ty } => {
+                                format!("{} = {}", name.name, self.type_expr(ty))
+                            }
+                        })
+                        .collect();
+                    format!("[{}]", rendered.join(", "))
+                };
+                format!(
+                    "{}.{}{}({})",
+                    self.expr_pure(recv),
+                    name.name,
+                    generic_args,
+                    args.join(", ")
+                )
             }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 let rendered: Vec<String> = args

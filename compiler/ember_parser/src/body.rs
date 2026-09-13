@@ -1028,12 +1028,19 @@ impl Parser<'_> {
     fn parse_postfix(&mut self, mut expr: Expr, min_bp: u8, allow_block_lambda: bool) -> Expr {
         loop {
             let start = expr.span;
+            let expr_id = expr.id;
             let id = self.next_id();
             let kind = match self.peek() {
                 TokenKind::Punct(Punct::LParen) => {
                     self.bump();
                     let args = self.parse_args();
-                    // A call on a field access is a method call.
+                    // A call on a field access is a method call. `[GRM-8]`
+                    // leaves `recv.method[T]` as an `IndexOrInstantiate`
+                    // until the following `(` proves that the bracketed
+                    // arguments instantiate the method rather than index its
+                    // result. Preserve that distinction in the AST instead
+                    // of making type checking reverse-engineer an indirect
+                    // call shape (GEN-METHOD-1).
                     match expr.kind {
                         ExprKind::Field { base, name } => ExprKind::MethodCall {
                             recv: base,
@@ -1041,6 +1048,34 @@ impl Parser<'_> {
                             generic_args: Vec::new(),
                             args,
                         },
+                        ExprKind::IndexOrInstantiate { base, args: type_args } => {
+                            match base.kind {
+                                ExprKind::Field { base: recv, name } => {
+                                    let generic_args = type_args
+                                        .into_iter()
+                                        .map(|arg| match arg {
+                                            TypeOrExpr::Type(ty) => GenericArg::Type(ty),
+                                            TypeOrExpr::Expr(expr) => GenericArg::Const(expr),
+                                            TypeOrExpr::Binding { name, ty } => {
+                                                GenericArg::Assoc { name, ty }
+                                            }
+                                        })
+                                        .collect();
+                                    ExprKind::MethodCall { recv, name, generic_args, args }
+                                }
+                                _ => ExprKind::Call {
+                                    callee: Box::new(Expr {
+                                        id: expr_id,
+                                        kind: ExprKind::IndexOrInstantiate {
+                                            base,
+                                            args: type_args,
+                                        },
+                                        span: start,
+                                    }),
+                                    args,
+                                },
+                            }
+                        }
                         _ => ExprKind::Call { callee: Box::new(expr), args },
                     }
                 }

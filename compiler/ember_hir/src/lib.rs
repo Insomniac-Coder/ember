@@ -348,6 +348,30 @@ pub enum Builtin {
     /// the function travel here as a pair and lowering, which holds a `Place`,
     /// uses it for both the read and the store.
     CellUpdate,
+    /// `[CELL-1]` — the non-`Copy`, `T: Default` update arm. Lowering moves
+    /// the old payload behind a default replacement before invoking the
+    /// callback, so callback re-entry never observes an uninitialized cell.
+    CellUpdateDefault { constructor: DefId },
+    /// `[CELL-1]` — `c.take()`, available for `T: Default`. The selected
+    /// receiver-less constructor is carried into MIR so lowering can replace
+    /// the payload without rediscovering interface dispatch.
+    CellTake { constructor: DefId },
+    /// `[ARN-8]` — `MaybeUninit[T].uninit()`. The value owns storage with
+    /// `T`'s layout without claiming that an initialized `T` is present.
+    MaybeUninitUninit { inner: Ty },
+    /// `[ARN-8]` — `slot.write(owned value) -> ref mut T`. Lowering performs
+    /// a store into the payload field without reading or dropping its prior
+    /// bytes, then returns a reference to the newly initialized value.
+    MaybeUninitWrite { inner: Ty },
+    /// `[ARN-8]`, `[ARN-8a]` — unsafe extraction of the initialized payload.
+    /// The wrapper is consumed and its field becomes ordinary owned `T`.
+    MaybeUninitAssumeInit { inner: Ty },
+    /// `[ARN-9]` — initialize one element of a
+    /// `MutSpan[MaybeUninit[T]]` without dropping prior bytes.
+    MaybeUninitWriteAt { inner: Ty },
+    /// `[ARN-9]` — consume a fully initialized uninitialized-storage span and
+    /// expose the same allocation as `MutSpan[T]`.
+    MaybeUninitSpanAssumeInit { inner: Ty },
     /// `[CELL-5]` — `c.borrow() -> Ref[T]`. A shared borrow of the cell plus
     /// a runtime check against the borrow counter; panics with the conflicting
     /// borrow's source location when a mutable borrow is active. Lowered in
@@ -371,6 +395,17 @@ pub enum Builtin {
     /// spellings for `[ARN-3]`; both lower to an aligned bump allocation and
     /// a move of the value into the returned storage.
     ArenaAlloc { elem: Ty },
+    /// `[ARN-9]` — allocate `count` slots without making an initialization
+    /// claim and return them as `MutSpan[MaybeUninit[T]]`.
+    ArenaAllocUninit { elem: Ty },
+    /// `[ARN-3]`, `[ARN-11]` — allocate and zero-initialize `count` elements
+    /// after type checking has proved the element's zero representation valid.
+    ArenaAllocArrayZeroed { elem: Ty },
+    /// `[ARN-3]`, `[ARN-10]`, `[ARN-12]` — allocate raw storage, then invoke
+    /// the selected `Default.default()` implementation once per element.
+    /// The constructor identity is resolved in type checking rather than
+    /// rediscovered by lowering or the backend.
+    ArenaAllocArrayDefault { elem: Ty, constructor: DefId },
     /// `[ARN-1]`, `[ARN-7]` — `arena.reset()`. Its receiver is `mut self`, so
     /// ordinary borrowing prevents a rewind while any allocation view lives.
     ArenaReset,
@@ -387,6 +422,38 @@ pub enum Builtin {
     /// `[ARN-1]`, `[ARN-6]` — allocate through a scope. Its element type is
     /// explicit for the same reason as the other arena allocation builtins.
     ScopedArenaAlloc { elem: Ty },
+    /// `[ARN-5]`–`[ARN-5g]` — reserve the one fixed backing allocation and
+    /// construct an empty `ArenaArray[T]` view anchored to its Arena.
+    ArenaArrayWithCapacity { elem: Ty, array: Ty },
+    /// `[ARN-5c]` — checked shared/mutable access into fixed backing storage.
+    ArenaArrayGet { elem: Ty, mutable: bool },
+    /// `[ARN-5b]`, `[ARN-5c]` — append without growth; capacity exhaustion is
+    /// represented by `Result`, never panic or another allocation.
+    ArenaArrayPush { elem: Ty },
+    /// `[ARN-5c]` — fixed-storage insertion, including the ordinary Array
+    /// insertion-index check and in-place suffix shift.
+    ArenaArrayInsert { elem: Ty },
+    /// `[ARN-5c]` — optional move-out followed by an in-place suffix shift.
+    ArenaArrayRemove { elem: Ty },
+    /// `[ARN-5c]` — logically empty the initialized prefix. Elements satisfy
+    /// `[ARN-5e]`, so this requires no destructor walk.
+    ArenaArrayClear,
+    /// `[ARN-5c]` — advance one named Array iterator and yield a shared or
+    /// mutable element view in increasing index order.
+    ArenaArrayIterNext { elem: Ty, mutable: bool },
+    /// `[ARN-5a]`, `[ARN-5d]` — reserve one zeroed slot allocation and build
+    /// an empty fixed-capacity ArenaMap view.
+    ArenaMapWithCapacity { key: Ty, value: Ty, map: Ty },
+    /// `[ARN-5d]` — deterministic lookup over the compact occupied prefix.
+    ArenaMapGet { key: Ty, value: Ty, mutable: bool },
+    ArenaMapContains { key: Ty },
+    /// `[ARN-5b]`, `[ARN-5d]` — replace in place or append without growth.
+    ArenaMapInsert { key: Ty, value: Ty },
+    /// `[ARN-5d]` — optional value move-out and compact suffix shift.
+    ArenaMapRemove { key: Ty, value: Ty },
+    ArenaMapClear,
+    /// `[ARN-5d]` — advance the named map iterator and yield key/value views.
+    ArenaMapIterNext { key: Ty, value: Ty },
 }
 
 impl Builtin {
@@ -430,6 +497,13 @@ impl Builtin {
             Builtin::CellReplace => "replace",
             Builtin::CellIntoInner => "into_inner",
             Builtin::CellUpdate => "update",
+            Builtin::CellUpdateDefault { .. } => "update",
+            Builtin::CellTake { .. } => "take",
+            Builtin::MaybeUninitUninit { .. } => "uninit",
+            Builtin::MaybeUninitWrite { .. } => "write",
+            Builtin::MaybeUninitAssumeInit { .. } => "assume_init",
+            Builtin::MaybeUninitWriteAt { .. } => "write_at",
+            Builtin::MaybeUninitSpanAssumeInit { .. } => "assume_init",
             Builtin::RefCellBorrow => "borrow",
             Builtin::RefCellBorrowMut => "borrow_mut",
             Builtin::RefCellTryBorrow => "try_borrow",
@@ -438,9 +512,30 @@ impl Builtin {
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }
             | Builtin::ScopedArenaAlloc { .. } => "alloc",
+            Builtin::ArenaAllocUninit { .. } => "alloc_uninit",
+            Builtin::ArenaAllocArrayZeroed { .. }
+            | Builtin::ArenaAllocArrayDefault { .. } => "alloc_array",
             Builtin::ArenaReset => "reset",
             Builtin::FixedArenaReset => "reset",
             Builtin::ArenaScope { .. } => "scope",
+            Builtin::ArenaArrayWithCapacity { .. } => "with_capacity",
+            Builtin::ArenaArrayGet { mutable, .. } => {
+                if mutable { "get_mut" } else { "get" }
+            }
+            Builtin::ArenaArrayPush { .. } => "push",
+            Builtin::ArenaArrayInsert { .. } => "insert",
+            Builtin::ArenaArrayRemove { .. } => "remove",
+            Builtin::ArenaArrayClear => "clear",
+            Builtin::ArenaArrayIterNext { .. } => "next",
+            Builtin::ArenaMapWithCapacity { .. } => "with_capacity",
+            Builtin::ArenaMapGet { mutable, .. } => {
+                if mutable { "get_mut" } else { "get" }
+            }
+            Builtin::ArenaMapContains { .. } => "contains_key",
+            Builtin::ArenaMapInsert { .. } => "insert",
+            Builtin::ArenaMapRemove { .. } => "remove",
+            Builtin::ArenaMapClear => "clear",
+            Builtin::ArenaMapIterNext { .. } => "next",
         }
     }
 }

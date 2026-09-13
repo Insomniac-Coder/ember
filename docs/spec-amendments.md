@@ -19,7 +19,8 @@ language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
 not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
 so 0.8.3 could not absorb it and the hardening count started again. The current
 repository-normative source is `0.8.5_Hardened_1`; the separately frozen
-development target is `0.9.5_Hardened_10`.
+development target is `0.9.6_Hardened_4`, whose immutable immediate predecessor
+is `0.9.6_Hardened_3`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -27,7 +28,8 @@ owner, or by research of my own — that detail is written into the document and
 the hardening number goes up by one. The trigger is discovering the gap, not
 finishing a feature.
 
-**What may go in.** Only what is needed to *implement v0.8.3's own goals*: a
+**What may go in.** Only what is needed to *implement the selected language
+contract's own goals*: a
 rule's mechanism, an invariant an implementer must hold, a name a rule uses and
 never declares, a production for syntax the document already writes. A hardening
 never adds a feature, never relaxes a rule to match a compiler, and never
@@ -64,8 +66,16 @@ parameter-mode ruling is frozen as H7. The helper-input and `Callable` bridge
 ruling is frozen as H8. The owner-approved Arena-backed return-provenance
 clarification is frozen as H9. ODR-004 through ODR-008 are closed.
 The owner-approved Arena initialization contract is frozen as H10 and closes
-ODR-009. `docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H9→H10 correction;
-this ledger continues to declare
+ODR-009. The owner-selected simplicity consolidation and final `[ARN-10]`
+clarification are frozen as `0.9.6_Hardened_1`; H10 remains unchanged.
+`0.9.6_Hardened_2` is the owner-approved ODR-011 Arena-backed collection
+completion; H1 remains unchanged.
+`0.9.6_Hardened_3` is the owner-approved ODR-012 hashing-contract completion;
+H2 remains unchanged.
+`0.9.6_Hardened_4` is the owner-approved ODR-013 static Hasher-call completion;
+H3 remains unchanged.
+`docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H9→H10 correction,
+and `docs/MIGRATION-0.9.6.md` inventories the H10→0.9.6 H1 cut. This ledger continues to declare
 differences in the currently adopted repository-normative source checked by
 `tools/hardening_check.py`.
 
@@ -228,6 +238,131 @@ Because H9 was frozen, ADR-023 requires this ruling to be issued as
 `Ember_v0.9.5_Hardened_10.md`. H9 remains unchanged. H10 becomes the frozen
 development target; it does not replace the adopted 0.8.5 normative source or
 claim implementation/conformance evidence.
+
+### HC-096-01 — H1 simplicity consolidation and abort-only Arena clarification
+
+**Class: IMPLEMENTATION INVARIANT plus SEMANTICALLY NEUTRAL CLARIFICATION,
+with an OWNER-APPROVED SEMANTIC CHANGE limited to accepting the additive
+`0.9.6` selector.** On 2026-09-13 the owner approved Revision 5 of the Simplicity
+Consolidation RFC as the design basis for `0.9.6_Hardened_1`, then explicitly
+approved the final wording that amends existing `[ARN-10]`. The received RFC is
+preserved byte-for-byte under `docs/spec-source/as-received/`; ADR-030 records
+the decision.
+
+The revision consolidates reference-compiler facts and phase boundaries. It
+amends existing `[IMP-7]`, `[MIR-REG-1]`, `[VERIFY-3]`, `[TST-19]`, `[TST-23]`,
+and the Part XIX pipeline/analysis prose rather than creating the RFC's
+organizational `SIMP-*`/`CAP-*` families as normative rules. Provenance root and
+storage identity remain distinct; permission, reference kind, ownership,
+checking, unsafe authority, synchronization, validity, and escape constraints
+remain orthogonal. Disjointness still requires a storage/projection proof, and
+canonical compiler facts neither create public helper APIs nor replace
+source-level diagnostic language. Callable access and provenance summaries share one trusted
+metadata/invalidation boundary. Initial MIR is the analysis substrate and
+verified MIR is the code-generation boundary. The type-checking algorithm now
+states consistently that it constructs typed HIR from the resolved AST rather
+than claiming to walk HIR before HIR is emitted. Existing cycle, exclusivity,
+interior-mutability, FFI, coroutine, ECS, runtime-erasure, and replacement-order
+guarantees are preserved.
+
+The `[ARN-10]` edit resolves H10's impossible recovery wording without adding a
+new rule ID. In v1 `Default.default()` has no recoverable construction-failure
+path; a panic terminates the process through `[PAN-1]`/`abort()`, so no
+post-panic Arena state is observable and no unwinder is required. A rollback
+obligation exists only where a separate API explicitly defines both a
+recoverable failure and transactional rollback. Successful construction and
+the existing `!needs_drop` boundary remain unchanged.
+
+The owner selected a new 0.9.6 architecture line, so the hardening counter
+resets to 1. `[MOD-6]`/`[MOD-6a]` accept the additive `0.9.6` selector while
+preserving the ordinary-source accepted/rejected sets and observable semantics
+of 0.9.5. H10 remains immutable. H1 is a frozen development target and does
+not replace the adopted `0.8.5_Hardened_1` source or claim implementation,
+verification, performance, or conformance evidence.
+
+### HC-096-02 — H2 Arena-backed collection completion
+
+**Class: OWNER-APPROVED SEMANTIC COMPLETION, explicitly assigned to the H2
+successor by the owner.** H1's `[ARN-5]` named `ArenaArray` and `ArenaMap`
+as Arena-backed `@view` containers but left construction, mutation,
+capacity/failure, iteration, key, invalidation, and destruction semantics
+unexecutable. ODR-011/ERR-052 stopped implementation rather than importing a
+familiar language's behavior.
+
+The owner selected fixed-capacity, single-allocation views; shared-Arena
+`@borrows(arena)` constructors returning empty containers; no growth,
+reallocation, hidden cursor mutation, or hidden region; recoverable
+`CapacityError.Full`; the exact minimum Array/Map operation sets; ordinary
+whole-container borrowing; `!needs_drop` contents; ordinary Map Eq/Hash and
+duplicate replacement; deterministic index-order Array iteration; and
+unspecified-but-deterministic unchanged-state Map iteration.
+
+A follow-up owner ruling places `ArenaArray`, `ArenaMap`, `CapacityError`,
+`ArenaArrayIter`, `ArenaArrayIterMut`, and `ArenaMapIter` publicly in
+`std.collections` but outside the prelude. The unit-only error has sole
+variant `Full`. Named `@view` iterators implement the existing
+`Iterator[Item = ...]` associated-type interface, avoiding an undefined
+`Iterator[T]` shorthand or new opaque-return mechanism. `[TST-24]` records
+the complete conformance boundary.
+
+The owner explicitly called this result `0.9.6_Hardened_2` and H2-ready.
+That direct version ruling governs this cut. H1 remains byte-for-byte frozen;
+the received ODR-011 text is preserved under `docs/spec-source/as-received/`.
+This does not change the adopted `ember-spec.md` or claim implementation.
+
+### HC-096-03 — H3 hashing-contract completion
+
+**Class: OWNER-APPROVED STANDARD-LIBRARY API COMPLETION.** H2 made
+`K: Eq + Hash` normative for `ArenaMap` and inherited the declaration
+`Hash.hash(self, mut h: Hasher)`, but the complete lineage defined no
+`Hasher` interface, construction/finalization boundary, default concrete
+hasher, or explicit Eq/hash coherence rule. Implementation stopped at that
+boundary instead of inventing a hidden protocol. ODR-012/ERR-053 record the
+finding and owner resolution.
+
+The owner assigned `Hash`, `Hasher`, and `DefaultHasher` to
+`std.collections`; retained the existing Map/ArenaMap `K: Eq + Hash` bound;
+required a deterministic value representation and `a == b` to imply equal
+hashes; prohibited retaining a supplied byte span; made the context move-only
+and finalization consuming; required ordinary Map/Set to use
+`DefaultHasher`; left its exact mixing algorithm implementation-defined; and
+prohibited safe mutable access to resident Map keys. Existing `[MOD-5]`
+already exports `Hash` through the prelude, so H3 preserves that fact while
+keeping `Hasher` and `DefaultHasher` out of the prelude.
+
+The supplied interface sketch wrote `finish(self)` while its prose explicitly
+required consumption. Under existing Ember receiver modes, borrowed `self`
+cannot consume and `owned self` can. H3 therefore canonicalizes that one
+signature as `finish(owned self) -> u64`; this preserves the approved semantic
+result and does not invent another receiver mode.
+
+H2 remains byte-for-byte frozen. H3 adds `[HASH-1]`–`[HASH-4]`, updates the
+standard-library ownership and ArenaMap conformance text, and becomes the new
+frozen development target. It does not change the adopted `ember-spec.md`,
+claim implementation/conformance, or freeze a hash mixing algorithm.
+
+### HC-096-04 — H4 static Hasher-call boundary
+
+**Class: OWNER-APPROVED STANDARD-LIBRARY API COMPLETION.** H3 preserved the
+owner's `Hash.hash(self, mut h: Hasher)` sketch and exposed a remaining
+conflict with `[TYP-22]`: a concrete, move-only `DefaultHasher` had no legal
+conversion to a bare interface parameter. ODR-013/ERR-054 stopped compiler ABI
+work rather than inventing a struct-to-interface coercion.
+
+The owner selected static generic dispatch. H4 writes the canonical Ember
+signature `fn hash[H: Hasher](self, mut h: H)`. `H` is inferred from the
+concrete argument and normally monomorphized through existing generic/interface
+machinery. `DefaultHasher` is a concrete move-only type implementing `Hasher`.
+`Hash.hash` introduces no mandatory dynamic dispatch; a future intentionally
+dynamic API must specify an explicit legal `dyn Hasher` representation.
+
+The supplied patch's angle brackets around the ordinary parameter list were
+transport/diff markup and are normalized to Ember's existing parenthesized
+parameter grammar. H3 remains byte-for-byte frozen. H4 changes no mixing,
+coherence, Map-key, ownership, effect, ABI, reload, or determinism rule beyond
+closing the previously explicit dispatch/representation choice. It becomes the
+new frozen development target without changing adopted `ember-spec.md` or
+claiming implementation/conformance.
 
 ### The four kinds, and what each is allowed to do
 

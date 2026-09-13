@@ -356,8 +356,24 @@ impl Printer {
                     p.arg(a);
                 }
             }),
-            ExprKind::MethodCall { recv, name, args, .. } => {
-                self.nest(&format!("MethodCall .{}", name.name), |p| {
+            ExprKind::MethodCall { recv, name, generic_args, args } => {
+                let suffix = if generic_args.is_empty() {
+                    String::new()
+                } else {
+                    let rendered = generic_args
+                        .iter()
+                        .map(|arg| match arg {
+                            GenericArg::Type(ty) => type_str(ty),
+                            GenericArg::Const(expr) => expr_summary(expr),
+                            GenericArg::Assoc { name, ty } => {
+                                format!("{} = {}", name.name, type_str(ty))
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("[{rendered}]")
+                };
+                self.nest(&format!("MethodCall .{}{suffix}", name.name), |p| {
                     p.expr(recv);
                     for a in args {
                         p.arg(a);

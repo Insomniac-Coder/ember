@@ -37,6 +37,11 @@ pub const LANGUAGE_VERSIONS: &[&str] = &[
     // region). Additive, so 0.8.3 stays accepted and a file declaring it
     // compiles unchanged.
     "0.8.4",
+    // `[MOD-6]`, `[MOD-6a]` — these remain three distinct contracts even
+    // where 0.9.5 and 0.9.6 accept and interpret ordinary source identically.
+    // Recognising a selector does not adopt its frozen development target or
+    // enable it for a module that explicitly selected an earlier contract.
+    "0.9", "0.9.5", "0.9.6",
 ];
 
 /// Parse one file's token stream into a [`Module`].

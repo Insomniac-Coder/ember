@@ -43,6 +43,9 @@ struct Expectations {
     profiles: Vec<String>,
     /// `!contains("…")` or `contains("…")` against the emitted C.
     assert_c: Vec<(bool, String)>,
+    /// `#$ assert-c-count: contains("…") == N` — the needle occurs exactly
+    /// `N` times in the emitted C.
+    assert_c_count: Vec<(String, usize)>,
     /// `#$ assert-c-order: "a" then "b"` — both appear in the emitted C, and
     /// the first before the second.
     ///
@@ -141,6 +144,20 @@ fn parse_expectations(source: &str) -> Expectations {
                 .and_then(|s| s.strip_suffix(')'))
             {
                 expectations.assert_c.push((expect_present, inner.trim_matches('"').to_string()));
+            }
+            collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("assert-c-count:") {
+            if let Some((body, expected)) = value.rsplit_once("==") {
+                if let (Some(inner), Ok(expected)) = (
+                    body.trim()
+                        .strip_prefix("contains(")
+                        .and_then(|s| s.strip_suffix(')')),
+                    expected.trim().parse::<usize>(),
+                ) {
+                    expectations
+                        .assert_c_count
+                        .push((inner.trim_matches('"').to_string(), expected));
+                }
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("assert-c-order:") {
@@ -444,6 +461,28 @@ stderr:
         }
     }
 
+    // The emitted C, for exact occurrence-count assertions. This is stronger
+    // than a presence check for rules such as `[ARN-5]`, where construction
+    // allocates once and every subsequent operation must reuse that storage.
+    if !expectations.assert_c_count.is_empty() {
+        for profile in &profiles {
+            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
+            assert_eq!(
+                emitted.exit, 0,
+                "emitting C for {relative} [{profile}] failed:\n{}",
+                emitted.stderr
+            );
+            for (needle, expected) in &expectations.assert_c_count {
+                let actual = emitted.stdout.matches(needle.as_str()).count();
+                assert_eq!(
+                    actual, *expected,
+                    "{relative} [{profile}]: expected the emitted C to contain {needle:?} exactly {expected} time(s), found {actual}\n--- emitted C ---\n{}",
+                    emitted.stdout
+                );
+            }
+        }
+    }
+
     for profile in &profiles {
         let profile_out_dir = out_dir.join(profile);
         let out_dir_arg = profile_out_dir.to_string_lossy().into_owned();
@@ -468,6 +507,18 @@ stderr:
 {}",
                 run.stderr
             );
+            // A panic contract may also require proving that execution did
+            // not reach a continuation marker. `stdout` used to be ignored
+            // for every run-fail case, so such a fixture could only assert
+            // that *some* panic happened, not where execution stopped.
+            if let Some(expected) = &expectations.stdout {
+                assert_eq!(
+                    run.stdout.trim_end(),
+                    expected.trim_end(),
+                    "{relative} [{profile}]: stdout before panic differs\nstderr:\n{}",
+                    run.stderr
+                );
+            }
             continue;
         }
 
@@ -627,23 +678,27 @@ fn the_emitted_c_compiles_without_warnings() {
 
 #[test]
 fn parse_expectations_reads_the_annotation_forms() {
-    let source = "\
+    let alloc = ember_branding::runtime("alloc");
+    let arena_alloc = ember_branding::runtime("arena_alloc");
+    let source = format!("\
 #$ test: run-pass
 #$ profiles: debug, release, shipping
 struct S:
     x: i32
 #$ stdout: 5
-#$ assert-c: !contains(\"ember_alloc\")
+#$ assert-c: !contains(\"{alloc}\")
+#$ assert-c-count: contains(\"{arena_alloc}\") == 1
 #$ help: keep one owner
 #$ not-help: RefCell
 #$ exit: 0
-";
-    let parsed = parse_expectations(source);
+");
+    let parsed = parse_expectations(&source);
     assert_eq!(parsed.kind.as_deref(), Some("run-pass"));
     assert_eq!(parsed.stdout.as_deref(), Some("5"));
     assert_eq!(parsed.exit, Some(0));
     assert_eq!(parsed.profiles, ["debug", "release", "shipping"]);
-    assert_eq!(parsed.assert_c, vec![(false, "ember_alloc".to_string())]);
+    assert_eq!(parsed.assert_c, vec![(false, alloc)]);
+    assert_eq!(parsed.assert_c_count, vec![(arena_alloc, 1)]);
     assert_eq!(parsed.helps, ["keep one owner"]);
     assert_eq!(parsed.forbidden_helps, ["RefCell"]);
 }

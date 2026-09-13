@@ -113,7 +113,9 @@ impl MovePaths {
         self.children.push(Vec::new());
 
         let fields: Vec<Ty> = match types.kind(ty) {
-            TyKind::Struct(id) if !types.struct_def(*id).has_drop => {
+            TyKind::Struct(id)
+                if !types.struct_def(*id).has_drop && types.struct_def(*id).drops_fields =>
+            {
                 types.struct_def(*id).fields.iter().map(|field| field.ty).collect()
             }
             TyKind::Tuple(items) => items.clone(),
@@ -377,7 +379,9 @@ fn drop_units(place: Place, ty: Ty, types: &TypeTable, out: &mut Vec<Place>) {
         return;
     }
     match types.kind(ty) {
-        TyKind::Struct(id) if !types.struct_def(*id).has_drop => {
+        TyKind::Struct(id)
+            if !types.struct_def(*id).has_drop && types.struct_def(*id).drops_fields =>
+        {
             let fields: Vec<Ty> =
                 types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
             for (index, field_ty) in fields.into_iter().enumerate().rev() {
@@ -554,6 +558,10 @@ fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
                 TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => ty = *elem,
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Ptr { inner, .. },
+            ) => ty = *inner,
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
                 ty = *inner
             }
@@ -597,6 +605,10 @@ fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
                 TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => ty = *elem,
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Ptr { inner, .. },
+            ) => ty = *inner,
             _ => {}
         }
     }

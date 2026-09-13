@@ -687,6 +687,127 @@ impl<'a> Builder<'a> {
         id
     }
 
+    /// `[ARN-8]` — store into `MaybeUninit[T]` without observing or dropping
+    /// the previous bytes, then return a mutable reference to the initialized
+    /// payload. This is deliberately not routed through ordinary assignment
+    /// or `lower_cell_store`: all three operations have different destruction
+    /// orderings in the language contract.
+    fn lower_maybe_uninit_write(
+        &mut self,
+        dest: Place,
+        slot_ref: &'a hir::Expr,
+        value: &'a hir::Expr,
+        inner: Ty,
+    ) {
+        debug_assert_eq!(value.ty, inner);
+        let hir::ExprKind::Ref { place: slot, mutable: true } = &slot_ref.kind else {
+            return;
+        };
+        // Materialize the `mut self` borrow before writing. Besides preserving
+        // the receiver's place semantics, this is what makes use of a wrapper
+        // consumed by `assume_init` fail before the field store can look like
+        // a legal reinitializing assignment.
+        let wrapper_ref = self.temp(slot_ref.ty, slot_ref.span);
+        let slot_place = self.lower_place(slot);
+        self.at(slot_ref.span);
+        self.push(StmtKind::Assign {
+            place: Place::local(wrapper_ref),
+            rvalue: Rvalue::Ref { place: slot_place, mutable: true },
+        });
+        let new = self.lower_operand(value);
+        let mut field = Place::local(wrapper_ref);
+        field.projection.push(Projection::Deref);
+        let field = field.field(0);
+        self.push(StmtKind::Assign {
+            place: field.clone(),
+            rvalue: Rvalue::Use(new),
+        });
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Ref { place: field, mutable: true },
+        });
+    }
+
+    /// `[ARN-8]`, `[ARN-8a]` — consume an initialized wrapper and expose its
+    /// payload as ordinary owned `T`. As with `Cell.into_inner`, moving the
+    /// whole wrapper first is what makes move analysis retire a non-`Copy`
+    /// source. The carrier is unowned and `MaybeUninit` never drops its field.
+    fn lower_maybe_uninit_assume_init(
+        &mut self,
+        dest: Place,
+        slot: &'a hir::Expr,
+        inner: Ty,
+    ) {
+        let carrier = self.temp_unowned(slot.ty, slot.span);
+        let whole = self.lower_place(slot);
+        self.at(slot.span);
+        let moved = self.read(whole, slot.ty);
+        self.push(StmtKind::Assign {
+            place: Place::local(carrier),
+            rvalue: Rvalue::Use(moved),
+        });
+        let payload = self.read(Place::local(carrier).field(0), inner);
+        self.push(StmtKind::Assign { place: dest, rvalue: Rvalue::Use(payload) });
+    }
+
+    /// `[ARN-9]`, `[EXP-1]` — evaluate the mutable span receiver and index,
+    /// perform the ordinary bounds check, then evaluate the value and store it
+    /// without dropping the old slot bytes.
+    fn lower_maybe_uninit_write_at(
+        &mut self,
+        dest: Place,
+        span_value: &'a hir::Expr,
+        index: &'a hir::Expr,
+        value: &'a hir::Expr,
+        inner: Ty,
+    ) {
+        debug_assert_eq!(value.ty, inner);
+        let element = self.lower_index(span_value, index, span_value.span).field(0);
+        let new = self.lower_operand(value);
+        self.at(span_value.span);
+        self.push(StmtKind::Assign {
+            place: element.clone(),
+            rvalue: Rvalue::Use(new),
+        });
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Ref { place: element, mutable: true },
+        });
+    }
+
+    /// `[ARN-9]` — consume a `MutSpan[MaybeUninit[T]]` and rebuild the
+    /// representation-identical `MutSpan[T]`. Moving the whole source into an
+    /// unowned carrier keeps the ownership transition explicit in MIR; the
+    /// aggregate then copies only the pointer and length representation.
+    fn lower_maybe_uninit_span_assume_init(
+        &mut self,
+        dest: Place,
+        span_value: &'a hir::Expr,
+        inner: Ty,
+    ) {
+        debug_assert!(matches!(
+            self.types.kind(self.locals[dest.local.0 as usize].ty),
+            TyKind::Span { elem, mutable: true } if *elem == inner
+        ));
+        let carrier = self.temp_unowned(span_value.ty, span_value.span);
+        let moved = self.lower_operand(span_value);
+        self.at(span_value.span);
+        self.push(StmtKind::Assign {
+            place: Place::local(carrier),
+            rvalue: Rvalue::Use(moved),
+        });
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Tuple,
+                operands: vec![
+                    Operand::Copy(Place::local(carrier).field(0)),
+                    Operand::Copy(Place::local(carrier).field(1)),
+                ],
+            },
+        });
+    }
+
     /// `[CELL-1]` — `c.set(v)` and `c.replace(v)`, which differ only in what
     /// becomes of the old value: `replace` hands it back, `set` drops it.
     ///
@@ -702,9 +823,10 @@ impl<'a> Builder<'a> {
     /// follows. That is why `set` is not lowered as an assignment; ADR-020's
     /// last paragraph is the note not to generalise either rule to the other.
     ///
-    /// The new value is lowered **first**, before the old one is disturbed:
-    /// `update(f)` arrives here as `set(f(get()))`, and `f` has to see what the
-    /// cell held.
+    /// `[EXP-1]` evaluates the receiver place before call arguments, so the
+    /// place (including an index expression) is resolved first. The new value
+    /// is then evaluated before the old payload is disturbed: `update(f)`
+    /// arrives here as `set(f(get()))`, and `f` has to see what the cell held.
     fn lower_cell_store(
         &mut self,
         old_into: Option<Place>,
@@ -712,8 +834,8 @@ impl<'a> Builder<'a> {
         value: &'a hir::Expr,
     ) {
         let inner = value.ty;
-        let new = self.lower_operand(value);
         let field = self.lower_place(cell).field(0);
+        let new = self.lower_operand(value);
         self.at(cell.span);
 
         // Where the old value goes. `replace` was given a destination; `set`
@@ -795,6 +917,110 @@ impl<'a> Builder<'a> {
         self.current = next;
         let produced = self.read(Place::local(result), ret);
         self.push(StmtKind::Assign { place: field, rvalue: Rvalue::Use(produced) });
+    }
+
+    /// `[CELL-1]` — construct the replacement first, then move the old value
+    /// to the caller and install the replacement without dropping either.
+    /// No user code runs while the cell is temporarily between the move and
+    /// store, and evaluating `Default.default()` may safely re-enter the cell
+    /// because its original payload is still present during that call.
+    fn lower_cell_take(
+        &mut self,
+        dest: Place,
+        cell: &'a hir::Expr,
+        constructor: hir::DefId,
+        inner: Ty,
+        span: ember_span::Span,
+    ) {
+        // Resolve an indexed receiver before invoking the constructor, as
+        // ordinary call evaluation order requires.
+        let field = self.lower_place(cell).field(0);
+        self.at(span);
+        let replacement = self.temp(inner, span);
+        self.push(StmtKind::StorageLive(replacement));
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Direct {
+                symbol: self.program.function(constructor).symbol.clone(),
+            },
+            args: Vec::new(),
+            dest: Place::local(replacement),
+            next,
+        });
+        self.current = next;
+
+        let old = self.read(field.clone(), inner);
+        self.push(StmtKind::Assign { place: dest, rvalue: Rvalue::Use(old) });
+        let replacement = self.read(Place::local(replacement), inner);
+        self.push(StmtKind::Assign { place: field, rvalue: Rvalue::Use(replacement) });
+    }
+
+    /// `[CELL-1]`'s `T: Default` update arm. Source operands are evaluated
+    /// first. Then the old payload is moved behind a default placeholder
+    /// before the callback runs, so re-entry sees an initialized cell and the
+    /// callback's borrowed argument remains valid independently of the cell.
+    /// Installing the callback result uses `[CELL-1]` ordering: store the new
+    /// payload before dropping the placeholder it replaces.
+    fn lower_cell_update_default(
+        &mut self,
+        cell: &'a hir::Expr,
+        f: &'a hir::Expr,
+        constructor: hir::DefId,
+        span: ember_span::Span,
+    ) {
+        let field = self.lower_place(cell).field(0);
+        let callee = self.lower_operand(f);
+        let TyKind::Fn { ret: inner, .. } = *self.types.kind(f.ty) else { return };
+        self.at(span);
+
+        let placeholder = self.temp(inner, span);
+        self.push(StmtKind::StorageLive(placeholder));
+        let after_default = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Direct {
+                symbol: self.program.function(constructor).symbol.clone(),
+            },
+            args: Vec::new(),
+            dest: Place::local(placeholder),
+            next: after_default,
+        });
+        self.current = after_default;
+
+        let old = self.temp(inner, span);
+        self.push(StmtKind::StorageLive(old));
+        self.push(StmtKind::Assign {
+            place: Place::local(old),
+            rvalue: Rvalue::Use(self.read(field.clone(), inner)),
+        });
+        self.push(StmtKind::Assign {
+            place: field.clone(),
+            rvalue: Rvalue::Use(self.read(Place::local(placeholder), inner)),
+        });
+
+        let result = self.temp(inner, span);
+        self.push(StmtKind::StorageLive(result));
+        let after_callback = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Indirect(callee),
+            // `fn(T) -> T` uses `[FN-2]`'s default borrowed mode. The old
+            // value stays owned by this lowering temporary until statement
+            // end; the callback may inspect it but cannot consume it.
+            args: vec![Operand::Copy(Place::local(old))],
+            dest: Place::local(result),
+            next: after_callback,
+        });
+        self.current = after_callback;
+
+        let replaced = self.temp_unowned(inner, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(replaced),
+            rvalue: Rvalue::Use(self.read(field.clone(), inner)),
+        });
+        self.push(StmtKind::Assign {
+            place: field,
+            rvalue: Rvalue::Use(self.read(Place::local(result), inner)),
+        });
+        self.push(StmtKind::Drop { place: Place::local(replaced), flag: None });
     }
 
     /// `[CELL-5]`, `[CELL-7]`, `[CELL-9]` — `c.borrow()` / `c.borrow_mut()`.
@@ -1167,6 +1393,36 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MaybeUninitWrite { inner },
+                args,
+            } => {
+                self.lower_maybe_uninit_write(place, &args[0], &args[1], *inner);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MaybeUninitAssumeInit { inner },
+                args,
+            } => {
+                self.lower_maybe_uninit_assume_init(place, &args[0], *inner);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MaybeUninitWriteAt { inner },
+                args,
+            } => {
+                self.lower_maybe_uninit_write_at(
+                    place,
+                    &args[0],
+                    &args[1],
+                    &args[2],
+                    *inner,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MaybeUninitSpanAssumeInit { inner },
+                args,
+            } => {
+                self.lower_maybe_uninit_span_assume_init(place, &args[0], *inner);
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::CellSet, args } => {
                 self.lower_cell_store(None, &args[0], &args[1]);
             }
@@ -1178,6 +1434,23 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Builtin { which: hir::Builtin::CellUpdate, args } => {
                 self.lower_cell_update(&args[0], &args[1]);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::CellUpdateDefault { constructor },
+                args,
+            } => {
+                self.lower_cell_update_default(
+                    &args[0],
+                    &args[1],
+                    *constructor,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::CellTake { constructor },
+                args,
+            } => {
+                self.lower_cell_take(place, &args[0], *constructor, expr.ty, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellBorrow, args } => {
                 self.lower_refcell_borrow(place, &args[0], false, expr.ty, expr.span);
@@ -1194,6 +1467,182 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::RangeChecked(id), args } => {
                 self.lower_range_checked(place, *id, &args[0], expr.ty, expr.span);
             }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaAllocArrayDefault { elem, constructor },
+                args,
+            } => {
+                self.lower_arena_alloc_array_default(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    *constructor,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayGet { elem, mutable },
+                args,
+            } => {
+                self.lower_arena_array_get(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    *mutable,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayPush { elem },
+                args,
+            } => {
+                self.lower_arena_array_push(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayInsert { elem },
+                args,
+            } => {
+                self.lower_arena_array_insert(
+                    place,
+                    &args[0],
+                    &args[1],
+                    &args[2],
+                    *elem,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayRemove { elem },
+                args,
+            } => {
+                self.lower_arena_array_remove(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayClear,
+                args,
+            } => {
+                let base = self.lower_arena_array_receiver(&args[0]);
+                self.push(StmtKind::Assign {
+                    place: base.field(2),
+                    rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                        value: 0,
+                        ty: self.usize_ty,
+                    })),
+                });
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaArrayIterNext { elem, mutable },
+                args,
+            } => {
+                self.lower_arena_array_iter_next(
+                    place,
+                    &args[0],
+                    *elem,
+                    *mutable,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapGet { key, value, mutable },
+                args,
+            } => {
+                self.lower_arena_map_get(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *key,
+                    *value,
+                    *mutable,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapContains { key },
+                args,
+            } => {
+                self.lower_arena_map_contains(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *key,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapInsert { key, value },
+                args,
+            } => {
+                self.lower_arena_map_insert(
+                    place,
+                    &args[0],
+                    &args[1],
+                    &args[2],
+                    *key,
+                    *value,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapRemove { key, value },
+                args,
+            } => {
+                self.lower_arena_map_remove(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *key,
+                    *value,
+                    expr.ty,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapClear,
+                args,
+            } => {
+                let base = self.lower_arena_array_receiver(&args[0]);
+                self.push(StmtKind::Assign {
+                    place: base.field(2),
+                    rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                        value: 0,
+                        ty: self.usize_ty,
+                    })),
+                });
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ArenaMapIterNext { key, value },
+                args,
+            } => {
+                self.lower_arena_map_iter_next(
+                    place,
+                    &args[0],
+                    *key,
+                    *value,
+                    expr.ty,
+                    expr.span,
+                );
+            }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.
                 // For most builtins that is the first argument; `alloc` takes
@@ -1201,7 +1650,12 @@ impl<'a> Builder<'a> {
                 // the result, and `size_of` carries it on a placeholder.
                 let arg_ty = match which {
                     hir::Builtin::MemAlloc
-                    | hir::Builtin::ArenaWithCapacity => expr.ty,
+                    | hir::Builtin::ArenaWithCapacity
+                    | hir::Builtin::ArenaArrayWithCapacity { .. }
+                    | hir::Builtin::ArenaMapWithCapacity { .. }
+                    | hir::Builtin::ArenaAllocUninit { .. }
+                    | hir::Builtin::ArenaAllocArrayZeroed { .. }
+                    | hir::Builtin::MaybeUninitUninit { .. } => expr.ty,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -1336,6 +1790,104 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::Assign { place, rvalue });
             }
         }
+    }
+
+    /// `[ARN-3]`, `[ARN-10]` — the non-zeroable `alloc_array` path is an
+    /// ordinary, visible construction loop. Storage is reserved first, then
+    /// the resolved `Default.default()` body is called exactly once for each
+    /// element. The backend only performs raw allocation; it never fabricates
+    /// an initialized `T` or guesses how source-level `Default` dispatch works.
+    fn lower_arena_alloc_array_default(
+        &mut self,
+        place: Place,
+        arena: &'a hir::Expr,
+        count: &'a hir::Expr,
+        elem: Ty,
+        constructor: hir::DefId,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        self.at(span);
+
+        // Preserve source evaluation order and evaluate the count once. It is
+        // reused by both allocation and the loop condition.
+        let arena = self.lower_operand_borrowed(arena);
+        let count_value = self.lower_operand_borrowed(count);
+        let count_local = self.temp(self.usize_ty, count.span);
+        self.push(StmtKind::StorageLive(count_local));
+        self.push(StmtKind::Assign {
+            place: Place::local(count_local),
+            rvalue: Rvalue::Use(count_value),
+        });
+
+        let after_alloc = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::ArenaAllocArrayDefault { elem, constructor },
+                arg_ty: result_ty,
+            },
+            args: vec![arena, Operand::Copy(Place::local(count_local))],
+            dest: place.clone(),
+            next: after_alloc,
+        });
+        self.current = after_alloc;
+
+        let index = self.temp(self.usize_ty, span);
+        self.push(StmtKind::StorageLive(index));
+        self.push(StmtKind::Assign {
+            place: Place::local(index),
+            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: 0, ty: self.usize_ty })),
+        });
+
+        let head = self.new_block();
+        let construct = self.new_block();
+        let store = self.new_block();
+        let exit = self.new_block();
+        self.terminate(Terminator::Goto(head));
+
+        self.current = head;
+        let more = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(more),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(count_local)),
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(more)),
+            targets: vec![(0, exit)],
+            otherwise: construct,
+        });
+
+        self.current = construct;
+        let value = self.temp(elem, span);
+        self.push(StmtKind::StorageLive(value));
+        let symbol = self.program.function(constructor).symbol.clone();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Direct { symbol },
+            args: Vec::new(),
+            dest: Place::local(value),
+            next: store,
+        });
+
+        self.current = store;
+        self.push(StmtKind::Assign {
+            place: place.clone().index(index),
+            rvalue: Rvalue::Use(Operand::Move(Place::local(value))),
+        });
+        self.push(StmtKind::Assign {
+            place: Place::local(index),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        self.terminate(Terminator::Goto(head));
+
+        self.current = exit;
     }
 
     /// `match` (`[ENM-2]`). Each arm tests its pattern, then its guard, then
@@ -1604,6 +2156,1036 @@ impl<'a> Builder<'a> {
 
     /// Emit `op` together with the check it needs, leaving the result in
     /// `place` and the cursor on the success path.
+    /// Materialize a collection receiver borrow and return the underlying
+    /// collection place. Keeping the `Rvalue::Ref` in MIR is essential:
+    /// `[ARN-5f]` deliberately uses the ordinary borrow checker for element
+    /// views and whole-container mutation conflicts.
+    fn lower_arena_array_receiver(&mut self, receiver: &'a hir::Expr) -> Place {
+        let hir::ExprKind::Ref { place, mutable } = &receiver.kind else {
+            return self.lower_place(receiver);
+        };
+        let borrowed = self.lower_place(place);
+        let reference = self.temp(receiver.ty, receiver.span);
+        self.push(StmtKind::StorageLive(reference));
+        self.push(StmtKind::Assign {
+            place: Place::local(reference),
+            rvalue: Rvalue::Ref { place: borrowed, mutable: *mutable },
+        });
+        let mut base = Place::local(reference);
+        base.projection.push(Projection::Deref);
+        base
+    }
+
+    fn option_variants(&self, option: ember_types::EnumId) -> (usize, usize) {
+        let none = self
+            .types
+            .enum_def(option)
+            .variants
+            .iter()
+            .position(|variant| variant.fields.is_empty())
+            .expect("an Option has a payload-free variant");
+        (none, 1 - none)
+    }
+
+    fn assign_capacity_result(
+        &mut self,
+        dest: Place,
+        result_ty: Ty,
+        success: bool,
+        span: ember_span::Span,
+    ) {
+        let TyKind::Enum(result) = *self.types.kind(result_ty) else {
+            unreachable!("an ArenaArray capacity operation returns Result")
+        };
+        if success {
+            self.push(StmtKind::Assign {
+                place: dest,
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Enum(result, 0),
+                    operands: vec![Operand::Const(Const::Void)],
+                },
+            });
+            return;
+        }
+        let error_ty = self.types.enum_def(result).variants[1].fields[0].ty;
+        let TyKind::Enum(error) = *self.types.kind(error_ty) else {
+            unreachable!("CapacityError is an enum")
+        };
+        let full = self.temp(error_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(full),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(error, 0),
+                operands: Vec::new(),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(result, 1),
+                operands: vec![Operand::Move(Place::local(full))],
+            },
+        });
+    }
+
+    /// `[ARN-5c]` — checked optional element access through the stable raw
+    /// backing pointer. The returned `Rvalue::Ref` is a normal MIR loan; there
+    /// is no collection-specific invalidation mechanism.
+    fn lower_arena_array_get(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        _elem: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let index_value = self.lower_operand(index);
+        let slot = self.temp(self.usize_ty, span);
+        self.push(StmtKind::StorageLive(slot));
+        self.push(StmtKind::Assign {
+            place: Place::local(slot),
+            rvalue: Rvalue::Use(index_value),
+        });
+        let in_range = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(in_range),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(slot)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("ArenaArray.get returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(in_range)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        let element = base.clone().field(1).index(slot);
+        let reference_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let reference = self.temp(reference_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(reference),
+            rvalue: Rvalue::Ref { place: element, mutable },
+        });
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(reference))],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    fn lower_arena_array_push(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        value: &'a hir::Expr,
+        elem: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let value = self.lower_operand(value);
+        let has_room = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_room),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Copy(base.clone().field(3)),
+            },
+        });
+        let ok_bb = self.new_block();
+        let err_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_room)),
+            targets: vec![(0, err_bb)],
+            otherwise: ok_bb,
+        });
+
+        self.current = ok_bb;
+        let slot = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(slot),
+            rvalue: Rvalue::Use(Operand::Copy(base.clone().field(2))),
+        });
+        self.push(StmtKind::Assign {
+            place: base.clone().field(1).index(slot),
+            rvalue: Rvalue::Use(value),
+        });
+        self.push(StmtKind::Assign {
+            place: base.clone().field(2),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        debug_assert!(!self.types.needs_drop(elem));
+        self.assign_capacity_result(dest.clone(), result_ty, true, span);
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = err_bb;
+        self.assign_capacity_result(dest, result_ty, false, span);
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    fn lower_arena_array_insert(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        value: &'a hir::Expr,
+        _elem: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let index_value = self.lower_operand(index);
+        let slot = self.temp(self.usize_ty, span);
+        self.push(StmtKind::StorageLive(slot));
+        self.push(StmtKind::Assign {
+            place: Place::local(slot),
+            rvalue: Rvalue::Use(index_value),
+        });
+        let value = self.lower_operand(value);
+
+        let valid_index = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(valid_index),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Le,
+                lhs: Operand::Copy(Place::local(slot)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        let after_bounds = self.new_block();
+        self.terminate(Terminator::Assert {
+            cond: Operand::Copy(Place::local(valid_index)),
+            expected: true,
+            msg: AssertKind::Bounds {
+                len: Operand::Copy(base.clone().field(2)),
+                index: Operand::Copy(Place::local(slot)),
+            },
+            next: after_bounds,
+            span,
+        });
+        self.current = after_bounds;
+
+        let has_room = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_room),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Copy(base.clone().field(3)),
+            },
+        });
+        let shift_init = self.new_block();
+        let err_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_room)),
+            targets: vec![(0, err_bb)],
+            otherwise: shift_init,
+        });
+
+        self.current = shift_init;
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(base.clone().field(2))),
+        });
+        let head = self.new_block();
+        let shift = self.new_block();
+        let store = self.new_block();
+        self.terminate(Terminator::Goto(head));
+
+        self.current = head;
+        let more = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(more),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Gt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(slot)),
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(more)),
+            targets: vec![(0, store)],
+            otherwise: shift,
+        });
+
+        self.current = shift;
+        let previous = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(previous),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        // Collection backing slots are compiler-managed initialized storage,
+        // not source-visible owners. `T` is guaranteed `!needs_drop`; copying
+        // the bytes while the logical slot is immediately retired/overwritten
+        // is the internal move operation and avoids pretending that safe user
+        // code may move through an arbitrary `ref mut`.
+        let moved = Operand::Copy(base.clone().field(1).index(previous));
+        self.push(StmtKind::Assign {
+            place: base.clone().field(1).index(cursor),
+            rvalue: Rvalue::Use(moved),
+        });
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(previous))),
+        });
+        self.terminate(Terminator::Goto(head));
+
+        self.current = store;
+        self.push(StmtKind::Assign {
+            place: base.clone().field(1).index(slot),
+            rvalue: Rvalue::Use(value),
+        });
+        self.push(StmtKind::Assign {
+            place: base.clone().field(2),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        self.assign_capacity_result(dest.clone(), result_ty, true, span);
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = err_bb;
+        self.assign_capacity_result(dest, result_ty, false, span);
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    fn lower_arena_array_remove(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        elem: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let index_value = self.lower_operand(index);
+        let slot = self.temp(self.usize_ty, span);
+        self.push(StmtKind::StorageLive(slot));
+        self.push(StmtKind::Assign {
+            place: Place::local(slot),
+            rvalue: Rvalue::Use(index_value),
+        });
+        let in_range = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(in_range),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(slot)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(in_range)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("ArenaArray.remove returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+
+        self.current = some_bb;
+        let removed = self.temp_unowned(elem, span);
+        let value = Operand::Copy(base.clone().field(1).index(slot));
+        self.push(StmtKind::Assign {
+            place: Place::local(removed),
+            rvalue: Rvalue::Use(value),
+        });
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(slot))),
+        });
+        let head = self.new_block();
+        let shift = self.new_block();
+        let finish = self.new_block();
+        self.terminate(Terminator::Goto(head));
+
+        self.current = head;
+        let next = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(next),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        let has_next = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_next),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(next)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_next)),
+            targets: vec![(0, finish)],
+            otherwise: shift,
+        });
+
+        self.current = shift;
+        let moved = Operand::Copy(base.clone().field(1).index(next));
+        self.push(StmtKind::Assign {
+            place: base.clone().field(1).index(cursor),
+            rvalue: Rvalue::Use(moved),
+        });
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(next))),
+        });
+        self.terminate(Terminator::Goto(head));
+
+        self.current = finish;
+        self.push(StmtKind::Assign {
+            place: base.clone().field(2),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![self.read(Place::local(removed), elem)],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    fn lower_arena_array_iter_next(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        _elem: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let iterator = self.lower_arena_array_receiver(receiver);
+        let mut array = iterator.clone().field(0);
+        array.projection.push(Projection::Deref);
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(1))),
+        });
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(array.clone().field(2)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("an ArenaArray iterator returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join_bb = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        // Advance the iterator's disjoint cursor field before publishing the
+        // element loan. The backing storage and length remain untouched.
+        self.push(StmtKind::Assign {
+            place: iterator.field(1),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        let reference_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let reference = self.temp(reference_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(reference),
+            rvalue: Rvalue::Ref {
+                place: array.field(1).index(cursor),
+                mutable,
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(reference))],
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join_bb));
+        self.current = join_bb;
+    }
+
+    fn arena_map_slot(base: &Place, index: LocalId) -> Place {
+        base.clone().field(1).index(index)
+    }
+
+    /// Emit the compact-prefix linear search used by the current fixed map.
+    /// `[ARN-5d]` does not prescribe a bucket algorithm; this is deterministic
+    /// for unchanged state and uses the ordinary key equality semantics for
+    /// the compiler-known key set accepted by type checking.
+    fn emit_arena_map_search(
+        &mut self,
+        base: &Place,
+        wanted: Operand,
+        key: Ty,
+        span: ember_span::Span,
+    ) -> (LocalId, BasicBlockId, BasicBlockId) {
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                value: 0,
+                ty: self.usize_ty,
+            })),
+        });
+        let head = self.new_block();
+        let compare = self.new_block();
+        let advance = self.new_block();
+        let found = self.new_block();
+        let missing = self.new_block();
+        self.terminate(Terminator::Goto(head));
+
+        self.current = head;
+        let has_entry = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_entry),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_entry)),
+            targets: vec![(0, missing)],
+            otherwise: compare,
+        });
+
+        self.current = compare;
+        let equal = self.temp(self.bool_ty, span);
+        let existing = Self::arena_map_slot(base, cursor).field(1).field(0);
+        self.push(StmtKind::Assign {
+            place: Place::local(equal),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Eq,
+                lhs: Operand::Copy(existing),
+                rhs: wanted,
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(equal)),
+            targets: vec![(0, advance)],
+            otherwise: found,
+        });
+
+        self.current = advance;
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int {
+                    value: 1,
+                    ty: self.usize_ty,
+                }),
+            },
+        });
+        self.terminate(Terminator::Goto(head));
+        debug_assert!(!self.types.needs_drop(key));
+        (cursor, found, missing)
+    }
+
+    fn assign_option(
+        &mut self,
+        dest: Place,
+        option_ty: Ty,
+        payload: Option<Operand>,
+    ) {
+        let TyKind::Enum(option) = *self.types.kind(option_ty) else {
+            unreachable!("expected Option")
+        };
+        let (none, some) = self.option_variants(option);
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, if payload.is_some() { some } else { none }),
+                operands: payload.into_iter().collect(),
+            },
+        });
+    }
+
+    fn assign_result_ok(&mut self, dest: Place, result_ty: Ty, payload: Operand) {
+        let TyKind::Enum(result) = *self.types.kind(result_ty) else {
+            unreachable!("expected Result")
+        };
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(result, 0),
+                operands: vec![payload],
+            },
+        });
+    }
+
+    fn lower_arena_map_get(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        wanted: &'a hir::Expr,
+        key: Ty,
+        _value: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let wanted = self.lower_operand_borrowed(wanted);
+        let (cursor, found, missing) =
+            self.emit_arena_map_search(&base, wanted, key, span);
+        let join = self.new_block();
+
+        self.current = found;
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("ArenaMap.get returns Option")
+        };
+        let (_, some) = self.option_variants(option);
+        let reference_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let reference = self.temp(reference_ty, span);
+        let value_place = Self::arena_map_slot(&base, cursor).field(2).field(0);
+        self.push(StmtKind::Assign {
+            place: Place::local(reference),
+            rvalue: Rvalue::Ref {
+                place: value_place,
+                mutable,
+            },
+        });
+        self.assign_option(
+            dest.clone(),
+            result_ty,
+            Some(Operand::Move(Place::local(reference))),
+        );
+        self.terminate(Terminator::Goto(join));
+
+        self.current = missing;
+        self.assign_option(dest, result_ty, None);
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    fn lower_arena_map_contains(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        wanted: &'a hir::Expr,
+        key: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let wanted = self.lower_operand_borrowed(wanted);
+        let (_, found, missing) = self.emit_arena_map_search(&base, wanted, key, span);
+        let join = self.new_block();
+        self.current = found;
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Use(Operand::Const(Const::Bool(true))),
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = missing;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))),
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    fn lower_arena_map_insert(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        wanted: &'a hir::Expr,
+        value: &'a hir::Expr,
+        key: Ty,
+        value_ty: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        // Calls evaluate all arguments before the body searches or mutates.
+        let wanted = self.lower_operand(wanted);
+        let value = self.lower_operand(value);
+        let (cursor, found, missing) =
+            self.emit_arena_map_search(&base, wanted.clone(), key, span);
+        let join = self.new_block();
+
+        self.current = found;
+        let old_value = self.temp_unowned(value_ty, span);
+        let value_place = Self::arena_map_slot(&base, cursor).field(2).field(0);
+        self.push(StmtKind::Assign {
+            place: Place::local(old_value),
+            rvalue: Rvalue::Use(Operand::Copy(value_place.clone())),
+        });
+        self.push(StmtKind::Assign {
+            place: value_place,
+            rvalue: Rvalue::Use(value.clone()),
+        });
+        let TyKind::Enum(result) = *self.types.kind(result_ty) else {
+            unreachable!("ArenaMap.insert returns Result")
+        };
+        let option_ty = self.types.enum_def(result).variants[0].fields[0].ty;
+        let old_option = self.temp(option_ty, span);
+        self.assign_option(
+            Place::local(old_option),
+            option_ty,
+            Some(Operand::Copy(Place::local(old_value))),
+        );
+        self.assign_result_ok(dest.clone(), result_ty, Operand::Move(Place::local(old_option)));
+        self.terminate(Terminator::Goto(join));
+
+        self.current = missing;
+        let has_room = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_room),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Copy(base.clone().field(3)),
+            },
+        });
+        let append = self.new_block();
+        let full = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_room)),
+            targets: vec![(0, full)],
+            otherwise: append,
+        });
+
+        self.current = append;
+        let at = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(at),
+            rvalue: Rvalue::Use(Operand::Copy(base.clone().field(2))),
+        });
+        let slot = Self::arena_map_slot(&base, at);
+        self.push(StmtKind::Assign {
+            place: slot.clone().field(0),
+            rvalue: Rvalue::Use(Operand::Const(Const::Bool(true))),
+        });
+        self.push(StmtKind::Assign {
+            place: slot.clone().field(1).field(0),
+            rvalue: Rvalue::Use(wanted),
+        });
+        self.push(StmtKind::Assign {
+            place: slot.field(2).field(0),
+            rvalue: Rvalue::Use(value),
+        });
+        self.push(StmtKind::Assign {
+            place: base.clone().field(2),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Const(Const::Int {
+                    value: 1,
+                    ty: self.usize_ty,
+                }),
+            },
+        });
+        let none_option = self.temp(option_ty, span);
+        self.assign_option(Place::local(none_option), option_ty, None);
+        self.assign_result_ok(dest.clone(), result_ty, Operand::Move(Place::local(none_option)));
+        self.terminate(Terminator::Goto(join));
+
+        self.current = full;
+        self.assign_capacity_result(dest, result_ty, false, span);
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    fn lower_arena_map_remove(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        wanted: &'a hir::Expr,
+        key: Ty,
+        value_ty: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let base = self.lower_arena_array_receiver(receiver);
+        let wanted = self.lower_operand_borrowed(wanted);
+        let (cursor, found, missing) = self.emit_arena_map_search(&base, wanted, key, span);
+        let join = self.new_block();
+
+        self.current = found;
+        let old_value = self.temp_unowned(value_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(old_value),
+            rvalue: Rvalue::Use(Operand::Copy(
+                Self::arena_map_slot(&base, cursor).field(2).field(0),
+            )),
+        });
+        let scan = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(scan),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(cursor))),
+        });
+        let head = self.new_block();
+        let shift = self.new_block();
+        let finish = self.new_block();
+        self.terminate(Terminator::Goto(head));
+
+        self.current = head;
+        let next = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(next),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(scan)),
+                rhs: Operand::Const(Const::Int {
+                    value: 1,
+                    ty: self.usize_ty,
+                }),
+            },
+        });
+        let has_next = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_next),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(next)),
+                rhs: Operand::Copy(base.clone().field(2)),
+            },
+        });
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_next)),
+            targets: vec![(0, finish)],
+            otherwise: shift,
+        });
+
+        self.current = shift;
+        let from = Self::arena_map_slot(&base, next);
+        let to = Self::arena_map_slot(&base, scan);
+        self.push(StmtKind::Assign {
+            place: to.clone().field(1).field(0),
+            rvalue: Rvalue::Use(Operand::Copy(from.clone().field(1).field(0))),
+        });
+        self.push(StmtKind::Assign {
+            place: to.field(2).field(0),
+            rvalue: Rvalue::Use(Operand::Copy(from.field(2).field(0))),
+        });
+        self.push(StmtKind::Assign {
+            place: Place::local(scan),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(next))),
+        });
+        self.terminate(Terminator::Goto(head));
+
+        self.current = finish;
+        self.push(StmtKind::Assign {
+            place: base.clone().field(2),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(base.clone().field(2)),
+                rhs: Operand::Const(Const::Int {
+                    value: 1,
+                    ty: self.usize_ty,
+                }),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: Self::arena_map_slot(&base, scan).field(0),
+            rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))),
+        });
+        self.assign_option(
+            dest.clone(),
+            result_ty,
+            Some(Operand::Copy(Place::local(old_value))),
+        );
+        self.terminate(Terminator::Goto(join));
+
+        self.current = missing;
+        self.assign_option(dest, result_ty, None);
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    fn lower_arena_map_iter_next(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        _key: Ty,
+        _value: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let iterator = self.lower_arena_array_receiver(receiver);
+        let mut map = iterator.clone().field(0);
+        map.projection.push(Projection::Deref);
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(1))),
+        });
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(map.clone().field(2)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("ArenaMap iterator returns Option")
+        };
+        let (_none, some) = self.option_variants(option);
+        let item_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let TyKind::Tuple(items) = self.types.kind(item_ty) else {
+            unreachable!("ArenaMap iterator item is a pair")
+        };
+        let key_ref_ty = items[0];
+        let value_ref_ty = items[1];
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        self.push(StmtKind::Assign {
+            place: iterator.field(1),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int {
+                    value: 1,
+                    ty: self.usize_ty,
+                }),
+            },
+        });
+        let slot = Self::arena_map_slot(&map, cursor);
+        let key_ref = self.temp(key_ref_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(key_ref),
+            rvalue: Rvalue::Ref {
+                place: slot.clone().field(1).field(0),
+                mutable: false,
+            },
+        });
+        let value_ref = self.temp(value_ref_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(value_ref),
+            rvalue: Rvalue::Ref {
+                place: slot.field(2).field(0),
+                mutable: false,
+            },
+        });
+        let pair = self.temp(item_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(pair),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Tuple,
+                operands: vec![
+                    Operand::Copy(Place::local(key_ref)),
+                    Operand::Copy(Place::local(value_ref)),
+                ],
+            },
+        });
+        self.assign_option(
+            dest.clone(),
+            result_ty,
+            Some(Operand::Move(Place::local(pair))),
+        );
+        self.terminate(Terminator::Goto(join));
+
+        self.current = none_bb;
+        self.assign_option(dest, result_ty, None);
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
     /// `[SPN-2]` — `s.get(i)`.
     ///
     /// `Some(ref s[i])` where `i < s.len()`, `None` otherwise. Unlike `s[i]`

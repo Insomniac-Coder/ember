@@ -15,29 +15,7 @@ use ember_mir::{
 };
 use ember_span::Span;
 
-/// Where a local stands on one path.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum State {
-    Uninit,
-    Init,
-    /// Initialised on some paths reaching this point and not on others.
-    Maybe,
-}
-
-impl State {
-    /// The lattice join at a control-flow merge.
-    fn join(self, other: State) -> State {
-        match (self, other) {
-            (State::Init, State::Init) => State::Init,
-            (State::Uninit, State::Uninit) => State::Uninit,
-            _ => State::Maybe,
-        }
-    }
-
-    fn is_readable(self) -> bool {
-        self == State::Init
-    }
-}
+use crate::facts::InitializationState as State;
 
 /// Check one body and report every read of a local that may not be
 /// initialised. Returns the number of errors reported.

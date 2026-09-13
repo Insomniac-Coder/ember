@@ -76,6 +76,24 @@ pub fn check(
         checker.declare_names(&loaded.module);
     }
     checker.bind_imports(modules);
+    // Type collection is whole-program and explicitly phased. Imported type
+    // names are already bound above, but an imported nominal/generic type did
+    // not formerly exist in `named_types`/`generic_structs` until that
+    // module's per-module `collect` walk happened. Because the root is loaded
+    // first, a root signature could therefore be checked before its imported
+    // type existed. This is the same load-order defect the interface collector
+    // below was split to avoid.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_type_headers(&loaded.module);
+    }
+    // Recipes may refer to earlier recipes in their declaring module. Walking
+    // dependencies before importers also makes the normal module case
+    // deterministic while all nominal headers are already globally visible.
+    for (index, loaded) in modules.iter().enumerate().rev() {
+        checker.current_module = index;
+        checker.collect_generic_structs(&loaded.module);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -88,6 +106,10 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    // Conformance is a whole-program question. Checking it inside the loop
+    // reports the same missing or mismatched member once per loaded module
+    // and can run before a later module's extension has been collected.
+    checker.check_implementations();
     let mut functions = Vec::new();
     let mut main = None;
     for (index, loaded) in modules.iter().enumerate() {
@@ -170,11 +192,17 @@ struct GenericStruct {
 #[derive(Clone)]
 struct GenericMethod {
     name: Symbol,
-    receiver: Mode,
+    /// `None` for an associated function on the generic type.
+    receiver: Option<Mode>,
     /// The parameters after `self`. `self` itself is not here: its type is
     /// the instantiation, which does not exist until one is built.
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
+    /// Type parameters declared by the method itself. Their `TyKind::Param`
+    /// indices follow the owning generic type's parameters while this recipe
+    /// is stored, then are rebased to zero when the owner is instantiated.
+    generics: Vec<GenericParam>,
+    borrows: Option<Vec<usize>>,
     /// Module, item and member index of the declaration.
     source: (usize, usize, usize),
     span: Span,
@@ -189,6 +217,18 @@ struct PendingMethod {
     /// what binds `T` while the body is checked.
     origin: (Symbol, Vec<Ty>),
     source: (usize, usize, usize),
+}
+
+/// The declaration behind a source-defined method. Generic method instances
+/// need this independently of ordinary function sources: the receiver type is
+/// part of both body checking and deterministic symbol identity.
+#[derive(Clone)]
+struct MethodSource {
+    owner: Ty,
+    source: (usize, usize, usize),
+    /// Bindings contributed by an instantiated generic owner, such as
+    /// `Box[T]` with `T = i32`. Empty for a concrete owner.
+    owner_bindings: Vec<(Symbol, Ty)>,
 }
 
 /// One instantiation of a generic function: which one, and with what.
@@ -208,17 +248,26 @@ struct MethodEntry {
     receiver: Mode,
 }
 
+/// A receiver-less function declared by a type or required by an interface.
+/// Kept separate from `MethodEntry` so value-method lookup can never
+/// accidentally treat a type-level operation as taking `self`.
+struct AssociatedEntry {
+    def: DefId,
+    from_interface: Option<Symbol>,
+}
+
 /// A declared interface: the methods a type must provide, and which of them
 /// carry a default body.
 struct InterfaceDef {
-    /// Method name, the `DefId` its declared signature was given, the
-    /// receiver's mode, and whether the interface supplies a body.
+    /// Member name, the `DefId` its declared signature was given, its
+    /// receiver mode (`None` for an associated function), and whether the
+    /// interface supplies a body.
     ///
     /// The `DefId` exists so that `[TYP-17]`'s "only what the bounds provide"
     /// can be checked: inside `fn f[T: Shape]`, `x.area()` resolves to the
     /// interface's declaration and takes its type. Nothing calls it — a
     /// generic body is never emitted, only its instantiations are.
-    methods: Vec<(Symbol, DefId, Mode, bool)>,
+    methods: Vec<(Symbol, DefId, Option<Mode>, bool)>,
     supertraits: Vec<Symbol>,
 }
 
@@ -239,6 +288,8 @@ struct Checker<'a> {
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
+    /// Receiver-less functions reachable as `Type.name(...)`.
+    associated: HashMap<(Ty, Symbol), AssociatedEntry>,
     /// Interfaces by name, with what each requires.
     interfaces: HashMap<Symbol, InterfaceDef>,
     /// Which interfaces each type implements, for `[TYP-20]` coherence and to
@@ -311,6 +362,10 @@ struct Checker<'a> {
     /// location (named in the panic in debug and release). Like `cells`, this
     /// is what tells method dispatch that `borrow` on it is a builtin.
     refcells: HashMap<StructId, Ty>,
+    /// `[ARN-8]` — every compiler-known `MaybeUninit[T]` wrapper and its
+    /// payload type. The wrapper has `T`'s layout but suppresses structural
+    /// destruction, which cannot be inferred from its field alone.
+    maybe_uninit: HashMap<StructId, Ty>,
     /// `[CELL-7]` — every `Ref[T]`/`RefMut[T]` guard built so far, and the
     /// `T` plus mutability it views. A transparent one-field struct holding a
     /// `ref`/`ref mut`, so `[TYP-15]` applies via `is_view` and the region
@@ -335,6 +390,14 @@ struct Checker<'a> {
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
     pending_methods: Vec<PendingMethod>,
+    /// Source declarations for generic methods, keyed by their uninstantiated
+    /// method `DefId`.
+    generic_method_sources: HashMap<DefId, MethodSource>,
+    /// Concrete generic-method instances waiting for body checking/emission.
+    pending_generic_methods: Vec<(Instance, DefId)>,
+    /// Generic methods on a newly instantiated generic owner must still be
+    /// checked once with their own parameters opaque, even if never called.
+    pending_generic_method_validations: Vec<DefId>,
 
     // Per-function state.
     locals: Vec<LocalDecl>,
@@ -374,6 +437,7 @@ impl<'a> Checker<'a> {
             fn_ids: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
+            associated: HashMap::new(),
             interfaces: HashMap::new(),
             implemented: Vec::new(),
             constants: HashMap::new(),
@@ -394,12 +458,16 @@ impl<'a> Checker<'a> {
             generic_structs: HashMap::new(),
             cells: HashMap::new(),
             refcells: HashMap::new(),
+            maybe_uninit: HashMap::new(),
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
             fixed_arenas: HashSet::new(),
             scoped_arenas: HashSet::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
+            generic_method_sources: HashMap::new(),
+            pending_generic_methods: Vec::new(),
+            pending_generic_method_validations: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             borrowed_params: HashSet::new(),
@@ -875,6 +943,17 @@ impl<'a> Checker<'a> {
     /// rather than against whatever they are eventually instantiated with.
     fn declare_generics(&mut self, params: &[ast::GenericParam]) -> Vec<GenericParam> {
         self.type_params.clear();
+        self.declare_generics_from(params, 0)
+    }
+
+    /// Declare parameters without discarding an enclosing generic type's
+    /// bindings. Method parameters use indices after the owner's parameters
+    /// until owner instantiation substitutes and rebases them.
+    fn declare_generics_from(
+        &mut self,
+        params: &[ast::GenericParam],
+        index_base: usize,
+    ) -> Vec<GenericParam> {
         let mut declared = Vec::new();
         for (index, param) in params.iter().enumerate() {
             // A const generic is a value, not a type; `[TYP-16]`'s type
@@ -889,7 +968,10 @@ impl<'a> Checker<'a> {
             }
             let ty = self
                 .types
-                .intern(TyKind::Param { index: index as u32, name: param.name.name });
+                .intern(TyKind::Param {
+                    index: (index_base + index) as u32,
+                    name: param.name.name,
+                });
             self.type_params.insert(param.name.name, ty);
             // The bound is recorded under the name the interface is
             // registered by, so `T: Ord` finds `std.core.Ord` when `Ord` was
@@ -932,6 +1014,7 @@ impl<'a> Checker<'a> {
         ty: &ast::TypeExpr,
         mode: ast::Mode,
         generics: &mut Vec<GenericParam>,
+        index_base: usize,
     ) -> Ty {
         let resolved = self.resolve_type(ty);
         let TyKind::Fn { params, ret } = self.types.kind(resolved) else { return resolved };
@@ -966,7 +1049,7 @@ impl<'a> Checker<'a> {
                 )),
             );
         }
-        let index = generics.len() as u32;
+        let index = (index_base + generics.len()) as u32;
         let name = Symbol::intern(&format!("Callable{index}"));
         let param_ty = self.types.intern(TyKind::Param { index, name });
         generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound) });
@@ -1147,70 +1230,13 @@ impl<'a> Checker<'a> {
 
     // -- collection ---------------------------------------------------------
 
-    /// Two passes over the items: names first, so that a struct may refer to a
-    /// struct declared later in the file, then fields and signatures
-    /// (Part XVIII §4.4 step 1).
-    fn collect(&mut self, module: &ast::Module) {
-        for (item_index, item) in module.items.iter().enumerate() {
+    /// Register every non-generic nominal type before any module resolves a
+    /// field or signature. `[MOD-4]` permits import cycles, so module load
+    /// order cannot be a semantic dependency.
+    fn collect_type_headers(&mut self, module: &ast::Module) {
+        for item in &module.items {
             match &item.kind {
-                // `[TYP-16]` — a struct with type parameters is not a type; it
-                // is a recipe. Each `Pair[i32, f32]` builds one.
-                ast::ItemKind::Struct(decl) if !decl.generics.is_empty() => {
-                    let name = self.qualified(decl.name.name);
-                    let params: Vec<Symbol> =
-                        decl.generics.iter().map(|g| g.name.name).collect();
-                    self.declare_generics(&decl.generics);
-                    let fields = decl
-                        .members
-                        .iter()
-                        .filter_map(|member| match &member.kind {
-                            ast::MemberKind::Field(field) => Some(FieldDef {
-                                name: field.name.name,
-                                ty: self.resolve_type(&field.ty),
-                                span: member.span,
-                                has_default: field.default.is_some(),
-                                read_only_outside: member.read_only_outside,
-                                vis: field_vis(member.vis.kind),
-                            }),
-                            _ => None,
-                        })
-                        .collect();
-                    // `[TYP-16]` — the methods, resolved once here. `self` is
-                    // left out of the signature because its type is the
-                    // instantiation, and no instantiation exists yet.
-                    let mut methods = Vec::new();
-                    for (member_index, member) in decl.members.iter().enumerate() {
-                        let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
-                        if fn_decl.body.is_none() {
-                            continue;
-                        }
-                        let Some((receiver, signature)) =
-                            self.method_signature(fn_decl, None, &member.attrs, member.span)
-                        else {
-                            continue;
-                        };
-                        methods.push(GenericMethod {
-                            name: fn_decl.name.name,
-                            receiver,
-                            params: signature.params,
-                            ret: signature.ret,
-                            source: (self.current_module, item_index, member_index),
-                            span: member.span,
-                        });
-                    }
-                    self.type_params.clear();
-                    self.generic_structs.insert(
-                        name,
-                        GenericStruct {
-                            declaring_module: self.current_module,
-                            params,
-                            fields,
-                            derives_copy: has_derive(&item.attrs, "Copy"),
-                            methods,
-                        },
-                    );
-                }
-                ast::ItemKind::Struct(decl) => {
+                ast::ItemKind::Struct(decl) if decl.generics.is_empty() => {
                     // Every declared name is stored qualified, so two modules
                     // may both declare a `Point`.
                     let name = self.qualified(decl.name.name);
@@ -1228,6 +1254,7 @@ impl<'a> Checker<'a> {
                         span: item.span,
                         derives_copy: has_derive(&item.attrs, "Copy"),
                         has_drop: false,
+                        drops_fields: true,
                         origin: None,
                         declaring_module: self.current_module,
                     });
@@ -1262,6 +1289,82 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// `[TYP-16]` — collect generic struct recipes after nominal headers are
+    /// globally visible and before any ordinary function signature is read.
+    fn collect_generic_structs(&mut self, module: &ast::Module) {
+        for (item_index, item) in module.items.iter().enumerate() {
+            let ast::ItemKind::Struct(decl) = &item.kind else { continue };
+            if decl.generics.is_empty() {
+                continue;
+            }
+            let name = self.qualified(decl.name.name);
+            let params: Vec<Symbol> = decl.generics.iter().map(|g| g.name.name).collect();
+            self.declare_generics(&decl.generics);
+            let fields = decl
+                .members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::Field(field) => Some(FieldDef {
+                        name: field.name.name,
+                        ty: self.resolve_type(&field.ty),
+                        span: member.span,
+                        has_default: field.default.is_some(),
+                        read_only_outside: member.read_only_outside,
+                        vis: field_vis(member.vis.kind),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let mut methods = Vec::new();
+            for (member_index, member) in decl.members.iter().enumerate() {
+                let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                if fn_decl.body.is_none() {
+                    continue;
+                }
+                let Some((receiver, signature)) = self.method_signature(
+                    fn_decl,
+                    None,
+                    &member.attrs,
+                    member.span,
+                    params.len(),
+                ) else {
+                    continue;
+                };
+                methods.push(GenericMethod {
+                    name: fn_decl.name.name,
+                    receiver,
+                    params: signature.params,
+                    ret: signature.ret,
+                    generics: signature.generics,
+                    borrows: signature.borrows.map(|positions| {
+                        positions
+                            .into_iter()
+                            .map(|position| position + usize::from(receiver.is_some()))
+                            .collect()
+                    }),
+                    source: (self.current_module, item_index, member_index),
+                    span: member.span,
+                });
+            }
+            self.type_params.clear();
+            self.generic_structs.insert(
+                name,
+                GenericStruct {
+                    declaring_module: self.current_module,
+                    params,
+                    fields,
+                    derives_copy: has_derive(&item.attrs, "Copy"),
+                    methods,
+                },
+            );
+        }
+    }
+
+    /// Resolve aliases, fields, variants, constants, statics, and function
+    /// signatures after every type header and generic recipe exists.
+    fn collect(&mut self, module: &ast::Module) {
 
         // Aliases are resolved between the two loops: they may name a struct or
         // enum (registered above) and may be named by a field (resolved below).
@@ -1461,7 +1564,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .filter_map(|p| match &p.kind {
                             ast::ParamKind::Named { name, ty } => {
-                                let ty = self.callable_param_ty(ty, p.mode, &mut generics);
+                                let ty = self.callable_param_ty(ty, p.mode, &mut generics, 0);
                                 Some((name.name, ty, mode_of(p.mode), p.span))
                             }
                             // A receiver outside a type body is meaningless;
@@ -1645,16 +1748,16 @@ impl<'a> Checker<'a> {
     /// A third collection pass: every method on a type, with every interface
     /// already collected so that `implements` can name one.
     fn collect_methods(&mut self, module: &ast::Module) {
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    self.collect_members(ty, &decl.members, None, item.span);
+                    self.collect_members(ty, &decl.members, None, item.span, item_index);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
-                    self.collect_members(ty, &decl.members, None, item.span);
+                    self.collect_members(ty, &decl.members, None, item.span, item_index);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
@@ -1666,7 +1769,13 @@ impl<'a> Checker<'a> {
                     // inherent methods. With `implements`, the methods belong
                     // to that interface.
                     let interface = decl.implements.first().and_then(interface_name);
-                    self.collect_members(ty, &decl.members, interface, item.span);
+                    self.collect_members(
+                        ty,
+                        &decl.members,
+                        interface,
+                        item.span,
+                        item_index,
+                    );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 _ => {}
@@ -1676,9 +1785,6 @@ impl<'a> Checker<'a> {
         // write. These have to exist before any body is checked, or a call to
         // one would not resolve.
         self.register_defaults(module);
-        // Only now is every method known: a type may declare `implements` in
-        // its header and define the methods in a later `extend` block.
-        self.check_implementations();
     }
 
     /// Every implementation has every method the interface requires, and every
@@ -1686,19 +1792,39 @@ impl<'a> Checker<'a> {
     fn check_implementations(&mut self) {
         for (ty, interface, span) in self.implemented.clone() {
             let Some(def) = self.interfaces.get(&interface) else { continue };
-            let required: Vec<Symbol> = def.methods.iter().map(|(n, _, _, _)| *n).collect();
+            let required = def.methods.clone();
             let supertraits = def.supertraits.clone();
 
-            for method in required {
-                if self.methods.contains_key(&(ty, method)) {
-                    continue;
-                }
+            for (method, declaration, receiver, _) in required {
+                let implementation = if receiver.is_some() {
+                    self.methods.get(&(ty, method)).map(|entry| (entry.def, Some(entry.receiver)))
+                } else {
+                    self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
+                };
                 let shown = self.types.display(ty);
-                self.error(
-                    codes::E2040,
-                    span,
-                    format!("`{shown}` implements `{interface}` but does not define `{method}`"),
-                );
+                let Some((implementation, actual_receiver)) = implementation else {
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}` implements `{interface}` but does not define `{method}`"),
+                    );
+                    continue;
+                };
+                if !self.implementation_signature_matches(
+                    ty,
+                    declaration,
+                    receiver,
+                    implementation,
+                    actual_receiver,
+                ) {
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!(
+                            "`{shown}.{method}` does not match the signature required by `{interface}`"
+                        ),
+                    );
+                }
             }
             for parent in supertraits {
                 if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == parent) {
@@ -1716,35 +1842,179 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Interface conformance includes the complete callable contract, not
+    /// merely the member name. In particular, Arena may call
+    /// `Default.default()` without source-level arguments, so accepting a
+    /// same-named function with parameters or the wrong result type would
+    /// turn a type-checking omission into invalid MIR.
+    fn implementation_signature_matches(
+        &mut self,
+        owner: Ty,
+        declaration: DefId,
+        required_receiver: Option<Mode>,
+        implementation: DefId,
+        actual_receiver: Option<Mode>,
+    ) -> bool {
+        if required_receiver != actual_receiver {
+            return false;
+        }
+
+        let expected_generics = self.signatures[declaration.0 as usize].generics.clone();
+        let actual_generics = self.signatures[implementation.0 as usize].generics.clone();
+        if expected_generics.len() != actual_generics.len() {
+            return false;
+        }
+        // Generic parameter names are not part of a callable signature. Map
+        // both sides to one canonical parameter vector before comparing the
+        // declared types, so `fn map[T]` and `fn map[U]` are alpha-equivalent.
+        let canonical = expected_generics
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                self.types.intern(TyKind::Param {
+                    index: index as u32,
+                    name: param.name,
+                })
+            })
+            .collect::<Vec<_>>();
+        for (expected, actual) in expected_generics.iter().zip(&actual_generics) {
+            let expected_bounds: HashSet<_> = expected.bounds.iter().copied().collect();
+            let actual_bounds: HashSet<_> = actual.bounds.iter().copied().collect();
+            if expected_bounds != actual_bounds
+                || expected.callable.is_some() != actual.callable.is_some()
+            {
+                return false;
+            }
+            if let (Some(expected), Some(actual)) = (&expected.callable, &actual.callable) {
+                if expected.once != actual.once || expected.params.len() != actual.params.len() {
+                    return false;
+                }
+                for (&expected, &actual) in expected.params.iter().zip(&actual.params) {
+                    let expected = self.types.substitute_self(expected, owner);
+                    let expected = self.resolve_assoc(expected, owner);
+                    let expected = self.substitute_ty(expected, &canonical);
+                    let actual = self.substitute_ty(actual, &canonical);
+                    if expected != actual {
+                        return false;
+                    }
+                }
+                let expected_ret = self.types.substitute_self(expected.ret, owner);
+                let expected_ret = self.resolve_assoc(expected_ret, owner);
+                let expected_ret = self.substitute_ty(expected_ret, &canonical);
+                let actual_ret = self.substitute_ty(actual.ret, &canonical);
+                if expected_ret != actual_ret {
+                    return false;
+                }
+            }
+        }
+
+        let expected_params = self.signatures[declaration.0 as usize]
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect::<Vec<_>>();
+        let expected_ret = self.signatures[declaration.0 as usize].ret;
+        let actual_params = self.signatures[implementation.0 as usize]
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect::<Vec<_>>();
+        let actual_ret = self.signatures[implementation.0 as usize].ret;
+
+        let actual_written = if required_receiver.is_some() {
+            let Some((self_ty, self_mode)) = actual_params.first() else { return false };
+            if *self_ty != owner || Some(*self_mode) != required_receiver {
+                return false;
+            }
+            &actual_params[1..]
+        } else {
+            actual_params.as_slice()
+        };
+        if expected_params.len() != actual_written.len() {
+            return false;
+        }
+
+        for ((expected, expected_mode), (actual, actual_mode)) in
+            expected_params.into_iter().zip(actual_written.iter().copied())
+        {
+            let expected = self.types.substitute_self(expected, owner);
+            let expected = self.resolve_assoc(expected, owner);
+            let expected = self.substitute_ty(expected, &canonical);
+            let actual = self.substitute_ty(actual, &canonical);
+            if expected != actual || expected_mode != actual_mode {
+                return false;
+            }
+        }
+        let expected_ret = self.types.substitute_self(expected_ret, owner);
+        let expected_ret = self.resolve_assoc(expected_ret, owner);
+        let expected_ret = self.substitute_ty(expected_ret, &canonical);
+        let actual_ret = self.substitute_ty(actual_ret, &canonical);
+        expected_ret == actual_ret
+    }
+
     /// Register one method per (implementing type, defaulted interface method)
     /// that the type did not define itself.
     fn register_defaults(&mut self, module: &ast::Module) {
         let implementations = self.implemented.clone();
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             let ast::ItemKind::Interface(decl) = &item.kind else { continue };
-            let interface = decl.name.name;
+            let interface = self.qualified(decl.name.name);
             for (ty, _, _) in implementations.iter().filter(|(_, i, _)| *i == interface) {
-                for member in &decl.members {
+                for (member_index, member) in decl.members.iter().enumerate() {
                     let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                     if fn_decl.body.is_none() {
                         continue;
                     }
-                    if self.methods.contains_key(&(*ty, fn_decl.name.name)) {
+                    let member_has_receiver = fn_decl
+                        .params
+                        .iter()
+                        .any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                    let already_exists = if member_has_receiver {
+                        self.methods.contains_key(&(*ty, fn_decl.name.name))
+                    } else {
+                        self.associated.contains_key(&(*ty, fn_decl.name.name))
+                    };
+                    if already_exists {
                         continue;
                     }
-                    let Some((receiver, signature)) =
-                        self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span)
-                    else {
+                    let outer_self = self.self_ty.replace(*ty);
+                    let signature =
+                        self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
+                    self.self_ty = outer_self;
+                    let Some((receiver, signature)) = signature else {
                         continue;
                     };
-                    self.register_method(
-                        *ty,
-                        fn_decl.name.name,
-                        signature,
-                        receiver,
-                        Some(interface),
-                        member.span,
-                    );
+                    let generic = !signature.generics.is_empty();
+                    let registered = if let Some(receiver) = receiver {
+                        self.register_method(
+                            *ty,
+                            fn_decl.name.name,
+                            signature,
+                            receiver,
+                            Some(interface),
+                            member.span,
+                        )
+                    } else {
+                        self.register_associated(
+                            *ty,
+                            fn_decl.name.name,
+                            signature,
+                            Some(interface),
+                            member.span,
+                        )
+                    };
+                    if generic {
+                        if let Some(def) = registered {
+                            self.generic_method_sources.insert(
+                                def,
+                                MethodSource {
+                                    owner: *ty,
+                                    source: (self.current_module, item_index, member_index),
+                                    owner_bindings: Vec::new(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1788,7 +2058,7 @@ impl<'a> Checker<'a> {
         for member in &decl.members {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
             let Some((receiver, signature)) =
-                self.method_signature(f, None, &member.attrs, member.span)
+                self.method_signature(f, None, &member.attrs, member.span, 0)
             else {
                 continue;
             };
@@ -1816,15 +2086,22 @@ impl<'a> Checker<'a> {
         self.interfaces.insert(name, InterfaceDef { methods, supertraits });
     }
 
-    /// Turn a method declaration into a signature. `self_ty` is `None` inside
-    /// an interface, where the receiver's type is not yet known.
+    /// Turn a type/interface member into a signature. `self_ty` is `None`
+    /// inside an interface, where `Self` remains the interface placeholder.
+    /// A missing receiver denotes an associated function, not a malformed
+    /// method; `Default.default()` is the first standard interface member
+    /// whose semantics depend on this distinction.
     fn method_signature(
         &mut self,
         decl: &ast::FnDecl,
         self_ty: Option<Ty>,
         attrs: &[ast::Attribute],
-        span: Span,
-    ) -> Option<(Mode, Signature)> {
+        _span: Span,
+        generic_index_base: usize,
+    ) -> Option<(Option<Mode>, Signature)> {
+        let saved_type_params = self.type_params.clone();
+        let mut generics =
+            self.declare_generics_from(&decl.generics, generic_index_base);
         let mut receiver = None;
         let mut params = Vec::new();
         for param in &decl.params {
@@ -1844,23 +2121,22 @@ impl<'a> Checker<'a> {
                     }
                 }
                 ast::ParamKind::Named { name, ty } => {
-                    params.push((name.name, self.resolve_type(ty), mode_of(param.mode), param.span))
+                    let ty = self.callable_param_ty(
+                        ty,
+                        param.mode,
+                        &mut generics,
+                        generic_index_base,
+                    );
+                    params.push((name.name, ty, mode_of(param.mode), param.span))
                 }
             }
         }
-        let Some(receiver) = receiver else {
-            self.error(
-                codes::E1010,
-                span,
-                "a method needs a `self` receiver in this phase of the compiler",
-            );
-            return None;
-        };
         let ret = decl.ret.as_ref().map(|t| self.resolve_type(t)).unwrap_or(self.common.void);
         // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
         // is resolved against the same parameter list the body will see.
         let borrows = self.check_borrows_attribute(attrs, &params, ret);
-        Some((receiver, Signature { params, ret, generics: Vec::new(), borrows }))
+        self.type_params = saved_type_params;
+        Some((receiver, Signature { params, ret, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -1870,10 +2146,11 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         from_interface: Option<Symbol>,
         span: Span,
+        item_index: usize,
     ) {
         // `Self` inside a type body or an `extend` block is that type.
         let outer_self = self.self_ty.replace(ty);
-        self.collect_members_inner(ty, members, from_interface, span);
+        self.collect_members_inner(ty, members, from_interface, span, item_index);
         self.self_ty = outer_self;
     }
 
@@ -1883,6 +2160,7 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         from_interface: Option<Symbol>,
         span: Span,
+        item_index: usize,
     ) {
         // `[IFC-4]` — `type Item = i32` in an implementation says what the
         // interface's associated type is for this type.
@@ -1892,17 +2170,47 @@ impl<'a> Checker<'a> {
             let value = self.resolve_type(value);
             self.assoc_values.insert((ty, alias.name.name), value);
         }
-        for member in members {
+        for (member_index, member) in members.iter().enumerate() {
             let ast::MemberKind::Fn(decl) = &member.kind else { continue };
             if decl.body.is_none() {
                 continue;
             }
             let Some((receiver, signature)) =
-                self.method_signature(decl, Some(ty), &member.attrs, member.span)
+                self.method_signature(decl, Some(ty), &member.attrs, member.span, 0)
             else {
                 continue;
             };
-            self.register_method(ty, decl.name.name, signature, receiver, from_interface, member.span);
+            let generic = !signature.generics.is_empty();
+            let registered = if let Some(receiver) = receiver {
+                self.register_method(
+                    ty,
+                    decl.name.name,
+                    signature,
+                    receiver,
+                    from_interface,
+                    member.span,
+                )
+            } else {
+                self.register_associated(
+                    ty,
+                    decl.name.name,
+                    signature,
+                    from_interface,
+                    member.span,
+                )
+            };
+            if generic {
+                if let Some(def) = registered {
+                    self.generic_method_sources.insert(
+                        def,
+                        MethodSource {
+                            owner: ty,
+                            source: (self.current_module, item_index, member_index),
+                            owner_bindings: Vec::new(),
+                        },
+                    );
+                }
+            }
         }
         let _ = span;
     }
@@ -1943,6 +2251,35 @@ impl<'a> Checker<'a> {
         self.signatures.push(signature);
         let _ = span;
         self.methods.insert((ty, name), MethodEntry { def, from_interface, receiver });
+        Some(def)
+    }
+
+    fn register_associated(
+        &mut self,
+        ty: Ty,
+        name: Symbol,
+        signature: Signature,
+        from_interface: Option<Symbol>,
+        span: Span,
+    ) -> Option<DefId> {
+        if let Some(existing) = self.associated.get(&(ty, name)) {
+            let shown = self.types.display(ty);
+            match (&existing.from_interface, &from_interface) {
+                (None, None) => {
+                    self.error(
+                        codes::E1030,
+                        span,
+                        format!("`{shown}` already has an associated function named `{name}`"),
+                    );
+                    return None;
+                }
+                (Some(_), Some(_)) | (Some(_), None) => {}
+                (None, Some(_)) => return None,
+            }
+        }
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(signature);
+        self.associated.insert((ty, name), AssociatedEntry { def, from_interface });
         Some(def)
     }
 
@@ -2057,154 +2394,20 @@ impl<'a> Checker<'a> {
                 if segments.len() == 1 && !args.is_empty() =>
             {
                 let name = segments[0].name;
-                // `Span[T]` / `MutSpan[T]` — Part IV §1's View category, so
-                // a compiler-known type like `str` rather than a library
-                // struct: a struct over a raw pointer carries no region, and
-                // the region is what `[TYP-15]` and `[UNS-4]` rest on.
-                if name.is("Span") || name.is("MutSpan") {
-                    let mutable = name.is("MutSpan");
-                    if args.len() != 1 {
-                        self.error(
-                            codes::E2020,
-                            ty.span,
-                            format!("`{name}` takes one type argument"),
-                        );
-                        return self.common.error;
-                    }
-                    let ast::GenericArg::Type(t) = &args[0] else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
-                        return self.common.error;
-                    };
-                    let elem = self.resolve_type(t);
-                    // `[TYP-15]` — a view of views has two regions and
-                    // `[LT-2]` gives a type one.
-                    self.reject_stored_view(elem, t.span, "a span element");
-                    return self.types.intern(TyKind::Span { elem, mutable });
-                }
-                // `Array[T]` — a compiler-known growable sequence (Part XX.1).
-                if name.is("Array") {
-                    if args.len() != 1 {
-                        self.error(codes::E2020, ty.span, "`Array` takes one type argument");
-                        return self.common.error;
-                    }
-                    let ast::GenericArg::Type(t) = &args[0] else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
-                        return self.common.error;
-                    };
-                    let elem = self.resolve_type(t);
-                    // `[TYP-15]` — "arbitrary owning containers instantiated
-                    // at a view type (`Array[str]`, `Array[MutSpan[T]]`)
-                    // remain rejected". `[TYP-15a]`'s `BorrowList`/`ViewList`
-                    // are the sanctioned exception and are not built.
-                    self.reject_stored_view(elem, t.span, "a container element");
-                    return self.types.intern(TyKind::Vec { elem });
-                }
-                // `[CELL-1]`, `[CELL-11]` — `Cell[T]`. In the prelude by the
-                // owner's `OQ-10`, which for a compiler-known type means the
-                // name resolves without an import, as `Array` and `Option` do.
-                if name.is("Cell") {
-                    if args.len() != 1 {
-                        self.error(codes::E2020, ty.span, "`Cell` takes one type argument");
-                        return self.common.error;
-                    }
-                    let ast::GenericArg::Type(t) = &args[0] else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
-                        return self.common.error;
-                    };
-                    let inner = self.resolve_type(t);
-                    // `[TYP-15]` — a cell is storage like any other, so a view
-                    // may not be put in one: `Cell[Span[T]]` would outlive the
-                    // region the span borrows exactly as a container element
-                    // would.
-                    self.reject_stored_view(inner, t.span, "a cell's contents");
-                    return self.cell_of(inner);
-                }
-                // `[CELL-5]`, `[CELL-11]` — `RefCell[T]`. In the prelude by
-                // `OQ-10` like `Cell` (the name resolves with no import).
-                // `[TYP-15]` applies to the contents as for `Cell`: a view
-                // may not be put in storage.
-                if name.is("RefCell") {
-                    if args.len() != 1 {
-                        self.error(codes::E2020, ty.span, "`RefCell` takes one type argument");
-                        return self.common.error;
-                    }
-                    let ast::GenericArg::Type(t) = &args[0] else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
-                        return self.common.error;
-                    };
-                    let inner = self.resolve_type(t);
-                    self.reject_stored_view(inner, t.span, "a cell's contents");
-                    return self.refcell_of(inner);
-                }
-                // `[CELL-7]` — `Ref[T]`/`RefMut[T]` guards. They live in
-                // `std.cell`; `std.cell` has no file yet, so like `Cell` they
-                // resolve without an import until the library can supply them
-                // (`[CELL-11]` names only `Cell`/`RefCell` for the prelude, and
-                // says nothing forbidding this route for the guards they hand
-                // out — without it no program could name a returned guard).
-                if name.is("Ref") || name.is("RefMut") {
-                    if args.len() != 1 {
-                        self.error(
-                            codes::E2020,
-                            ty.span,
-                            format!("`{name}` takes one type argument"),
-                        );
-                        return self.common.error;
-                    }
-                    let ast::GenericArg::Type(t) = &args[0] else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
-                        return self.common.error;
-                    };
-                    let inner = self.resolve_type(t);
-                    let mutable = name.is("RefMut");
-                    return self.ref_guard_of(inner, mutable);
-                }
-                // `[TYP-16]` — a user generic struct, instantiated on demand:
-                // `Pair[i32, f32]` is its own struct with its own layout.
-                if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
-                    let mut resolved = Vec::new();
-                    for arg in args {
-                        let ast::GenericArg::Type(t) = arg else {
-                            self.error(codes::E1010, ty.span, "expected a type argument");
-                            return self.common.error;
-                        };
-                        resolved.push(self.resolve_type(t));
-                    }
-                    return self.instantiate_struct(name, &decl, &resolved, ty.span);
-                }
-                let arity = if name.is("Option") {
-                    1
-                } else if name.is("Result") {
-                    2
-                } else {
-                    self.error(
-                        codes::E1010,
-                        ty.span,
-                        format!("`{name}` does not take type arguments in this phase"),
-                    );
-                    return self.common.error;
-                };
-                if args.len() != arity {
-                    self.error(
-                        codes::E2020,
-                        ty.span,
-                        format!("`{name}` takes {arity} type arguments, found {}", args.len()),
-                    );
-                    return self.common.error;
-                }
-                let mut resolved = Vec::new();
+                let mut resolved = Vec::with_capacity(args.len());
                 for arg in args {
                     let ast::GenericArg::Type(t) = arg else {
-                        self.error(codes::E1010, ty.span, "expected a type argument");
+                        let arg_span = match arg {
+                            ast::GenericArg::Const(expr) => expr.span,
+                            ast::GenericArg::Assoc { name, .. } => name.span,
+                            ast::GenericArg::Type(_) => unreachable!(),
+                        };
+                        self.error(codes::E1010, arg_span, "expected a type argument");
                         return self.common.error;
                     };
-                    resolved.push(self.resolve_type(t));
+                    resolved.push((self.resolve_type(t), t.span));
                 }
-                if name.is("Option") {
-                    self.option_of(resolved[0])
-                } else {
-                    self.result_of(resolved[0], resolved[1])
-                }
+                self.resolve_type_application(name, &resolved, ty.span)
             }
 
             ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 => {
@@ -2255,6 +2458,92 @@ impl<'a> Checker<'a> {
                 );
                 self.common.error
             }
+        }
+    }
+
+    /// Resolve a named type application after bracket ambiguity has been
+    /// settled. Both written type syntax (`Array[Cell[i32]]`) and the
+    /// expression-shaped syntax preserved by `[GRM-8]` use this single path.
+    fn resolve_type_application(&mut self, name: Symbol, args: &[(Ty, Span)], span: Span) -> Ty {
+        let require = |this: &mut Self, expected: usize| {
+            if args.len() == expected {
+                true
+            } else {
+                let suffix = if expected == 1 { "one type argument".to_owned() } else {
+                    format!("{expected} type arguments, found {}", args.len())
+                };
+                this.error(codes::E2020, span, format!("`{name}` takes {suffix}"));
+                false
+            }
+        };
+
+        // Compiler-known generic types share ordinary type-application
+        // semantics; only their representation and invariants are special.
+        if name.is("Span") || name.is("MutSpan") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (elem, arg_span) = args[0];
+            self.reject_stored_view(elem, arg_span, "a span element");
+            return self.types.intern(TyKind::Span { elem, mutable: name.is("MutSpan") });
+        }
+        if name.is("Array") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (elem, arg_span) = args[0];
+            self.reject_stored_view(elem, arg_span, "a container element");
+            return self.types.intern(TyKind::Vec { elem });
+        }
+        if name.is("Cell") || name.is("RefCell") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, arg_span) = args[0];
+            self.reject_stored_view(inner, arg_span, "a cell's contents");
+            return if name.is("Cell") { self.cell_of(inner) } else { self.refcell_of(inner) };
+        }
+        if name.is("MaybeUninit") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            return self.maybe_uninit_of(args[0].0);
+        }
+        if name.is("Ref") || name.is("RefMut") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            return self.ref_guard_of(args[0].0, name.is("RefMut"));
+        }
+        let resolved_name = self.resolve_name(name);
+        if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
+            let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+            return self.instantiate_struct(resolved_name, &decl, &resolved, span);
+        }
+        let arity = if name.is("Option") {
+            1
+        } else if name.is("Result") {
+            2
+        } else {
+            let message = if self.named_types.contains_key(&resolved_name) {
+                format!("`{name}` does not take type arguments in this phase")
+            } else {
+                format!("cannot find type `{name}` in this scope")
+            };
+            self.error(
+                codes::E1010,
+                span,
+                message,
+            );
+            return self.common.error;
+        };
+        if !require(self, arity) {
+            return self.common.error;
+        }
+        if name.is("Option") {
+            self.option_of(args[0].0)
+        } else {
+            self.result_of(args[0].0, args[1].0)
         }
     }
 
@@ -2637,22 +2926,108 @@ impl<'a> Checker<'a> {
     /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different struct with a
     /// different layout, not the same one with its fields rewritten.
     fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
-        if let TyKind::Struct(id) = *self.types.kind(ty) {
-            let origin = self.types.struct_def(id).origin.clone();
-            if let Some((name, generic_args)) = origin {
-                let concrete: Vec<Ty> = generic_args
+        match self.types.kind(ty).clone() {
+            TyKind::Param { index, .. } => args.get(index as usize).copied().unwrap_or(ty),
+            TyKind::Ref { mutable, inner } => {
+                let inner = self.substitute_ty(inner, args);
+                self.types.intern(TyKind::Ref { mutable, inner })
+            }
+            TyKind::Ptr { mutable, inner } => {
+                let inner = self.substitute_ty(inner, args);
+                self.types.intern(TyKind::Ptr { mutable, inner })
+            }
+            TyKind::Span { elem, mutable } => {
+                let elem = self.substitute_ty(elem, args);
+                self.types.intern(TyKind::Span { elem, mutable })
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.substitute_ty(elem, args);
+                self.types.intern(TyKind::Array { elem, len })
+            }
+            TyKind::Vec { elem } => {
+                let elem = self.substitute_ty(elem, args);
+                self.types.intern(TyKind::Vec { elem })
+            }
+            TyKind::Tuple(items) => {
+                let items = items
                     .iter()
-                    .map(|&a| self.substitute_ty(a, args))
+                    .map(|&item| self.substitute_ty(item, args))
                     .collect();
+                self.types.intern(TyKind::Tuple(items))
+            }
+            TyKind::Fn { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|&param| self.substitute_ty(param, args))
+                    .collect();
+                let ret = self.substitute_ty(ret, args);
+                self.types.intern(TyKind::Fn { params, ret })
+            }
+            TyKind::Struct(id) => {
+                if let Some(inner) = self.cells.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.cell_of(inner);
+                }
+                if let Some(inner) = self.refcells.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.refcell_of(inner);
+                }
+                if let Some(inner) = self.maybe_uninit.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.maybe_uninit_of(inner);
+                }
+                if let Some((inner, mutable)) = self.ref_guards.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.ref_guard_of(inner, mutable);
+                }
+                let origin = self.types.struct_def(id).origin.clone();
+                let Some((name, generic_args)) = origin else { return ty };
+                let concrete = generic_args
+                    .iter()
+                    .map(|&arg| self.substitute_ty(arg, args))
+                    .collect::<Vec<_>>();
                 if concrete == generic_args {
                     return ty;
                 }
                 let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
-                return self.instantiate_struct(name, &decl, &concrete, Span::DUMMY);
+                self.instantiate_struct(name, &decl, &concrete, Span::DUMMY)
             }
-            return ty;
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(id);
+                let name = def.name.as_str();
+                if name.starts_with("Option_") && def.variants.len() == 2 {
+                    let inner = def.variants[1].fields[0].ty;
+                    let inner = self.substitute_ty(inner, args);
+                    return self.option_of(inner);
+                }
+                if name.starts_with("Result_") && def.variants.len() == 2 {
+                    let ok = def.variants[0].fields[0].ty;
+                    let err = def.variants[1].fields[0].ty;
+                    let ok = self.substitute_ty(ok, args);
+                    let err = self.substitute_ty(err, args);
+                    return self.result_of(ok, err);
+                }
+                ty
+            }
+            _ => ty,
         }
-        self.types.substitute(ty, args)
+    }
+
+    fn substitute_generic_param(
+        &mut self,
+        param: &GenericParam,
+        args: &[Ty],
+    ) -> GenericParam {
+        let callable = param.callable.as_ref().map(|bound| CallableBound {
+            params: bound
+                .params
+                .iter()
+                .map(|&ty| self.substitute_ty(ty, args))
+                .collect(),
+            ret: self.substitute_ty(bound.ret, args),
+            once: bound.once,
+        });
+        GenericParam { name: param.name, bounds: param.bounds.clone(), callable }
     }
 
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
@@ -2666,6 +3041,18 @@ impl<'a> Checker<'a> {
         explicit: &[Ty],
         span: Span,
     ) -> Expr {
+        if explicit.len() > decl.params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{name}` takes {} type arguments, found {}",
+                    decl.params.len(),
+                    explicit.len()
+                ),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let mut solved: Vec<Option<Ty>> = vec![None; decl.params.len()];
         for (slot, ty) in explicit.iter().enumerate() {
             if slot < solved.len() {
@@ -2675,7 +3062,7 @@ impl<'a> Checker<'a> {
         // Unify each declared field type with the value given for it.
         for (arg, field) in args.iter().zip(decl.fields.iter()) {
             let value = self.synth_committed(&arg.value);
-            self.types.unify(field.ty, value.ty, &mut solved);
+            self.types.unify_with_fixed(field.ty, value.ty, &mut solved, explicit.len());
         }
 
         let mut substitution = Vec::new();
@@ -2737,6 +3124,7 @@ impl<'a> Checker<'a> {
             span,
             derives_copy: decl.derives_copy,
             has_drop: false,
+            drops_fields: true,
             origin: Some((name, args.to_vec())),
             declaring_module: decl.declaring_module,
         });
@@ -2765,21 +3153,50 @@ impl<'a> Checker<'a> {
         // instantiation is usually reached in the middle of checking some
         // other body, which is not a place to start checking a new one.
         for method in &decl.methods {
-            let mut params =
-                vec![(Symbol::intern("self"), ty, method.receiver, method.span)];
-            for &(field_name, param_ty, mode, param_span) in &method.params {
-                params.push((field_name, self.substitute_ty(param_ty, args), mode, param_span));
+            // Owner parameters occupy the first slots in the stored recipe;
+            // method parameters follow them. Substitute the owner and map the
+            // method parameters back to zero-based indices for ordinary call
+            // inference/monomorphisation.
+            let method_params: Vec<Ty> = method
+                .generics
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    self.types.intern(TyKind::Param {
+                        index: index as u32,
+                        name: param.name,
+                    })
+                })
+                .collect();
+            let mut combined = args.to_vec();
+            combined.extend(method_params);
+            let mut params = Vec::new();
+            if let Some(receiver) = method.receiver {
+                params.push((Symbol::intern("self"), ty, receiver, method.span));
             }
-            let ret = self.substitute_ty(method.ret, args);
-            let signature = Signature { params, ret, generics: Vec::new(), borrows: None };
-            let Some(def) = self.register_method(
-                ty,
-                method.name,
-                signature,
-                method.receiver,
-                None,
-                method.span,
-            ) else {
+            for &(field_name, param_ty, mode, param_span) in &method.params {
+                params.push((
+                    field_name,
+                    self.substitute_ty(param_ty, &combined),
+                    mode,
+                    param_span,
+                ));
+            }
+            let ret = self.substitute_ty(method.ret, &combined);
+            let generics = method
+                .generics
+                .iter()
+                .map(|param| self.substitute_generic_param(param, &combined))
+                .collect();
+            let signature =
+                Signature { params, ret, generics, borrows: method.borrows.clone() };
+            let generic = !signature.generics.is_empty();
+            let def = if let Some(receiver) = method.receiver {
+                self.register_method(ty, method.name, signature, receiver, None, method.span)
+            } else {
+                self.register_associated(ty, method.name, signature, None, method.span)
+            };
+            let Some(def) = def else {
                 continue;
             };
             // `[DRP-1]` — a generic that writes `fn drop` gives every one of
@@ -2787,12 +3204,29 @@ impl<'a> Checker<'a> {
             if method.name.is("drop") {
                 self.types.struct_def_mut(id).has_drop = true;
             }
-            self.pending_methods.push(PendingMethod {
-                def,
-                owner: ty,
-                origin: (name, args.to_vec()),
-                source: method.source,
-            });
+            if generic {
+                self.generic_method_sources.insert(
+                    def,
+                    MethodSource {
+                        owner: ty,
+                        source: method.source,
+                        owner_bindings: decl
+                            .params
+                            .iter()
+                            .copied()
+                            .zip(args.iter().copied())
+                            .collect(),
+                    },
+                );
+                self.pending_generic_method_validations.push(def);
+            } else {
+                self.pending_methods.push(PendingMethod {
+                    def,
+                    owner: ty,
+                    origin: (name, args.to_vec()),
+                    source: method.source,
+                });
+            }
         }
         ty
     }
@@ -2851,6 +3285,7 @@ impl<'a> Checker<'a> {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -2864,6 +3299,53 @@ impl<'a> Checker<'a> {
     fn cell_inner(&self, ty: Ty) -> Option<Ty> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.cells.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `[ARN-8]`, `[ARN-8a]` — storage with exactly `T`'s layout which never
+    /// structurally drops `T`.
+    ///
+    /// A one-field compiler-private struct preserves size, alignment and the
+    /// field-derived `Copy iff T: Copy` rule. `drops_fields: false` is the
+    /// essential semantic distinction: bytes in a `MaybeUninit[T]` slot do
+    /// not own an initialized `T` until the explicit transition, so ordinary
+    /// structural drop must never visit the payload. This is separate from
+    /// both ordinary assignment and `Cell.set`'s replacement order.
+    fn maybe_uninit_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!(
+            "MaybeUninit_{}",
+            type_stem(&self.types.display(inner))
+        ));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: inner,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.maybe_uninit.insert(id, inner);
+        ty
+    }
+
+    fn maybe_uninit_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.maybe_uninit.get(id).copied(),
             _ => None,
         }
     }
@@ -2938,6 +3420,7 @@ impl<'a> Checker<'a> {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -2986,6 +3469,7 @@ impl<'a> Checker<'a> {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: true,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -3041,6 +3525,7 @@ impl<'a> Checker<'a> {
             // The backend supplies the destructor. No source-visible drop
             // method exists, and the pointer field itself owns nothing.
             has_drop: true,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -3088,6 +3573,7 @@ impl<'a> Checker<'a> {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -3154,6 +3640,7 @@ impl<'a> Checker<'a> {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: true,
+            drops_fields: true,
             origin: None,
             declaring_module: usize::MAX,
         });
@@ -3406,7 +3893,11 @@ impl<'a> Checker<'a> {
         // ones are quiet, as generic function instantiations are.
         let mut reported: std::collections::HashSet<(Symbol, Symbol)> =
             std::collections::HashSet::new();
-        while !self.pending.is_empty() || !self.pending_methods.is_empty() {
+        while !self.pending.is_empty()
+            || !self.pending_methods.is_empty()
+            || !self.pending_generic_method_validations.is_empty()
+            || !self.pending_generic_methods.is_empty()
+        {
             while let Some((key, instance)) = self.pending.pop() {
                 let Some(&(module_index, item_index)) = sources.get(&key.def) else { continue };
                 let item = &modules[module_index].module.items[item_index];
@@ -3475,6 +3966,90 @@ impl<'a> Checker<'a> {
                 }
                 self.type_params.clear();
                 if let Some(function) = function {
+                    out.push(function);
+                }
+            }
+
+            while let Some(def) = self.pending_generic_method_validations.pop() {
+                let Some(source) = self.generic_method_sources.get(&def).cloned() else {
+                    continue;
+                };
+                let (module_index, item_index, member_index) = source.source;
+                let item = &modules[module_index].module.items[item_index];
+                let Some(member) = item_members(item).and_then(|members| members.get(member_index))
+                else {
+                    continue;
+                };
+                let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+                let Some(block) = &decl.body else { continue };
+
+                self.current_module = module_index;
+                self.type_params.clear();
+                for (name, ty) in &source.owner_bindings {
+                    self.type_params.insert(*name, *ty);
+                }
+                let generics = self.signatures[def.0 as usize].generics.clone();
+                self.current_generics = generics.clone();
+                for (index, param) in generics.iter().enumerate() {
+                    let ty = self.types.intern(TyKind::Param {
+                        index: index as u32,
+                        name: param.name,
+                    });
+                    self.type_params.insert(param.name, ty);
+                }
+                let _ = self.check_one_method(
+                    source.owner,
+                    decl,
+                    block,
+                    def,
+                    &item.attrs,
+                    member.span,
+                );
+                self.type_params.clear();
+                self.current_generics.clear();
+            }
+
+            while let Some((key, instance)) = self.pending_generic_methods.pop() {
+                let Some(source) = self.generic_method_sources.get(&key.def).cloned() else {
+                    continue;
+                };
+                let (module_index, item_index, member_index) = source.source;
+                let item = &modules[module_index].module.items[item_index];
+                let Some(member) = item_members(item).and_then(|members| members.get(member_index))
+                else {
+                    continue;
+                };
+                let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+                let Some(block) = &decl.body else { continue };
+
+                self.current_module = module_index;
+                self.type_params.clear();
+                for (name, ty) in &source.owner_bindings {
+                    self.type_params.insert(*name, *ty);
+                }
+                let generics = self.signatures[key.def.0 as usize].generics.clone();
+                self.current_generics = generics.clone();
+                for (param, &ty) in generics.iter().zip(key.args.iter()) {
+                    self.type_params.insert(param.name, ty);
+                }
+
+                let quiet_before = quiet.diagnostics().len();
+                let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
+                let function = self.check_one_method(
+                    source.owner,
+                    decl,
+                    block,
+                    instance,
+                    &item.attrs,
+                    member.span,
+                );
+                quiet = std::mem::replace(self.sink, saved);
+                let concrete = quiet.diagnostics()[quiet_before..].to_vec();
+                self.emit_concrete_instantiation_diagnostics(concrete);
+                self.type_params.clear();
+                self.current_generics.clear();
+                if let Some(mut function) = function {
+                    function.symbol = format!("{}__{}", function.symbol, instance.0);
                     out.push(function);
                 }
             }
@@ -3624,8 +4199,48 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             for member in members {
                 let ast::MemberKind::Fn(decl) = &member.kind else { continue };
                 let Some(block) = &decl.body else { continue };
-                let Some(entry) = self.methods.get(&(owner, decl.name.name)) else { continue };
-                let def = entry.def;
+                let has_receiver = decl
+                    .params
+                    .iter()
+                    .any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                let def = if has_receiver {
+                    let Some(entry) = self.methods.get(&(owner, decl.name.name)) else { continue };
+                    entry.def
+                } else {
+                    let Some(entry) = self.associated.get(&(owner, decl.name.name)) else {
+                        continue;
+                    };
+                    entry.def
+                };
+                if !self.signatures[def.0 as usize].generics.is_empty() {
+                    let source = self.generic_method_sources.get(&def).cloned();
+                    self.type_params.clear();
+                    if let Some(source) = &source {
+                        for (name, ty) in &source.owner_bindings {
+                            self.type_params.insert(*name, *ty);
+                        }
+                    }
+                    let generics = self.signatures[def.0 as usize].generics.clone();
+                    self.current_generics = generics.clone();
+                    for (index, param) in generics.iter().enumerate() {
+                        let ty = self.types.intern(TyKind::Param {
+                            index: index as u32,
+                            name: param.name,
+                        });
+                        self.type_params.insert(param.name, ty);
+                    }
+                    let _ = self.check_one_method(
+                        owner,
+                        decl,
+                        block,
+                        def,
+                        &item.attrs,
+                        member.span,
+                    );
+                    self.type_params.clear();
+                    self.current_generics.clear();
+                    continue;
+                }
                 if let Some(function) =
                     self.check_one_method(owner, decl, block, def, &item.attrs, member.span)
                 {
@@ -3644,19 +4259,58 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let implementations = self.implemented.clone();
         for item in &module.items {
             let ast::ItemKind::Interface(decl) = &item.kind else { continue };
-            let interface = decl.name.name;
+            let interface = self.qualified(decl.name.name);
             for (ty, _, _) in implementations.iter().filter(|(_, i, _)| *i == interface) {
                 for member in &decl.members {
                     let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                     let Some(block) = &fn_decl.body else { continue };
                     // Only the entries that came from this interface's default
                     // — a type that wrote its own method keeps that one.
-                    let Some(entry) = self.methods.get(&(*ty, fn_decl.name.name)) else { continue };
-                    if entry.from_interface != Some(interface) {
+                    let has_receiver = fn_decl
+                        .params
+                        .iter()
+                        .any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                    let def = if has_receiver {
+                        let Some(entry) = self.methods.get(&(*ty, fn_decl.name.name)) else {
+                            continue;
+                        };
+                        if entry.from_interface != Some(interface) {
+                            continue;
+                        }
+                        entry.def
+                    } else {
+                        let Some(entry) = self.associated.get(&(*ty, fn_decl.name.name)) else {
+                            continue;
+                        };
+                        if entry.from_interface != Some(interface) {
+                            continue;
+                        }
+                        entry.def
+                    };
+                    if out.iter().any(|f: &Function| f.def == def) {
                         continue;
                     }
-                    let def = entry.def;
-                    if out.iter().any(|f: &Function| f.def == def) {
+                    if !self.signatures[def.0 as usize].generics.is_empty() {
+                        self.type_params.clear();
+                        let generics = self.signatures[def.0 as usize].generics.clone();
+                        self.current_generics = generics.clone();
+                        for (index, param) in generics.iter().enumerate() {
+                            let ty = self.types.intern(TyKind::Param {
+                                index: index as u32,
+                                name: param.name,
+                            });
+                            self.type_params.insert(param.name, ty);
+                        }
+                        let _ = self.check_one_method(
+                            *ty,
+                            fn_decl,
+                            block,
+                            def,
+                            &item.attrs,
+                            member.span,
+                        );
+                        self.type_params.clear();
+                        self.current_generics.clear();
                         continue;
                     }
                     if let Some(function) =
@@ -3702,7 +4356,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             params.push(Param { local, mode });
         }
 
+        let outer_self = self.self_ty.replace(owner);
         let body = self.check_block(block);
+        self.self_ty = outer_self;
         let overflow = self.overflow_policy(attrs, span);
         let name = decl.name.name;
         Some(Function {
@@ -4779,20 +5435,67 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `__it.next()`, checked through ordinary method resolution so that a
         // type without one is reported the same way any missing method is.
         let receiver = Expr { ty: iterable.ty, kind: ExprKind::Local(it_local), span: iter.span };
-        let Some(entry) = self.methods.get(&(iterable.ty, Symbol::intern("next"))) else {
-            let shown = self.types.display(iterable.ty);
-            self.scopes.pop();
-            self.error(
-                codes::E2040,
-                iter.span,
-                format!("`{shown}` cannot be iterated: it has no `next` method"),
-            );
-            return None;
+        let (item_option, call) = if let Some((elem, mutable)) =
+            self.arena_array_iterator(iterable.ty)
+        {
+            let item = self.types.intern(TyKind::Ref { mutable, inner: elem });
+            let item_option = self.option_of(item);
+            let receiver = self.pass_receiver(receiver, Mode::Mut, iter.span);
+            (
+                item_option,
+                Expr {
+                    ty: item_option,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayIterNext { elem, mutable },
+                        args: vec![receiver],
+                    },
+                    span: iter.span,
+                },
+            )
+        } else if let Some((key, value)) = self.arena_map_iterator(iterable.ty) {
+            let key_ref = self.types.intern(TyKind::Ref { mutable: false, inner: key });
+            let value_ref = self.types.intern(TyKind::Ref { mutable: false, inner: value });
+            let item = self.types.intern(TyKind::Tuple(vec![key_ref, value_ref]));
+            let item_option = self.option_of(item);
+            let receiver = self.pass_receiver(receiver, Mode::Mut, iter.span);
+            (
+                item_option,
+                Expr {
+                    ty: item_option,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapIterNext { key, value },
+                        args: vec![receiver],
+                    },
+                    span: iter.span,
+                },
+            )
+        } else {
+            let Some(entry) = self.methods.get(&(iterable.ty, Symbol::intern("next"))) else {
+                let shown = self.types.display(iterable.ty);
+                self.scopes.pop();
+                self.error(
+                    codes::E2040,
+                    iter.span,
+                    format!("`{shown}` cannot be iterated: it has no `next` method"),
+                );
+                return None;
+            };
+            let def = entry.def;
+            let receiver_mode = entry.receiver;
+            let raw_ret = self.signatures[def.0 as usize].ret;
+            let item_option = self.resolve_assoc(raw_ret, iterable.ty);
+            (
+                item_option,
+                Expr {
+                    ty: item_option,
+                    kind: ExprKind::Call {
+                        callee: def,
+                        args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
+                    },
+                    span: iter.span,
+                },
+            )
         };
-        let def = entry.def;
-        let receiver_mode = entry.receiver;
-        let raw_ret = self.signatures[def.0 as usize].ret;
-        let item_option = self.resolve_assoc(raw_ret, iterable.ty);
 
         let TyKind::Enum(option_id) = *self.types.kind(item_option) else {
             let shown = self.types.display(item_option);
@@ -4805,15 +5508,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return None;
         };
         let item_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
-
-        let call = Expr {
-            ty: item_option,
-            kind: ExprKind::Call {
-                callee: def,
-                args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
-            },
-            span: iter.span,
-        };
 
         // `Some(x): <body>` — the loop variable is the payload.
         self.scopes.push(HashMap::new());
@@ -5713,7 +6407,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // this is a variant constructor (`[ENM-1]`).
             // `[MOD-3]` — `import a.b.ops` then `ops.add(x)`. The parser sees
             // a method call, because it cannot know `ops` is a module.
-            ast::ExprKind::MethodCall { recv, name, args, .. }
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if self.namespace_named(recv).is_some() =>
             {
                 let module = self.namespace_named(recv).expect("just checked");
@@ -5723,12 +6417,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 } else {
                     Symbol::intern(&format!("{prefix}.{}", name.name))
                 };
-                self.synth_qualified_call(qualified, name.span, args, span)
+                let explicit = self.resolve_method_type_args(generic_args);
+                self.synth_qualified_call(qualified, name.span, args, explicit, span)
             }
 
-            ast::ExprKind::MethodCall { recv, name, args, .. }
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if self.enum_named(recv).is_some() =>
             {
+                self.reject_method_type_args(name.name, generic_args, span);
                 let id = self.enum_named(recv).expect("just checked");
                 self.synth_variant(id, *name, args, span)
             }
@@ -5748,16 +6444,35 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // A type name on the left is an associated function, not a
             // receiver, so it is matched here beside the variant constructor
             // rather than in `[TYP-24]`'s method resolution.
-            ast::ExprKind::MethodCall { recv, name, args, .. }
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if self.range_named(recv).is_some() =>
             {
+                self.reject_method_type_args(name.name, generic_args, span);
                 let id = self.range_named(recv).expect("just checked");
                 self.synth_range_construction(id, *name, args, span)
             }
 
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
-            ast::ExprKind::MethodCall { recv, name, args, .. } => {
-                self.synth_method_call(recv, *name, args, span)
+            ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
+                if let Some(ty) = self.maybe_uninit_named(recv) {
+                    return self.synth_maybe_uninit_construction(
+                        ty,
+                        *name,
+                        generic_args,
+                        args,
+                        span,
+                    );
+                }
+                if let Some(owner) = self.associated_type_named(recv) {
+                    return self.synth_associated_call(
+                        owner,
+                        *name,
+                        generic_args,
+                        args,
+                        span,
+                    );
+                }
+                self.synth_method_call(recv, *name, generic_args, args, span)
             }
 
             ast::ExprKind::Call { callee, args } => self.synth_call(callee, args, expected, span),
@@ -6068,8 +6783,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         // `Pair(1, 2.5)` — a generic struct's constructor, with the type
         // arguments inferred from the values, or written as `Pair[i32, f32]`.
-        if let Some(decl) = self.generic_structs.get(&self.resolve_name(name)).cloned() {
-            return self.synth_generic_struct_literal(name, &decl, args, &explicit, span);
+        let resolved_name = self.resolve_name(name);
+        if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
+            return self.synth_generic_struct_literal(resolved_name, &decl, args, &explicit, span);
         }
 
         // `[UNS-5]`, `std.mem` — the raw memory primitives.
@@ -6255,19 +6971,134 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `f[i32]` writes its type argument in expression position, so the
     /// argument arrives as an expression and has to be read back as a type.
     fn type_from_expr(&mut self, expr: &ast::Expr) -> Ty {
-        let ast::ExprKind::Path { segments } = &expr.kind else {
-            self.error(codes::E1010, expr.span, "expected a type argument");
-            return self.common.error;
+        match &expr.kind {
+            ast::ExprKind::Path { segments } => {
+                let ty = ast::TypeExpr {
+                    id: ast::NodeId(0),
+                    kind: ast::TypeKind::Path {
+                        segments: segments.clone(),
+                        args: Vec::new(),
+                    },
+                    span: expr.span,
+                };
+                self.resolve_type(&ty)
+            }
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                let ast::ExprKind::Path { segments } = &base.kind else {
+                    self.error(codes::E1010, expr.span, "expected a type argument");
+                    return self.common.error;
+                };
+                if segments.len() != 1 {
+                    self.error(codes::E1010, expr.span, "expected a type argument");
+                    return self.common.error;
+                }
+                let mut resolved = Vec::with_capacity(args.len());
+                for arg in args {
+                    let ty = match arg {
+                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        ast::TypeOrExpr::Expr(expr) => self.type_from_expr(expr),
+                        ast::TypeOrExpr::Binding { name, .. } => {
+                            self.error(
+                                codes::E2173,
+                                name.span,
+                                format!(
+                                    "`{} = …` binds an associated type, which this type does not take",
+                                    name.name
+                                ),
+                            );
+                            return self.common.error;
+                        }
+                    };
+                    resolved.push((ty, arg.span()));
+                }
+                self.resolve_type_application(segments[0].name, &resolved, expr.span)
+            }
+            _ => {
+                self.error(codes::E1010, expr.span, "expected a type argument");
+                self.common.error
+            }
+        }
+    }
+
+    /// Recognise the type receiver in
+    /// `MaybeUninit[T].uninit()`. `[GRM-8]` deliberately leaves the brackets
+    /// ambiguous, so the receiver arrives as an expression-shaped
+    /// `IndexOrInstantiate` rather than as a `TypeExpr`.
+    fn maybe_uninit_named(&mut self, expr: &ast::Expr) -> Option<Ty> {
+        let ast::ExprKind::IndexOrInstantiate { base, args } = &expr.kind else {
+            return None;
         };
-        let ty = ast::TypeExpr {
-            id: ast::NodeId(0),
-            kind: ast::TypeKind::Path {
-                segments: segments.clone(),
-                args: Vec::new(),
-            },
-            span: expr.span,
+        let ast::ExprKind::Path { segments } = &base.kind else {
+            return None;
         };
-        self.resolve_type(&ty)
+        if segments.len() != 1
+            || !segments[0].name.is("MaybeUninit")
+            || self.lookup(Symbol::intern("MaybeUninit")).is_some()
+        {
+            return None;
+        }
+        if args.len() != 1 {
+            self.error(
+                codes::E2020,
+                expr.span,
+                "`MaybeUninit` takes one type argument",
+            );
+            return Some(self.common.error);
+        }
+        let inner = match &args[0] {
+            ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+            ast::TypeOrExpr::Expr(expr) => self.type_from_expr(expr),
+            ast::TypeOrExpr::Binding { name, .. } => {
+                self.error(
+                    codes::E2173,
+                    name.span,
+                    "`MaybeUninit` takes a type, not an associated-type binding",
+                );
+                self.common.error
+            }
+        };
+        Some(self.maybe_uninit_of(inner))
+    }
+
+    /// `[GRM-8]`, `[TYP-18]` — bracket arguments on a method call are parsed
+    /// before name resolution knows whether an identifier denotes a type or a
+    /// const. Generic methods currently consume type parameters, so a path in
+    /// expression form is reinterpreted exactly as it is for `f[T](...)`.
+    fn resolve_method_type_args(&mut self, args: &[ast::GenericArg]) -> Vec<Ty> {
+        args.iter()
+            .map(|arg| match arg {
+                ast::GenericArg::Type(ty) => self.resolve_type(ty),
+                ast::GenericArg::Const(expr) => self.type_from_expr(expr),
+                ast::GenericArg::Assoc { name, .. } => {
+                    self.error(
+                        codes::E2173,
+                        name.span,
+                        format!(
+                            "`{} = …` binds an associated type, which this method instantiation does not take",
+                            name.name
+                        ),
+                    );
+                    self.common.error
+                }
+            })
+            .collect()
+    }
+
+    fn reject_method_type_args(
+        &mut self,
+        name: Symbol,
+        generic_args: &[ast::GenericArg],
+        span: Span,
+    ) -> bool {
+        if generic_args.is_empty() {
+            return false;
+        }
+        self.error(
+            codes::E2020,
+            span,
+            format!("`{name}` takes no type arguments, found {}", generic_args.len()),
+        );
+        true
     }
 
     /// `[TYP-16]`, `[TYP-18]` — a call to a generic function. The parameters
@@ -6286,6 +7117,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
 
+        if explicit.len() > generics.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{name}` takes {} type arguments, found {}",
+                    generics.len(),
+                    explicit.len()
+                ),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
         if args.len() != declared.len() {
             self.error(
                 codes::E2020,
@@ -6303,21 +7147,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 solved[slot] = Some(*ty);
             }
         }
-        let mut checked_args: Vec<Expr> = Vec::new();
-        for (arg, &(param_ty, _)) in args.iter().zip(declared.iter()) {
-            // `[TYP-23]` rule 4 — "Lambda parameter types are inferred from the
-            // expected function type". For a `fn(A) -> R` parameter the
-            // expected type is now an opaque `Param`, which tells a lambda
-            // nothing, so the *bound's* signature is handed over instead. It is
-            // a hint and not a requirement: the argument may be a lambda whose
-            // own type is its environment, and it is `unify` below that decides
-            // whether what came back fits.
-            let hint = self.callable_hint(param_ty, &generics);
-            let value = match hint {
-                Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
-                None => self.synth_committed(&arg.value),
-            };
-            if !self.types.unify(param_ty, value.ty, &mut solved) {
+        let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
+        // Solve non-lambda arguments first. Type inference is not evaluation,
+        // so this does not change source order; it lets a later ordinary
+        // argument determine `T` before an earlier `fn(T) -> T` lambda needs
+        // its parameter expectation.
+        for (index, (arg, &(param_ty, _))) in
+            args.iter().zip(declared.iter()).enumerate()
+        {
+            if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
+                continue;
+            }
+            let value = self.synth_committed(&arg.value);
+            if !self
+                .types
+                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
                 self.error(
@@ -6326,8 +7171,41 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     format!("`{name}` cannot take `{got}` where it expects `{want}`"),
                 );
             }
-            checked_args.push(value);
+            checked_args[index] = Some(value);
         }
+        for (index, (arg, &(param_ty, _))) in
+            args.iter().zip(declared.iter()).enumerate()
+        {
+            if !matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
+                continue;
+            }
+            // `[TYP-23]` rule 4 — "Lambda parameter types are inferred from the
+            // expected function type". For a `fn(A) -> R` parameter the
+            // expected type is now an opaque `Param`, which tells a lambda
+            // nothing, so the *bound's* signature is handed over instead. It is
+            // a hint and not a requirement: the argument may be a lambda whose
+            // own type is its environment, and it is `unify` below that decides
+            // whether what came back fits.
+            let hint = self.callable_hint(param_ty, &generics, &solved);
+            let value = match hint {
+                Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
+                None => self.synth_committed(&arg.value),
+            };
+            if !self
+                .types
+                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            {
+                let want = self.types.display(param_ty);
+                let got = self.types.display(value.ty);
+                self.error(
+                    codes::E2020,
+                    arg.value.span,
+                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                );
+            }
+            checked_args[index] = Some(value);
+        }
+        let checked_args = checked_args.into_iter().flatten().collect::<Vec<_>>();
 
         // `[TYP-18]` — a parameter no argument mentions must be written out.
         let mut substitution = Vec::new();
@@ -6392,6 +7270,167 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
     }
 
+    /// `[TYP-18]` for a source-defined method. Inference, bound checks and
+    /// argument re-checking intentionally mirror `synth_generic_call`; only
+    /// the receiver prefix and method-specific instantiation queue differ.
+    fn synth_generic_method_call(
+        &mut self,
+        def: DefId,
+        name: Symbol,
+        receiver: Option<(Expr, Mode, Span)>,
+        signature_has_receiver: bool,
+        args: &[ast::Arg],
+        explicit: Vec<Ty>,
+        span: Span,
+        instantiate: bool,
+    ) -> Expr {
+        let generics = self.signatures[def.0 as usize].generics.clone();
+        let declared: Vec<(Ty, Mode)> = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .skip(usize::from(signature_has_receiver))
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect();
+        let ret = self.signatures[def.0 as usize].ret;
+
+        if explicit.len() > generics.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{name}` takes {} type arguments, found {}",
+                    generics.len(),
+                    explicit.len()
+                ),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if args.len() != declared.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {} arguments, found {}", declared.len(), args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        let mut solved: Vec<Option<Ty>> = vec![None; generics.len()];
+        for (slot, ty) in explicit.iter().enumerate() {
+            solved[slot] = Some(*ty);
+        }
+        let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
+        for (index, (arg, &(param_ty, _))) in
+            args.iter().zip(declared.iter()).enumerate()
+        {
+            if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
+                continue;
+            }
+            let value = self.synth_committed(&arg.value);
+            if !self
+                .types
+                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            {
+                let want = self.types.display(param_ty);
+                let got = self.types.display(value.ty);
+                self.error(
+                    codes::E2020,
+                    arg.value.span,
+                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                );
+            }
+            checked_args[index] = Some(value);
+        }
+        for (index, (arg, &(param_ty, _))) in
+            args.iter().zip(declared.iter()).enumerate()
+        {
+            if !matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
+                continue;
+            }
+            let hint = self.callable_hint(param_ty, &generics, &solved);
+            let value = match hint {
+                Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
+                None => self.synth_committed(&arg.value),
+            };
+            if !self
+                .types
+                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            {
+                let want = self.types.display(param_ty);
+                let got = self.types.display(value.ty);
+                self.error(
+                    codes::E2020,
+                    arg.value.span,
+                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                );
+            }
+            checked_args[index] = Some(value);
+        }
+        let checked_args = checked_args.into_iter().flatten().collect::<Vec<_>>();
+
+        let mut substitution = Vec::new();
+        for (index, param) in generics.iter().enumerate() {
+            match solved[index] {
+                Some(ty) => substitution.push(ty),
+                None => {
+                    self.error(
+                        codes::E2060,
+                        span,
+                        format!(
+                            "cannot tell what `{}` is here; write it out, as `.{name}[T](...)`",
+                            param.name
+                        ),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+            }
+        }
+
+        for (param, &ty) in generics.iter().zip(substitution.iter()) {
+            for bound in &param.bounds {
+                if !self.implements(ty, *bound) {
+                    let shown = self.types.display(ty);
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!(
+                            "`{shown}` does not implement `{bound}`, which `{}` requires",
+                            param.name
+                        ),
+                    );
+                }
+            }
+        }
+
+        let instance = if instantiate {
+            self.instantiate_method(def, &substitution, name, span)
+        } else {
+            // A call through an opaque interface bound is checked for its
+            // contract but never emitted. Concrete monomorphisation rechecks
+            // the body and resolves the implementing method.
+            def
+        };
+        let concrete = declared
+            .iter()
+            .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
+            .collect::<Vec<_>>();
+        let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
+        let mut checked = Vec::new();
+        if let Some((receiver, receiver_mode, receiver_span)) = receiver {
+            checked.push(self.pass_receiver(receiver, receiver_mode, receiver_span));
+        }
+        for (index, (arg, &(param_ty, mode))) in
+            args.iter().zip(concrete.iter()).enumerate()
+        {
+            let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
+            match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
+                Some(value) => checked.push(value),
+                None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
+            }
+        }
+        let ret = self.substitute_ty(ret, &substitution);
+        Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
+    }
+
     /// `[CLO-1]`, `[CLO-6]` — call a closure through its environment.
     ///
     /// The environment is the first argument, which is `call(self, args)` in
@@ -6436,10 +7475,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// The signature a `fn(A) -> R` parameter may be called with, when that
     /// parameter is one of `generics` and carries `[CLO-3]`'s bound.
-    fn callable_hint(&mut self, param_ty: Ty, generics: &[GenericParam]) -> Option<Ty> {
+    fn callable_hint(
+        &mut self,
+        param_ty: Ty,
+        generics: &[GenericParam],
+        solved: &[Option<Ty>],
+    ) -> Option<Ty> {
         let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return None };
         let bound = generics.get(index as usize)?.callable.clone()?;
-        Some(self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret }))
+        // Earlier arguments may already have solved parameters used by the
+        // callable signature. Feed those facts into the lambda expectation so
+        // `fn apply[T](value: T, f: fn(T) -> T)` checks `f` against the actual
+        // `T`, rather than emitting a closure body over an opaque placeholder.
+        let substitution = generics
+            .iter()
+            .enumerate()
+            .map(|(slot, param)| {
+                solved.get(slot).and_then(|ty| *ty).unwrap_or_else(|| {
+                    self.types.intern(TyKind::Param {
+                        index: slot as u32,
+                        name: param.name,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let params = bound
+            .params
+            .into_iter()
+            .map(|ty| self.substitute_ty(ty, &substitution))
+            .collect();
+        let ret = self.substitute_ty(bound.ret, &substitution);
+        Some(self.types.intern(TyKind::Fn { params, ret }))
     }
 
     /// Synthesise an expression that may want to know what is expected of it.
@@ -6504,12 +7570,51 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
     fn implements(&self, ty: Ty, interface: Symbol) -> bool {
+        if let TyKind::Param { index, .. } = *self.types.kind(ty) {
+            return self
+                .current_generics
+                .get(index as usize)
+                .is_some_and(|param| param.bounds.contains(&interface));
+        }
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
+            return true;
+        }
+        // `[ARN-5c]`, `[ARN-5d]` — the three compiler-lowered, named
+        // Arena-backed iterators implement the one standard associated-type
+        // Iterator contract. Their `next` operations are synthesized directly
+        // so they can preserve the element-view provenance in HIR/MIR; that
+        // implementation detail must not make them fail an ordinary
+        // `I: Iterator` bound.
+        if interface.as_str() == "std.core.Iterator"
+            && (self.arena_array_iterator(ty).is_some()
+                || self.arena_map_iterator(ty).is_some())
+        {
             return true;
         }
         // A bound naming an interface nothing declares cannot be satisfied;
         // the declaration site already reported that.
         !self.interfaces.contains_key(&interface)
+    }
+
+    /// Find the concrete associated member that supplies one standard
+    /// interface capability. Compiler-known APIs use the fully qualified
+    /// interface identity so their behavior cannot depend on which short
+    /// names happen to be imported at the call site.
+    fn standard_associated_capability(
+        &self,
+        ty: Ty,
+        interface: &str,
+        member: &str,
+    ) -> Option<DefId> {
+        let interface = Symbol::intern(interface);
+        self.implemented
+            .iter()
+            .any(|(candidate, implemented, _)| {
+                *candidate == ty && *implemented == interface
+            })
+            .then(|| self.associated.get(&(ty, Symbol::intern(member))))
+            .flatten()
+            .map(|entry| entry.def)
     }
 
     /// `[MONO-1]` — one `DefId` per (function, type arguments), created once
@@ -6552,6 +7657,50 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         instance
     }
 
+    /// Generic methods use the same `(definition, type arguments)` identity as
+    /// generic functions, but their bodies must be checked with a concrete
+    /// receiver and emitted under a receiver-qualified symbol.
+    fn instantiate_method(
+        &mut self,
+        def: DefId,
+        args: &[Ty],
+        name: Symbol,
+        span: Span,
+    ) -> DefId {
+        let key = Instance { def, args: args.to_vec() };
+        if let Some(&existing) = self.instances.get(&key) {
+            return existing;
+        }
+        let generic = &self.signatures[def.0 as usize];
+        let params = generic
+            .params
+            .iter()
+            .map(|(param_name, ty, mode, param_span)| {
+                (*param_name, *ty, *mode, *param_span)
+            })
+            .collect::<Vec<_>>();
+        let ret = generic.ret;
+        let borrows = generic.borrows.clone();
+        let concrete_params = params
+            .into_iter()
+            .map(|(param_name, ty, mode, param_span)| {
+                (param_name, self.substitute_ty(ty, args), mode, param_span)
+            })
+            .collect();
+        let concrete_ret = self.substitute_ty(ret, args);
+        let instance = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature {
+            params: concrete_params,
+            ret: concrete_ret,
+            generics: Vec::new(),
+            borrows,
+        });
+        self.instances.insert(key.clone(), instance);
+        self.pending_generic_methods.push((key, instance));
+        let _ = (name, span);
+        instance
+    }
+
     /// The module an expression names, if it is a bare path bound by
     /// `import a.b.c`. A local of the same name wins.
     fn namespace_named(&self, expr: &ast::Expr) -> Option<usize> {
@@ -6569,12 +7718,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         qualified: Symbol,
         name_span: Span,
         args: &[ast::Arg],
+        explicit: Vec<Ty>,
         span: Span,
     ) -> Expr {
         let Some(&def) = self.fn_ids.get(&qualified) else {
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_call(def, qualified, args, explicit, span);
+        }
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{qualified}` takes no type arguments, found {}", explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -6622,6 +7783,244 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             TyKind::Range(id) => Some(*id),
             _ => None,
         }
+    }
+
+    /// A type named on the left of `Type.function(...)`. Name resolution must
+    /// make this distinction before ordinary method synthesis, because a type
+    /// is not a runtime receiver value. A local shadows a type exactly as it
+    /// does for enum and range associated operations.
+    fn associated_type_named(&mut self, expr: &ast::Expr) -> Option<Ty> {
+        match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].name;
+                if self.lookup(name).is_some() {
+                    return None;
+                }
+                self.type_params
+                    .get(&name)
+                    .copied()
+                    .or_else(|| self.scalar_named(name.as_str()))
+                    .or_else(|| self.named_types.get(&self.resolve_name(name)).copied())
+            }
+            ast::ExprKind::IndexOrInstantiate { base, .. } => {
+                let ast::ExprKind::Path { segments } = &base.kind else { return None };
+                if segments.len() != 1 || self.lookup(segments[0].name).is_some() {
+                    return None;
+                }
+                let name = self.resolve_name(segments[0].name);
+                if !self.generic_structs.contains_key(&name) {
+                    return None;
+                }
+                Some(self.type_from_expr(expr))
+            }
+            _ => None,
+        }
+    }
+
+    fn synth_associated_call(
+        &mut self,
+        owner: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        if let Some(elem) = self.arena_array_element(owner) {
+            return self.synth_arena_array_construction(
+                owner,
+                elem,
+                name,
+                generic_args,
+                args,
+                span,
+            );
+        }
+        if let Some((key, value)) = self.arena_map_parts(owner) {
+            return self.synth_arena_map_construction(
+                owner,
+                key,
+                value,
+                name,
+                generic_args,
+                args,
+                span,
+            );
+        }
+        if let TyKind::Param { index, name: param } = *self.types.kind(owner) {
+            return self.synth_bound_associated(
+                index,
+                param,
+                owner,
+                name,
+                generic_args,
+                args,
+                span,
+            );
+        }
+        let Some(entry) = self.associated.get(&(owner, name.name)) else {
+            let shown = self.types.display(owner);
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{shown}` has no associated function `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let def = entry.def;
+        let explicit = self.resolve_method_type_args(generic_args);
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_method_call(
+                def,
+                name.name,
+                None,
+                false,
+                args,
+                explicit,
+                span,
+                true,
+            );
+        }
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{}.{}` takes no type arguments, found {}",
+                    self.types.display(owner),
+                    name.name,
+                    explicit.len()
+                ),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let signature = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect::<Vec<_>>();
+        let ret = self.signatures[def.0 as usize].ret;
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{}.{}` takes {} arguments, found {}",
+                    self.types.display(owner),
+                    name.name,
+                    signature.len(),
+                    args.len()
+                ),
+            );
+        }
+        let checked = args
+            .iter()
+            .zip(signature)
+            .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
+            .collect();
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+    }
+
+    /// Resolve `T.make(...)` inside a generic body from `T`'s declared
+    /// interface bounds. The opaque validation call targets the interface
+    /// declaration only while checking the generic recipe; each concrete
+    /// monomorphisation is rechecked and calls its actual implementation.
+    fn synth_bound_associated(
+        &mut self,
+        index: u32,
+        param: Symbol,
+        owner: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let bounds = self
+            .current_generics
+            .get(index as usize)
+            .map(|generic| generic.bounds.clone())
+            .unwrap_or_default();
+        let mut found: Option<(DefId, Symbol)> = None;
+        for bound in &bounds {
+            let Some(interface) = self.interfaces.get(bound) else { continue };
+            let member = interface.methods.iter().find(|(member, _, receiver, _)| {
+                *member == name.name && receiver.is_none()
+            });
+            let Some((_, def, _, _)) = member else { continue };
+            if let Some((_, first)) = found {
+                self.error(
+                    codes::E2070,
+                    name.span,
+                    format!("`{}` is offered by both `{first}` and `{bound}`", name.name),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            found = Some((*def, *bound));
+        }
+        let Some((def, _)) = found else {
+            let candidate = self.interfaces.iter().find_map(|(interface_name, interface)| {
+                interface
+                    .methods
+                    .iter()
+                    .any(|(member, _, receiver, _)| {
+                        *member == name.name && receiver.is_none()
+                    })
+                    .then_some(*interface_name)
+            });
+            let mut diagnostic = Diagnostic::error(
+                codes::E2040,
+                name.span,
+                format!(
+                    "`{param}` has no associated function `{}`; its bounds do not provide one",
+                    name.name
+                ),
+            )
+            .note("inside a generic body only the bounds' operations are available [TYP-17]");
+            if let Some(bound) = candidate {
+                diagnostic = diagnostic.help(format!("add the bound: `{param}: {bound}`"));
+            }
+            self.sink.emit(diagnostic);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let explicit = self.resolve_method_type_args(generic_args);
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_method_call(
+                def,
+                name.name,
+                None,
+                false,
+                args,
+                explicit,
+                span,
+                false,
+            );
+        }
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let signature = self.signatures[def.0 as usize]
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| (self.types.substitute_self(*ty, owner), *mode))
+            .collect::<Vec<_>>();
+        let ret = self.types.substitute_self(self.signatures[def.0 as usize].ret, owner);
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}.{}` takes {} arguments, found {}", param, name.name, signature.len(), args.len()),
+            );
+        }
+        let checked = args
+            .iter()
+            .zip(signature)
+            .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
+            .collect();
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
     }
 
     /// `[MOD-2]` — **the one place a field's visibility is checked.**
@@ -7096,6 +8495,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         &mut self,
         recv: &ast::Expr,
         name: ast::Ident,
+        generic_args: &[ast::GenericArg],
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
@@ -7113,37 +8513,147 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             Some(_) => self.read_guard_through(receiver),
             None => receiver,
         };
+        let explicit = self.resolve_method_type_args(generic_args);
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_vec_method(receiver, elem, name, args, span);
         }
         if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_span_method(receiver, elem, mutable, name, args, span);
         }
         // `[CELL-1]` — a cell is an ordinary struct to every other part of the
         // compiler, so its methods are found here rather than in `self.methods`.
         if let Some(inner) = self.cell_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_cell_method(receiver, inner, name, args, span);
         }
         // `[CELL-5]` — a `RefCell` is likewise an ordinary struct here; its
         // `borrow` family are builtins (ADR-019).
         if let Some(inner) = self.refcell_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_refcell_method(receiver, inner, name, args, span);
         }
+        if let Some(inner) = self.maybe_uninit_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_maybe_uninit_method(receiver, inner, name, args, span);
+        }
         if self.is_arena(receiver.ty) {
-            return self.synth_arena_method(receiver, name, args, span);
+            return self.synth_arena_method(receiver, name, args, &explicit, span);
         }
         if self.is_fixed_arena(receiver.ty) {
-            return self.synth_fixed_arena_method(receiver, name, args, span);
+            return self.synth_fixed_arena_method(receiver, name, args, &explicit, span);
         }
         if self.is_scoped_arena(receiver.ty) {
-            return self.synth_scoped_arena_method(receiver, name, args, span);
+            return self.synth_scoped_arena_method(receiver, name, args, &explicit, span);
+        }
+        if let Some(elem) = self.arena_array_element(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_arena_array_method(receiver, elem, name, args, span);
+        }
+        if let Some((elem, mutable)) = self.arena_array_iterator(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_arena_array_iterator_method(
+                receiver,
+                elem,
+                mutable,
+                name,
+                args,
+                span,
+            );
+        }
+        if let Some((key, value)) = self.arena_map_parts(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_arena_map_method(receiver, key, value, name, args, span);
+        }
+        if let Some((key, value)) = self.arena_map_iterator(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_arena_map_iterator_method(
+                receiver,
+                key,
+                value,
+                name,
+                args,
+                span,
+            );
         }
         // `[TYP-17]` — on a generic parameter, only what its bounds provide
         // is permitted, and that is exactly what is looked up.
         if let TyKind::Param { index, name: param } = *self.types.kind(receiver.ty) {
-            return self.synth_bound_method(index, param, receiver, name, args, span);
+            return self.synth_bound_method(
+                index,
+                param,
+                receiver,
+                name,
+                args,
+                explicit,
+                span,
+            );
         }
         // `[DRP-1]` — "`fn drop(mut self)` is invoked exactly once per value at
         // the end of its life. It may not be called explicitly (`E3070`)."
@@ -7183,6 +8693,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let def = entry.def;
         let receiver_mode = entry.receiver;
+
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_method_call(
+                def,
+                name.name,
+                Some((receiver, receiver_mode, recv.span)),
+                true,
+                args,
+                explicit,
+                span,
+                true,
+            );
+        }
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         // `[TYP-24]` — the same name reachable through two implemented
         // interfaces has to be disambiguated by the caller.
@@ -7244,6 +8775,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         receiver: Expr,
         name: ast::Ident,
         args: &[ast::Arg],
+        explicit: Vec<Ty>,
         span: Span,
     ) -> Expr {
         let bounds = self
@@ -7255,8 +8787,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut found: Option<(DefId, Mode, Symbol)> = None;
         for bound in &bounds {
             let Some(def) = self.interfaces.get(bound) else { continue };
-            if let Some((_, method, receiver_mode, _)) =
-                def.methods.iter().find(|(m, _, _, _)| *m == name.name)
+            if let Some((_, method, Some(receiver_mode), _)) =
+                def.methods.iter().find(|(m, _, receiver, _)| {
+                    *m == name.name && receiver.is_some()
+                })
             {
                 // `[TYP-24]` — two bounds offering the same name is ambiguous.
                 if let Some((_, _, first)) = found {
@@ -7275,7 +8809,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let candidates: Vec<Symbol> = self
                 .interfaces
                 .iter()
-                .filter(|(_, d)| d.methods.iter().any(|(m, _, _, _)| *m == name.name))
+                .filter(|(_, d)| {
+                    d.methods
+                        .iter()
+                        .any(|(m, _, receiver, _)| *m == name.name && receiver.is_some())
+                })
                 .map(|(name, _)| *name)
                 .collect();
             let mut diagnostic = Diagnostic::error(
@@ -7291,6 +8829,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+
+        if !self.signatures[def.0 as usize].generics.is_empty() {
+            return self.synth_generic_method_call(
+                def,
+                name.name,
+                Some((receiver, receiver_mode, span)),
+                false,
+                args,
+                explicit,
+                span,
+                false,
+            );
+        }
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         // Part IV §8 — the interface was declared over `Self`; here the
         // implementing type is the receiver's, so `Self` becomes it. Without
@@ -7490,6 +9049,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: self.current_module,
         });
@@ -7737,6 +9297,127 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[ARN-8]` — the one associated constructor on
+    /// `MaybeUninit[T]`. The type receiver is resolved before ordinary method
+    /// dispatch because it is a type, not a runtime value.
+    fn synth_maybe_uninit_construction(
+        &mut self,
+        ty: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if ty == self.common.error {
+            return error;
+        }
+        if self.reject_method_type_args(name.name, generic_args, span) {
+            return error;
+        }
+        let Some(inner) = self.maybe_uninit_inner(ty) else {
+            return error;
+        };
+        if !name.name.is("uninit") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`MaybeUninit[{}]` has no associated operation named `{}`", self.types.display(inner), name.name),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`uninit` takes no arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        Expr {
+            ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::MaybeUninitUninit { inner },
+                args: Vec::new(),
+            },
+            span,
+        }
+    }
+
+    /// `[ARN-8]`, `[ARN-8a]` — the transitions exposed by a
+    /// `MaybeUninit[T]` place. `write` uses ordinary mutable-place borrowing
+    /// but a dedicated lowering operation, because it must not read or drop
+    /// the prior bytes. `assume_init` is the one unchecked read boundary.
+    fn synth_maybe_uninit_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let arity = match method {
+            "write" => 1,
+            "assume_init" => 0,
+            _ => {
+                self.error(
+                    codes::E1010,
+                    name.span,
+                    format!(
+                        "`MaybeUninit[{}]` has no method named `{}`",
+                        self.types.display(inner),
+                        name.name
+                    ),
+                );
+                return error;
+            }
+        };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {arity} arguments, found {}", name.name, args.len()),
+            );
+            return error;
+        }
+
+        if method == "write" {
+            let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+            let value = self.check_expr(&args[0].value, inner);
+            let result = self.types.intern(TyKind::Ref { mutable: true, inner });
+            return Expr {
+                ty: result,
+                kind: ExprKind::Builtin {
+                    which: Builtin::MaybeUninitWrite { inner },
+                    args: vec![receiver, value],
+                },
+                span,
+            };
+        }
+
+        if !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    "`assume_init` needs an `unsafe` block",
+                )
+                .help("initialize the slot with `write`, then wrap `assume_init` in `unsafe:`")
+                .note("the caller must establish that the slot contains a valid initialized value [ARN-8]"),
+            );
+        }
+        Expr {
+            ty: inner,
+            kind: ExprKind::Builtin {
+                which: Builtin::MaybeUninitAssumeInit { inner },
+                args: vec![receiver],
+            },
+            span,
+        }
+    }
+
     /// `[CELL-1]` — the methods on `Cell[T]`.
     ///
     /// All of them take `self`, a **shared** borrow, and three of them mutate.
@@ -7748,9 +9429,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// question at all — so the borrow checker is told about a builtin call and
     /// is not weakened anywhere.
     ///
-    /// `get` and `update` are `T: Copy` only, per the rule. `take` needs
-    /// `T: Default` and `Default` does not exist yet — `CELL-DEF-1` in
-    /// `docs/BACKLOG.md` — so it reports that rather than being quietly absent.
+    /// `get` is `T: Copy` only. `take` resolves the standard `Default`
+    /// capability and carries its concrete constructor into MIR.
     fn synth_cell_method(
         &mut self,
         receiver: Expr,
@@ -7762,24 +9442,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let shown = self.types.display(inner);
 
-        // `take` and `update`'s `T: Default` arm are the two members the
-        // compiler cannot reach. Say so, rather than "no method named `take`",
-        // which would send the reader looking for a typo.
-        if name.name.is("take") {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2020,
-                    name.span,
-                    "`take` needs `T: Default`, and `Default` is not built yet",
-                )
-                .help("`c.replace(v)` gives the old value back and puts `v` in its place")
-                .note("`[CELL-1]`; the gap is `CELL-DEF-1` in docs/BACKLOG.md"),
-            );
-            return error;
-        }
-
         let arity = match name.name.as_str() {
-            "get" | "into_inner" => 0,
+            "get" | "into_inner" | "take" => 0,
             "set" | "replace" | "update" => 1,
             _ => {
                 self.error(
@@ -7803,7 +9467,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[CELL-1]` makes that a borrow of it. A borrow needs something to
         // point at: writing into a value that dies at the end of the statement
         // is a mistake with no way to observe it.
-        let writes = matches!(name.name.as_str(), "set" | "replace" | "update");
+        let writes = matches!(name.name.as_str(), "set" | "replace" | "update" | "take");
         if writes && !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,
@@ -7816,12 +9480,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[CELL-1]` — "`get(self) -> T` is provided only where `T: Copy`".
         // The reason is `[CELL-2]`: a non-`Copy` `T` could only be *handed*
         // out, which would either move the cell's contents away or alias them.
-        if matches!(name.name.as_str(), "get" | "update") && !self.types.is_copy(inner) {
+        if name.name.is("get") && !self.types.is_copy(inner) {
             self.sink.emit(
                 Diagnostic::error(
                     codes::E2020,
                     name.span,
-                    format!("`{}` on `Cell[{shown}]` needs `{shown}: Copy`", name.name),
+                    format!("`get` on `Cell[{shown}]` needs `{shown}: Copy`"),
                 )
                 .help("`c.replace(v)` takes the value out and puts `v` in its place")
                 .note("a `Cell` hands out no reference, so a non-`Copy` value can only be replaced [CELL-1]"),
@@ -7860,17 +9524,69 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 kind: ExprKind::Builtin { which: Builtin::CellIntoInner, args: vec![receiver] },
                 span,
             },
+            "take" => {
+                let Some(constructor) = self.standard_associated_capability(
+                    inner,
+                    "std.core.Default",
+                    "default",
+                ) else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2020,
+                            name.span,
+                            format!("`take` on `Cell[{shown}]` needs `{shown}: Default`"),
+                        )
+                        .help("implement `std.core.Default` or use `c.replace(v)` with an explicit replacement")
+                        .note("`take` leaves a default value in the cell [CELL-1]"),
+                    );
+                    return error;
+                };
+                Expr {
+                    ty: inner,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::CellTake { constructor },
+                        args: vec![receiver],
+                    },
+                    span,
+                }
+            }
             // `update(f)` is `set(f(get()))`, and it needs the receiver twice —
             // once to read the old value and once to store the new one. A HIR
             // expression cannot be duplicated, so the pair travels to lowering,
             // which has a `Place` and can use it as often as it likes.
             _ => {
+                let constructor = if self.types.is_copy(inner) {
+                    None
+                } else {
+                    self.standard_associated_capability(
+                        inner,
+                        "std.core.Default",
+                        "default",
+                    )
+                };
+                if !self.types.is_copy(inner) && constructor.is_none() {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2020,
+                            name.span,
+                            format!(
+                                "`update` on `Cell[{shown}]` needs `{shown}: Copy` or `{shown}: Default`"
+                            ),
+                        )
+                        .help("implement `std.core.Default` or use `replace` with an explicit value")
+                        .note("the Default arm keeps the cell initialized while the callback runs [CELL-1]"),
+                    );
+                    return error;
+                }
                 let fn_ty = self.types.intern(TyKind::Fn { params: vec![inner], ret: inner });
                 let f = self.check_expr(&args[0].value, fn_ty);
                 Expr {
                     ty: self.common.void,
                     kind: ExprKind::Builtin {
-                        which: Builtin::CellUpdate,
+                        which: match constructor {
+                            Some(constructor) => Builtin::CellUpdateDefault { constructor },
+                            None => Builtin::CellUpdate,
+                        },
                         args: vec![receiver, f],
                     },
                     span,
@@ -8055,6 +9771,712 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// The element type of the public `std.collections.ArenaArray[T]`
+    /// instantiation, if `ty` is one. The source declaration owns the public
+    /// identity and representation; this recognition supplies only the
+    /// operations whose fixed-storage semantics require compiler lowering.
+    fn arena_array_element(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        if origin.as_str() == "std.collections.ArenaArray" && args.len() == 1 {
+            Some(args[0])
+        } else {
+            None
+        }
+    }
+
+    fn arena_array_iterator(&self, ty: Ty) -> Option<(Ty, bool)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        if args.len() != 1 {
+            return None;
+        }
+        match origin.as_str() {
+            "std.collections.ArenaArrayIter" => Some((args[0], false)),
+            "std.collections.ArenaArrayIterMut" => Some((args[0], true)),
+            _ => None,
+        }
+    }
+
+    fn arena_map_parts(&self, ty: Ty) -> Option<(Ty, Ty)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        if origin.as_str() == "std.collections.ArenaMap" && args.len() == 2 {
+            Some((args[0], args[1]))
+        } else {
+            None
+        }
+    }
+
+    fn arena_map_iterator(&self, ty: Ty) -> Option<(Ty, Ty)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        if origin.as_str() == "std.collections.ArenaMapIter" && args.len() == 2 {
+            Some((args[0], args[1]))
+        } else {
+            None
+        }
+    }
+
+    /// Built-in keys whose `Eq + Hash` semantics are already compiler-known.
+    /// The fixed map may choose a linear implementation, but its public bound
+    /// remains the ordinary Map bound. User-defined keys become available
+    /// when the staged `Hasher`/`Hash` standard-interface surface is complete;
+    /// they are rejected rather than compared bytewise or by guessed rules.
+    fn is_builtin_map_key(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Str => true,
+            TyKind::Range(_) => true,
+            TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
+            _ => false,
+        }
+    }
+
+    fn instantiate_named_generic(&mut self, name: &str, args: &[Ty], span: Span) -> Ty {
+        let name = Symbol::intern(name);
+        let Some(decl) = self.generic_structs.get(&name).cloned() else {
+            self.error(codes::E1010, span, format!("cannot find standard type `{name}`"));
+            return self.common.error;
+        };
+        self.instantiate_struct(name, &decl, args, span)
+    }
+
+    fn capacity_error_ty(&self) -> Option<Ty> {
+        self.named_types
+            .get(&Symbol::intern("std.collections.CapacityError"))
+            .copied()
+    }
+
+    /// `[ARN-5a]` — the only operation that obtains backing storage. The
+    /// result contains an explicit `ref Arena` anchor, and the builtin call's
+    /// first operand is that same borrow, so both the structural view checker
+    /// and the region/loan analysis see the provenance rather than inferring
+    /// it from a raw pointer.
+    fn synth_arena_array_construction(
+        &mut self,
+        array: Ty,
+        elem: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("with_capacity") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`{}` has no associated function `{}`",
+                    self.types.display(array),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !generic_args.is_empty() {
+            self.error(codes::E2020, span, "`ArenaArray.with_capacity` takes no type arguments");
+            return error;
+        }
+        if args.len() != 2 {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`ArenaArray.with_capacity` takes 2 arguments, found {}",
+                    args.len()
+                ),
+            );
+            return error;
+        }
+        if self.types.needs_drop(elem) {
+            let shown = self.types.display(elem);
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3090,
+                    span,
+                    format!("`ArenaArray[{shown}]` requires `!needs_drop({shown})`"),
+                )
+                .primary_label("Arena-backed collection elements are not dropped individually")
+                .help("use an owned `Array[T]` when elements need destruction")
+                .note("Arena rewind/drop reclaims bytes without an element destructor walk [ARN-5e]"),
+            );
+            return error;
+        }
+        let arena_ty = self.arena_ty();
+        let arena = self.check_expr(&args[0].value, arena_ty);
+        if arena.ty == self.common.error {
+            return error;
+        }
+        if !is_place(&arena.kind) {
+            self.error(
+                codes::E2140,
+                args[0].value.span,
+                "an Arena-backed container needs an Arena variable to borrow",
+            );
+            return error;
+        }
+        let arena_ref_ty = self.types.intern(TyKind::Ref { mutable: false, inner: arena_ty });
+        let borrowed = Expr {
+            ty: arena_ref_ty,
+            kind: ExprKind::Ref { place: Box::new(arena), mutable: false },
+            span: args[0].value.span,
+        };
+        let capacity = self.check_expr(&args[1].value, self.common.usize);
+        Expr {
+            ty: array,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaArrayWithCapacity { elem, array },
+                args: vec![borrowed, capacity],
+            },
+            span,
+        }
+    }
+
+    fn arena_collection_receiver(&mut self, receiver: Expr, mutable: bool, span: Span) -> Expr {
+        if mutable {
+            return self.pass_receiver(receiver, Mode::Mut, span);
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "this Arena collection operation needs a value to borrow");
+            return receiver;
+        }
+        let ty = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        Expr {
+            ty,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        }
+    }
+
+    /// `[ARN-5b]`–`[ARN-5g]` — the fixed-capacity Array surface. Operations
+    /// are lowered over the already-reserved pointer/length/capacity fields;
+    /// no method carries an Arena operand, which makes a later cursor mutation
+    /// impossible by construction.
+    fn synth_arena_array_method(
+        &mut self,
+        receiver: Expr,
+        elem: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let arity = match method {
+            "len" | "capacity" | "is_empty" | "clear" | "iter" | "iter_mut" => 0,
+            "get" | "get_mut" | "push" | "remove" => 1,
+            "insert" => 2,
+            _ => {
+                self.error(
+                    codes::E1010,
+                    name.span,
+                    format!(
+                        "`{}` has no method named `{}`",
+                        self.types.display(receiver.ty),
+                        name.name
+                    ),
+                );
+                return error;
+            }
+        };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{method}` takes {arity} arguments, found {}", args.len()),
+            );
+            return error;
+        }
+
+        match method {
+            "len" | "capacity" | "is_empty" => {
+                let field = if method == "capacity" { 3 } else { 2 };
+                let value = Expr {
+                    ty: self.common.usize,
+                    kind: ExprKind::Field { base: Box::new(receiver), index: field },
+                    span,
+                };
+                if method == "is_empty" {
+                    return Expr {
+                        ty: self.common.bool_,
+                        kind: ExprKind::Binary {
+                            op: BinOp::Eq,
+                            lhs: Box::new(value),
+                            rhs: Box::new(Expr {
+                                ty: self.common.usize,
+                                kind: ExprKind::Int(0),
+                                span,
+                            }),
+                        },
+                        span,
+                    };
+                }
+                value
+            }
+            "get" | "get_mut" => {
+                let mutable = method == "get_mut";
+                let receiver = self.arena_collection_receiver(receiver, mutable, span);
+                let index = self.check_expr(&args[0].value, self.common.usize);
+                let reference = self.types.intern(TyKind::Ref { mutable, inner: elem });
+                let result = self.option_of(reference);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayGet { elem, mutable },
+                        args: vec![receiver, index],
+                    },
+                    span,
+                }
+            }
+            "push" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                let value = self.check_expr(&args[0].value, elem);
+                let Some(capacity_error) = self.capacity_error_ty() else {
+                    self.error(codes::E1010, span, "`std.collections.CapacityError` is unavailable");
+                    return error;
+                };
+                let result = self.result_of(self.common.void, capacity_error);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayPush { elem },
+                        args: vec![receiver, value],
+                    },
+                    span,
+                }
+            }
+            "insert" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                let index = self.check_expr(&args[0].value, self.common.usize);
+                let value = self.check_expr(&args[1].value, elem);
+                let Some(capacity_error) = self.capacity_error_ty() else {
+                    self.error(codes::E1010, span, "`std.collections.CapacityError` is unavailable");
+                    return error;
+                };
+                let result = self.result_of(self.common.void, capacity_error);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayInsert { elem },
+                        args: vec![receiver, index, value],
+                    },
+                    span,
+                }
+            }
+            "remove" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                let index = self.check_expr(&args[0].value, self.common.usize);
+                let result = self.option_of(elem);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayRemove { elem },
+                        args: vec![receiver, index],
+                    },
+                    span,
+                }
+            }
+            "clear" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaArrayClear,
+                        args: vec![receiver],
+                    },
+                    span,
+                }
+            }
+            "iter" | "iter_mut" => {
+                let mutable = method == "iter_mut";
+                let receiver = self.arena_collection_receiver(receiver, mutable, span);
+                let iterator = self.instantiate_named_generic(
+                    if mutable {
+                        "std.collections.ArenaArrayIterMut"
+                    } else {
+                        "std.collections.ArenaArrayIter"
+                    },
+                    &[elem],
+                    span,
+                );
+                let TyKind::Struct(iterator_id) = *self.types.kind(iterator) else {
+                    return error;
+                };
+                Expr {
+                    ty: iterator,
+                    kind: ExprKind::StructLit {
+                        struct_id: iterator_id,
+                        fields: vec![
+                            receiver,
+                            Expr {
+                                ty: self.common.usize,
+                                kind: ExprKind::Int(0),
+                                span,
+                            },
+                        ],
+                    },
+                    span,
+                }
+            }
+            _ => unreachable!("all ArenaArray methods were classified above"),
+        }
+    }
+
+    fn synth_arena_array_iterator_method(
+        &mut self,
+        receiver: Expr,
+        elem: Ty,
+        mutable: bool,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("next") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`{}` has no method named `{}`",
+                    self.types.display(receiver.ty),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`next` takes no arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+        let item = self.types.intern(TyKind::Ref { mutable, inner: elem });
+        let result = self.option_of(item);
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaArrayIterNext { elem, mutable },
+                args: vec![receiver],
+            },
+            span,
+        }
+    }
+
+    fn synth_arena_map_construction(
+        &mut self,
+        map: Ty,
+        key: Ty,
+        value: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("with_capacity") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`{}` has no associated function `{}`",
+                    self.types.display(map),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !generic_args.is_empty() {
+            self.error(codes::E2020, span, "`ArenaMap.with_capacity` takes no type arguments");
+            return error;
+        }
+        if args.len() != 2 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`ArenaMap.with_capacity` takes 2 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        if self.types.is_view(key) || self.types.is_view(value) {
+            self.error(
+                codes::E2130,
+                span,
+                "an ArenaMap cannot store a view key or value",
+            );
+            return error;
+        }
+        if self.types.needs_drop(key) || self.types.needs_drop(value) {
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3090,
+                    span,
+                    format!(
+                        "`ArenaMap[{}, {}]` requires drop-free keys and values",
+                        self.types.display(key),
+                        self.types.display(value)
+                    ),
+                )
+                .primary_label("Arena-backed map entries are not dropped individually")
+                .help("use an owned `Map[K, V]` when keys or values need destruction")
+                .note("Arena rewind/drop reclaims bytes without an entry destructor walk [ARN-5e]"),
+            );
+            return error;
+        }
+        if !self.is_builtin_map_key(key) {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2040,
+                    span,
+                    format!(
+                        "`{}` does not yet have a usable `Eq + Hash` implementation",
+                        self.types.display(key)
+                    ),
+                )
+                .help("use a built-in integral, bool, char, range, str, or unit-enum key for now")
+                .note("user-defined Hash keys wait for the standard Hasher interface substrate; no comparison semantics are guessed"),
+            );
+            return error;
+        }
+        let arena_ty = self.arena_ty();
+        let arena = self.check_expr(&args[0].value, arena_ty);
+        if arena.ty == self.common.error {
+            return error;
+        }
+        if !is_place(&arena.kind) {
+            self.error(
+                codes::E2140,
+                args[0].value.span,
+                "an Arena-backed container needs an Arena variable to borrow",
+            );
+            return error;
+        }
+        let arena_ref_ty = self.types.intern(TyKind::Ref { mutable: false, inner: arena_ty });
+        let borrowed = Expr {
+            ty: arena_ref_ty,
+            kind: ExprKind::Ref { place: Box::new(arena), mutable: false },
+            span: args[0].value.span,
+        };
+        let capacity = self.check_expr(&args[1].value, self.common.usize);
+        Expr {
+            ty: map,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaMapWithCapacity { key, value, map },
+                args: vec![borrowed, capacity],
+            },
+            span,
+        }
+    }
+
+    fn synth_arena_map_method(
+        &mut self,
+        receiver: Expr,
+        key: Ty,
+        value: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let arity = match method {
+            "len" | "capacity" | "is_empty" | "clear" | "iter" => 0,
+            "get" | "get_mut" | "remove" | "contains_key" => 1,
+            "insert" => 2,
+            _ => {
+                self.error(
+                    codes::E1010,
+                    name.span,
+                    format!(
+                        "`{}` has no method named `{}`",
+                        self.types.display(receiver.ty),
+                        name.name
+                    ),
+                );
+                return error;
+            }
+        };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{method}` takes {arity} arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        match method {
+            "len" | "capacity" | "is_empty" => {
+                let field = if method == "capacity" { 3 } else { 2 };
+                let length = Expr {
+                    ty: self.common.usize,
+                    kind: ExprKind::Field { base: Box::new(receiver), index: field },
+                    span,
+                };
+                if method != "is_empty" {
+                    return length;
+                }
+                Expr {
+                    ty: self.common.bool_,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Eq,
+                        lhs: Box::new(length),
+                        rhs: Box::new(Expr {
+                            ty: self.common.usize,
+                            kind: ExprKind::Int(0),
+                            span,
+                        }),
+                    },
+                    span,
+                }
+            }
+            "get" | "get_mut" => {
+                let mutable = method == "get_mut";
+                let receiver = self.arena_collection_receiver(receiver, mutable, span);
+                let wanted = self.check_expr(&args[0].value, key);
+                let reference = self.types.intern(TyKind::Ref { mutable, inner: value });
+                let result = self.option_of(reference);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapGet { key, value, mutable },
+                        args: vec![receiver, wanted],
+                    },
+                    span,
+                }
+            }
+            "contains_key" => {
+                let receiver = self.arena_collection_receiver(receiver, false, span);
+                let wanted = self.check_expr(&args[0].value, key);
+                Expr {
+                    ty: self.common.bool_,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapContains { key },
+                        args: vec![receiver, wanted],
+                    },
+                    span,
+                }
+            }
+            "insert" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                let key_value = self.check_expr(&args[0].value, key);
+                let mapped = self.check_expr(&args[1].value, value);
+                let Some(capacity_error) = self.capacity_error_ty() else {
+                    self.error(codes::E1010, span, "`std.collections.CapacityError` is unavailable");
+                    return error;
+                };
+                let old = self.option_of(value);
+                let result = self.result_of(old, capacity_error);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapInsert { key, value },
+                        args: vec![receiver, key_value, mapped],
+                    },
+                    span,
+                }
+            }
+            "remove" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                let wanted = self.check_expr(&args[0].value, key);
+                let result = self.option_of(value);
+                Expr {
+                    ty: result,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapRemove { key, value },
+                        args: vec![receiver, wanted],
+                    },
+                    span,
+                }
+            }
+            "clear" => {
+                let receiver = self.arena_collection_receiver(receiver, true, span);
+                Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ArenaMapClear,
+                        args: vec![receiver],
+                    },
+                    span,
+                }
+            }
+            "iter" => {
+                let receiver = self.arena_collection_receiver(receiver, false, span);
+                let iterator = self.instantiate_named_generic(
+                    "std.collections.ArenaMapIter",
+                    &[key, value],
+                    span,
+                );
+                let TyKind::Struct(iterator_id) = *self.types.kind(iterator) else {
+                    return error;
+                };
+                Expr {
+                    ty: iterator,
+                    kind: ExprKind::StructLit {
+                        struct_id: iterator_id,
+                        fields: vec![
+                            receiver,
+                            Expr {
+                                ty: self.common.usize,
+                                kind: ExprKind::Int(0),
+                                span,
+                            },
+                        ],
+                    },
+                    span,
+                }
+            }
+            _ => unreachable!("all ArenaMap methods were classified above"),
+        }
+    }
+
+    fn synth_arena_map_iterator_method(
+        &mut self,
+        receiver: Expr,
+        key: Ty,
+        value: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("next") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`{}` has no method named `{}`",
+                    self.types.display(receiver.ty),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`next` takes no arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+        let key_ref = self.types.intern(TyKind::Ref { mutable: false, inner: key });
+        let value_ref = self.types.intern(TyKind::Ref { mutable: false, inner: value });
+        let item = self.types.intern(TyKind::Tuple(vec![key_ref, value_ref]));
+        let result = self.option_of(item);
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::ArenaMapIterNext { key, value },
+                args: vec![receiver],
+            },
+            span,
+        }
+    }
+
     /// `[ARN-1]`–`[ARN-4]`, `[ARN-7]` — the core operations on a growing
     /// arena. Allocation borrows `self` shared and returns a mutable view tied
     /// to that borrow; reset takes `mut self`, so the ordinary borrow checker
@@ -8064,13 +10486,172 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         receiver: Expr,
         name: ast::Ident,
         args: &[ast::Arg],
+        explicit: &[Ty],
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
+        if method == "alloc_uninit" {
+            if explicit.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`Arena.alloc_uninit` takes one type argument, found {}",
+                        explicit.len()
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`Arena.alloc_uninit` takes one argument, found {}",
+                        args.len()
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !is_place(&receiver.kind) {
+                self.error(codes::E2140, span, "arena allocation needs a variable to borrow");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = explicit[0];
+            if self.types.is_view(inner) {
+                self.error(
+                    codes::E2130,
+                    span,
+                    "an uninitialized arena span cannot itself contain a view type",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let count = self.check_expr(&args[0].value, self.common.usize);
+            let slot = self.maybe_uninit_of(inner);
+            let result = self.types.intern(TyKind::Span { elem: slot, mutable: true });
+            let arena_ref = self.types.intern(TyKind::Ref {
+                mutable: false,
+                inner: receiver.ty,
+            });
+            let borrowed = Expr {
+                ty: arena_ref,
+                kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+                span,
+            };
+            return Expr {
+                ty: result,
+                kind: ExprKind::Builtin {
+                    which: Builtin::ArenaAllocUninit { elem: inner },
+                    args: vec![borrowed, count],
+                },
+                span,
+            };
+        }
+        if method == "alloc_array" {
+            if explicit.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`Arena.alloc_array` takes one type argument, found {}",
+                        explicit.len()
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`Arena.alloc_array` takes one argument, found {}",
+                        args.len()
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !is_place(&receiver.kind) {
+                self.error(codes::E2140, span, "arena allocation needs a variable to borrow");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let elem = explicit[0];
+            if self.types.needs_drop(elem) {
+                let shown = self.types.display(elem);
+                self.sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3090,
+                        span,
+                        format!(
+                            "`{shown}` needs `drop` and cannot be allocated with `Arena.alloc_array`"
+                        ),
+                    )
+                    .primary_label("arena array elements are never dropped individually")
+                    .help("use `alloc_uninit` only when you will explicitly manage every initialized value")
+                    .note("ordinary `alloc_array` always requires `!needs_drop(T)` [ARN-2, ARN-3]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let constructor = if self.types.is_builtin_zeroable(elem) {
+                None
+            } else {
+                self.standard_associated_capability(
+                    elem,
+                    "std.core.Default",
+                    "default",
+                )
+            };
+            if !self.types.is_builtin_zeroable(elem) && constructor.is_none() {
+                let shown = self.types.display(elem);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2040,
+                        span,
+                        format!(
+                            "`{shown}` has no available `Zeroable` or `Default` capability"
+                        ),
+                    )
+                    .help("use `alloc_uninit[T](count)`, write every slot, then assert initialization in `unsafe`")
+                    .note("`alloc_array` requires a proven `Zeroable` representation or an implementation of `Default` [ARN-3, ARN-12]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let count = self.check_expr(&args[0].value, self.common.usize);
+            let result = self.types.intern(TyKind::Span { elem, mutable: true });
+            let arena_ref = self.types.intern(TyKind::Ref {
+                mutable: false,
+                inner: receiver.ty,
+            });
+            let borrowed = Expr {
+                ty: arena_ref,
+                kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+                span,
+            };
+            return Expr {
+                ty: result,
+                kind: ExprKind::Builtin {
+                    which: match constructor {
+                        Some(constructor) => {
+                            Builtin::ArenaAllocArrayDefault { elem, constructor }
+                        }
+                        None => Builtin::ArenaAllocArrayZeroed { elem },
+                    },
+                    args: vec![borrowed, count],
+                },
+                span,
+            };
+        }
         if method == "scope" {
+            if !explicit.is_empty() {
+                self.error(codes::E2020, span, "`Arena.scope` takes no type arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_arena_scope(receiver, "Arena", args, span);
         }
         if method == "reset" {
+            if !explicit.is_empty() {
+                self.error(codes::E2020, span, "`Arena.reset` takes no type arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             if !args.is_empty() {
                 self.error(
                     codes::E2020,
@@ -8094,6 +10675,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        if explicit.len() > 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`Arena.{method}` takes one type argument, found {}", explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         if args.len() != 1 {
             self.error(
                 codes::E2020,
@@ -8108,7 +10697,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let value = {
-            let value = self.synth_committed(&args[0].value);
+            let value = match explicit.first().copied() {
+                Some(ty) => self.check_expr(&args[0].value, ty),
+                None => self.synth_committed(&args[0].value),
+            };
             self.read_through(value)
         };
         if value.ty == self.common.error {
@@ -8154,10 +10746,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         receiver: Expr,
         name: ast::Ident,
         args: &[ast::Arg],
+        explicit: &[Ty],
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
         if method == "reset" {
+            if !explicit.is_empty() {
+                self.error(codes::E2020, span, "`FixedArena.reset` takes no type arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             if !args.is_empty() {
                 self.error(
                     codes::E2020,
@@ -8183,6 +10780,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        if explicit.len() > 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`FixedArena.{method}` takes one type argument, found {}", explicit.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         if args.len() != 1 {
             self.error(
                 codes::E2020,
@@ -8196,7 +10801,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let value = {
-            let value = self.synth_committed(&args[0].value);
+            let value = match explicit.first().copied() {
+                Some(ty) => self.check_expr(&args[0].value, ty),
+                None => self.synth_committed(&args[0].value),
+            };
             self.read_through(value)
         };
         if value.ty == self.common.error {
@@ -8272,10 +10880,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         receiver: Expr,
         name: ast::Ident,
         args: &[ast::Arg],
+        explicit: &[Ty],
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
         if method == "scope" {
+            if !explicit.is_empty() {
+                self.error(codes::E2020, span, "`ScopedArena.scope` takes no type arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return self.synth_arena_scope(receiver, "ScopedArena", args, span);
         }
         if !matches!(method, "alloc" | "alloc_nodrop") {
@@ -8283,6 +10896,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 codes::E1010,
                 name.span,
                 format!("`ScopedArena` has no method named `{}`", name.name),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if explicit.len() > 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`ScopedArena.{method}` takes one type argument, found {}", explicit.len()),
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
@@ -8299,7 +10920,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let value = {
-            let value = self.synth_committed(&args[0].value);
+            let value = match explicit.first().copied() {
+                Some(ty) => self.check_expr(&args[0].value, ty),
+                None => self.synth_committed(&args[0].value),
+            };
             self.read_through(value)
         };
         if value.ty == self.common.error {
@@ -8351,6 +10975,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        if mutable
+            && self.maybe_uninit_inner(elem).is_some()
+            && matches!(name.name.as_str(), "write_at" | "assume_init")
+        {
+            let inner = self.maybe_uninit_inner(elem).expect("checked above");
+            return self.synth_maybe_uninit_span_method(receiver, inner, name, args, span);
+        }
         let usize_ty = self.common.usize;
         let (which, arity, ret) = if name.name.is("len") {
             (Builtin::SpanLen, 0, usize_ty)
@@ -8417,6 +11048,75 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
         Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span }
+    }
+
+    /// `[ARN-9]` — initialization operations on
+    /// `MutSpan[MaybeUninit[T]]`. Bounds and exclusivity stay in the ordinary
+    /// span/borrow machinery; dedicated builtins preserve the no-drop store
+    /// and the explicit unsafe initialization assertion.
+    fn synth_maybe_uninit_span_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let arity = if method == "write_at" { 2 } else { 0 };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{method}` takes {arity} arguments, found {}", args.len()),
+            );
+            return error;
+        }
+
+        if method == "write_at" {
+            if !is_place(&receiver.kind) {
+                self.error(
+                    codes::E2140,
+                    span,
+                    "`write_at` needs a mutable span variable to write through",
+                );
+                return error;
+            }
+            self.reject_borrowed_parameter_write(&receiver, span, false);
+            let index = self.check_expr(&args[0].value, self.common.usize);
+            let value = self.check_expr(&args[1].value, inner);
+            let result = self.types.intern(TyKind::Ref { mutable: true, inner });
+            return Expr {
+                ty: result,
+                kind: ExprKind::Builtin {
+                    which: Builtin::MaybeUninitWriteAt { inner },
+                    args: vec![receiver, index, value],
+                },
+                span,
+            };
+        }
+
+        if !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    "`assume_init` needs an `unsafe` block",
+                )
+                .help("initialize every slot with `write_at`, then wrap `assume_init` in `unsafe:`")
+                .note("the caller must establish that every exposed element is initialized [ARN-9]"),
+            );
+        }
+        let result = self.types.intern(TyKind::Span { elem: inner, mutable: true });
+        Expr {
+            ty: result,
+            kind: ExprKind::Builtin {
+                which: Builtin::MaybeUninitSpanAssumeInit { inner },
+                args: vec![receiver],
+            },
+            span,
+        }
     }
 
     fn synth_vec_method(
@@ -9050,6 +11750,17 @@ fn item_name(item: &ast::Item) -> Option<Symbol> {
         | ast::ItemKind::ExternClass(_)
         | ast::ItemKind::Comptime(_) => return None,
     })
+}
+
+/// Members belonging to any item form that can provide a method body.
+fn item_members(item: &ast::Item) -> Option<&[ast::Member]> {
+    match &item.kind {
+        ast::ItemKind::Struct(decl) => Some(&decl.members),
+        ast::ItemKind::Enum(decl) => Some(&decl.members),
+        ast::ItemKind::Interface(decl) => Some(&decl.members),
+        ast::ItemKind::Extend(decl) => Some(&decl.members),
+        _ => None,
+    }
 }
 
 /// The visibility of a named item in a module, or `None` if it has no such

@@ -1,9 +1,9 @@
 # Cold start — read this first
 
-State as of 2026-09-12. Read `docs/MIGRATION-0.9.5.md` next for the active
+State as of 2026-09-13. Read `docs/MIGRATION-0.9.6.md` next for the active
 migration, then `docs/HANDOFF.md` §0 for the process and verified implementation
-state. `docs/MIGRATION-0.8.3.md` remains historical context for the original
-phase order.
+state. `docs/MIGRATION-0.9.5.md` and `docs/MIGRATION-0.8.3.md` remain historical
+context for the 0.9.5 intake and original phase order.
 
 | Ledger | Answers |
 |---|---|
@@ -11,16 +11,20 @@ phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..029 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..009 are closed; ODR-003 is deferred editorial; there is currently no open owner semantic decision |
+| `docs/DECISIONS.md` | ADR-001..033 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..013 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is currently open |
 
 ---
 
 ## 1. State
 
-**`main`, pushed, clean.** `https://github.com/Insomniac-Coder/ember.git`
+**Last committed implementation baseline:** `main` at `adfd5ea`, equal to
+`origin/main`. The live working tree is dirty with the uncommitted H4 cut and
+active compiler/runtime/test work. Always run `git status` and `git log -1`
+instead of treating this sentence as live Git state.
+`https://github.com/Insomniac-Coder/ember.git`
 
-    178 tests green      cargo test --workspace
+    183 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -30,11 +34,16 @@ phase order.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 80 conformance rule directories, 229 cases. 58 defects recorded, **none open**.
+ 86 top-level conformance rule directories, 274 `.em` files including support
+ modules. 67 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
-`MaybeUninit`, and Arena bulk initialization. Their compiler/runtime/conformance
-work remains open. ERR-047 and ERR-048 were closed
+`MaybeUninit`, and Arena bulk initialization. Their core
+compiler/runtime/conformance work is now complete. **ERR-051 / ODR-010 is
+closed in H1:** v1 `Default` panic
+aborts, so `[ARN-10]` requires no observable post-panic rollback or unwinding;
+only a separately specified recoverable transactional API creates rollback.
+ERR-047 and ERR-048 were closed
 by the H7/H8 owner rulings; ERR-049 was closed by the H9
 Arena-provenance ruling; earlier ERR-041 and ERR-043 were
 decided on 2026-09-10 and ERR-042 was withdrawn as wrong. See `HANDOFF.md`.
@@ -47,8 +56,9 @@ five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
 
-**0.9.5 status:** the owner-supplied H2 and H3 files are preserved unchanged
-under `docs/spec-source/as-received/`. The repaired and frozen
+**0.9.6 status:** the owner-supplied 0.9.5 H2/H3 files and the Revision 5
+simplicity-consolidation RFC are preserved unchanged under
+`docs/spec-source/as-received/`. The repaired and frozen
 `Ember_v0.9.5_Hardened_4.md` remains the source-gap audit record. The owner then
 supplied `[LT-8]`–`[LT-13]`, frozen as H5, and resolved the mutable-helper
 boundary in H6. The owner then specified ordinary borrowed/default, `mut`, and
@@ -59,10 +69,17 @@ helper consumes a view, and callable modes remain compile-time canonical type
 metadata through the existing abstraction. H9 then resolved the Arena-backed
 return-provenance boundary with the narrow `@borrows(arena)` exception. H10
 now resolves deterministic bulk initialization and the complete `Zeroable` /
-`MaybeUninit` safety/API boundary. H10 is the new frozen development
+`MaybeUninit` safety/API boundary. The owner then selected the simplicity-
+consolidation architecture line and approved the abort-only `[ARN-10]`
+clarification. H2 then completed Arena-backed collections, and
+H3 records the public hashing protocol, and
+`Ember_v0.9.6_Hardened_4.md` closes its callable boundary with static generic
+`H: Hasher` dispatch. H4 is the frozen development
 target, but not yet the normative repository source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
-helper families; no mixed overloads are implied. No 0.9/0.9.5 implementation
+helper families; no mixed overloads are implied, and it requires one shared
+semantic-fact/MIR verification architecture without merging distinct language
+semantics. No 0.9/0.9.5/0.9.6 implementation
 or conformance is implied by the target's version label.
 
 ## 2. The rules. Read these before touching `docs/spec-source/`
@@ -110,7 +127,8 @@ the caveat.*
 
 ## 3. Versioning
 
-The document is **v0.8.5_Hardened_1**. Two numbers move independently:
+The adopted normative document is **v0.8.5_Hardened_1**; the frozen development
+target is **v0.9.6_Hardened_4**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
@@ -122,25 +140,34 @@ The document is **v0.8.5_Hardened_1**. Two numbers move independently:
   records the last one that way, and `207c69f` is the shape to follow when the
   file has outrun its header and the decision has not been made.
 
-`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts `"0.8.3"`,
-`"0.8.4"` and `"0.8.5"`; each is additive, so nothing valid became invalid.
-`docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the current frozen snapshot —
-the next revision diffs against **that**, not against as-received.
+`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts the exact
+`"0.9"`, `"0.9.5"`, and `"0.9.6"` selectors plus the supported 0.8 contracts.
+That completed `VER-096-1` work is selector recognition, not evidence of
+adoption by itself.
+`docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the frozen adopted snapshot.
+The current development lineage first diffed H1 against immutable H10, H2
+against immutable H1, H3 against immutable H2, and H4 against immutable H3;
+any next 0.9.6 hardening diffs against frozen H4, never
+against an as-received file.
 `Ember_v0.8.4_Hardened_1.md` and `Ember_v0.8.4_Hardened_2.md` are kept as prior
 baselines. The working source and the current snapshot are **identical** right
 now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.5_Hardened_10`, per the owner's
-instruction that each issued hardening pass increments the hardening number.
-H9 is the immediate predecessor and remains frozen. H5 recovered the missing
+The current development target is `0.9.6_Hardened_4`, per the owner's explicit
+completion of ODR-013. H3 is its immediate predecessor; H10 remains the
+immutable architecture-line predecessor. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
 modes; H8 records helper input modes and compile-time mode preservation through
 `Callable`; H9 records Arena-backed return provenance; H10 records the complete
 Arena initialization and `MaybeUninit` contract. The 0.9.5 multi-region-view
-feature itself is the owner-selected language change. Any H10 correction must
-be H11.
+feature itself is the owner-selected language change. H1 preserves 0.9.5's
+accepted/rejected ordinary-source sets while selecting the consolidated
+reference-compiler/conformance architecture. H2 completes the Arena-backed
+container contract, H3 completes the public hashing protocol, and H4 selects
+static generic Hasher dispatch without changing that architecture line. Any
+later correction must become `0.9.6_Hardened_5`, not an in-place H4 edit.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -148,6 +175,11 @@ checking the current section the moment the version moved. It was one commit
 from happening.
 
 ## 4. Where the work is: finish Phase 2
+
+**Current phase count: exactly 1 of 9 phases is complete.** Phase 2 is active
+and substantial, but it has not met every exit criterion below. Phases 3–9
+have not passed their exit gates. Older historical notes that counted a
+separate "Phase 0" do not change this current nine-phase accounting.
 
 Exit criteria, from Part XXI: *all `[OWN-*]`, `[BRW-*]`, `[LT-*]`, `[DRP-*]`,
 `[SPN-*]`, `[CELL-*]`, `[DIA-7..10]` tests; milestone M2; zero unclassified
@@ -189,7 +221,7 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: implement H10's Arena initialization foundation
+## 5. Next task: resolve the H1 Arena-collection contract
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -233,13 +265,36 @@ already clear; no specification or ADR changed.
    enforcement, `E3090`/`E3096`, and H9 wrapper provenance. Generic
    instantiations re-check `[ARN-3]`, so `alloc(Array[T]())` cannot hide behind
    an opaque type parameter.
-3. **Remaining Arena surface.** `alloc_array` needs `Default`/`Zeroable`;
-   `alloc_uninit` needs `MaybeUninit`; `ArenaArray`/`ArenaMap` need the
-   corresponding collection machinery; allocation effects and `ThreadArena`
+3. **Canonical-fact foundation.** **Started.** The smallest shared
+   `TypeIdentity`/`BorrowCapability`/`AccessContract`/
+   `InitializationState`/`LayoutDescriptor`/`EffectSet` representation needed
+   by the next Gate B work, and route existing behavior through it without a
+   big-bang rewrite. Preserve exact diagnostics, current accepted/rejected
+   programs, runtime erasure, and the three different replacement orderings.
+   This is `ARCH-096-1`; prove each migrated path with differential and
+   adversarial tests before deleting parallel state.
+4. **Remaining Arena surface.** `MaybeUninit`, `alloc_uninit`, the conservative
+   core `Zeroable` predicate, both `alloc_array` branches, receiver-less
+   `Default` dispatch, the complete `[TST-23]` matrix, and `[ARN-10]`
+   success/abort evidence are implemented. Source-declared generic methods,
+   inference, bounds, interface conformance/defaults, callable expectations,
+   monomorphisation, and generic-owner return provenance are also complete
+   under `GEN-METHOD-1`. `ArenaArray`/`ArenaMap` are now active under
+   **`ARN-COLL-1`**. ODR-011 is closed in H2: the owner selected fixed-capacity,
+   single-allocation views; specified their operations, failure direction,
+   `!needs_drop` boundary, and Map behavior; placed the six public types in
+   `std.collections` without prelude exports; defined unit-only
+   `CapacityError.Full`; selected named `@view` iterators using
+   `Iterator[Item = ...]`; and required empty initial construction. Allocation
+   effects and `ThreadArena`
    wait for the effects/concurrency phases. **ODR-009 is closed:** H10 defines
    the zero-bit validity set, `MaybeUninit` state transitions, canonical APIs,
-   and exact bulk-allocation fallback/drop/rollback behavior. Explicit type
-   arguments on methods remain the separate compiler gap `GEN-METHOD-1`.
+   and exact bulk-allocation fallback/drop behavior. H1 `[ARN-10]` clarifies
+   that v1 panic aborts and requires no observable recovery or unwinding;
+   rollback exists only for a separately specified recoverable transactional
+   API. Built-in-key collection behavior and the surrounding conformance matrix
+   are executable; H4 has closed ODR-013 and custom keys are active compiler
+   work through the static generic Hasher boundary.
    Implement the H10 contract exactly; do not substitute ad-hoc initialized
    bytes or implementation-defined conversion APIs.
 
@@ -247,8 +302,9 @@ Arena is **not a third interior-mutability primitive**. It is a region
 allocator, and amendment A13 records that it shares implementation machinery
 with `Cell`/`RefCell`, not their semantic concept.
 
-**Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`;
-`Cell.take` on `CELL-DEF-1`. Neither rule was softened to fit.
+**Blocked, correctly:** `[CELL-3]`/`[CELL-8]` (`!Sync`) on `CELL-SYNC-1`.
+`CELL-DEF-1` is complete: `Cell.take` and the move-only `Default` update arm are
+implemented without softening the rule.
 
 **Open compiler defects:** none.
 
@@ -275,8 +331,8 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-009 are closed. ODR-003 is deferred editorial work. **There is no
-current open owner semantic question.**
+through ODR-013 are closed. ODR-003 is deferred editorial work. **No owner
+semantic/API decision is currently open.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -304,6 +360,24 @@ current open owner semantic question.**
   and `alloc_uninit`, including bit validity, canonical value/span transitions,
   `!needs_drop`, deterministic fallback, E2040, rollback, and phase ordering.
   The remaining Arena bulk surface is now ordinary implementation work.
+* **ODR-010 — CLOSED.** H1 amends `[ARN-10]` directly: `Default.default()` has
+  no recoverable failure path in v1, panic terminates through `[PAN-1]`
+  `abort()`, and no post-panic Arena state or unwinding is promised. No
+  `[ARN-10a]` was introduced. A future recoverable API receives rollback only
+  from its own explicit transactional contract.
+* **ODR-011 — CLOSED.** H2 records fixed-capacity, single-allocation Arena
+  provenance, empty construction, operations, recoverable
+  `CapacityError.Full`, `!needs_drop` contents, Map key/duplicate/order
+  behavior, and the public `std.collections` surface. The owner selected named
+  `@view` iterator types using `Iterator[Item = ...]`; none of the six names is
+  in the prelude. `ARN-COLL-1` is active implementation work.
+* **ODR-012 — CLOSED.** H3 defines public `Hash`/`Hasher`, concrete
+  `DefaultHasher`, Eq/hash coherence, read-only resident Map keys, and leaves
+  the exact mixing algorithm implementation-defined.
+* **ODR-013 — CLOSED.** H4 uses
+  `fn hash[H: Hasher](self, mut h: H)`: `H` is inferred from the concrete
+  context and normally monomorphized, `DefaultHasher implements Hasher`, and
+  `Hash.hash` introduces no implicit or mandatory dynamic dispatch.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
@@ -319,6 +393,11 @@ current open owner semantic question.**
   borrowed places unchecked — `x = r.inner` compiled and the value dropped
   twice) was the serious one and is **fixed** this turn: borrowed-ness is
   threaded HIR→MIR and owning moves out of borrows are `E3013`.
+  **D-048–D-050** close the generic pipeline defects found while completing
+  `GEN-METHOD-1`: explicit arguments outrank literal defaults, solved types
+  reach callable expectations independent of argument order, and
+  substitution/inference recurse through `Span`/`MutSpan` while preserving
+  generic-owner return provenance.
 * **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
   (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
   (`extern class` parses and is refused), D4 (`E9012` registered and never

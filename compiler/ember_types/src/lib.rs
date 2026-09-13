@@ -16,6 +16,11 @@ use ember_span::{Span, Symbol};
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ty(u32);
 
+/// `[IMP-7]` — the canonical identity exchanged by semantic passes for one
+/// interned type. `Ty` remains the compact representation; this name makes the
+/// contract explicit without creating a second type universe.
+pub type TypeIdentity = Ty;
+
 /// Index of a user-declared struct in the type table.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct StructId(pub u32);
@@ -130,6 +135,11 @@ pub struct Layout {
     pub field_offsets: Vec<u64>,
 }
 
+/// `[IMP-7]` — the canonical target layout attached to a `TypeIdentity`.
+/// `Layout` remains the representation so existing layout and ABI consumers
+/// cannot drift onto a parallel descriptor.
+pub type LayoutDescriptor = Layout;
+
 impl Layout {
     pub fn scalar(size: u64) -> Layout {
         Layout { size, align: size.max(1), field_offsets: Vec::new() }
@@ -174,6 +184,11 @@ pub struct StructDef {
     pub derives_copy: bool,
     /// `[STR-3]` — a `drop` method or a `Drop` field makes the type move-only.
     pub has_drop: bool,
+    /// Whether ordinary structural drop descends into the fields after any
+    /// user destructor. This is true for source structs. Compiler-known
+    /// storage wrappers such as `[ARN-8]`'s `MaybeUninit[T]` set it false:
+    /// their field describes layout, not an initialized owned `T`.
+    pub drops_fields: bool,
     /// `[TYP-16]` — when this struct is one instantiation of a generic, the
     /// generic it came from and the arguments it was built with. That is what
     /// lets `Buffer[T]` unify with `Buffer[i32]`.
@@ -497,6 +512,10 @@ impl TypeTable {
                 let elem = self.substitute(elem, args);
                 self.intern(TyKind::Vec { elem })
             }
+            TyKind::Span { elem, mutable } => {
+                let elem = self.substitute(elem, args);
+                self.intern(TyKind::Span { elem, mutable })
+            }
             TyKind::Tuple(items) => {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
@@ -514,11 +533,28 @@ impl TypeTable {
     /// argument actually has, filling in `args` where a parameter is met.
     /// Returns false only on a shape mismatch the caller should report.
     pub fn unify(&self, declared: Ty, actual: Ty, args: &mut Vec<Option<Ty>>) -> bool {
+        self.unify_with_fixed(declared, actual, args, 0)
+    }
+
+    /// Call-site unification with an explicit prefix. A written type argument
+    /// is already fixed by the programmer, so inference must not reject an
+    /// untyped literal merely because it has not yet reached the later
+    /// coercion check. The substituted argument check remains authoritative.
+    pub fn unify_with_fixed(
+        &self,
+        declared: Ty,
+        actual: Ty,
+        args: &mut Vec<Option<Ty>>,
+        fixed: usize,
+    ) -> bool {
         match (self.kind(declared).clone(), self.kind(actual).clone()) {
             (TyKind::Param { index, .. }, _) => {
                 let slot = index as usize;
                 if slot >= args.len() {
                     return false;
+                }
+                if slot < fixed {
+                    return true;
                 }
                 match args[slot] {
                     // A parameter met twice must be met with the same type.
@@ -532,19 +568,29 @@ impl TypeTable {
             (TyKind::Ref { inner: a, .. }, TyKind::Ref { inner: b, .. })
             | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
             | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. })
-            | (TyKind::Vec { elem: a }, TyKind::Vec { elem: b }) => self.unify(a, b, args),
+            | (TyKind::Vec { elem: a }, TyKind::Vec { elem: b }) => {
+                self.unify_with_fixed(a, b, args, fixed)
+            }
+            (
+                TyKind::Span { elem: a, mutable: a_mut },
+                TyKind::Span { elem: b, mutable: b_mut },
+            ) if a_mut == b_mut => self.unify_with_fixed(a, b, args, fixed),
             // Two instantiations of the same generic struct unify argument
             // by argument.
             (TyKind::Struct(a), TyKind::Struct(b)) => {
                 match (&self.struct_def(a).origin, &self.struct_def(b).origin) {
                     (Some((na, aa)), Some((nb, ab))) if na == nb && aa.len() == ab.len() => {
-                        aa.iter().zip(ab.iter()).all(|(&x, &y)| self.unify(x, y, args))
+                        aa.iter()
+                            .zip(ab.iter())
+                            .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
                     }
                     _ => true,
                 }
             }
             (TyKind::Tuple(a), TyKind::Tuple(b)) if a.len() == b.len() => {
-                a.iter().zip(b.iter()).all(|(&x, &y)| self.unify(x, y, args))
+                a.iter()
+                    .zip(b.iter())
+                    .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
             }
             // A concrete declared type has nothing to infer; the ordinary
             // coercion check decides whether the argument fits.
@@ -796,13 +842,67 @@ impl TypeTable {
         }
     }
 
+    /// `[ARN-11]`, `[ARN-12]` — whether an all-zero object representation is
+    /// a valid initialized value of this type.
+    ///
+    /// This is intentionally conservative. It contains only representation
+    /// facts the compiler can prove without consulting a user implementation;
+    /// general `@derive(Zeroable)` remains a later extension. In particular,
+    /// a raw pointer may be null, but a reference, view or callable may not be
+    /// manufactured from zero bytes. A range is zeroable exactly when zero is
+    /// inside its declared validity interval.
+    pub fn is_builtin_zeroable(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::Ptr { .. } => true,
+            TyKind::Array { elem, .. } => self.is_builtin_zeroable(*elem),
+            TyKind::Tuple(items) => items.iter().all(|&item| self.is_builtin_zeroable(item)),
+            // The compiler-known `MaybeUninit[T]` wrapper accepts every byte
+            // pattern because it makes no validity claim about its payload.
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                !def.drops_fields && def.name.as_str().starts_with("MaybeUninit_")
+            }
+            TyKind::Range(id) => {
+                let def = self.range_def(*id);
+                match (def.lo, def.hi) {
+                    (Bound::Int(lo), Bound::Int(hi)) => lo <= 0 && 0 <= hi,
+                    (Bound::Float(lo), Bound::Float(hi)) => lo <= 0.0 && 0.0 <= hi,
+                    _ => false,
+                }
+            }
+            // The runtime representation of an empty growable buffer is
+            // `{null, 0, 0}`. It is valid even though the value owns storage
+            // once grown and therefore is not Copy.
+            TyKind::Vec { .. } => true,
+            TyKind::Error => true,
+            TyKind::Void
+            | TyKind::Never
+            | TyKind::Str
+            | TyKind::Span { .. }
+            | TyKind::Ref { .. }
+            | TyKind::Fn { .. }
+            | TyKind::Enum(_)
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
+            | TyKind::Infer(_)
+            | TyKind::IntLit
+            | TyKind::FloatLit => false,
+        }
+    }
+
     /// `[TYP-1]` — whether a value of this type needs destruction. Drives drop
     /// elaboration (Part XVIII §4.9).
     pub fn needs_drop(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                def.has_drop || def.fields.iter().any(|f| self.needs_drop(f.ty))
+                def.has_drop
+                    || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             TyKind::Enum(id) => {
                 let def = self.enum_def(*id);
@@ -1139,6 +1239,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
@@ -1160,6 +1261,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
@@ -1180,6 +1282,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
@@ -1199,12 +1302,74 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: true,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
         let ty = table.intern(TyKind::Struct(id));
         assert!(!table.is_copy(ty));
         assert!(table.needs_drop(ty));
+    }
+
+    #[test]
+    fn a_no_drop_storage_wrapper_keeps_layout_and_copy_but_suppresses_field_drop() {
+        // `[ARN-8]` — this is the representation contract used by
+        // compiler-known `MaybeUninit[T]`: one field gives it exactly `T`'s
+        // layout and ordinary Copy derivation, while `drops_fields` prevents
+        // bytes that may not hold an initialized `T` from being destroyed.
+        let (mut table, c) = TypeTable::new();
+        let owning = table.intern(TyKind::Vec { elem: c.i32 });
+        let wrapper = table.add_struct(StructDef {
+            name: Symbol::intern("MaybeUninit_Array_i32"),
+            fields: vec![field("value", owning)],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let wrapped = table.intern(TyKind::Struct(wrapper));
+        let wrapped_layout = table.layout(wrapped);
+        let owning_layout = table.layout(owning);
+        assert_eq!(wrapped_layout.size, owning_layout.size);
+        assert_eq!(wrapped_layout.align, owning_layout.align);
+        assert!(!table.is_copy(wrapped));
+        assert!(table.needs_drop(owning));
+        assert!(!table.needs_drop(wrapped));
+
+        let scalar_wrapper = table.add_struct(StructDef {
+            name: Symbol::intern("MaybeUninit_i32"),
+            fields: vec![field("value", c.i32)],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: false,
+            origin: None,
+            declaring_module: usize::MAX,
+        });
+        let scalar_wrapped = table.intern(TyKind::Struct(scalar_wrapper));
+        assert!(table.is_copy(scalar_wrapped));
+        let scalar_wrapped_layout = table.layout(scalar_wrapped);
+        let scalar_layout = table.layout(c.i32);
+        assert_eq!(scalar_wrapped_layout.size, scalar_layout.size);
+        assert_eq!(scalar_wrapped_layout.align, scalar_layout.align);
+    }
+
+    #[test]
+    fn builtin_zeroable_is_a_validity_fact_not_a_copy_or_drop_fact() {
+        // `[ARN-11]` — primitive zero is valid, references are not, and an
+        // owning empty buffer may be zero-valid without becoming Copy.
+        let (mut table, c) = TypeTable::new();
+        let raw = table.intern(TyKind::Ptr { mutable: true, inner: c.i32 });
+        let reference = table.intern(TyKind::Ref { mutable: false, inner: c.i32 });
+        let buffer = table.intern(TyKind::Vec { elem: c.i32 });
+        assert!(table.is_builtin_zeroable(c.i32));
+        assert!(table.is_builtin_zeroable(raw));
+        assert!(!table.is_builtin_zeroable(reference));
+        assert!(table.is_builtin_zeroable(buffer));
+        assert!(!table.is_copy(buffer));
+        assert!(table.needs_drop(buffer));
     }
 
     #[test]
@@ -1229,6 +1394,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
@@ -1262,6 +1428,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });
@@ -1274,6 +1441,7 @@ mod tests {
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });

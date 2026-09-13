@@ -24,8 +24,17 @@ pub interface Eq:
 pub interface Ord: Eq:
     fn cmp(self, other: Self) -> Ordering
 
-## Part IV §8 also declares `Clone`, `Hash`, `Default`, `Display`, `Debug`, the
-## operator interfaces and `Iterator`. `Default` and the rest of the
-## associated-function forms wait for interface members with no `self`
-## receiver, which this phase does not have; declaring one here would be a
-## name taken by something that cannot be implemented.
+## Part IV §8 — a receiver-less interface member is an associated function,
+## invoked through the implementing type as `T.default()`.
+pub interface Default:
+    fn default() -> Self
+
+## Part IV §8's canonical associated-type iterator contract. Named standard
+## iterators, including the Arena-backed collection iterators, implement this
+## interface rather than introducing a second iterator abstraction.
+pub interface Iterator:
+    type Item
+    fn next(mut self) -> Option[Item]
+
+## Part IV §8 also declares `Clone`, `Hash`, `Display`, `Debug`, and the
+## operator interfaces; they remain staged with their dependent surface.

@@ -972,3 +972,163 @@ The mnemonic conformance heading becomes numeric `[TST-23]`.
 advertised by 0.9.5 and is owner-classified as a hardening. H9 was frozen, so
 ADR-023 requires `0.9.5_Hardened_10`. H10 is the new frozen development target;
 the adopted 0.8.5 specification remains unchanged pending adoption gates.
+
+## ADR-030 — 0.9.6 consolidates compiler mechanisms without weakening semantics
+
+**Owner rulings, 2026-09-13.** The owner supplied and iteratively corrected the
+Simplicity Consolidation RFC, approved Revision 5 as the design basis for
+`0.9.6_Hardened_1`, and explicitly approved the final clarification of H10
+`[ARN-10]`. The received Revision 5 file is preserved byte-for-byte under
+`docs/spec-source/as-received/` with SHA-256
+`593E86A61738B32DCFAAB14875C12EA3A7BBF1A16BAD5286260EE1BAFD803923`.
+
+**Architecture decision.** The reference compiler converges on reusable
+`TypeIdentity`, `BorrowCapability`, `OwnershipGraph`, `AccessContract`,
+`InitializationState`, `LayoutDescriptor`, and `EffectSet` facts. A canonical
+borrow capability keeps provenance root, optional source place, storage
+identity, projection, region, access permission, representation kind,
+ownership, acquisition/checking, unsafe authority, synchronization, validity,
+and escape constraints distinct. Raw-pointer representation is not an access
+permission; unsafe is an authority boundary rather than a proof algorithm;
+region equality or inequality is not an overlap or `noalias` proof.
+
+This is shared machinery, not shared semantics. Arena remains a region
+allocator. `Cell`, `RefCell`, synchronization guards, and `UnsafeCell` retain
+different invariants. ECS remains library-owned; FFI remains contract-driven;
+coroutines gain no escape exception; and H10's class-exclusivity runtime path
+does not turn ordinary borrow failures into runtime acceptance. The three
+replacement orderings — ordinary assignment drop-before-store after RHS
+evaluation, `Cell.set` store-before-drop, and `MaybeUninit.write` store with no
+old-value drop — remain deliberately different.
+
+**Compiler boundary.** Initial MIR precedes initialization, ownership, borrow,
+and region analyses; verified MIR is the code-generation boundary. Type and
+interface solving constructs typed HIR from the resolved AST. Callable
+field-access and field-to-region summaries use exact, trusted-declared, or
+conservative-unknown facts. Trusted metadata comes only from verified MIR or
+an audited unsafe/FFI contract. Dynamic dispatch includes every contractually
+valid current, separately compiled, and hot-reload target. Both summaries
+invalidate callers, interface hashes, generics, and caches together; stale
+metadata is a hard compiler failure and none of it enters runtime ABI or reload
+state.
+
+**`[ARN-10]` resolution.** When `alloc_array[T]` uses `T: Default`, successful
+construction remains specified. In v1 `T.default()` has no recoverable failure
+path, and panic terminates the process through `abort()` under `[PAN-1]`; there
+is no post-panic Arena state to observe and no unwinding requirement. No
+rollback obligation arises unless a separate API explicitly specifies both a
+recoverable construction-failure path and transactional rollback semantics.
+The existing `[ARN-10]` is amended directly; no new suffixed rule is created.
+
+**Version and evidence treatment.** The owner selected a fresh 0.9.6
+architecture line, so the hardening counter resets to 1. Apart from accepting
+the additive `0.9.6` selector, H1 preserves H10's accepted/rejected ordinary
+source sets and observable semantics. H10 remains immutable. H1 is a frozen
+development target, not the adopted repository specification, until its
+implementation, conformance, tooling, and adoption gates pass. The adopted
+source remains `docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`).
+
+## ADR-031 — Arena-backed collections are fixed-capacity Arena views
+
+**Owner rulings resolving ODR-011 / ERR-052.** H1 named `ArenaArray[T]` and
+`ArenaMap[K, V]` as Arena-backed `@view` containers but did not define an
+executable API. The owner selected fixed-capacity, single-allocation
+containers and then explicitly closed the remaining public identity,
+iterator-type, and initial-state questions.
+
+**Storage and provenance.** Both constructors borrow a shared `Arena` through
+`@borrows(arena)`, allocate their backing storage once, and return an empty
+container with the Arena's region and `len() == 0`. No later operation grows,
+reallocates, moves the backing buffer, mutates the Arena cursor, or creates a
+hidden Arena region. Both containers and all named iterators are `@view`
+types governed by `[TYP-15]` and ordinary borrowing.
+
+**Failure and destruction.** Capacity exhaustion is recoverable:
+`Err(CapacityError.Full)`. The unit-only public enum is owned by
+`std.collections` and is not a prelude name. `ArenaArray[T]` requires
+`!needs_drop(T)`; `ArenaMap[K, V]` requires `!needs_drop(K)` and
+`!needs_drop(V)`. Arena rewind/drop never performs per-element destruction.
+
+**API and iteration.** `std.collections` publicly owns `ArenaArray`,
+`ArenaMap`, `CapacityError`, `ArenaArrayIter`, `ArenaArrayIterMut`, and
+`ArenaMapIter`; none is in the prelude. The named iterator views implement
+the existing associated-type `Iterator[Item = ...]` contract. Array iteration
+is deterministic index order. Map iteration has no promised bucket order but
+is deterministic for unchanged state and implementation configuration.
+`ArenaMap` uses the ordinary `K: Eq + Hash` contract and duplicate insertion
+returns the replaced value.
+
+**Borrowing boundary.** Mutating methods take `mut self`; existing whole-place
+borrow rules therefore reject an overlapping mutation while an element or
+iterator borrow is live. No container-specific invalidation mechanism is
+introduced.
+
+**Version and evidence treatment.** The owner explicitly approved this exact
+completion as `0.9.6_Hardened_2`. H1 remains frozen. H2 is the new frozen
+development target but not the adopted repository specification until its
+implementation, `[TST-24]` conformance, and adoption gates pass. This
+owner-selected treatment closes an already advertised but unexecutable API; it
+does not create a general implementation-agent exception to the project's
+language-revision policy.
+
+## ADR-032 — Hashing is an explicit protocol with coherent, read-only Map keys
+
+**Owner ruling resolving ODR-012 / ERR-053, 2026-09-13.** H2 required
+`K: Eq + Hash` for ordinary and Arena-backed Maps, but the inherited
+`Hash.hash(self, mut h: Hasher)` declaration referred to a `Hasher` whose
+identity, operations, lifetime boundary, and default implementation were never
+defined. The implementation stopped rather than treating raw bytes, a no-op,
+or another language's hasher as Ember semantics.
+
+**Public contract.** `std.collections` publicly owns the `Hash` and `Hasher`
+interfaces and the concrete `DefaultHasher`. Existing `[MOD-5]` keeps `Hash`
+in the prelude; `Hasher` and `DefaultHasher` are not added. `Hasher` is a
+stateful, move-only context with canonical byte and signed/unsigned integer
+write operations. Finalization consumes it and yields `u64`; H3 spells this
+`finish(owned self)` because existing receiver-mode rules make bare `self`
+borrowed while the owner's normative prose explicitly requires consumption.
+
+**Coherence and safety.** A `Hash` implementation feeds a deterministic
+representation into the supplied context, does not retain or inspect the
+context after return, and no hasher retains an input span past a write call.
+For `T: Eq + Hash`, equality implies equal hashes; distinct values need not
+hash distinctly. Safe Map APIs never expose `ref mut K`, preventing a resident
+key's equality/hash identity from being invalidated in place.
+
+**Implementation freedom.** `Map` and `Set` use `DefaultHasher` until an
+explicit future custom-hasher API exists. The mixing algorithm is deliberately
+not source-level compatibility behavior. Implementers may replace it without a
+language revision while preserving all observable semantic requirements.
+
+**Version and evidence treatment.** The owner classified this as a
+standard-library API completion, so immutable H2 is succeeded by
+`0.9.6_Hardened_3`. `[HASH-1]`–`[HASH-4]`, HC-096-03, closed ODR-012, and
+ERR-053 preserve the authority chain. H3 remains a frozen development target,
+not the adopted repository specification, until its implementation,
+conformance, and adoption gates pass.
+
+## ADR-033 — `Hash.hash` uses static generic Hasher dispatch
+
+**Owner ruling resolving ODR-013 / ERR-054, 2026-09-13.** H3 defined the
+public Hasher protocol but retained `Hash.hash(self, mut h: Hasher)`. Existing
+`[TYP-22]` does not turn a concrete struct into a bare interface value:
+interfaces require either an explicit generic bound or a legal `dyn`
+representation. Because `DefaultHasher` is a concrete move-only context, the
+H3 signature left dispatch, representation, and ABI unresolved.
+
+**Decision.** The canonical signature is
+`fn hash[H: Hasher](self, mut h: H)`. The concrete `H` is inferred at the call
+and normally monomorphized through Ember's existing generic/interface
+machinery. `DefaultHasher` implements `Hasher`. No mandatory dynamic dispatch,
+bare-interface concrete parameter, or compiler-only coercion is introduced.
+A future API may use `dyn Hasher` only by explicitly specifying a legal
+runtime-polymorphic representation.
+
+**Normalization.** The owner-supplied patch placed angle brackets around the
+ordinary parameter list. Existing grammar uses parentheses directly, so H4
+removes those transport markers while preserving the selected generic bound.
+
+**Version and evidence treatment.** H3 remains immutable and is succeeded by
+`0.9.6_Hardened_4`. `[HASH-1]`, HC-096-04, closed ODR-013, and ERR-054 preserve
+the authority chain. H4 is a frozen development target rather than an
+implementation claim or adopted repository source.

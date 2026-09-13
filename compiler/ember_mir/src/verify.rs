@@ -334,7 +334,12 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 which,
                 Builtin::SpanFrom { .. }
                     | Builtin::StringAsStr
+                    | Builtin::ArenaArrayWithCapacity { .. }
+                    | Builtin::ArenaMapWithCapacity { .. }
                     | Builtin::ArenaAlloc { .. }
+                    | Builtin::ArenaAllocUninit { .. }
+                    | Builtin::ArenaAllocArrayZeroed { .. }
+                    | Builtin::ArenaAllocArrayDefault { .. }
                     | Builtin::FixedArenaAlloc { .. }
                     | Builtin::ScopedArenaAlloc { .. }
                     | Builtin::ArenaScope { .. }
@@ -385,7 +390,13 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
                 TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => ty = *elem,
-            (Projection::Deref, TyKind::Ref { inner, .. }) => ty = *inner,
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Ptr { inner, .. },
+            ) => ty = *inner,
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
+                ty = *inner
+            }
             _ => {}
         }
     }
@@ -441,6 +452,7 @@ mod view_invariant_tests {
             span: Span::DUMMY,
             derives_copy: true,
             has_drop: false,
+            drops_fields: true,
             origin: None,
             declaring_module: 0,
         });

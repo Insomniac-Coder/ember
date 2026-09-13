@@ -40,19 +40,21 @@ use ember_mir::{
 use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
 
-use crate::regions::{Elision, Origin, Point, RegionVid, Regions};
+use crate::facts::{
+    AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
+};
+use crate::regions::{Elision, Origin, Point, Regions};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
 struct Loan {
-    /// The place borrowed.
-    place: Place,
-    mutable: bool,
+    /// `[IMP-7]` — the shared semantic facts for the borrowed storage. Access
+    /// checking, region liveness, and diagnostics consume this one record
+    /// rather than maintaining parallel place/mutability/region truths.
+    capability: BorrowCapability,
     /// The local the reference was stored in. Named in the help line, and
     /// exempt from being its own conflicting access.
     borrower: LocalId,
-    /// §4.7 step 4 — the loan is in scope exactly where this region is.
-    region: RegionVid,
     created_at: Point,
     span: Span,
     /// `[BRW-3]` — a mutable borrow taken for a call's receiver or a `mut`
@@ -110,7 +112,12 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) {
         FuncRef::Builtin {
             which:
                 Builtin::SpanFrom { .. }
+                | Builtin::ArenaArrayWithCapacity { .. }
+                | Builtin::ArenaMapWithCapacity { .. }
                 | Builtin::ArenaAlloc { .. }
+                | Builtin::ArenaAllocUninit { .. }
+                | Builtin::ArenaAllocArrayZeroed { .. }
+                | Builtin::ArenaAllocArrayDefault { .. }
                 | Builtin::FixedArenaAlloc { .. }
                 | Builtin::ScopedArenaAlloc { .. }
                 | Builtin::ArenaScope { .. },
@@ -413,15 +420,16 @@ fn check_escapes(
     sink: &mut Sink,
 ) {
     for loan in in_scope(loans, regions, point) {
-        let root = body.local(loan.place.local);
+        let place = loan.capability.source_place().expect("a loan has source storage");
+        let root = body.local(place.local);
         if root.kind == LocalKind::Arg
-            && (types.is_view(root.ty) || is_named_arena_origin(body, loan.place.local, types))
+            && (types.is_view(root.ty) || is_named_arena_origin(body, place.local, types))
         {
             continue;
         }
-        let name = place_name(body, types, &loan.place);
+        let name = place_name(body, types, place);
         // The label is about the *owner*, which for `self.n` is `self`.
-        let owner = place_name(body, types, &Place::local(loan.place.local));
+        let owner = place_name(body, types, &Place::local(place.local));
         let storage = match root.kind {
             LocalKind::Arg => format!(
                 "`{owner}` is passed by value, so the copy's storage ends with the frame"
@@ -525,7 +533,11 @@ fn check_refcell_call(
     // across the call.
     let mut live: Vec<&Loan> = in_scope(loans, regions, point)
         .into_iter()
-        .filter(|loan| is_guard_loan(body, types, &loan.place))
+        .filter(|loan| {
+            loan.capability
+                .source_place()
+                .is_some_and(|place| is_guard_loan(body, types, place))
+        })
         .collect();
     live.sort_by_key(|loan| (loan.created_at.block, loan.created_at.index));
     let Some(loan) = live.first() else {
@@ -534,7 +546,11 @@ fn check_refcell_call(
     // Name the cell, not its private `value` field: the loan is of field 0,
     // which no source ever writes. Strip one trailing `Field(0)` where the
     // parent is the cell for the display; the loan itself is unchanged.
-    let mut display = loan.place.clone();
+    let mut display = loan
+        .capability
+        .source_place()
+        .expect("a guard loan has source storage")
+        .clone();
     if let Some(Projection::Field(0)) = display.projection.last() {
         let mut parent = display.clone();
         parent.projection.pop();
@@ -579,11 +595,28 @@ fn collect_loans(
             }
             let created_at = Point { block: block_index, index };
             let Some(region) = regions.loan_region(created_at) else { continue };
-            loans.push(Loan {
-                place: borrowed.clone(),
-                mutable: *mutable,
-                borrower: place.local,
+            let permission = if *mutable {
+                AccessPermission::Mut
+            } else {
+                AccessPermission::Shared
+            };
+            let reference_kind = if is_guard_loan(body, types, borrowed) {
+                ReferenceKind::RuntimeGuard
+            } else {
+                ReferenceKind::Reference
+            };
+            let capability = BorrowCapability::statically_checked_reference(
+                place_ty(body, types, borrowed),
+                provenance_root(body, borrowed.local),
+                borrowed.clone(),
+                StorageIdentity::PlaceRoot(borrowed.local),
                 region,
+                permission,
+                reference_kind,
+            );
+            loans.push(Loan {
+                capability,
+                borrower: place.local,
                 created_at,
                 span: stmt.span,
                 reserved_at: reservation_window(body, place.local, created_at),
@@ -609,11 +642,21 @@ fn collect_loans(
                 continue;
             }
             let created_at = Point { block: block_index, index: block.stmts.len() };
-            loans.push(Loan {
-                place: borrowed.clone(),
-                mutable: false,
-                borrower: dest.local,
+            let capability = BorrowCapability::statically_checked_reference(
+                place_ty(body, types, borrowed),
+                provenance_root(body, borrowed.local),
+                borrowed.clone(),
+                StorageIdentity::ArenaAllocation {
+                    arena: borrowed.local,
+                    site: created_at,
+                },
                 region,
+                AccessPermission::Shared,
+                ReferenceKind::Reference,
+            );
+            loans.push(Loan {
+                capability,
+                borrower: dest.local,
                 created_at,
                 span: block.terminator_span,
                 reserved_at: HashSet::new(),
@@ -622,6 +665,13 @@ fn collect_loans(
         }
     }
     loans
+}
+
+fn provenance_root(body: &Body, local: LocalId) -> ProvenanceRoot {
+    match body.local(local).kind {
+        LocalKind::Arg => ProvenanceRoot::Param(local),
+        _ => ProvenanceRoot::Local(local),
+    }
 }
 
 fn borrower_feeds_arena_scope(body: &Body, borrower: LocalId) -> bool {
@@ -826,7 +876,10 @@ fn method_autoref_target(
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
 /// borrower still live. Liveness *is* the region, for a borrow held in a local.
 fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
-    loans.iter().filter(|loan| regions.contains(loan.region, point)).collect()
+    loans
+        .iter()
+        .filter(|loan| regions.contains(loan.capability.region, point))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -849,7 +902,8 @@ fn check_point(
     }
     for (place, access) in accesses {
         for loan in &scope {
-            if !overlaps(&loan.place, place) {
+            let loan_place = loan.capability.source_place().expect("a loan has source storage");
+            if !overlaps(loan_place, place) {
                 continue;
             }
             // The borrower itself is not a conflicting access.
@@ -864,7 +918,7 @@ fn check_point(
             // `mut` argument taking the cell for a call) must still conflict,
             // since moving the cell while a guard is live dangles it. Reads
             // and writes still conflict (see below). See `is_guard_loan`.
-            if is_guard_loan(body, types, &loan.place) {
+            if is_guard_loan(body, types, loan_place) {
                 if let Access::Borrow { .. } = access {
                     if is_guard_loan(body, types, place) {
                         continue;
@@ -875,7 +929,7 @@ fn check_point(
                 // moving inline storage out from under a guard dangles it, so
                 // reads conflict here too. (A mutable guard loan already
                 // forbids reads.) Writes already conflict for every loan.
-                if matches!(access, Access::Read) && !loan.mutable {
+                if matches!(access, Access::Read) && !loan.capability.is_mut() {
                     // Fall through to report below (via `refcell` flag).
                 } else if matches!(access, Access::Read) {
                     // Mutable case already conflicts via `loan_mutable` below;
@@ -884,9 +938,9 @@ fn check_point(
             }
             // `[BRW-3]` — inside the reservation window the borrow is not yet
             // mutable, so shared borrows and reads of the same place pass.
-            let reserved = loan.mutable && loan.reserved_at.contains(&point);
-            let loan_mutable = loan.mutable && !reserved;
-            let refcell = is_guard_loan(body, types, &loan.place);
+            let reserved = loan.capability.is_mut() && loan.reserved_at.contains(&point);
+            let loan_mutable = loan.capability.is_mut() && !reserved;
+            let refcell = is_guard_loan(body, types, loan_place);
             let conflict = match access {
                 // While a mutable borrow is live the owner may not read. A
                 // shared `RefCell` loan also forbids reads: a move is a read,
@@ -906,7 +960,7 @@ fn check_point(
                 continue;
             }
 
-            let name = place_name(body, types, &loan.place);
+            let name = place_name(body, types, loan_place);
             let (code, message) = match (loan_mutable, access) {
                 (true, Access::Borrow { mutable: true }) => (
                     codes::E3022,
@@ -1027,7 +1081,7 @@ fn keeper(
     conflict: Span,
 ) -> (Option<String>, Option<Span>, Option<LocalId>) {
     let mut best: Option<(LocalId, Span)> = None;
-    for holder in regions.holders(loan.region) {
+    for holder in regions.holders(loan.capability.region) {
         if body.local(*holder).name.is_none() {
             continue;
         }
@@ -1219,6 +1273,7 @@ fn field_ty(types: &TypeTable, ty: Ty, index: usize) -> Option<Ty> {
 fn element_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
     match types.kind(ty) {
         TyKind::Array { elem, .. } | TyKind::Vec { elem } => Some(*elem),
+        TyKind::Ptr { inner, .. } => Some(*inner),
         _ => None,
     }
 }
@@ -1256,6 +1311,10 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
                 TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => ty = *elem,
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Ptr { inner, .. },
+            ) => ty = *inner,
             (Projection::Deref, TyKind::Ref { inner, .. }) => ty = *inner,
             (Projection::Deref, TyKind::Ptr { inner, .. }) => ty = *inner,
             _ => {}

@@ -1,0 +1,255 @@
+# Ember
+
+Ember is an experimental, statically typed, ahead-of-time compiled language
+for systems and application code. Its design combines explicit ownership,
+borrowing, deterministic destruction, region-aware views, generics, and
+safe-by-default APIs with a portable C backend. The long-term language also
+specifies effects, concurrency, C and C++ interoperability, data-oriented
+facilities, deterministic execution, and first-class hot reload.
+
+This repository contains the reference compiler, runtime, standard-library
+sources, language specifications, conformance suite, diagnostics, and the
+engineering records used to keep those pieces consistent.
+
+> Ember is under active development and is not ready for production use.
+> Implemented behavior is only a subset of the full specification.
+
+## Project status
+
+The authority levels matter:
+
+| Role | Current artifact |
+|---|---|
+| Adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), Ember v0.8.5_Hardened_1 |
+| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_4.md`](docs/spec-source/Ember_v0.9.6_Hardened_4.md) |
+| Immediate target predecessor | Ember v0.9.6_Hardened_3, kept immutable |
+| Implementation phase | Phase 2, ownership |
+| Completed phases | Exactly 1 of 9 |
+
+The v0.9.6_Hardened_4 target is not yet adopted as the normative source. It is
+the contract the implementation is working toward. A version is adopted only
+after its implementation, conformance, documentation, and regression gates
+pass and the owner explicitly installs it.
+
+At the latest verified checkpoint:
+
+- `cargo build --workspace` is warning-free;
+- all 183 Rust tests pass;
+- the conformance runner passes across 86 rule directories and 274 Ember
+  source files;
+- all six adopted-specification gates pass;
+- 67 recorded compiler defects are closed;
+- four known deviations remain open (D1–D4);
+- no owner semantic/API decision is currently open.
+
+The active milestone is `ARN-COLL-1`: complete the public `Hasher` and
+move-only `DefaultHasher` implementation, then support user-defined
+`Eq + Hash` keys in `ArenaMap`. Fixed-capacity `ArenaArray`, built-in-key
+`ArenaMap`, named iterators, capacity handling, Arena provenance, borrow
+enforcement, and single-allocation behavior are already executable.
+
+See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
+[`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
+compiler.
+
+## What works today
+
+The reference compiler currently includes substantial support for:
+
+- lexical analysis, parsing, formatting, name resolution, type checking, HIR,
+  MIR, safety analysis, C generation, native compilation, and execution;
+- scalar values, structs, enums, tuples, arrays, ranges, pattern matching, and
+  control flow;
+- generic functions, generic types, generic methods, interface bounds,
+  associated types, and monomorphization;
+- ownership, moves, non-lexical borrows, mutable references, region-carrying
+  views, deterministic destruction, drop flags, and partial moves;
+- capturing closures through statically monomorphized callable bounds;
+- compiler-known `Array`, `String`, `Span`, `MutSpan`, `Cell`, `RefCell`, and
+  Arena primitives;
+- Arena allocation, scopes, reset/rewind, `MaybeUninit`, conservative
+  `Zeroable`, `alloc_array`, `alloc_uninit`, and fixed-capacity Arena
+  collections;
+- structured diagnostics and conformance assertions over generated C,
+  including operation ordering and exact occurrence counts.
+
+Important incomplete areas include the remainder of Phase 2 diagnostics and
+rule coverage, `UnsafeCell`, full user-defined hashing, the canonical semantic
+fact migration, objects and managed ownership, effects and comptime, complete
+FFI, concurrency/data-oriented facilities, the interpreter, hot reload, and
+the final performance and ecosystem hardening phases.
+
+## Examples
+
+### Hello, Ember
+
+```ember
+fn main():
+    println("Hello from Ember")
+```
+
+### Generics and interface bounds
+
+```ember
+interface Shape:
+    fn area(self) -> f32
+
+struct Square implements Shape:
+    side: f32
+
+    fn area(self) -> f32:
+        return self.side * self.side
+
+fn total_area[T: Shape](a: T, b: T) -> f32:
+    return a.area() + b.area()
+
+fn main():
+    println(total_area(Square(2.0), Square(3.0)))
+```
+
+### Explicit borrowing
+
+```ember
+fn increment(mut value: i32):
+    value = value + 1
+
+fn main():
+    n: i32 = 10
+    increment(n)
+    println(n)  # 11
+
+    shared: ref i32 = ref n
+    println(shared)
+```
+
+Parameter modes carry the ordinary borrow at call sites, so `increment(n)`
+does not require `ref mut` syntax. Explicit `ref` and `ref mut` are used when a
+reference value itself is constructed.
+
+### Fixed-capacity Arena storage
+
+```ember
+from std.collections import ArenaArray
+
+fn main():
+    arena = Arena.with_capacity(4096)
+    values: ArenaArray[i32] = ArenaArray[i32].with_capacity(arena, 3)
+
+    _first = values.push(10)
+    _second = values.push(20)
+
+    total: i32 = 0
+    for value in values.iter():
+        total = total + value
+    println(total)  # 30
+```
+
+`ArenaArray` is a region-carrying fixed-capacity view. Construction reserves
+its backing storage in one Arena allocation; it does not own the Arena or hide
+an owning Arena pointer.
+
+More executable examples live in [`examples/`](examples/),
+[`tests/run-pass/`](tests/run-pass/), and
+[`tests/conformance/`](tests/conformance/).
+
+## Build and run
+
+The compiler is a Rust workspace using the stable toolchain. Native Ember
+programs currently lower through the C backend, so a supported C compiler is
+also required. CI exercises MSVC and clang-cl on Windows, and Clang and GCC on
+Linux.
+
+```text
+cargo build --workspace
+cargo test --workspace
+```
+
+Run a source file through the compiler without installing it:
+
+```text
+cargo run -p ember_driver --bin ember -- run path/to/program.em
+```
+
+Other useful commands are:
+
+```text
+cargo run -p ember_driver --bin ember -- check path/to/program.em
+cargo run -p ember_driver --bin ember -- check path/to/program.em --syntax-only
+cargo run -p ember_driver --bin ember -- build path/to/program.em --emit c
+cargo run -p ember_driver --bin ember -- explain E3042
+```
+
+Run `cargo run -p ember_driver --bin ember -- --help` for the current command
+line surface.
+
+## Repository map
+
+```text
+compiler/   Rust crates for the compiler pipeline
+runtime/    C runtime used by generated programs
+std/        Ember standard-library source modules
+tests/      run-pass, run-fail, compile-fail, milestone, and conformance tests
+tools/      specification, registry, branding, and documentation gates
+docs/       specifications, diagnostics, decisions, defects, backlog, and handoff
+examples/   standalone Ember programs
+```
+
+The most useful project records are:
+
+- [`docs/COLD-START.md`](docs/COLD-START.md) — current starting point and traps;
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) — detailed implementation snapshot;
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — accepted architecture and owner rulings;
+- [`docs/DEFECTS.md`](docs/DEFECTS.md) — compiler defects and verification evidence;
+- [`docs/BACKLOG.md`](docs/BACKLOG.md) — implementation gaps and build order;
+- [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) — questions requiring owner authority;
+- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H4 adoption and implementation map.
+
+## Development protocol
+
+The specification is the contract. Compiler behavior and passing tests do not
+override it. Before changing semantics or implementation:
+
+1. reproduce the behavior with a minimal adversarial program;
+2. identify the exact normative rule;
+3. classify the finding as a language decision, specification ambiguity,
+   compiler defect, test defect, or implementation limitation;
+4. verify that the test actually exercises every relevant clause;
+5. fix the compiler when the semantics are clear;
+6. stop and request an owner ruling when semantics are genuinely ambiguous;
+7. record the result in the appropriate ledgers and add mutation-sensitive
+   conformance evidence.
+
+Frozen specification cuts are immutable. A newly discovered specification gap
+after H4 becomes H5; H4 is never edited in place. Generated specification
+parts under `docs/spec/` are never hand-edited.
+
+A passing suite is necessary, not sufficient. Ownership and lifetime work is
+checked with minimal counterexamples, adversarial cases, generated-C
+inspection where source observation is unsafe or impossible, and all relevant
+repository gates.
+
+## Roadmap
+
+The nine-phase plan proceeds from the completed core-language phase through:
+
+1. ownership completion (current Phase 2);
+2. objects and managed ownership;
+3. effects, comptime, reflection, and derives;
+4. C interoperability;
+5. concurrency and data-oriented programming;
+6. C++ interoperability and the supported interpreter;
+7. iteration, determinism, hot reload, and instantiation-cost controls;
+8. full conformance, performance validation, external-package validation, and
+   the 1.0 hardening pass.
+
+The immediate order is narrower: finish `ARN-COLL-1`, continue the 0.9.6
+canonical-fact migration, implement `UnsafeCell`, close the remaining Phase 2
+tests and diagnostics, and only then advance to later phases.
+
+## Contributing
+
+Start with `README.md`, then read `docs/COLD-START.md`, `docs/HANDOFF.md`,
+`docs/DECISIONS.md`, `docs/DEFECTS.md`, and `docs/BACKLOG.md` before changing
+compiler behavior. Preserve unrelated working-tree changes, use normative rule
+IDs in conformance tests, and include the exact failure and verification method
+in every defect record.

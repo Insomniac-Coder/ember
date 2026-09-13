@@ -4,9 +4,10 @@
 # `replace(self, owned v: T) -> T`, `into_inner(owned self) -> T` … `get(self)
 # -> T` is provided only where `T: Copy` … `update(self, f: fn(T) -> T)`."
 #
-# `take` needs `T: Default`, which the compiler cannot express yet — the gap is
-# `CELL-DEF-1` in docs/BACKLOG.md, and `reject_take_needs_default.em` beside
-# this one pins the message rather than leaving it as a missing method.
+# `take` and the non-Copy `update` arm are covered beside this case with an
+# explicit `Default` implementation. `reject_take_needs_default.em` pins the
+# missing-capability diagnostics rather than treating either as a missing
+# method.
 #
 # Every one of these takes `self`, a *shared* borrow, and three of them mutate.
 # That is the whole point of the type, and ADR-019 records what is permitted to

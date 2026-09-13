@@ -37,6 +37,25 @@ fn contains(src: &str, needle: &str) -> bool {
     dump(src).contains(needle)
 }
 
+#[test]
+fn every_0_9_contract_has_its_own_supported_selector() {
+    // `[MOD-6]`, `[MOD-6a]` — patch-level contracts are not normalized to
+    // `0.9`; each spelling selects its own accepted semantic contract.
+    for version in ["0.9", "0.9.5", "0.9.6"] {
+        let source = format!("#! language \"{version}\"\nfn main():\n    pass\n");
+        let out = run(&source);
+        assert!(out.codes.is_empty(), "{version} was rejected:\n{}", out.messages);
+        assert!(out.dump.contains(&format!("language = \"{version}\"")), "{}", out.dump);
+    }
+}
+
+#[test]
+fn an_unknown_0_9_patch_contract_is_rejected() {
+    let out = run("#! language \"0.9.7\"\nfn main():\n    pass\n");
+    assert_eq!(out.codes, ["E0006"]);
+    assert!(out.messages.contains("does not support language version `0.9.7`"));
+}
+
 // -- items -------------------------------------------------------------------
 
 #[test]
@@ -297,6 +316,16 @@ fn generic_instantiation_parses_as_index_or_instantiate() {
     // [GRM-8] — the parser cannot tell these apart; resolution does.
     let out = dump("fn f():\n    x = Array[i32]()\n    y = a[i]\n");
     assert_eq!(out.matches("IndexOrInstantiate").count(), 2, "{out}");
+}
+
+#[test]
+fn explicit_method_type_arguments_form_a_method_call() {
+    // `[GRM-8]`, GEN-METHOD-1 — the following `(` resolves the ambiguous
+    // brackets as an instantiation of `alloc_array`, while retaining `arena`
+    // as the receiver.
+    let out = dump("fn f(arena: Arena):\n    xs = arena.alloc_array[i32](4)\n");
+    assert!(out.contains("MethodCall .alloc_array[i32]"), "{out}");
+    assert!(!out.contains("IndexOrInstantiate"), "{out}");
 }
 
 #[test]

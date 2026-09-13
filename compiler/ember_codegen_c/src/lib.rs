@@ -229,7 +229,19 @@ impl Emitter<'_> {
                     let fields: Vec<String> = variant
                         .fields
                         .iter()
-                        .map(|f| format!("{} {}; ", self.c_type(f.ty), f.name))
+                        // Ember's `void` is a unit value. A payload such as
+                        // `Result[void, E].Ok` still has a semantic field for
+                        // generic substitution, but C cannot declare a field
+                        // of type `void`; one private byte is its portable,
+                        // zero-information carrier.
+                        .map(|f| {
+                            let ty = if self.is_void(f.ty) {
+                                "uint8_t".to_string()
+                            } else {
+                                self.c_type(f.ty)
+                            };
+                            format!("{ty} {}; ", f.name)
+                        })
                         .collect();
                     union.push(format!("        struct {{ {}}} {};", fields.concat(), variant.name));
                 }
@@ -384,10 +396,12 @@ impl Emitter<'_> {
                     let owner = self.types.display(ty);
                     out.push(format!("{}(&{access});", drop_symbol(&owner)));
                 }
-                let fields = def.fields.clone();
-                for field in fields.iter().rev() {
-                    if self.types.needs_drop(field.ty) {
-                        self.drop_lines(&format!("{access}.{}", field.name), field.ty, out);
+                if def.drops_fields {
+                    let fields = def.fields.clone();
+                    for field in fields.iter().rev() {
+                        if self.types.needs_drop(field.ty) {
+                            self.drop_lines(&format!("{access}.{}", field.name), field.ty, out);
+                        }
                     }
                 }
             }
@@ -873,24 +887,104 @@ impl Emitter<'_> {
                     | Builtin::CellReplace
                     | Builtin::CellIntoInner
                     | Builtin::CellUpdate
+                    | Builtin::CellUpdateDefault { .. }
+                    | Builtin::CellTake { .. }
                     | Builtin::RefCellBorrow
                     | Builtin::RefCellBorrowMut
                     | Builtin::RefCellTryBorrow
-                    | Builtin::RefCellTryBorrowMut => {
+                    | Builtin::RefCellTryBorrowMut
+                    | Builtin::MaybeUninitWrite { .. }
+                    | Builtin::MaybeUninitAssumeInit { .. }
+                    | Builtin::MaybeUninitWriteAt { .. }
+                    | Builtin::MaybeUninitSpanAssumeInit { .. }
+                    | Builtin::ArenaArrayGet { .. }
+                    | Builtin::ArenaArrayPush { .. }
+                    | Builtin::ArenaArrayInsert { .. }
+                    | Builtin::ArenaArrayRemove { .. }
+                    | Builtin::ArenaArrayClear
+                    | Builtin::ArenaArrayIterNext { .. }
+                    | Builtin::ArenaMapGet { .. }
+                    | Builtin::ArenaMapContains { .. }
+                    | Builtin::ArenaMapInsert { .. }
+                    | Builtin::ArenaMapRemove { .. }
+                    | Builtin::ArenaMapClear
+                    | Builtin::ArenaMapIterNext { .. } => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
                             which.name()
                         );
                     }
+                    // `[ARN-8]` — C needs a determinate carrier value even
+                    // though Ember does not consider the payload initialized.
+                    // A zeroed private wrapper avoids reading indeterminate C
+                    // bytes; it does not establish `T: Zeroable` and no safe
+                    // Ember operation can observe the payload as `T`.
+                    Builtin::MaybeUninitUninit { .. } => {
+                        let wrapper = self.c_type(*arg_ty);
+                        return format!("({wrapper}){{0}}");
+                    }
                     Builtin::ArenaWithCapacity => {
                         let arena = self.c_type(*arg_ty);
                         return format!("({arena}){{ {RT}arena_new({}), 0 }}", rendered[0]);
+                    }
+                    Builtin::ArenaArrayWithCapacity { elem, array } => {
+                        let array = self.c_type(*array);
+                        let elem = self.c_type(*elem);
+                        return format!(
+                            "({array}){{ {}, ({elem}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem}), _Alignof({elem})), 0, {} }}",
+                            rendered[0], rendered[0], rendered[1], rendered[1]
+                        );
+                    }
+                    Builtin::ArenaMapWithCapacity { map, .. } => {
+                        let map_ty = *map;
+                        let map = self.c_type(map_ty);
+                        let TyKind::Struct(map_id) = *self.types.kind(map_ty) else {
+                            unreachable!("ArenaMap is represented by a struct")
+                        };
+                        let pointer = self.types.struct_def(map_id).fields[1].ty;
+                        let TyKind::Ptr { inner: slot, .. } = *self.types.kind(pointer) else {
+                            unreachable!("ArenaMap backing storage is a slot pointer")
+                        };
+                        let slot = self.c_type(slot);
+                        return format!(
+                            "({map}){{ {}, ({slot}*){RT}arena_alloc_zeroed(({})->state, {}, sizeof({slot}), _Alignof({slot})), 0, {} }}",
+                            rendered[0], rendered[0], rendered[1], rendered[1]
+                        );
                     }
                     Builtin::ArenaAlloc { elem } => {
                         let elem_c = self.c_type(*elem);
                         return format!(
                             "({elem_c}*){RT}arena_alloc_copy(({})->state, sizeof({elem_c}), _Alignof({elem_c}), &{})",
                             rendered[0], rendered[1]
+                        );
+                    }
+                    Builtin::ArenaAllocUninit { elem } => {
+                        let span = self.c_type(*arg_ty);
+                        let slot = self.c_type(self.span_element(*arg_ty));
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({span}){{ ({slot}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
+                            rendered[0], rendered[1], rendered[1]
+                        );
+                    }
+                    Builtin::ArenaAllocArrayZeroed { elem } => {
+                        let span = self.c_type(*arg_ty);
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({span}){{ ({elem_c}*){RT}arena_alloc_zeroed(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
+                            rendered[0], rendered[1], rendered[1]
+                        );
+                    }
+                    // `[ARN-3]`'s `Default` arm is constructed explicitly in
+                    // MIR. This call reserves only raw storage; the following
+                    // loop invokes the source constructor and initializes each
+                    // element before the span can be observed.
+                    Builtin::ArenaAllocArrayDefault { elem, .. } => {
+                        let span = self.c_type(*arg_ty);
+                        let elem_c = self.c_type(*elem);
+                        return format!(
+                            "({span}){{ ({elem_c}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
+                            rendered[0], rendered[1], rendered[1]
                         );
                     }
                     Builtin::ArenaReset => {
@@ -1137,12 +1231,14 @@ impl Emitter<'_> {
                     TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
                         out = format!("(({}*){out}.ptr)[_{}]", self.c_type(*elem), local.0);
                     }
+                    TyKind::Ptr { .. } => out = format!("({out})[_{}]", local.0),
                     _ => out.push_str(&format!("._0[_{}]", local.0)),
                 },
                 Projection::ConstIndex(i) => match self.types.kind(at.ty) {
                     TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
                         out = format!("(({}*){out}.ptr)[{i}]", self.c_type(*elem));
                     }
+                    TyKind::Ptr { .. } => out = format!("({out})[{i}]"),
                     _ => out.push_str(&format!("._0[{i}]")),
                 },
                 Projection::Deref => out = format!("(*{out})"),
@@ -1189,6 +1285,10 @@ impl Emitter<'_> {
                 Projection::Index(_) | Projection::ConstIndex(_),
                 TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
             ) => plain(*elem),
+            (
+                Projection::Index(_) | Projection::ConstIndex(_),
+                TyKind::Ptr { inner, .. },
+            ) => plain(*inner),
             // `.len` and `.cap` on the runtime buffer are `usize`; `.ptr` is
             // never projected through, so it keeps the buffer's own type. A
             // view is the same shape with no `.cap`.
