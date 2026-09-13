@@ -12,14 +12,14 @@ context for the 0.9.5 intake and original phase order.
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
 | `docs/DECISIONS.md` | ADR-001..034 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..013 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is currently open |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..013 are closed; ODR-003 is deferred editorial; ODR-014 is the one open owner API decision |
 
 ---
 
 ## 1. State
 
-**Last committed implementation baseline:** `dea6aa7` on `main`, followed by
-the documentation snapshot that records it. Both are pushed to `origin/main`
+**Last committed implementation baseline:** `0fdd9b6` on `main`, following
+`de641fb` for the concrete Box slice. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -34,8 +34,8 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 101 top-level conformance rule directories, 347 `.em` files including support
- modules. 80 defects recorded, **none open**.
+ 102 top-level conformance rule directories, 359 `.em` files including support
+ modules. 83 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -230,14 +230,16 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. UnsafeCell complete; next task is diagnostic-shape coverage
+## 5. Box complete; next task is blocked on the remaining Span API boundary
 
-**Exact next task: `[DIA-7..10]` and `[DIA-13]` rendered diagnostic-shape
-coverage in `tests/ui/`.** Establish one failing snapshot and compilable fixed
-companion per required ownership/borrow shape, beginning with the existing
-shape catalogue rather than inventing diagnostics. Keep the first
-`ARCH-096-1` boundary from `66d0d43` load-bearing and continue that migration
-incrementally when a real producer and consumer are available.
+**Exact next task: resolve ODR-014, then complete `SPN-API-1` against the owner-
+selected signatures.** H5 names `iter`, `iter_mut`, `chunks`, and `as_ptr` but
+does not fix their complete public types, mutable counterparts, zero-size chunk
+behavior, or raw-pointer safety boundary. Do not invent those accepted-program
+and safety details in the compiler. Once resolved, reuse ordinary Iterator,
+borrow/provenance, bounds, and raw-pointer machinery; do not create a parallel
+view model. Keep the first `ARCH-096-1` boundary from `66d0d43` load-bearing
+and continue that migration when a real producer and consumer are available.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -352,6 +354,16 @@ one C result constructor. Explicit `MutSpan.reborrow()` now uses the same
 receiver-borrow and provenance facts without copying or moving the parent.
 `chunks`, iterators, and raw-pointer access remain.
 
+**Concrete `Box[T]` is complete at `de641fb`, with the final region correction
+at `0fdd9b6`.** The implemented slice is deliberately bounded to sized payloads
+and the default allocator. It has the specified `T*` C representation, runtime
+allocation, move-only ownership, auto-deref and owner-rooted `get`, exact
+payload-drop-before-free behavior, nested/overwrite coverage, and strict C11
+evidence. `[TYP-15]` is checked after region inference: static provenance
+survives locals, named statics, and calls, while ordinary and Arena-backed
+non-static views report E3063. D-067 through D-069 record the defects found by
+testing representation and provenance rather than trusting smoke tests.
+
 **`TUP-DST-1` is complete at `dea6aa7`.** Tuple/struct target lists now use one
 explicit HIR destructuring operation and one statement-scoped aggregate
 temporary. The RHS runs once before destination places; nested projections,
@@ -384,8 +396,8 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-013 are closed. ODR-003 is deferred editorial work. **No owner
-semantic/API decision is currently open.**
+through ODR-013 are closed. ODR-003 is deferred editorial work. **ODR-014 is
+open and blocks only the unfinished Span iterator/chunk/raw-pointer surface.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -431,6 +443,11 @@ semantic/API decision is currently open.**
   `fn hash[H: Hasher](self, mut h: H)`: `H` is inferred from the concrete
   context and normally monomorphized, `DefaultHasher implements Hasher`, and
   `Hash.hash` introduces no implicit or mandatory dynamic dispatch.
+* **ODR-014 — OPEN.** H5 names the remaining Span operations without fixing
+  their complete iterator/chunk types, mutable variants, zero-size behavior,
+  module/prelude identity, or raw-pointer safety boundary. These affect
+  accepted programs and safety. Obtain an owner ruling and cut the next
+  hardened target before implementing `SPN-API-1` further.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms

@@ -35,12 +35,12 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 101 rule directories and 347 Ember
+- the conformance runner passes across 102 rule directories and 359 Ember
   source files;
 - all six adopted-specification gates pass;
-- 80 recorded compiler defects are closed;
+- 83 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
-- no owner semantic/API decision is currently open.
+- one owner API decision, ODR-014, is open for the remaining Span surface.
 
 `ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
@@ -53,6 +53,14 @@ can consume only a structurally and provenance-verified MIR/type pair. The
 move-only representation, ordinary destruction, `@static_safe` exclusion, and
 diagnostic restraint are executable. The remaining architecture migration
 continues incrementally around real feature work.
+
+The concrete, sized, default-allocator `Box[T]` slice is complete at `de641fb`,
+with region-complete stored-view checking at `0fdd9b6`. It allocates through
+the runtime allocator, is emitted as the specified `T*`, auto-dereferences,
+keeps `get()` tied to its owner, rejects invalid moves and non-static stored
+views, and destroys `T` before freeing exactly one allocation. Existential
+`Box[dyn I]`, custom allocators, allocation-effect accounting, and `Send`
+integration remain assigned to their dependent phases.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -72,7 +80,7 @@ The reference compiler currently includes substantial support for:
   views, checked shared/mutable Span splitting, explicit mutable-span
   reborrowing, deterministic destruction, drop flags, and partial moves;
 - capturing closures through statically monomorphized callable bounds;
-- compiler-known `Array`, `String`, `Span`, `MutSpan`, `Cell`, `RefCell`, and
+- compiler-known `Array`, `String`, `Span`, `MutSpan`, `Box`, `Cell`, `RefCell`, and
   Arena primitives, plus the public `std.mem.UnsafeCell` boundary;
 - public `std.mem` ownership/layout operations including move-preserving
   `take`, `replace`, `swap`, destructor-suppressing `forget`, `size_of`, and
@@ -86,7 +94,8 @@ The reference compiler currently includes substantial support for:
   including operation ordering and exact occurrence counts.
 
 Important incomplete areas include the remainder of Phase 2 diagnostics and
-rule coverage, general automatic/derived `Hash` generation and
+rule coverage, the owner-blocked remainder of the Span iterator/chunk/raw-
+pointer API, existential/custom-allocator Box forms, general automatic/derived `Hash` generation and
 ordinary `Map`/`Set`, the canonical semantic-fact migration, objects and
 managed ownership, effects and comptime, complete FFI, concurrency/data-oriented
 facilities, the interpreter, hot reload, and the final performance and

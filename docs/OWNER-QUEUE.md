@@ -33,6 +33,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-011 | **CLOSED** — complete fixed-capacity Arena collection contract | Language / standard-library API / regions | — | **No** — ruled by owner |
 | ODR-012 | **CLOSED** — public hashing protocol and Map key boundary | Standard-library API / equality coherence | — | **No** — ruled 2026-09-13 |
 | ODR-013 | **CLOSED** — static generic `H: Hasher` parameter | Language / callable-interface ABI | — | **No** — ruled 2026-09-13 |
+| ODR-014 | **OPEN** — complete the remaining Span method surface | Standard-library API / views / unsafe boundary | **P1** | **Yes** |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -41,8 +42,8 @@ intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
 ODR-001, ODR-002, and ODR-004 through ODR-013 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **No owner semantic/API decision is
-currently open.** H8 records the complete helper-mode and callable-abstraction
+editorial work with no semantic impact. **ODR-014 is the one open owner API
+decision.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -55,6 +56,79 @@ Other gaps are implementation/conformance work, not owner questions.
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
 editorial cleanup that can safely wait.
+
+---
+
+## ODR-014 — remaining `Span` / `MutSpan` method surface — **OPEN**
+
+    ID:        ODR-014
+    Status:    OPEN — exact public API and unsafe boundary required
+    Category:  STANDARD-LIBRARY API / VIEWS / UNSAFE BOUNDARY
+    Priority:  P1
+    Location:  Ember_v0.9.6_Hardened_5.md IV.4, IV.8, VI.4 [CTL-1]/[CTL-3b],
+               VII.7 [SPN-1]–[SPN-3], IX.2, and [UNS-1]
+
+    Existing wording: "Span[T] ... Bounds-checked indexing; `.len()`, `.iter()`,
+                      `.iter_mut()`, `.split_at(i)`, `.chunks(n)`, `.as_ptr()`
+                      (unsafe result)."
+
+    Conflict: The document names operations but does not define enough of the
+              public contract to implement them without selecting semantics.
+              `[CTL-3b]` also names `chunks_mut`, although IV.4 lists only
+              `chunks`. The existing Iterator interface requires a concrete
+              associated iterator type, but no ordinary Span iterator/chunk
+              types or exact `Item` relationships are named. `as_ptr()` does
+              not say whether calling it is unsafe, whether only dereference is
+              unsafe, or which shared/mutable pointer forms a MutSpan exposes.
+
+    Semantic impact:                  YES — accepted calls, ownership/reborrow behavior,
+                                      pointer mutability, panic behavior, and API identity
+    Blocks implementation:            YES — blocks the unfinished SPN-API-1 surface
+    Blocks conformance:               YES — exact positive/negative cases cannot be written
+    Blocks specification freeze:      NO — H5 remains an immutable finding/target record
+    Blocks normative specification adoption: YES — the target API is not implementation-ready
+    Requires owner semantic decision: YES
+
+**Exact unresolved questions.**
+
+1. What named concrete iterator types and signatures implement `iter` and
+   `iter_mut`, and which receivers are shared, mutable-reborrowed, or consumed?
+2. Does the canonical chunk surface include both `chunks` and `chunks_mut`?
+   What are their named result/iterator types and `Iterator.Item` types?
+3. What happens when a chunk size is zero: a required panic in every profile,
+   a fallible result, an empty iterator, or another already-defined behavior?
+4. Is `as_ptr()` itself safe and merely returns a raw pointer whose use is
+   unsafe under `[UNS-1]`, or must the call occur in `unsafe`? For `MutSpan`,
+   does the public surface include shared `as_ptr() -> *T`, mutable
+   `as_mut_ptr(...) -> *mut T`, or a different exact pair?
+5. Which module publicly owns the concrete iterator/chunk types, and are any of
+   them prelude names? No new opaque-return syntax currently exists.
+
+**Possible interpretations.**
+
+1. **Recommended conventional paired API:** use named compiler/library `@view`
+   iterators implementing the existing associated-type `Iterator`; shared
+   iteration/chunking yields `ref T`/`Span[T]`, mutable reborrowed forms yield
+   `ref mut T`/`MutSpan[T]`; provide `chunks_mut` because `[CTL-3b]` already
+   names it; define an explicit all-profile zero-size failure; and make pointer
+   extraction safe while raw-pointer operations remain unsafe. The owner must
+   still approve the exact names, modes, signatures, failure identity, module,
+   and prelude status.
+2. Restrict v1 to a smaller surface and amend every normative example and
+   `[CTL-3b]` reference consistently. This changes the advertised API and may
+   invalidate existing accepted source expectations, so it cannot be selected
+   as editorial cleanup.
+3. Introduce opaque iterator return types. Ember currently has no such public
+   type mechanism; this would be a larger language feature and is not
+   recommended merely to finish Span.
+
+**Why this cannot be resolved safely by an agent.** The alternatives determine
+which programs type-check, when a mutable view is reborrowed or consumed,
+whether zero is a recoverable/error/abort boundary, what pointer authority safe
+code can obtain, and whether a new public type or return abstraction exists.
+Those are language/library safety and accepted-program decisions. Following the
+project's hardening rule, an owner resolution should be incorporated in the
+next `0.9.6_Hardened_N` target before compiler implementation.
 
 ---
 

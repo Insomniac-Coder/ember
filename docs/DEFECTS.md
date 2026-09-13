@@ -52,6 +52,16 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-13 — concrete Box ownership and region storage
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-069 | **Arena-backed return provenance was represented as a loan but not as an origin in the region graph at a wrapper call boundary.** `Arena` is intentionally not a view type, so the ordinary operand-region edge is absent. A new unbounded-storage consumer could therefore mistake an Arena-backed returned view for a static one even though the existing borrow checker still kept the Arena loan live | `[LT-1a]`, `[LT-3]`, `[LT-4]`, `[LT-4a]`, `[TYP-15]` | **fixed** | `0fdd9b6` seeds the destination region from a tied growing-Arena argument while retaining Arena's non-view identity. It does not generalize the exception to arbitrary non-view arguments: a scalar argument ignored by a function returning a literal leaves that result static. **Verified:** `reject_arena_backed_view_in_box.em` follows an allocation through an `@borrows(arena)` wrapper and reports E3063, while `accept_static_region_view_provenance_in_box.em` accepts a literal returned from a function with an unrelated scalar argument. The specification already distinguished the Arena provenance exception and did not change |
+| D-068 | **The first Box type path rejected every view at type formation and then recognized only direct literal syntax.** This made `Box[str]` illegal before a value was known and would reject a static view after binding it to a local, reading a named `static`, or returning it from a call. `[TYP-15]` is region-based and explicitly permits every-static-region view in unbounded storage | `[TYP-15]`, `[LT-3]`, `[DRP-6]` | **fixed** | `de641fb` moved the prohibition from type formation to the stored value; `0fdd9b6` moved the final decision after MIR region inference so provenance, not spelling, governs. **Verified:** direct literals, locals, named statics, and call-produced static views run; a local Array span and an Arena-backed mutable reference report E3063. The specification was already correct and was not weakened |
+| D-067 | **The first Box backend path emitted a one-field wrapper struct around `T*`.** The checker deliberately uses a private logical field so existing place, borrow, and ownership machinery can see auto-dereference, but Part XIX §6 requires the C representation of concrete `Box[T]` itself to be `T*`; leaking the compiler wrapper into C changed layout and ABI | Part XIX §6, `[HEAP-1]`, `[DRP-6]`, `[CG-C-1]` | **fixed** | `de641fb` recognizes Box by compiler-owned generic-origin metadata and erases only that logical wrapper to a C pointer alias. Projections emit direct pointer dereference, while drop glue destroys `T` and then frees the same pointer. **Verified:** generated C contains `typedef em_Payload* em_Box_Payload;`, nested Box produces exactly two frees, destructor-before-free order is asserted, and all generated Box translation units pass Clang `-std=c11 -pedantic -Wall -Wextra -Werror`. The target specification did not change |
+
+---
+
 ## 2026-09-13 — diagnostic snapshot foundation
 
 | # | Defect | Rule | Status | Fixed in |

@@ -236,6 +236,16 @@ and ordinary overwrite, visibility, borrow, and coercion rules remain shared.
 Removing the temporary-drop registration leaks the ignored destructor and
 turns the dedicated run-pass case red.
 
+The concrete Box checkpoint is `de641fb`, followed by the region-completeness
+fix `0fdd9b6`. The sized/default-allocator slice now lowers `Box(owned value)`
+through the runtime allocator, erases its compiler-private logical wrapper to
+the required C `T*`, auto-dereferences, roots `get()` in the owner, and destroys
+the payload before freeing exactly one allocation. Region storage is checked
+after the existing provenance fixpoint: literal/local/static/call-produced
+static views are accepted, while local-array and Arena-backed views are
+E3063. Coverage is now 102 conformance directories and 359 Ember sources;
+`Box[dyn I]`, custom allocators, `Alloc` effects, and `Send` remain later work.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -302,9 +312,10 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `size_of` subset. Only `[THR-6]`'s later `@must_drop` integration remains.
 
 The four open deviations remain D1–D4. D5 is closed and D6 withdrawn. There is
-no open compiler defect and no open owner semantic/API decision. ODR-011
-through ODR-013 are closed; ODR-003 remains deferred editorial work with no
-semantic impact.
+no open compiler defect. ODR-011 through ODR-013 are closed; ODR-014 is the one
+open owner API decision and blocks only the unfinished Span iterator/chunk/raw-
+pointer surface. ODR-003 remains deferred editorial work with no semantic
+impact.
 
 ## 5. Alternate-target audit result
 
@@ -474,12 +485,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Complete the already-started concrete, sized, default-allocator **`Box[T]`**
-slice. Its C representation is the specified `T*`; construction uses the
-runtime allocator, ordinary access auto-dereferences, moving while the payload
-is borrowed is rejected, dropping destroys `T` before freeing storage, and a
-non-static view cannot be stored in the owned box. Verify the generated C under
-strict C11. Do not infer `Box[dyn I]`, `Box[T, A]`, or complete effect-system
-support from this bounded slice. Continue `ARCH-096-1` through the real facts
-the implementation exposes, and do not adopt H5, freeze the hash mixer, broaden
-`Zeroable` or `Hash` by inference, or add a second unsafe tier.
+Resolve **ODR-014**, then complete `SPN-API-1` using the exact owner-selected
+iterator, chunk, mutability, zero-size, and raw-pointer contracts. H5 names the
+surface but does not define enough of its public types and safety behavior for
+an implementation agent to choose without changing accepted programs. Once
+resolved, reuse the existing Iterator, borrow/provenance, checked bounds, and
+raw-pointer machinery. Continue `ARCH-096-1` through the real facts this work
+exposes; do not add opaque-return syntax, a parallel view abstraction, or an
+implementation-defined unsafe boundary.
