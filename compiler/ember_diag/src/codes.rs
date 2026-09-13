@@ -250,10 +250,8 @@ codes! {
     E3080 = (Error, 3080, Ownership, "[EXC-3]", "overlapping access through the same handle");
     E3090 = (Error, 3090, Ownership, "[ARN-3]", "arena allocation of a type that needs `drop`");
     E3100 = (Error, 3100, Ownership, "[UNS-1]", "this operation requires an `unsafe` block");
-    // Registered ahead of its emitter: `[UNS-10b]` forbids `UnsafeCell` in
-    // `@static_safe` code, and `UnsafeCell` itself is 0.8.5 spec and not yet
-    // built. `[DIA-6a]` requires a code named in the specification to be in the
-    // registry, so it is registered here rather than left dangling.
+    // `[UNS-10b]` forbids `UnsafeCell` in `@static_safe` code. The type checker
+    // emits this for direct, nested, and body-local uses of the primitive.
     E3105 = (Error, 3105, Ownership, "[UNS-10b]", "`UnsafeCell` is not permitted in `@static_safe` code");
 
     // --- effects and contracts ----------------------------------------------

@@ -6,6 +6,7 @@
 ##   `std.core`  Part IV §8's interfaces, and `Ordering`
 ##   `std.math`  Part XV's scalar mathematics
 ##   `std.collections`  `[ARN-5]`'s Arena-backed collection declarations
+##   `std.mem`  `[UNS-10]`'s lowest-level interior-mutability primitive
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

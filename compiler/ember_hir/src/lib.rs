@@ -366,6 +366,13 @@ pub enum Builtin {
     /// `[ARN-8]`, `[ARN-8a]` — unsafe extraction of the initialized payload.
     /// The wrapper is consumed and its field becomes ordinary owned `T`.
     MaybeUninitAssumeInit { inner: Ty },
+    /// `[UNS-10]` — derive a mutable raw pointer to an `UnsafeCell[T]` payload
+    /// through shared access. Type checking admits this only in `unsafe`; the
+    /// result is a raw pointer, never a safe reference or borrow-checker
+    /// exemption.
+    UnsafeCellGet { inner: Ty },
+    /// `[UNS-10]` — consume an `UnsafeCell[T]` and move out its payload.
+    UnsafeCellIntoInner,
     /// `[ARN-9]` — initialize one element of a
     /// `MutSpan[MaybeUninit[T]]` without dropping prior bytes.
     MaybeUninitWriteAt { inner: Ty },
@@ -507,6 +514,8 @@ impl Builtin {
             Builtin::MaybeUninitAssumeInit { .. } => "assume_init",
             Builtin::MaybeUninitWriteAt { .. } => "write_at",
             Builtin::MaybeUninitSpanAssumeInit { .. } => "assume_init",
+            Builtin::UnsafeCellGet { .. } => "get",
+            Builtin::UnsafeCellIntoInner => "into_inner",
             Builtin::RefCellBorrow => "borrow",
             Builtin::RefCellBorrowMut => "borrow_mut",
             Builtin::RefCellTryBorrow => "try_borrow",

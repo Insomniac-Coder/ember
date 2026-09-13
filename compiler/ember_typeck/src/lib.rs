@@ -367,6 +367,11 @@ struct Checker<'a> {
     /// payload type. The wrapper has `T`'s layout but suppresses structural
     /// destruction, which cannot be inferred from its field alone.
     maybe_uninit: HashMap<StructId, Ty>,
+    /// `[UNS-10]` — every compiler-known `std.mem.UnsafeCell[T]` and its
+    /// payload. It remains an ordinary private one-field struct everywhere
+    /// else; this side table supplies only its deliberately narrow method and
+    /// trait behavior.
+    unsafe_cells: HashMap<StructId, Ty>,
     /// `[CELL-7]` — every `Ref[T]`/`RefMut[T]` guard built so far, and the
     /// `T` plus mutability it views. A transparent one-field struct holding a
     /// `ref`/`ref mut`, so `[TYP-15]` applies via `is_view` and the region
@@ -419,6 +424,12 @@ struct Checker<'a> {
     /// `[UNS-1]`, `[UNS-2]` — inside an `unsafe:` block, where the raw memory
     /// operations are permitted.
     in_unsafe: bool,
+    /// `[UNS-10b]` — `UnsafeCell` delegates an invariant to unsafe code and
+    /// therefore cannot occur in a function that promises `@static_safe`.
+    in_static_safe: bool,
+    /// Keep one precise E3105 per function even when the forbidden type occurs
+    /// in both its signature and body.
+    static_safe_unsafe_cell_reported: bool,
     ret_ty: Ty,
     /// The profile's `[TYP-8]` policy, used when a function has no
     /// `@overflow(...)` of its own.
@@ -460,6 +471,7 @@ impl<'a> Checker<'a> {
             cells: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
+            unsafe_cells: HashMap::new(),
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
             fixed_arenas: HashSet::new(),
@@ -476,6 +488,8 @@ impl<'a> Checker<'a> {
             loop_labels: Vec::new(),
             in_defer: false,
             in_unsafe: false,
+            in_static_safe: false,
+            static_safe_unsafe_cell_reported: false,
             ret_ty,
             default_overflow: OverflowPolicy::default(),
         }
@@ -2553,6 +2567,16 @@ impl<'a> Checker<'a> {
             }
             return self.maybe_uninit_of(args[0].0);
         }
+        if self.is_unsafe_cell_name(name) {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, arg_span) = args[0];
+            self.reject_stored_view(inner, arg_span, "an UnsafeCell's contents");
+            let ty = self.unsafe_cell_of(inner);
+            self.reject_unsafe_cell_in_static_safe(span);
+            return ty;
+        }
         if name.is("Ref") || name.is("RefMut") {
             if !require(self, 1) {
                 return self.common.error;
@@ -3020,6 +3044,10 @@ impl<'a> Checker<'a> {
                     let inner = self.substitute_ty(inner, args);
                     return self.maybe_uninit_of(inner);
                 }
+                if let Some(inner) = self.unsafe_cells.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.unsafe_cell_of(inner);
+                }
                 if let Some((inner, mutable)) = self.ref_guards.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
                     return self.ref_guard_of(inner, mutable);
@@ -3284,9 +3312,11 @@ impl<'a> Checker<'a> {
     /// `[CELL-1]`, `[CELL-2]`, `[CELL-4]` — `Cell[T]`, as a transparent
     /// one-field struct built once per `T`.
     ///
-    /// ADR-019 makes it compiler-known rather than Ember written on
-    /// `UnsafeCell`, because the document names `UnsafeCell` once and defines
-    /// it nowhere. A **struct** rather than a `TyKind` of its own is what makes
+    /// ADR-019 makes it compiler-known rather than implemented in Ember on
+    /// top of another primitive. That historical implementation choice remains
+    /// in force after `[UNS-10]` separately defined `UnsafeCell`; neither type
+    /// inherits the other's lowering rules. A **struct** rather than a `TyKind`
+    /// of its own is what makes
     /// `[CELL-2]`'s "no overhead relative to a plain field" true by
     /// construction instead of by promise, and it hands `[CELL-4]` over
     /// whole: `is_copy` on a struct is `derives_copy && !has_drop && every
@@ -3392,6 +3422,118 @@ impl<'a> Checker<'a> {
             TyKind::Struct(id) => self.maybe_uninit.get(id).copied(),
             _ => None,
         }
+    }
+
+    /// `[UNS-10]` — the lowest-level interior-mutability primitive.
+    ///
+    /// The ordinary one-field representation gives `UnsafeCell[T]` exactly
+    /// `T`'s size/alignment and ordinary field destruction. Unlike `Cell`, it
+    /// is never `Copy`: the exception is semantic, so `derives_copy` stays
+    /// false even when the payload is Copy. The field is compiler-private;
+    /// the only source-level routes are `get` and `into_inner`.
+    fn unsafe_cell_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!(
+            "UnsafeCell_{}",
+            type_stem(&self.types.display(inner))
+        ));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: inner,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: false,
+            drops_fields: true,
+            // Preserve the generic family structurally so ordinary call-site
+            // unification can infer T through `UnsafeCell[T]`.
+            origin: Some((Symbol::intern("std.mem.UnsafeCell"), vec![inner])),
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.unsafe_cells.insert(id, inner);
+        ty
+    }
+
+    fn unsafe_cell_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.unsafe_cells.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `UnsafeCell` is public but deliberately not in the prelude. Resolve
+    /// through the module visibility table so aliases work and an unimported
+    /// bare spelling does not become a compiler-only back door.
+    fn is_unsafe_cell_name(&self, name: Symbol) -> bool {
+        self.resolve_name(name).is("std.mem.UnsafeCell")
+    }
+
+    fn reject_unsafe_cell_in_static_safe(&mut self, span: Span) {
+        if !self.in_static_safe || self.static_safe_unsafe_cell_reported {
+            return;
+        }
+        self.static_safe_unsafe_cell_reported = true;
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E3105,
+                span,
+                "`UnsafeCell` is not permitted in `@static_safe` code",
+            )
+            .note(concat!(
+                "`@static_safe` requires the relevant safety invariant to be established ",
+                "statically; `UnsafeCell` delegates it to unsafe implementation code [UNS-10b]"
+            )),
+        );
+    }
+
+    fn ty_contains_unsafe_cell(&self, ty: Ty) -> bool {
+        fn visit(this: &Checker<'_>, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+            if !seen.insert(ty) {
+                return false;
+            }
+            match this.types.kind(ty) {
+                TyKind::Struct(id) => {
+                    this.unsafe_cells.contains_key(id)
+                        || this
+                            .types
+                            .struct_def(*id)
+                            .fields
+                            .iter()
+                            .any(|field| visit(this, field.ty, seen))
+                }
+                TyKind::Enum(id) => this
+                    .types
+                    .enum_def(*id)
+                    .variants
+                    .iter()
+                    .flat_map(|variant| variant.fields.iter())
+                    .any(|field| visit(this, field.ty, seen)),
+                TyKind::Ref { inner, .. }
+                | TyKind::Ptr { inner, .. }
+                | TyKind::Array { elem: inner, .. }
+                | TyKind::Vec { elem: inner }
+                | TyKind::Span { elem: inner, .. } => visit(this, *inner, seen),
+                TyKind::Tuple(items) => items.iter().any(|&item| visit(this, item, seen)),
+                TyKind::Fn { params, ret } => {
+                    params.iter().any(|&param| visit(this, param, seen))
+                        || visit(this, *ret, seen)
+                }
+                TyKind::Range(id) => visit(this, this.types.range_def(*id).repr, seen),
+                _ => false,
+            }
+        }
+
+        visit(self, ty, &mut HashSet::new())
     }
 
     /// `[CELL-5]`, `[CELL-9]`, `[CELL-12]` — `RefCell[T]`, as a transparent
@@ -3803,6 +3945,10 @@ impl<'a> Checker<'a> {
             // Nothing is emitted for it: only its instantiations exist at run
             // time.
             if !self.signatures[def.0 as usize].generics.is_empty() {
+                let outer_static_safe = self.in_static_safe;
+                let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
+                self.in_static_safe = has_attribute(&item.attrs, "static_safe");
+                self.static_safe_unsafe_cell_reported = false;
                 let generics = self.signatures[def.0 as usize].generics.clone();
                 self.type_params.clear();
                 self.current_generics = generics.clone();
@@ -3823,7 +3969,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|(n, t, m, s)| (*n, *t, *m, *s))
                         .collect();
-                    for (name, ty, mode, param_span) in signature_params {
+                    for (name, ty, mode, param_span) in signature_params.iter().copied() {
                         let local_ty = match mode {
                             Mode::Mut => self.mut_param_ty(ty),
                             _ => ty,
@@ -3833,8 +3979,18 @@ impl<'a> Checker<'a> {
                             self.borrowed_params.insert(local);
                         }
                     }
+                    if self.in_static_safe
+                        && (signature_params
+                            .iter()
+                            .any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
+                            || self.ty_contains_unsafe_cell(self.ret_ty))
+                    {
+                        self.reject_unsafe_cell_in_static_safe(item.span);
+                    }
                     self.check_block(block);
                 }
+                self.in_static_safe = outer_static_safe;
+                self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
                 self.type_params.clear();
                 self.current_generics.clear();
                 continue;
@@ -3844,6 +4000,10 @@ impl<'a> Checker<'a> {
             self.scopes = vec![HashMap::new()];
             self.borrowed_params.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
+            let outer_static_safe = self.in_static_safe;
+            let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
+            self.in_static_safe = has_attribute(&item.attrs, "static_safe");
+            self.static_safe_unsafe_cell_reported = false;
 
             let mut params = Vec::new();
             let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
@@ -3851,7 +4011,7 @@ impl<'a> Checker<'a> {
                 .iter()
                 .map(|(n, t, m, s)| (*n, *t, *m, *s))
                 .collect();
-            for (name, ty, mode, span) in signature_params {
+            for (name, ty, mode, span) in signature_params.iter().copied() {
                 // A `mut` parameter is an inout: inside the function it is a
                 // `ref mut T`, and every mention of its name reads through it.
                 // Without this the callee writes to a copy and the caller
@@ -3867,10 +4027,21 @@ impl<'a> Checker<'a> {
                 params.push(Param { local, mode });
             }
 
+            if self.in_static_safe
+                && (signature_params
+                    .iter()
+                    .any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
+                    || self.ty_contains_unsafe_cell(self.ret_ty))
+            {
+                self.reject_unsafe_cell_in_static_safe(item.span);
+            }
+
             let body = match &decl.body {
                 Some(block) => self.check_block(block),
                 None => Block { stmts: Vec::new(), span: item.span },
             };
+            self.in_static_safe = outer_static_safe;
+            self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
 
             // `[MNG-1]` — the symbol carries the module, so two modules may
             // each declare a `helper`. Only the root module's `main` is the
@@ -3998,7 +4169,7 @@ impl<'a> Checker<'a> {
                     fn_decl,
                     block,
                     job.def,
-                    &item.attrs,
+                    &member.attrs,
                     member.span,
                 );
                 if let Some(saved) = saved {
@@ -4046,7 +4217,7 @@ impl<'a> Checker<'a> {
                     decl,
                     block,
                     def,
-                    &item.attrs,
+                    &member.attrs,
                     member.span,
                 );
                 self.type_params.clear();
@@ -4084,7 +4255,7 @@ impl<'a> Checker<'a> {
                     decl,
                     block,
                     instance,
-                    &item.attrs,
+                    &member.attrs,
                     member.span,
                 );
                 quiet = std::mem::replace(self.sink, saved);
@@ -4184,6 +4355,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        let outer_static_safe = self.in_static_safe;
+        let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
+        self.in_static_safe = has_attribute(attrs, "static_safe");
+        self.static_safe_unsafe_cell_reported = false;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
@@ -4191,7 +4366,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (name, ty, mode, param_span) in signature_params {
+        for (name, ty, mode, param_span) in signature_params.iter().copied() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
@@ -4202,8 +4377,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             params.push(Param { local, mode });
         }
+        if self.in_static_safe
+            && (signature_params.iter().any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
+                || self.ty_contains_unsafe_cell(self.ret_ty))
+        {
+            self.reject_unsafe_cell_in_static_safe(span);
+        }
         let body = self.check_block(block);
         let overflow = self.overflow_policy(attrs, span);
+        self.in_static_safe = outer_static_safe;
+        self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         // `[MONO-1]` — the symbol carries the instantiation, so two of them
         // never collide and identical ones dedupe at link time.
         let name = self.qualified(decl.name.name);
@@ -4278,7 +4461,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         decl,
                         block,
                         def,
-                        &item.attrs,
+                        &member.attrs,
                         member.span,
                     );
                     self.type_params.clear();
@@ -4286,7 +4469,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     continue;
                 }
                 if let Some(function) =
-                    self.check_one_method(owner, decl, block, def, &item.attrs, member.span)
+                    self.check_one_method(owner, decl, block, def, &member.attrs, member.span)
                 {
                     out.push(function);
                 }
@@ -4350,7 +4533,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             fn_decl,
                             block,
                             def,
-                            &item.attrs,
+                            &member.attrs,
                             member.span,
                         );
                         self.type_params.clear();
@@ -4358,7 +4541,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         continue;
                     }
                     if let Some(function) =
-                        self.check_one_method(*ty, fn_decl, block, def, &item.attrs, member.span)
+                        self.check_one_method(*ty, fn_decl, block, def, &member.attrs, member.span)
                     {
                         out.push(function);
                     }
@@ -4381,6 +4564,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        let outer_static_safe = self.in_static_safe;
+        let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
+        self.in_static_safe = has_attribute(attrs, "static_safe");
+        self.static_safe_unsafe_cell_reported = false;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
@@ -4388,7 +4575,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (name, ty, mode, param_span) in signature_params {
+        for (name, ty, mode, param_span) in signature_params.iter().copied() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
@@ -4399,11 +4586,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             params.push(Param { local, mode });
         }
+        if self.in_static_safe
+            && (signature_params.iter().any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
+                || self.ty_contains_unsafe_cell(self.ret_ty))
+        {
+            self.reject_unsafe_cell_in_static_safe(span);
+        }
 
         let outer_self = self.self_ty.replace(owner);
         let body = self.check_block(block);
         self.self_ty = outer_self;
         let overflow = self.overflow_policy(attrs, span);
+        self.in_static_safe = outer_static_safe;
+        self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         let name = decl.name.name;
         Some(Function {
             def,
@@ -6825,6 +7020,60 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return built;
         }
 
+        // `[UNS-10]` — `std.mem.UnsafeCell(owned v)`. Its public name is
+        // source-backed for module visibility, but its representation and two
+        // operations are compiler-known while the unsafe standard-library
+        // substrate is staged. Recognize it before the ordinary generic
+        // struct constructor so the source declaration cannot expose its
+        // private payload field as an implementation accident.
+        if self.is_unsafe_cell_name(name) {
+            if explicit.len() > 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`UnsafeCell` takes one type argument, found {}",
+                        explicit.len()
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`UnsafeCell` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let hint = explicit
+                .first()
+                .copied()
+                .or_else(|| expected.and_then(|ty| self.unsafe_cell_inner(ty)));
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => {
+                    let synthesised = self.synth_committed(&args[0].value);
+                    self.read_through(synthesised)
+                }
+            };
+            if value.ty == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = value.ty;
+            self.reject_stored_view(inner, args[0].value.span, "an UnsafeCell's contents");
+            let ty = self.unsafe_cell_of(inner);
+            self.reject_unsafe_cell_in_static_safe(span);
+            let TyKind::Struct(id) = *self.types.kind(ty) else {
+                unreachable!("UnsafeCell is compiler-known as a struct")
+            };
+            return Expr {
+                ty,
+                kind: ExprKind::StructLit { struct_id: id, fields: vec![value] },
+                span,
+            };
+        }
+
         // `Pair(1, 2.5)` — a generic struct's constructor, with the type
         // arguments inferred from the values, or written as `Pair[i32, f32]`.
         let resolved_name = self.resolve_name(name);
@@ -8629,6 +8878,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return self.synth_maybe_uninit_method(receiver, inner, name, args, span);
         }
+        if let Some(inner) = self.unsafe_cell_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_unsafe_cell_method(receiver, inner, name, args, span);
+        }
         if self.is_arena(receiver.ty) {
             return self.synth_arena_method(receiver, name, args, &explicit, span);
         }
@@ -9472,6 +9732,82 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[UNS-10]` — the complete and intentionally tiny `UnsafeCell[T]`
+    /// operation surface. `get` is the sole shared-access escape to a mutable
+    /// raw pointer and therefore requires an unsafe context; it creates no
+    /// safe mutable reference and no runtime borrow state. `into_inner`
+    /// consumes the wrapper and follows ordinary ownership/destruction.
+    fn synth_unsafe_cell_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        if !matches!(method, "get" | "into_inner") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!(
+                    "`UnsafeCell[{}]` has no method named `{}`",
+                    self.types.display(inner),
+                    name.name
+                ),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{method}` takes 0 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+
+        self.reject_unsafe_cell_in_static_safe(span);
+
+        if method == "into_inner" {
+            return Expr {
+                ty: inner,
+                kind: ExprKind::Builtin {
+                    which: Builtin::UnsafeCellIntoInner,
+                    args: vec![receiver],
+                },
+                span,
+            };
+        }
+
+        if !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(codes::E3100, span, "`UnsafeCell.get` needs an `unsafe` block")
+                    .help("wrap the raw-pointer operation in `unsafe:`")
+                    .note("`get` is the explicit unsafe boundary for shared interior mutation [UNS-10]"),
+            );
+        }
+        let cell_ref = self.types.intern(TyKind::Ref {
+            mutable: false,
+            inner: receiver.ty,
+        });
+        let borrowed = Expr {
+            ty: cell_ref,
+            kind: ExprKind::Ref { place: Box::new(receiver), mutable: false },
+            span,
+        };
+        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        Expr {
+            ty: pointer,
+            kind: ExprKind::Builtin {
+                which: Builtin::UnsafeCellGet { inner },
+                args: vec![borrowed],
+            },
+            span,
+        }
+    }
+
     /// `[CELL-1]` — the methods on `Cell[T]`.
     ///
     /// All of them take `self`, a **shared** borrow, and three of them mutate.
@@ -9654,8 +9990,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// All take `self`, a shared borrow, and `borrow`/`borrow_mut` mutate the
     /// borrow state (the counter plus the conflicting location). Like `Cell`,
     /// the cell is an ordinary struct here, so its methods are found by the
-    /// side table rather than in `self.methods` (ADR-019: compiler-known, not
-    /// built on `UnsafeCell`, which is specified but unbuilt per ADR-022).
+    /// side table rather than in `self.methods` (ADR-019: compiler-known and
+    /// deliberately not rebuilt on `[UNS-10]`'s separate `UnsafeCell`).
     ///
     /// `borrow(self) -> Ref[T]` succeeds unless a mutable borrow is active;
     /// `borrow_mut(self) -> RefMut[T]` succeeds unless any borrow is active;

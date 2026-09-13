@@ -1432,6 +1432,13 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::CellIntoInner, args } => {
                 self.lower_cell_into_inner(place, &args[0], expr.ty);
             }
+            hir::ExprKind::Builtin { which: hir::Builtin::UnsafeCellIntoInner, args } => {
+                // The representation and ownership transition are identical
+                // to consuming `Cell.into_inner`: move the wrapper as a whole,
+                // then move its sole payload so the wrapper cannot be dropped
+                // a second time.
+                self.lower_cell_into_inner(place, &args[0], expr.ty);
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::CellUpdate, args } => {
                 self.lower_cell_update(&args[0], &args[1]);
             }

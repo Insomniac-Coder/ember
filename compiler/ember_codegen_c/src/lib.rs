@@ -891,6 +891,7 @@ impl Emitter<'_> {
                     | Builtin::CellUpdate
                     | Builtin::CellUpdateDefault { .. }
                     | Builtin::CellTake { .. }
+                    | Builtin::UnsafeCellIntoInner
                     | Builtin::RefCellBorrow
                     | Builtin::RefCellBorrowMut
                     | Builtin::RefCellTryBorrow
@@ -924,6 +925,14 @@ impl Emitter<'_> {
                     Builtin::MaybeUninitUninit { .. } => {
                         let wrapper = self.c_type(*arg_ty);
                         return format!("({wrapper}){{0}}");
+                    }
+                    // `[UNS-10]` — the argument is an explicit shared borrow
+                    // of the one-field wrapper. The cast removes C's `const`
+                    // from that field address at the unsafe boundary; Ember
+                    // still exposes only `*mut T`, never a safe `ref mut T`.
+                    Builtin::UnsafeCellGet { inner } => {
+                        let inner = self.c_type(*inner);
+                        return format!("(({inner}*)&(({})->value))", rendered[0]);
                     }
                     Builtin::ArenaWithCapacity => {
                         let arena = self.c_type(*arg_ty);
