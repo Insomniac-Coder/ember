@@ -3,7 +3,7 @@
 #$ error[E2040]: `Missing` implements `Named` but does not define `label`
 #$ error[E2041]: `Twice` already implements `Named`
 #$ error[E2070]: `label` is offered by both
-#$ error[E2140]: a `mut` argument must be a variable, not a value
+#$ error[E3027]: a `mut` argument is not a mutable place
 
 interface Named:
     fn label(self) -> i32

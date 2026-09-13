@@ -11867,6 +11867,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty, kind: ExprKind::Ref { place: Box::new(receiver), mutable: true }, span }
     }
 
+    /// `[FN-2a]`, diagnostic shape B10 — a callee's `mut` mode forms a
+    /// mutable borrow at the call boundary. This is deliberately narrower
+    /// than `[EXP-5]`'s general "value is not a place" diagnostic: naming the
+    /// failed parameter-mode adjustment is what gives the caller the useful
+    /// structural repair.
+    fn emit_mut_argument_place_error(&mut self, span: Span) {
+        self.sink.emit_classified(
+            Diagnostic::error(codes::E3027, span, "a `mut` argument is not a mutable place")
+                .primary_label("this value has no mutable storage for the callee to borrow")
+                .help(concat!(
+                    "bind the value to a local first, or pass the owner place directly ",
+                    "(`f(obj.field)` rather than `f(obj.get_field())`)"
+                ))
+                .note(concat!(
+                    "the callee's declared `mut` mode forms the mutable borrow; ",
+                    "the call site does not write a mode [FN-2a]"
+                )),
+        );
+    }
+
     /// One argument, in its parameter's mode. A `mut` parameter takes the
     /// address of a place, so the callee writes through to the caller's
     /// variable; everything else is passed by value.
@@ -11885,11 +11905,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let view = self.check_expr(arg, param_ty);
             self.reject_borrowed_parameter_write(&view, arg.span, false);
             if view.ty != self.common.error && !self.viewed_place(&view) {
-                self.error(
-                    codes::E2140,
-                    arg.span,
-                    "a `mut` view must be taken of a variable, not of a value",
-                );
+                self.emit_mut_argument_place_error(arg.span);
             }
             return view;
         }
@@ -11902,11 +11918,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.reject_borrowed_parameter_write(&place, arg.span, false);
         }
         if !is_place(&place.kind) && place.ty != self.common.error {
-            self.error(
-                codes::E2140,
-                arg.span,
-                "a `mut` argument must be a variable, not a value",
-            );
+            self.emit_mut_argument_place_error(arg.span);
             return place;
         }
         let ty = self.types.intern(TyKind::Ref { mutable: true, inner: param_ty });

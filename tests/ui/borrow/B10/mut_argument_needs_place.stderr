@@ -1,0 +1,10 @@
+error[E3027]: a `mut` argument is not a mutable place
+ --> tests/ui/borrow/B10/mut_argument_needs_place.em:5:12
+  |
+5 |     double(1 + 1)
+  |            ^^^^^ this value has no mutable storage for the callee to borrow
+  |
+  = help: bind the value to a local first, or pass the owner place directly (`f(obj.field)` rather than `f(obj.get_field())`)
+  = note: the callee's declared `mut` mode forms the mutable borrow; the call site does not write a mode [FN-2a]
+
+error: could not compile due to 1 error(s)
