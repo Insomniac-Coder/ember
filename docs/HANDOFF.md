@@ -283,14 +283,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `a02c0a50b700e25aa18d6162c9a6e9671d1fd147` (`Implement H4 UnsafeCell safety boundary`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `352ea64` (`Implement Array split_at_mut and B1 repair`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
-| `cargo test --workspace` | **188 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
+| `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 98 top-level rule directories, 320 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 73 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
+| Conformance | 98 top-level rule directories, 324 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 76 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -2389,13 +2389,12 @@ shape-required concrete construct, rejects orphan companions, and compiles the
 fixed program. Paths and line endings are normalized, but diagnostic content
 is otherwise exact.
 
-Thirteen of the 25 code-keyed ownership shapes now have honest cases: O1, O3,
-O4, O6, O7, B3, B4, B6, B7, B8, B12, B13, and A1. Every fixed companion was
+Fourteen of the 25 code-keyed ownership shapes now have honest cases: O1, O3,
+O4, O6, O7, B1, B3, B4, B6, B7, B8, B12, B13, and A1. Every fixed companion was
 compiled, not inferred. This is **partial `[DIA-13]` coverage**, not a claim
 that the rule is complete: O2/O5/O8/O9/B2/B5/B9/B10/B11/X1/S1 have no current
-producer, B1 is blocked by D-062/SPN-API-1, R1 still needs the
-`ember explain --borrow` overlay, and §XX.6.2's N1–N12 basic classifier and
-snapshots remain.
+producer, R1 still needs the `ember explain --borrow` overlay, and §XX.6.2's
+N1–N12 basic classifier and snapshots remain.
 
 The first two cases exposed why `[PHIL-8a]` requires compiling the repair.
 D-060: E3070 prescribed `mem.drop(x)`, but `std.mem` had no such function.
@@ -2406,12 +2405,33 @@ O3 code but not O3's required repair set; its primary help now names moving the
 declaration inside the loop, cloning per iteration, and `mem.take` for a value
 replaced each pass. Neither finding changed the specification.
 
-D-062 remains open and must not be hidden by a snapshot: E3022/B1 currently
-gets the generic B3 "shorten the borrow" help. The catalogue requires a
-concrete disjointness API, while all such Span/Array APIs remain the explicit
-`SPN-API-1` implementation gap. Implement a real sanctioned repair, then add
-the B1 before/fixed/snapshot triplet. Do not bless output whose fix cannot
-compile.
+D-062 is closed in `352ea64`. E3022/B1 now prescribes a concrete structural
+repair, and `Array[T].split_at_mut(index)` implements one without creating a
+second borrowing model: it checks `index <= len`, returns two non-overlapping
+`MutSpan[T]` values, and retains the mutable loan of the source Array. The
+before/fixed/snapshot triplet compiles the repair; BRW-5 conformance executes
+ordinary and empty splits, rejects mutation of the source while a half lives,
+and checks the boundary panic. A deliberate method-removal probe made the
+fixed case fail with E1010. The remaining Span/MutSpan API stays `SPN-API-1`.
+
+### 0.37 D-062 closure and the next exposed boundary — 2026-09-13
+
+The D-062 fix is a complete vertical slice rather than diagnostic wording
+alone. Type checking creates the compiler-known method and an explicit mutable
+receiver borrow; MIR evaluates receiver and boundary once, asserts
+`boundary <= len`, and creates the result tuple; view verification requires
+that borrow; C lowering constructs the two ranges only after the assertion.
+The returned views therefore share the source Array's provenance and ordinary
+borrow checking prevents structural mutation until they die.
+
+Applying the catalogue's natural destructuring spelling exposed a separate,
+pre-existing implementation limitation: `[GRM-5]` parses `left, right = value`,
+but type checking reports E1010 because tuple destructuring is not implemented.
+The B1 repair remains usable through `parts.0` and `parts.1`; `TUP-DST-1` now
+tracks the missing language mechanism explicitly rather than hiding it in
+`SPN-API-1` or weakening the diagnostic. The next diagnostic-shape work may
+continue independently, while the remaining Span/MutSpan methods and tuple
+destructuring retain their own implementation gates.
 
 ## The task list — where to begin
 
@@ -2423,7 +2443,8 @@ and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 §0.31 records H3 and the ODR-013 stop; §0.32 records the owner resolution and
 H4 cut; §0.33 records the completed `ARN-COLL-1` implementation; §0.34 records
 the first verified `ARCH-096-1` fact/backend boundary; §0.35 records completed
-UnsafeCell. The active task is now the Phase 2 diagnostic-shape snapshot suite,
+UnsafeCell; §§0.36–0.37 record the diagnostic UI foundation and D-062/B1
+closure. The active task is now the Phase 2 diagnostic-shape snapshot suite,
 with the remaining canonical-fact migration continuing incrementally, followed
 by Phase 2 rule closure and the multi-region work before the current target can
 be explicitly adopted.
