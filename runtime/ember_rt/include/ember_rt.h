@@ -263,6 +263,10 @@ void* ember_alloc(size_t size, size_t align);
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 void ember_free(void* p, size_t size, size_t align);
 void* ember_try_alloc(size_t size, size_t align);
+/* IX.1: allocate one uniquely owned value and move its object bytes into the
+ * allocation. The compiler remains responsible for source move state and for
+ * running the payload destructor before ember_free. */
+void* ember_box_new_copy(size_t size, size_t align, const void* value);
 
 /* -- arenas ---------------------------------------------------------------
  *

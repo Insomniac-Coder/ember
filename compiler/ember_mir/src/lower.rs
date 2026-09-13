@@ -1893,18 +1893,19 @@ impl<'a> Builder<'a> {
                 // `[OWN-3]`'s elaboration deletes the temporary's
                 // statement-end drop. Erasing it to a copy destroys the value
                 // twice — once as the temporary, once with the buffer.
-                let spill = matches!(
+                let spill_second = matches!(
                     which,
                     hir::Builtin::ArrayPush
                         | hir::Builtin::ArenaAlloc { .. }
                         | hir::Builtin::FixedArenaAlloc { .. }
                         | hir::Builtin::ScopedArenaAlloc { .. }
                 );
+                let spill_first = matches!(which, hir::Builtin::BoxNew { .. });
                 let args: Vec<Operand> = args
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        if spill && index == 1 {
+                        if (spill_first && index == 0) || (spill_second && index == 1) {
                             match self.lower_operand(a) {
                                 Operand::Const(_) => self.lower_into_temp(a),
                                 other => other,

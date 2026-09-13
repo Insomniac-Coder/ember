@@ -282,6 +282,10 @@ pub enum Builtin {
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
     /// compiler-known type until Phase 2's generics.
     ArrayNew,
+    /// `[HEAP-1]`, `[DRP-6]` — `Box(owned value)`. The payload and concrete
+    /// box type travel with the operation so the backend can allocate exactly
+    /// one `T` without recovering a compiler-private wrapper relationship.
+    BoxNew { elem: Ty, boxed: Ty },
     /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
     ArrayPush,
     /// `a.len()`.
@@ -513,6 +517,7 @@ impl Builtin {
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
+            Builtin::BoxNew { .. } => "Box",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",
             Builtin::StringNew => "String",

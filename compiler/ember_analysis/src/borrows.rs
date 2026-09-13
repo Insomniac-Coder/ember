@@ -77,6 +77,10 @@ struct Loan {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Access {
     Read,
+    /// Ownership leaves this place. A move of a drop-owning value while a
+    /// reference into it remains live can end the referent's lifetime even
+    /// though the generated C expression looks like an ordinary read.
+    Move,
     Write,
     Borrow { mutable: bool },
 }
@@ -928,13 +932,14 @@ fn check_point(
                     }
                 }
                 // A shared guard loan still forbids moving the cell: an
-                // ordinary shared loan allows `Read` (a move is a read), but
+                // ordinary shared loan allows `Read`, but
                 // moving inline storage out from under a guard dangles it, so
-                // reads conflict here too. (A mutable guard loan already
-                // forbids reads.) Writes already conflict for every loan.
-                if matches!(access, Access::Read) && !loan.capability.is_mut() {
+                // moves conflict here too. (A mutable guard loan already
+                // forbids reads and moves.) Writes already conflict for every
+                // loan.
+                if matches!(access, Access::Move) && !loan.capability.is_mut() {
                     // Fall through to report below (via `refcell` flag).
-                } else if matches!(access, Access::Read) {
+                } else if matches!(access, Access::Read | Access::Move) {
                     // Mutable case already conflicts via `loan_mutable` below;
                     // keep the same path for the message.
                 }
@@ -946,9 +951,19 @@ fn check_point(
             let refcell = is_guard_loan(body, types, loan_place);
             let conflict = match access {
                 // While a mutable borrow is live the owner may not read. A
-                // shared `RefCell` loan also forbids reads: a move is a read,
-                // and moving inline storage out from under a guard dangles it.
+                // shared `RefCell` guard keeps the existing conservative
+                // whole-cell read conflict; guard-vs-guard borrows were
+                // handled above by the runtime-check exception.
                 Access::Read => loan_mutable || refcell,
+                // A unique owner may keep its referent at a stable address
+                // across a move (Box does), but moving it to a call may also
+                // drop it before the live reference's next use. Drop-owning
+                // moves therefore conflict with every loan. The existing
+                // dropless-value latitude is preserved for types that own no
+                // destruction obligation.
+                Access::Move => {
+                    loan_mutable || refcell || types.needs_drop(place_ty(body, types, place))
+                }
                 // While any borrow is live the owner may not write.
                 Access::Write => true,
                 // Two mutable, or one of each, conflict; two shared do not.
@@ -980,6 +995,9 @@ fn check_point(
                 ),
                 (true, Access::Read) => {
                     (codes::E3021, format!("`{name}` cannot be read while it is mutably borrowed"))
+                }
+                (_, Access::Move) => {
+                    (codes::E3021, format!("`{name}` cannot be moved while it is borrowed"))
                 }
                 _ => (codes::E3021, format!("`{name}` cannot be written while it is borrowed")),
             };
@@ -1175,7 +1193,7 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
     let record = |accesses: Vec<(Place, Access)>, span: Span, reads: &mut HashMap<_, Vec<_>>| {
         for (place, access) in accesses {
             // A write through a reference reads the reference itself.
-            let reading = matches!(access, Access::Read)
+            let reading = matches!(access, Access::Read | Access::Move)
                 || place.projection.iter().any(|p| matches!(p, Projection::Deref));
             if reading {
                 reads.entry(place.local).or_default().push(span);
@@ -1267,7 +1285,27 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
     let decl = body.local(place.local);
     let mut out = decl.name.clone().unwrap_or_else(|| format!("_{}", place.local.0));
     let mut ty = decl.ty;
-    for projection in &place.projection {
+    let mut at = 0;
+    while at < place.projection.len() {
+        // IX.1 — Box auto-deref is represented internally as its private
+        // pointer field followed by a dereference. Diagnostics must name the
+        // source-level owner (`boxed`), never expose `boxed.value` as if that
+        // private implementation field were valid Ember syntax.
+        if matches!(place.projection.get(at), Some(Projection::Field(0)))
+            && matches!(place.projection.get(at + 1), Some(Projection::Deref))
+        {
+            if let TyKind::Struct(id) = types.kind(ty) {
+                let def = types.struct_def(*id);
+                if let Some((name, args)) = &def.origin {
+                    if name.is("Box") && args.len() == 1 {
+                        ty = args[0];
+                        at += 2;
+                        continue;
+                    }
+                }
+            }
+        }
+        let projection = &place.projection[at];
         match projection {
             Projection::Field(i) => {
                 out = match field_name(types, ty, *i) {
@@ -1290,6 +1328,7 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
             }
             _ => {}
         }
+        at += 1;
     }
     out
 }
@@ -1389,7 +1428,8 @@ fn is_guard_loan(body: &Body, types: &TypeTable, place: &Place) -> bool {
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {
     match operand {
-        Operand::Copy(p) | Operand::Move(p) => out.push((p.clone(), Access::Read)),
+        Operand::Copy(p) => out.push((p.clone(), Access::Read)),
+        Operand::Move(p) => out.push((p.clone(), Access::Move)),
         Operand::Const(_) => {}
     }
 }

@@ -127,6 +127,14 @@ void ember_free(void* p, size_t size, size_t align) {
     g_stats.total_frees += 1;
 }
 
+void* ember_box_new_copy(size_t size, size_t align, const void* value) {
+    void* boxed = ember_alloc(size, align);
+    if (size != 0) {
+        memcpy(boxed, value, size);
+    }
+    return boxed;
+}
+
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     void* fresh = ember_alloc(new_size, align);
     if (p != NULL) {

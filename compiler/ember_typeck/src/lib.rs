@@ -365,6 +365,11 @@ struct Checker<'a> {
     /// what tells method dispatch that `set` on it is a builtin rather than a
     /// missing method.
     cells: HashMap<StructId, Ty>,
+    /// `[DRP-6]`, IX.1 — every compiler-known `Box[T]` and its payload.
+    /// The public value is an ordinary move-only struct containing one private
+    /// pointer. This table supplies the ownership-aware constructor,
+    /// auto-deref and drop semantics without making raw access public.
+    boxes: HashMap<StructId, Ty>,
     /// `[CELL-5]` — every `RefCell[T]` built so far, and the `T` it holds.
     /// A transparent struct with a second field for the one-word borrow
     /// counter plus location fields for the conflicting borrow's source
@@ -477,6 +482,7 @@ impl<'a> Checker<'a> {
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
             cells: HashMap::new(),
+            boxes: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
@@ -2561,6 +2567,16 @@ impl<'a> Checker<'a> {
             self.reject_stored_view(elem, arg_span, "a container element");
             return self.types.intern(TyKind::Vec { elem });
         }
+        if name.is("Box") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            // `[TYP-15]` is a value-region rule, not a prohibition on forming
+            // the type: `Box[str]` is legal when the stored `str` has the
+            // static region. Construction/storage checks the actual value.
+            let (inner, _) = args[0];
+            return self.box_of(inner);
+        }
         if name.is("Cell") || name.is("RefCell") {
             if !require(self, 1) {
                 return self.common.error;
@@ -3182,6 +3198,10 @@ impl<'a> Checker<'a> {
                 self.types.intern(TyKind::Fn { params, ret })
             }
             TyKind::Struct(id) => {
+                if let Some(inner) = self.boxes.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.box_of(inner);
+                }
                 if let Some(inner) = self.cells.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
                     return self.cell_of(inner);
@@ -3457,6 +3477,66 @@ impl<'a> Checker<'a> {
     fn option_of(&mut self, inner: Ty) -> Ty {
         let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.display(inner))));
         self.builtin_enum(name, &[(Symbol::intern("None"), Vec::new()), (Symbol::intern("Some"), vec![inner])])
+    }
+
+    /// IX.1, `[HEAP-1]`, `[DRP-6]` — one unique heap owner.
+    ///
+    /// The source-visible value contains only a compiler-private `*mut T`.
+    /// `has_drop` makes every `Box[T]` move-only and gives drop elaboration an
+    /// indivisible owner; `drops_fields: false` prevents the pointer field
+    /// from pretending to own an inline `T`. The C backend supplies the real
+    /// glue: drop `*value`, then free the allocation.
+    fn box_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!("Box_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: pointer,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: false,
+            has_drop: true,
+            drops_fields: false,
+            origin: Some((Symbol::intern("Box"), vec![inner])),
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.boxes.insert(id, inner);
+        ty
+    }
+
+    fn box_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.boxes.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// The safe place reached by Box auto-deref. Raw-pointer syntax never
+    /// reaches source: the private pointer projection and dereference are
+    /// introduced together by the compiler, rooted at the Box owner so the
+    /// ordinary borrow and move analyses retain the ownership relationship.
+    fn read_box_through(&mut self, boxed: Expr) -> Expr {
+        let Some(inner) = self.box_inner(boxed.ty) else { return boxed };
+        let span = boxed.span;
+        let TyKind::Struct(id) = *self.types.kind(boxed.ty) else { unreachable!() };
+        let pointer = self.types.struct_def(id).fields[0].ty;
+        let field = Expr {
+            ty: pointer,
+            kind: ExprKind::Field { base: Box::new(boxed), index: 0 },
+            span,
+        };
+        Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span }
     }
 
     /// `[CELL-1]`, `[CELL-2]`, `[CELL-4]` — `Cell[T]`, as a transparent
@@ -6779,10 +6859,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let base = self.synth(base);
                 // `[CELL-7]` — a temporary guard (e.g. `c.borrow().x`) reads
                 // through like a local one does via `read_local_expecting`.
-                let base = match self.ref_guard_inner(base.ty) {
+                let mut base = match self.ref_guard_inner(base.ty) {
                     Some(_) => self.read_guard_through(base),
                     None => base,
                 };
+                // IX.1 — field lookup auto-dereferences Box owners. Repeat
+                // for nested boxes; every generated dereference remains
+                // rooted at the owner place for borrow and move analysis.
+                while self.box_inner(base.ty).is_some() {
+                    base = self.read_box_through(base);
+                }
                 let TyKind::Struct(id) = *self.types.kind(base.ty) else {
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
@@ -6886,7 +6972,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // `t.0`. A tuple element is a `Field` in HIR, exactly like a
             // struct field; only the way the index is found differs.
             ast::ExprKind::TupleField { base, index } => {
-                let base = self.synth(base);
+                let mut base = self.synth(base);
+                while self.box_inner(base.ty).is_some() {
+                    base = self.read_box_through(base);
+                }
                 let index = *index as usize;
                 let found = match self.types.kind(base.ty) {
                     TyKind::Tuple(items) => Some((items.len(), items.get(index).copied())),
@@ -6918,7 +7007,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // instantiation until name resolution; an array base settles it.
             // The bounds check is added when this is lowered to MIR.
             ast::ExprKind::IndexOrInstantiate { base, args } => {
-                let base = self.synth(base);
+                let mut base = self.synth(base);
+                while self.box_inner(base.ty).is_some() {
+                    base = self.read_box_through(base);
+                }
                 let elem = match self.types.kind(base.ty) {
                     // `[SPN-2]` — "Indexing a `Span` is bounds-checked".
                     TyKind::Array { elem, .. }
@@ -7381,6 +7473,59 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // which needs an annotation.
         if let Some(built) = self.synth_wrapper(name, args, expected, span) {
             return built;
+        }
+
+        // IX.1 — `Box(owned v)`, or `Box[T](owned v)`. The allocation is an
+        // explicit builtin rather than a private-field literal: MIR must see
+        // the owned move, and the backend must route the allocation through
+        // `[HEAP-1]`'s allocator rather than materialising an inline payload.
+        if name.is("Box") {
+            if explicit.len() > 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Box` takes one type argument, found {}", explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Box` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let expected_inner = expected.and_then(|ty| self.box_inner(ty));
+            let hint = explicit.first().copied().or(expected_inner);
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => self.synth_committed(&args[0].value),
+            };
+            if value.ty == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = value.ty;
+            // `[TYP-15]` is region-based: a static-region view can live in
+            // this unbounded owner, while a non-static one cannot. Keep the
+            // check at the value boundary so forming `Box[str]` itself remains
+            // legal. The syntax predicate is deliberately conservative until
+            // the general region graph can prove more indirect static flows.
+            self.reject_stored_view_unless(
+                inner,
+                args[0].value.span,
+                "a Box's contents",
+                has_static_region(&args[0].value),
+            );
+            let boxed = self.box_of(inner);
+            return Expr {
+                ty: boxed,
+                kind: ExprKind::Builtin {
+                    which: Builtin::BoxNew { elem: inner, boxed },
+                    args: vec![value],
+                },
+                span,
+            };
         }
 
         // `[UNS-10]` — `std.mem.UnsafeCell(owned v)`. Its public name is
@@ -9183,11 +9328,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // guard alive for the borrow checker and the region graph.
         // Guards hold `ref`s (never guards: a view may not be put in a cell),
         // so one step suffices.
-        let receiver = match self.ref_guard_inner(receiver.ty) {
+        let mut receiver = match self.ref_guard_inner(receiver.ty) {
             Some(_) => self.read_guard_through(receiver),
             None => receiver,
         };
         let explicit = self.resolve_method_type_args(generic_args);
+        // IX.1 — `get` exposes the canonical shared reference. Other method
+        // names are resolved after auto-dereferencing to the payload, so Box
+        // does not duplicate the payload's method surface.
+        if self.box_inner(receiver.ty).is_some() {
+            if name.name.is("get") {
+                if !explicit.is_empty() {
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("`get` takes no type arguments, found {}", explicit.len()),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                return self.synth_box_get(receiver, name, args, span);
+            }
+            while self.box_inner(receiver.ty).is_some() {
+                receiver = self.read_box_through(receiver);
+            }
+        }
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
@@ -10175,6 +10339,45 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 which: Builtin::UnsafeCellGet { inner },
                 args: vec![borrowed],
             },
+            span,
+        }
+    }
+
+    /// IX.1 — `Box[T].get() -> ref T`. This is intentionally an ordinary
+    /// reference expression rather than a backend-only pointer extraction:
+    /// the owner loan and returned region then use the same machinery as all
+    /// other safe references.
+    fn synth_box_get(
+        &mut self,
+        receiver: Expr,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let Some(inner) = self.box_inner(receiver.ty) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes 0 arguments, found {}", name.name, args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(
+                codes::E2140,
+                span,
+                "`Box.get` needs an owner place so its returned reference cannot outlive a temporary",
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let payload = self.read_box_through(receiver);
+        let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
+        Expr {
+            ty,
+            kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
             span,
         }
     }

@@ -204,19 +204,39 @@ impl Emitter<'_> {
         }
     }
 
+    /// The payload of the compiler-known `Box[T]` structural wrapper. The
+    /// generic origin is canonical metadata; unlike a generated name prefix,
+    /// it cannot be forged by an unrelated source declaration.
+    fn box_inner_id(&self, id: StructId) -> Option<Ty> {
+        let def = self.types.struct_def(id);
+        match &def.origin {
+            Some((name, args)) if name.is("Box") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
     /// What one type definition looks like in C. Members are already written
     /// as declarators — an array member interleaves its type and its name, so
     /// this cannot be a `(type, name)` pair.
     fn definition(&self, node: TypeNode) -> Definition {
         match node {
-            TypeNode::Struct(id) => Definition::Struct(
-                self.types
-                    .struct_def(id)
-                    .fields
-                    .iter()
-                    .map(|f| format!("{} {}", self.c_type(f.ty), f.name))
-                    .collect(),
-            ),
+            TypeNode::Struct(id) => {
+                // Part XIX.6 maps `Box[T]` directly to `T*`. The checker uses
+                // one private logical pointer field so ordinary projection
+                // and ownership machinery can follow auto-deref; the backend
+                // erases that wrapper rather than emitting a second struct.
+                if let Some(inner) = self.box_inner_id(id) {
+                    return Definition::Alias(format!("{}*", self.c_type(inner)));
+                }
+                Definition::Struct(
+                    self.types
+                        .struct_def(id)
+                        .fields
+                        .iter()
+                        .map(|f| format!("{} {}", self.c_type(f.ty), f.name))
+                        .collect(),
+                )
+            }
             // `[ENM-3]` — a unit-only enum *is* its discriminant, so it is a
             // name for the repr integer and nothing more. `[TYP-12]` — a
             // payload enum is `{tag, union of variants}`.
@@ -343,6 +363,26 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                // IX.1 / `[DRP-6]` — the compiler-known Box owns the value
+                // behind its private pointer. Its drop order is observable:
+                // destroy `T` first, then release exactly that allocation.
+                // `drops_fields` is false, so this is the sole ownership walk.
+                let compiler_box = matches!(
+                    &def.origin,
+                    Some((name, args)) if name.is("Box") && args.len() == 1
+                );
+                if compiler_box && def.fields.len() == 1 {
+                    if let TyKind::Ptr { inner, .. } = self.types.kind(def.fields[0].ty) {
+                        if self.types.needs_drop(*inner) {
+                            self.drop_lines(&format!("(*{access})"), *inner, out);
+                        }
+                        let inner_c = self.c_type(*inner);
+                        out.push(format!(
+                            "{RT}free({access}, sizeof({inner_c}), _Alignof({inner_c}));"
+                        ));
+                        return;
+                    }
+                }
                 // `[CELL-7]` — a `Ref`/`RefMut` guard's `drop` releases the
                 // borrow state. The guard holds a pointer to the cell's `value`
                 // (at offset 0, so the value pointer is also the cell pointer);
@@ -1137,6 +1177,14 @@ impl Emitter<'_> {
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }
+                    Builtin::BoxNew { elem, boxed } => {
+                        let elem_c = self.c_type(*elem);
+                        let boxed_c = self.c_type(*boxed);
+                        return format!(
+                            "(({boxed_c}){RT}box_new_copy(sizeof({elem_c}), _Alignof({elem_c}), &{}))",
+                            rendered[0]
+                        );
+                    }
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);
                         return format!(
@@ -1354,7 +1402,14 @@ impl Emitter<'_> {
                     }
                     (_, TyKind::Struct(id)) => {
                         let def = self.types.struct_def(*id);
-                        out.push_str(&format!(".{}", def.fields[*index].name));
+                        // The checker models Box auto-deref as private field 0
+                        // followed by `Deref`, while Part XIX.6 erases Box to
+                        // `T*`. The logical field therefore contributes no C
+                        // member access; the following projection emits
+                        // `(*box)` directly.
+                        if self.box_inner_id(*id).is_none() {
+                            out.push_str(&format!(".{}", def.fields[*index].name));
+                        }
                     }
                     // An `Array[T]` is the runtime's buffer: pointer, length,
                     // capacity, in that order. A view is the same shape with
