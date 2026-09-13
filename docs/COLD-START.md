@@ -18,15 +18,15 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `af7c525` on `main`, following
-`90059c8` for direct callable summaries, `c913fbd` for field-sensitive region
-vectors, `e0ba765` for canonical Array-loop borrowing, and `d077563` for the H6
-Span implementation. All are pushed to `origin/main`
+**Last committed implementation baseline:** `9ade1d0` on `main`, following
+`af7c525` for verified in-MIR callable metadata, `90059c8` for direct callable
+summaries, `c913fbd` for field-sensitive region vectors, `e0ba765` for canonical
+Array-loop borrowing, and `d077563` for the H6 Span implementation. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
-    189 tests green      cargo test --workspace
+    199 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -37,7 +37,7 @@ treating this sentence as live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 122 top-level conformance rule directories, 410 `.em` files including support
+ 123 top-level conformance rule directories, 412 `.em` files including support
  modules. 86 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -237,12 +237,11 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Verified callable metadata complete; interface invalidation is next
+## 5. Validated callable interface artifact complete; precise reuse is next
 
-**Exact next task: serialize the verified `[LT-22]`/`[LT-35]` callable
-field/provenance metadata in a real interface/cache artifact and implement
-`[LT-40]` dependency invalidation.** Continue in the order in
-`MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
+**Exact next task: make the callable-summary section export-precise and use
+the validated BLAKE3 cache identity for safe incremental reuse.** Continue in
+the order in `MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
 class/thread/effect diagnostic shapes, add placeholder semantic facts, or
 attempt a big-bang rewrite.
 
@@ -265,9 +264,23 @@ checking consume the installed record, independently rederives it from MIR,
 and rejects missing/corrupt/false metadata at the final code-generation
 boundary. Direct methods, generic functions, and statically monomorphized
 interface bounds are covered. Generated C for the two-Span aggregate contains
-no provenance metadata. The remaining `[LT-40]` gap is cross-build rather than
-in-memory: there is no separate interface/cache artifact system yet in which
-to serialize the record or invalidate dependants. Virtual/dynamic/FFI/closure/
+no provenance metadata.
+
+`9ade1d0` completes the smallest real cross-build `[LT-40]` slice. `EMIF`
+schema-1 artifacts canonically encode and validate every installed direct
+callable summary; malformed, noncanonical, trailing, stale-fingerprint, or
+summary/body disagreement is a hard compiler error, never an unknown-call
+fallback. BLAKE3 interface hashes and cache keys include source, compiler,
+language/configuration, and transitive dependency-interface identity. The
+cache is committed only after semantic validation. The LT-40 integration test
+changes only an imported callable's result relation and proves the unchanged
+importer's key changes; the conformance case crosses a module boundary and
+asserts the metadata is absent from generated C.
+
+This is deliberately not full `[BLD-2]`: the artifact conservatively contains
+every currently compiled direct body rather than an exact export-only public
+interface, the compiler still rechecks the whole loaded program, and there is
+no item-granular or generic-instantiation reuse. Virtual/dynamic/FFI/closure/
 coroutine and the complete escape/storage matrices remain open.
 
 **D-116 is fixed in the same checkpoint.** `[LT-21]` field replacement now

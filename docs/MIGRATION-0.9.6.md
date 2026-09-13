@@ -322,11 +322,22 @@ the old source, retains the new source, merges conditional alternatives, and
 publishes only return-reaching sources in wrapper summaries. Coverage is now
 122 conformance directories and 410 Ember sources; 189 Rust tests remain green.
 
-This still does not complete H1's summary architecture. The metadata is an
-in-memory MIR artifact; the repository has no separate interface/incremental-
-cache artifact in which to serialize it or implement `[LT-40]` dependency
-invalidation. Non-direct dispatch and the full escape/storage/enum/generic
-matrix also remain.
+`9ade1d0` adds the first real interface/cache boundary. Its versioned `EMIF`
+artifact serializes canonical callable metadata, verifies canonical decoding
+and the stored fingerprint, and is installed before caller-side checking.
+BLAKE3 interface/cache identity includes source, compiler, language/profile
+configuration, and the sorted transitive interface-hash closure. Cache writes
+occur only after semantic validation; malformed, stale, or body-disagreeing
+records are hard errors. An integration test changes only an imported
+callable's summary and proves the importer cache key changes, while a
+cross-module LT-40 conformance case proves runtime C erasure.
+
+This still does not complete H1's summary architecture. The current artifact
+conservatively serializes all compiled direct bodies rather than an
+export-precise public interface, and the compiler still whole-program
+rechecks: no item/generic-instantiation reuse follows from this checkpoint.
+Non-direct dispatch and the full escape/storage/enum/generic matrix also
+remain.
 
 ## 4. Known implementation gaps
 
@@ -346,9 +357,10 @@ preparatory "Phase 0" is not part of this current nine-phase count.
 - H1's exact direct callable access/provenance behavior is implemented at
   `90059c8`, including E3065/B14 and runtime erasure. `af7c525` installs and
   verifies canonical fingerprinted MIR metadata and closes point-sensitive
-  `[LT-21]` replacement. Interface-file serialization, `[LT-40]` cross-build
-  invalidation, dynamic targets, and the wider dispatch matrix remain
-  incomplete.
+  `[LT-21]` replacement. `9ade1d0` serializes/validates that metadata and
+  couples imported-summary changes to BLAKE3 cache identity. Export-precise
+  interfaces, actual item/generic reuse, dynamic targets, and the wider
+  dispatch matrix remain incomplete.
 - The H1 equivalence matrix across references, spans, view fields, Arena
   results, RefCell guards, and FFI views has no complete conformance evidence.
 
@@ -527,10 +539,11 @@ proved.
    split-result relations, and `E3065/B14`; `af7c525` installs canonical
    fingerprinted MIR metadata, verifies producer/consumer agreement, covers
    direct method/generic/monomorphized-interface cases, and closes `[LT-21]`
-   point-sensitive replacement. Next add a real interface/cache artifact and
-   `[LT-40]` invalidation, then cover audited-declared, unknown, separate-
-   compilation, dynamic, hot-reload, escape/storage, and remaining verifier
-   cases while preserving runtime erasure.
+   point-sensitive replacement. `9ade1d0` adds the first real interface/cache
+   artifact and `[LT-40]` identity invalidation. Next make its public interface
+   export-precise and use it for safe reuse, then cover audited-declared,
+   unknown, separate-compilation, dynamic, hot-reload, escape/storage, and
+   remaining verifier cases while preserving runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -593,13 +606,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement the smallest real interface/cache artifact path that serializes
-`af7c525`'s verified `[LT-22]`/`[LT-35]` callable metadata, incorporates its
-deterministic fingerprint into dependency identity, and rejects stale or
-missing records under `[LT-40]`/`[MIR-REG-1]`. Preserve conservative all-slot
-behavior for unknown calls and ordinary E3021 for precise matching-field
-conflicts; E3064 remains a reserved historical identity rather than target
-behavior. Then extend the non-direct, escape/storage/enum, FFI/coroutine, and
-hot-reload matrices without leaking proof metadata into runtime layout. Do not
-fabricate class/thread/effect diagnostic shapes, add placeholder facts, or
-start a big-bang rewrite.
+Make `9ade1d0`'s validated callable-summary section export-precise, then use
+its BLAKE3 cache identity for safe incremental reuse. Preserve conservative
+all-slot behavior for unknown calls and ordinary E3021 for precise
+matching-field conflicts; E3064 remains a reserved historical identity rather
+than target behavior. Then extend the non-direct, escape/storage/enum,
+FFI/coroutine, and hot-reload matrices without leaking proof metadata into
+runtime layout. Do not fabricate class/thread/effect diagnostic shapes, add
+placeholder facts, or start a big-bang rewrite.

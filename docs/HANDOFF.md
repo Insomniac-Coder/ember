@@ -288,13 +288,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `af7c525` (`Verify callable regions and field replacement`), following `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
-| Recent commits | `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | Clean immediately after pushed implementation commit `af7c525`; the handoff/ledger synchronization is the only subsequent documentation scope before its own commit |
+| Current implementation checkpoint | `9ade1d0` (`Add verified callable interface cache artifacts`), following `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
+| Recent commits | `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Working tree | Clean immediately after source checkpoint `9ade1d0`; this handoff synchronization is documentation-only. Always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** |
-| `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
+| `cargo test --workspace` | **199 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 122 top-level rule directories, 410 `.em` files including support modules; the full conformance runner is green |
+| Conformance | 123 top-level rule directories, 412 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 86 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
 | Gates | **all green** (six, run individually below) |
 
@@ -919,9 +919,9 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Complete `[LT-40]` interface/cache invalidation for the verified callable-
-region metadata now installed by `af7c525`, then continue the non-direct and
-remaining multi-region conformance matrix.**
+**Make `9ade1d0`'s validated callable-summary interface section export-precise
+and use its BLAKE3 cache identity for safe incremental reuse, then continue
+the non-direct and remaining multi-region conformance matrix.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -936,11 +936,10 @@ complete at `90059c8`; §0.50 records their first evidence. `af7c525` installs
 canonical, fingerprinted metadata in every MIR body, makes borrow checking
 consume it, independently rederives and verifies it before code generation,
 and closes `[LT-21]` field replacement through point-sensitive provenance;
-§0.51 records the exact boundary. Interface serialization and cache
-invalidation remain because this repository does not yet have a separate
-interface/cache artifact system. Keep architecture migration incremental
-through real producers and consumers; do not create placeholder facts or
-attempt a big-bang rewrite.
+§0.51 records the exact in-MIR boundary, and §0.52 records its serialized
+`EMIF`/cache continuation. Keep architecture migration incremental through
+real producers and consumers; do not create placeholder facts or attempt a
+big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
 remaining multi-region and Phase 2 ownership/lifetime coverage before
@@ -3016,19 +3015,69 @@ six adopted-source gates and Appendix A pass.
 
 No specification, amendment, ADR, or owner-queue entry changed. `[LT-21]` and
 `[VERIFY-3]` were already explicit; this was a compiler defect, not a reason to
-weaken the frozen H6 target. The remaining `[LT-40]` work is honest and narrow:
-the repository has no separate interface serialization or incremental cache
-yet, so the deterministic fingerprint is an input to that future boundary,
-not evidence that cross-build invalidation already exists. Dynamic/non-direct
-dispatch and the wider enum/Option/Result, closure, coroutine, FFI,
-escape/storage, and hot-reload matrices also remain incomplete.
+weaken the frozen H6 target. The remaining `[LT-40]` work was then honest and
+narrow: the repository needed a real serialized consumer boundary before it
+could claim cross-build cache identity or invalidation.
 
-**Exact next task:** implement the smallest real interface/cache artifact path
-that can serialize canonical callable-region metadata, incorporate its
-fingerprint into dependency identity, and reject stale/missing metadata at the
-consumer boundary under `[LT-40]`/`[MIR-REG-1]`. Do not claim cross-build or
-incremental invalidation from the in-memory fingerprint alone. Then extend the
-non-direct and remaining multi-region matrix conservatively.
+**Exact next task at that checkpoint:** implement the smallest real
+interface/cache artifact path that can serialize canonical callable-region
+metadata, incorporate its fingerprint into dependency identity, and reject
+stale/missing metadata at the consumer boundary under
+`[LT-40]`/`[MIR-REG-1]`. Do not claim cross-build or incremental invalidation
+from the in-memory fingerprint alone. Then extend the non-direct and remaining
+multi-region matrix conservatively.
+
+### 0.52 Validated callable interface artifacts and LT-40 identity — 2026-09-13
+
+Implementation commit `9ade1d0` completes that smallest real cross-build
+boundary without changing language semantics. `ember_mir::CallableRegionMetadata`
+now has one canonical schema-checked binary codec. It encodes every
+field-access relation, result-field provenance relation, projection and source
+tag, and the normalized FNV-1a summary fingerprint. Decoding rejects invalid
+tags, truncation, length overflow, trailing bytes, noncanonical encodings, and
+a stale fingerprint. A decoded record is then installed and independently
+rederived from its MIR body before borrow checking/code generation consume it;
+there is no unknown-call fallback for a malformed, missing, or false artifact.
+
+`ember_build::interface` owns the versioned `EMIF` schema-1 module artifact.
+Its BLAKE3 interface hash derives from the canonical summary section. Its
+cache key includes the module source hash, compiler version, selected language
+contract, package configuration, and sorted transitive dependency-interface
+hashes. Artifact writes are deferred until semantic validation completes.
+Cached bytes that decode but disagree with the fresh summary for an unchanged
+cache key are a hard stale-summary error; changed identity invalidates rather
+than reuses the cache record.
+
+The driver deliberately continues its existing whole-program analysis after
+installing artifact records, so every caller is rechecked now. The LT-40 driver
+test edits only an imported function's returned Span relation and proves that
+the unchanged importer's cache key changes. The new cross-module conformance
+case exercises that imported summary in the ordinary compiler path and asserts
+generated C contains no callable-region proof payload. Unit tests cover the
+codec, corruption/staleness, cache reuse, and dependency invalidation.
+
+This is **not** a claim of full `[BLD-2]` incremental compilation. The first
+artifact conservatively carries every compiled direct callable body rather than
+an export-precise public interface; signatures, types/layouts/effects and
+generic-instantiation sections are not serialized; and no item-granular reuse
+skips semantic work yet. Those are implementation gaps, not permission to
+weaken H6 or to declare the cache a language-visible feature. Dynamic/non-direct
+dispatch and the wider enum/Option/Result, closure, coroutine, FFI,
+escape/storage, and hot-reload matrices remain incomplete.
+
+No defect was filed and no frozen specification/decision/owner queue changed:
+the work implements existing `[LT-40]`, `[BLD-2]`, `[MIR-REG-1]`, and
+`[VERIFY-3]` obligations incrementally. The full workspace is green at 199
+Rust tests, 123 conformance directories, and 412 Ember sources; debug/release
+builds are warning-free; all six adopted-source gates pass. The test build
+retains only the pre-existing lexer test-name style warning.
+
+**Exact next task:** make the callable-summary artifact export-precise and use
+its validated BLAKE3 key for safe incremental reuse. Preserve the current
+hard-error validation boundary, whole-program correctness, generated-C erasure,
+conservative unknown-call behavior, E3021 matching-field conflicts, and
+reserved E3064/B13 identity. Then extend the non-direct and remaining
+multi-region matrix only with adversarial evidence.
 
 ## The task list — where to begin
 
@@ -3050,10 +3099,12 @@ target cut; §0.46 completes the bounded concrete Box slice; and §0.47 records
 H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
 §0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing; §0.49
 installs the field-sensitive region-vector core; §0.50 adds direct callable
-result/access summaries and E3065/B14; and §0.51 persists and verifies those
-summaries in MIR while closing D-116's field-replacement defect. Interface-file
-serialization and `[LT-40]` cache invalidation, non-direct dispatch, and the
-remaining multi-region matrix precede target adoption.
+result/access summaries and E3065/B14; §0.51 persists and verifies those
+summaries in MIR while closing D-116's field-replacement defect; and §0.52
+serializes/validates them in the first real `EMIF` cache artifact and couples
+dependency summary changes to `[LT-40]` cache identity. Export-precise
+interfaces, actual reuse, non-direct dispatch, and the remaining multi-region
+matrix precede target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner
