@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `8f16a7f` on `main`, followed by
+**Last committed implementation baseline:** `17ee5d1` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
@@ -34,7 +34,7 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 100 top-level conformance rule directories, 330 `.em` files including support
+ 100 top-level conformance rule directories, 332 `.em` files including support
  modules. 80 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -333,11 +333,19 @@ It does not weaken ordinary borrowing or create runtime borrow state. The
 under `CELL-SYNC-1` until threading traits exist. **Do not rebuild `RefCell` on
 it**; ADR-019's compiler-known route stands.
 
+**`MEM-API-1` is complete at `17ee5d1`.** `mem.forget` consumes locals,
+temporaries, and owning containers through ordinary move semantics while
+suppressing their destructor; `std.mem.align_of[T]` uses the canonical layout
+descriptor after generic substitution. The later `[THR-6]` `@must_drop`
+rejection remains a dependency gap, and this slice does not invent that marker.
+
 ## 6. `[DIA-7..10]`, `[DIA-13]`, and `tests/ui/`
 
-A Phase 2 *exit* criterion and currently zero. `compiler/ember_diag/src/shapes.rs`
+A Phase 2 *exit* criterion now in progress. `compiler/ember_diag/src/shapes.rs`
 holds every shape; `[DIA-13]` wants a rendered snapshot per shape plus
-`[PHIL-8a]`'s `.fixed.em` companion, and `tests/ui/` is empty.
+`[PHIL-8a]`'s `.fixed.em` companion. Sixteen of 25 ownership shapes have exact
+snapshots and compiling repairs; the remaining nine await real semantic
+producers rather than fabricated diagnostics.
 
 Note the pattern three defects took: **the compiler rejects the right program
 under the wrong shape**, so the *help* is wrong. D-011 (`E3064` reported as B3),

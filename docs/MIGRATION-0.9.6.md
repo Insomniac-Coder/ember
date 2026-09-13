@@ -183,6 +183,18 @@ the owner-approved `[FN-1a]` mutable-view-value case remains accepted. B10 now
 has an exact rendered snapshot, a compiling fixed companion, positive and
 negative conformance, and an executable error page.
 
+The subsequent memory-surface checkpoint is `17ee5d1`. It retains 189 Rust
+tests and raises executable coverage to 100 conformance directories and 332
+Ember source files. `mem.forget` now consumes through ordinary move semantics
+without creating a drop owner, including for expression temporaries and owning
+Arrays; a mutation probe that borrowed instead of moving reintroduced all
+three forbidden drops and made the conformance case fail. Public
+`std.mem.size_of[T]`/`align_of[T]` resolve through the module, and `align_of`
+folds only after generic substitution from the canonical `LayoutDescriptor`.
+Program and runtime C pass Clang C11 `-pedantic -Wall -Wextra -Werror`.
+`[THR-6]`'s future `@must_drop` rejection remains assigned to its later
+mechanism and was not simulated.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -244,8 +256,9 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   Sixteen of 25 ownership shapes now have executable snapshots; the nine
   remaining shapes currently await their later semantic producers rather than
   fabricated test-only diagnostics.
-- `MEM-API-1`: `[OWN-6]` `mem.forget` and Part XV's `align_of` remain after
-  the completed `drop`/`take`/`replace`/`swap`/`size_of` subset.
+- **`MEM-API-1` is complete at `17ee5d1`:** `[OWN-6]` `mem.forget` and Part
+  XV's `align_of` now join the existing `drop`/`take`/`replace`/`swap`/
+  `size_of` subset. Only `[THR-6]`'s later `@must_drop` integration remains.
 
 The four open deviations remain D1–D4. D5 is closed and D6 withdrawn. There is
 no open compiler defect and no open owner semantic/API decision. ODR-011

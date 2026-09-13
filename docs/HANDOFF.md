@@ -283,13 +283,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `8f16a7f` (`Implement FN-2a mutable-argument diagnostic`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `8f16a7f` FN-2a/B10 diagnostic · `c520a32` OWN-6/O2/Windows panic runner · `f3224b9` approved post-H4 simplicity RFC · `3095f83` D-062 documentation · `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `17ee5d1` (`Implement mem forget and align_of`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `17ee5d1` `mem.forget`/`align_of` · `edd6bb9` FN-2a/B10 documentation · `8f16a7f` FN-2a/B10 diagnostic · `c520a32` OWN-6/O2/Windows panic runner · `f3224b9` approved post-H4 simplicity RFC · `3095f83` D-062 documentation · `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 100 top-level rule directories, 330 `.em` files including support modules; the full conformance runner is green |
+| Conformance | 100 top-level rule directories, 332 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 80 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
@@ -2519,6 +2519,40 @@ mismatch. Debug and release builds are warning-free; 189 Rust tests pass; the
 full 100-directory/330-source conformance walk and all six gates are green.
 The test build retains its one pre-existing lexer test-name warning.
 
+### 0.41 `MEM-API-1` ownership/layout completion — 2026-09-13
+
+Implementation checkpoint `17ee5d1` completes the remaining buildable
+`std.mem` ownership/layout surface without changing the specification.
+`mem.forget(owned value)` is compiler-known but passes its operand through the
+ordinary move path: a non-`Copy` source is moved, no replacement owner is
+created, and neither a local, an expression temporary, nor an owning `Array`
+runs its destructor. A later use is therefore the existing E3040 move error,
+not a special `forget` rule. Public `std.mem.size_of[T]` and `align_of[T]`
+declarations now resolve through the module as well as their existing direct
+builtin spelling.
+
+`align_of` is folded after generic substitution from the one canonical
+`LayoutDescriptor`; the backend does not independently rediscover layout or
+recompute it with C `_Alignof`. The generated-C case proves padded-struct,
+primitive, and generic results (`8`, `2`, and `4` respectively), contains no
+`_Alignof(em_Padded)`, and compiles together with the runtime under Clang C11
+`-pedantic -Wall -Wextra -Werror`.
+
+The destructor assertions are mutation-tested rather than decorative. Changing
+only `lower_mem_forget` from move lowering to borrowed-operand lowering made the
+new OWN-6 conformance case fail because generated C regained the local and
+temporary `em_Resource_drop` calls and the forgotten Array's
+`ember_vec_free`. Restoring the move made the exact case and full suite green.
+The executable output is `1`, `16`, `8`, `2`, `4`; only the pre-forget Array
+length prints, and neither Resource destructor prints.
+
+Debug and release workspace builds are warning-free; all 189 Rust tests pass;
+the full 100-directory/332-source conformance walk and all six gates are green.
+The test build retains its one pre-existing lexer test-name warning. This does
+not claim `[THR-6]`: rejecting `mem.forget` for a future `@must_drop` value
+remains assigned to the later capability/threading mechanism, and no parallel
+marker or guessed semantics were introduced.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2532,11 +2566,11 @@ the first verified `ARCH-096-1` fact/backend boundary; §0.35 records completed
 UnsafeCell; §§0.36–0.37 record the diagnostic UI foundation and D-062/B1
 closure; §0.38 records the approved post-H4 simplicity policy; §0.39 records
 the OWN-6/O2 and panic-runner checkpoint; §0.40 records the FN-2a/B10 closure.
-The active task is now the remaining
-Phase 2 diagnostic-shape snapshot suite,
-with the remaining canonical-fact migration continuing incrementally, followed
-by Phase 2 rule closure and the multi-region work before the current target can
-be explicitly adopted.
+Section 0.41 closes `MEM-API-1`. The next buildable Phase 2 work is the
+remaining `SPN-API-1` view-method surface, with diagnostic snapshots added only
+when a real producer exists and the canonical-fact migration continuing
+incrementally. Phase 2 rule closure and the multi-region work follow before the
+current target can be explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before

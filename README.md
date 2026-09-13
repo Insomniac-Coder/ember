@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 100 rule directories and 330 Ember
+- the conformance runner passes across 100 rule directories and 332 Ember
   source files;
 - all six adopted-specification gates pass;
 - 80 recorded compiler defects are closed;
@@ -73,6 +73,9 @@ The reference compiler currently includes substantial support for:
 - capturing closures through statically monomorphized callable bounds;
 - compiler-known `Array`, `String`, `Span`, `MutSpan`, `Cell`, `RefCell`, and
   Arena primitives, plus the public `std.mem.UnsafeCell` boundary;
+- public `std.mem` ownership/layout operations including move-preserving
+  `take`, `replace`, `swap`, destructor-suppressing `forget`, `size_of`, and
+  canonical-layout `align_of`;
 - Arena allocation, scopes, reset/rewind, `MaybeUninit`, conservative
   `Zeroable`, `alloc_array`, `alloc_uninit`, and fixed-capacity Arena
   collections;
