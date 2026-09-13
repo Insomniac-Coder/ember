@@ -195,6 +195,16 @@ Program and runtime C pass Clang C11 `-pedantic -Wall -Wextra -Werror`.
 `[THR-6]`'s future `@must_drop` rejection remains assigned to its later
 mechanism and was not simulated.
 
+The subsequent view-surface checkpoint is `1aaa98f`. It retains 189 Rust tests
+and raises executable coverage to 100 conformance directories and 337 Ember
+source files. Shared and mutable `Span.split_at` now use the same MIR bounds
+shape and C half-view constructor as `Array.split_at_mut`; named mutable spans
+are reborrowed, direct view-producing expressions remain valid, both halves
+retain owner provenance, and generic element substitution reaches pointer
+arithmetic. Removing either result provenance or the explicit reborrow makes
+the new adversarial cases compile incorrectly. `SPN-API-1` remains partial:
+`reborrow`, `chunks`, iterators, and raw-pointer access are still absent.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

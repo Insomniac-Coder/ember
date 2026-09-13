@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 100 rule directories and 332 Ember
+- the conformance runner passes across 100 rule directories and 337 Ember
   source files;
 - all six adopted-specification gates pass;
 - 80 recorded compiler defects are closed;
@@ -69,7 +69,8 @@ The reference compiler currently includes substantial support for:
 - generic functions, generic types, generic methods, interface bounds,
   associated types, and monomorphization;
 - ownership, moves, non-lexical borrows, mutable references, region-carrying
-  views, deterministic destruction, drop flags, and partial moves;
+  views, checked shared/mutable Span splitting, deterministic destruction,
+  drop flags, and partial moves;
 - capturing closures through statically monomorphized callable bounds;
 - compiler-known `Array`, `String`, `Span`, `MutSpan`, `Cell`, `RefCell`, and
   Arena primitives, plus the public `std.mem.UnsafeCell` boundary;
