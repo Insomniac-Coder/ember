@@ -283,14 +283,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| HEAD at H1 cut | `adfd5eac42f7af3e85e688b1bf1d001ff20cf71d` (`main`, equal to `origin/main`) |
-| Recent commits | `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | **dirty with the uncommitted H1/H2/H3/H4 specification and ledger cuts, Arena collection implementation, and README checkpoint**. HEAD and `origin/main` remain equal at `adfd5ea`; this state is being committed and pushed as one verified checkpoint before H4 implementation continues |
+| Current implementation checkpoint | `825eac53385bf58c2e311ecce58629f2d5a8ef0f` (`Complete H4 ArenaMap hashing boundary`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **183 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; `cargo build` is warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 86 top-level rule directories, 274 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 67 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
+| Conformance | 95 top-level rule directories, 305 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 72 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -815,8 +815,8 @@ single-allocation Arena-backed `@view` containers, recoverable
 `CapacityError.Full`, `!needs_drop` contents, empty construction, the minimum
 operation set, and Map key/duplicate/order behavior. `std.collections` owns
 the six public non-prelude names. The iterators are named `@view` types and use
-the existing `Iterator[Item = ...]` associated-type form. `ARN-COLL-1` is active
-implementation work; no collection API decision remains open.
+the existing `Iterator[Item = ...]` associated-type form. `ARN-COLL-1` is
+complete at `825eac5`; no collection API decision remains open.
 
 **ODR-012 / ERR-053 — CLOSED.** H3 defines the public `Hash`/`Hasher`
 protocol, `DefaultHasher`, Eq/hash coherence, read-only resident Map keys, and
@@ -881,8 +881,9 @@ descriptions below are preserved as found; each carries its resolution.**
   every-profile checks; `[CELL-8]`'s `!Sync` marker awaits threading.
 * **`Arena`** — **a region allocator, not an interior-mutability primitive.**
   Its mutation happens to reach through a shared borrow, but what it must prove
-  is a **region** rather than an alias, which `[ARN-1]` does **statically**. Not
-  built.
+  is a **region** rather than an alias, which `[ARN-1]` does **statically**.
+  Growing, fixed, scoped, initialization, and fixed-capacity collection paths
+  are built; later effect/thread obligations remain separately tracked.
 
 Amendment **A13** records that the three share **the implementation concern and
 not the concept**. `[CELL-2]` says an implementation *may* share machinery
@@ -906,43 +907,34 @@ the owner-approved rules.
 
 ### 0.14 The next task
 
-**Implement `ARN-COLL-1`: the Arena collections defined by H2.**
+**Resume `ARCH-096-1`: the incremental canonical semantic-fact migration.**
 
-Arena core and H9 wrapper provenance are complete in §0.25. Section 0.26
-records the unsafe-initialization boundary and its H10 resolution. Arena
-remains a region allocator, not a third interior-mutability primitive. The
-minimal shared H1 semantic-fact spine, generic methods and associated
-functions, `Default`, the core `Zeroable` predicate, `MaybeUninit`,
-`alloc_array`, `alloc_uninit`, and the complete `[TST-23]` matrix are now
-executable. ODR-011 is closed: H2 fixes the Arena collection model, public
-`std.collections` identities, concrete named iterator return types,
-`CapacityError.Full`, and empty construction. Implement that contract in the
-dependency order `ArenaArray` -> named iterators -> `ArenaMap`. Route the implementation
-through `TypeIdentity`, `BorrowCapability`, `OwnershipGraph`, `AccessContract`,
-`InitializationState`, `LayoutDescriptor`, and `EffectSet` as each fact becomes
-load-bearing; do not attempt a big-bang rewrite or delete existing state before
-differential and adversarial evidence proves parity. Preserve the
-ordinary borrow relationship: allocations borrow the arena, `reset`/drop
-require mutable access, and no view may outlive the arena or a scoped child.
-Preserve ordinary assignment, `Cell.set`, and `MaybeUninit.write` as three
-different storage orderings. H1 `[ARN-10]` requires no panic unwinder or
-observable post-abort rollback.
+`ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
+record. Choose one existing fact with a real producer and real consumers,
+thread it through the shared H1 representation and the MIR verifier, and prove
+accepted/rejected behavior unchanged before deleting any parallel state. Do
+not create placeholder facts and do not attempt a big-bang rewrite. Preserve
+the exact diagnostics, all current ownership/region behavior, runtime erasure,
+and the distinct ordinary-assignment, `Cell.set`, and `MaybeUninit.write`
+orderings. After this architecture slice, implement `UnsafeCell`, then close
+the remaining Phase 2 diagnostics and conformance exits.
 
 Read first:
 
-1. `docs/spec-source/ember-spec.md`, frozen H10 and H1, and the frozen H2 target — especially
-   initialization, unsafe, `[TYP-15]`, `[LT-1]`, `[LT-4]`, and `[ARN-*]`;
-2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.26–0.28;
+1. `docs/spec-source/ember-spec.md` and frozen H4 — especially H1's canonical
+   semantic-fact architecture, MIR boundary, equivalence matrix, and runtime
+   erasure requirements;
+2. `docs/MIGRATION-0.9.6.md`, then this §0 and §§0.28–0.33;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
-4. the compiler-known-type patterns in `compiler/ember_typeck/src/lib.rs`,
-   region/elision handling in `compiler/ember_analysis`, drop elaboration, and
-   the C runtime allocation surface.
+4. the current fact definitions and producers in `compiler/ember_types`,
+   `compiler/ember_typeck`, `compiler/ember_analysis`, HIR/MIR lowering and
+   `compiler/ember_mir/src/verify.rs`.
 
-After the complete Arena milestone, the next milestone is **UnsafeCell**, then
+After the next `ARCH-096-1` slice, the next milestone is **UnsafeCell**, then
 the remaining Phase 2 exit work and 0.9.5/H1 multi-region-view work in the
 order recorded by `MIGRATION-0.9.6.md`. `VER-096-1` is complete, but accepting
-a version selector alone is not H2 adoption or conformance.
+a version selector alone is not H4 adoption or conformance.
 
 ### 0.15 The principles, in one place
 
@@ -2196,6 +2188,88 @@ add `[HASH-1]`–`[HASH-4]` plus remaining `[TST-24]` evidence. After
 remaining Phase 2 exits. Any newly discovered specification gap belongs in
 H5; H4 is frozen.
 
+### 0.33 H4 Hash and ArenaMap implementation checkpoint — 2026-09-13
+
+This section supersedes §0.32's implementation-status and exact-next-task
+statements. H4 itself remains frozen and unchanged. The implementation landed
+as `825eac53385bf58c2e311ecce58629f2d5a8ef0f` (`Complete H4 ArenaMap hashing
+boundary`). The adopted normative source remains `ember-spec.md`
+(`0.8.5_Hardened_1`); executable progress toward H4 is not adoption.
+
+**`ARN-COLL-1` is complete at its defined H4 boundary.** `std.collections`
+now supplies the public `Hash` and `Hasher` interfaces and a move-only
+`DefaultHasher implements Hasher`. `Hash.hash` is exactly the static generic
+`fn hash[H: Hasher](self, mut h: H)` contract. `Hash` is available through the
+source-backed prelude; `Hasher`, `DefaultHasher`, and the Arena collection
+types remain explicit imports. `finish` consumes the hasher, byte writes do
+not retain their input span, equivalent input sequences are deterministic,
+and no test or compiler rule freezes the current mixer.
+
+`ArenaMap[K, V]` now accepts both compiler-known keys and user-defined
+`K: Eq + Hash`. For a custom key, type checking selects the concrete `Eq.eq`
+definition and carries it through HIR into deterministic MIR lowering; no
+bytewise or guessed structural comparison exists. The current fixed-capacity
+Map is a permitted compact-prefix linear implementation and therefore need
+not call the hasher or promise a hash-call count. Safe lookup and iteration
+expose keys only through borrowed/shared access. Replacement, removal, result
+construction, and suffix compaction preserve move-only keys and values rather
+than copying them.
+
+**Source-backed prelude loading is availability, not code reachability.** The
+driver loads `std.core` and `std.collections` so their actual interface
+definitions back prelude names, but executable C includes only transitively
+referenced standard bodies (plus standard drop roots). Analysis and
+`--emit mir` continue to see the complete checked program. This keeps an
+unused `DefaultHasher` from inserting dormant panic paths into unrelated
+generated C.
+
+**Defects found and closed while integrating the surface:**
+
+- D-054: unreachable standard bodies polluted unrelated generated C;
+- D-055: ArenaMap internals assumed move-only keys/values were `Copy`;
+- D-056: built-in `Eq + Hash` capability failed through a generic bound;
+- D-057: every concrete-instantiation diagnostic except E3090 was discarded;
+- D-058: an explicitly imported prelude interface kept a second unqualified
+  identity and caused false E2070 ambiguity.
+
+All five were compiler defects against already-settled rules. No specification
+or ADR changed. The lasting generic lesson is that a fact is not complete when
+inference solves it; it is complete only when explicit arguments, substitution,
+expected callable types, interface capability, concrete rechecking,
+diagnostics, and every downstream IR consumer observe the same fact.
+
+**Permanent adversarial evidence** now covers the entire public Hasher method
+surface, custom concrete hasher monomorphization, prelude/non-prelude identity,
+move-after-`finish`, rejection of a concrete-Hasher substitute for the generic
+Hash signature, missing Eq and Hash bounds, custom move-only Map keys/values,
+duplicate replacement, removal/compaction, generic wrappers, read-only
+resident keys, and a concrete-only view-storage diagnostic that was formerly
+lost. The existing imported-`Ord` test caught D-058 and remains the regression.
+
+**Verified state:** `cargo build --workspace --locked` is warning-free;
+`cargo test --workspace --locked` reports 183 tests green, including the full
+conformance walk over 95 top-level rule directories and 305 `.em` files. The
+test build retains its one pre-existing non-snake-case test-name warning. All
+six adopted-source gates pass. Generated C for the custom-key Map passes Clang
+with `-std=c11 -pedantic -Wall -Wextra -Werror`. The defect ledger now contains
+72 closed defects and none open; deviations D1–D4 remain open; no owner
+semantic/API decision is open.
+
+**Boundary of the completion claim:** general automatic/derived `Hash`
+generation and ordinary `Map`/`Set` remain later-phase work. This checkpoint
+does not claim full H4 adoption, the Phase 4 derive system, or every standard
+library type's future Hash implementation.
+
+**Phase count: exactly 1 of 9 phases is complete.** Phase 2 remains active and
+substantial; Phases 3–9 have not passed their exit gates.
+
+**Exact next task: resume `ARCH-096-1`.** Select one existing semantic fact,
+identify its producer and every consumer, route it through the shared H1
+representation and MIR verifier, and prove behavior unchanged with
+differential and adversarial tests before removing duplicate state. Then
+implement `UnsafeCell` and continue the remaining Phase 2 exits. Do not edit
+frozen H4; any genuine new specification gap requires H5.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2204,10 +2278,9 @@ are complete (§0.22–§0.25). Sections 0.26–0.27 close ODR-009 and freeze H1
 §0.28 cuts H1 and closes ODR-010; §0.29 records the completed generic-method
 and Arena-initialization foundations. Section 0.30 closes ODR-011 in H2;
 §0.31 records H3 and the ODR-013 stop; §0.32 records the owner resolution and
-H4 cut. `ARN-COLL-1` remains the active Arena collection implementation, now
-unblocked at the static generic Hasher boundary. After it come `ARCH-096-1`,
-UnsafeCell, Phase 2 completion, and the multi-region work before the current
-target can be explicitly adopted.
+H4 cut; §0.33 records the completed `ARN-COLL-1` implementation. The active
+task is now `ARCH-096-1`, followed by UnsafeCell, Phase 2 completion, and the
+multi-region work before the current target can be explicitly adopted.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report after each task and wait for the green signal before

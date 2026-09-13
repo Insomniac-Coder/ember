@@ -137,9 +137,10 @@ repository baseline currently has executable evidence for:
 - exact `0.9`, `0.9.5`, and `0.9.6` source-selector recognition, while unknown
   patch contracts remain E0006.
 
-The current uncommitted checkpoint has 183 Rust tests green and a green
-conformance runner over 86 top-level rule directories and 274 `.em` files
-including support modules. The last ordinary `cargo build` was warning-free;
+The H4 Arena-collection implementation checkpoint is `825eac5`. It has 183
+Rust tests green and a green conformance runner over 95 top-level rule
+directories and 305 `.em` files including support modules. The last ordinary
+`cargo build` was warning-free;
 the test build retains one pre-existing test-name style warning. All six
 adopted-source gates are green. These figures are repository evidence, not H4
 conformance counts.
@@ -179,14 +180,19 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   abort, and no-continuation evidence. General/manual or derived `Zeroable`
   support remains assigned to its later phase; unsupported validity is never
   guessed from zero bytes or field resemblance.
-- **`ARN-COLL-1` is specified and active:** ODR-011 is closed in H2 and its
-  public hashing dependency is closed by ODR-012 in H3.
+- **`ARN-COLL-1` is complete at `825eac5`:** ODR-011 is closed in H2 and its
+  public hashing dependency is closed by ODR-012 in H3 and ODR-013 in H4.
   Fixed-capacity, single-allocation Arena views, `CapacityError.Full`,
   `!needs_drop` contents, the minimum operations, named iterators, and Map
   key/duplicate/order behavior are all explicit. ArenaArray, built-in-key
   ArenaMap, named iterator, allocation-count, capacity, provenance, and borrow
-  paths have executable evidence. User-defined `Eq + Hash` keys and the H4
-  `Hasher`/`DefaultHasher` surface remain active implementation work.
+  paths have executable evidence. The source-backed public `Hash`/`Hasher`
+  interfaces, move-only `DefaultHasher`, static generic `H: Hasher` dispatch,
+  custom `Eq + Hash` key selection, read-only resident keys, and move-only Map
+  replacement/removal/compaction now have positive and adversarial evidence.
+  The linear fixed-capacity Map is permitted not to call the hasher, and the
+  concrete mixer remains implementation-defined. General derive-generated
+  `Hash` and ordinary `Map`/`Set` remain later-phase work.
 - **`ARN-LATE-1`:** effect, `@must_drop`, `Send`/`Sync`, and `ThreadArena`
   obligations remain assigned to their later phases.
 - 0.9.5 inferred multi-region view structs, callable field/provenance summaries,
@@ -233,8 +239,10 @@ Running the same audit directly against frozen H2 reports:
     0 orphaned amendments
 
 H2 adds exactly `[ARN-5a]` through `[ARN-5g]` and `[TST-24]` over H1. Their
-missing conformance directories are the active `ARN-COLL-1` implementation
-work, not evidence that the frozen target has been adopted.
+conformance directories and executable Arena-collection matrix now exist under
+the completed `ARN-COLL-1` checkpoint. Other H1–H4 rules still lack complete
+adoption evidence, so this progress is not evidence that the frozen target has
+been adopted.
 
 H2 intentionally has many rules without conformance directories. In
 particular, Arena collections and the H1 architecture/equivalence requirements
@@ -359,9 +367,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement H4's public **`Hasher`/`DefaultHasher`** surface through the ordinary
-generic/interface pipeline, then complete user-defined `Eq + Hash` key dispatch
-for `ArenaMap` and the remaining `[TST-24]`/`[HASH-*]` evidence. Preserve the
-static `H: Hasher` contract and read-only keys. Do not add a compiler-only
-interface coercion, adopt H4, freeze a mixing algorithm, broaden `Zeroable` by
-inference, or add a second initialization API.
+Resume **`ARCH-096-1`** with one incremental canonical-fact slice: identify the
+existing producer and every consumer, route the fact through the shared
+representation and MIR verifier, prove accepted/rejected behavior is unchanged
+with differential and adversarial tests, and only then remove duplicate state.
+After that slice, implement `UnsafeCell` and continue the remaining Phase 2
+exit work. Do not perform a big-bang architecture rewrite, adopt H4, freeze the
+hash mixer, broaden `Zeroable` or `Hash` by inference, or add a second
+initialization/interface-dispatch mechanism.

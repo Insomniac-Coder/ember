@@ -35,18 +35,19 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 183 Rust tests pass;
-- the conformance runner passes across 86 rule directories and 274 Ember
+- the conformance runner passes across 95 rule directories and 305 Ember
   source files;
 - all six adopted-specification gates pass;
-- 67 recorded compiler defects are closed;
+- 72 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open.
 
-The active milestone is `ARN-COLL-1`: complete the public `Hasher` and
-move-only `DefaultHasher` implementation, then support user-defined
-`Eq + Hash` keys in `ArenaMap`. Fixed-capacity `ArenaArray`, built-in-key
-`ArenaMap`, named iterators, capacity handling, Arena provenance, borrow
-enforcement, and single-allocation behavior are already executable.
+`ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
+`Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
+`Eq + Hash` ArenaMap keys, read-only resident keys, named iterators, capacity
+handling, Arena provenance, ordinary ownership, and single-allocation behavior
+are executable. The active milestone is now `ARCH-096-1`, the incremental
+migration to v0.9.6's canonical semantic-fact and verified-MIR architecture.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -70,14 +71,17 @@ The reference compiler currently includes substantial support for:
 - Arena allocation, scopes, reset/rewind, `MaybeUninit`, conservative
   `Zeroable`, `alloc_array`, `alloc_uninit`, and fixed-capacity Arena
   collections;
+- the statically generic `Hash`/`Hasher` protocol, a deterministic move-only
+  `DefaultHasher`, and custom `Eq + Hash` keys in `ArenaMap`;
 - structured diagnostics and conformance assertions over generated C,
   including operation ordering and exact occurrence counts.
 
 Important incomplete areas include the remainder of Phase 2 diagnostics and
-rule coverage, `UnsafeCell`, full user-defined hashing, the canonical semantic
-fact migration, objects and managed ownership, effects and comptime, complete
-FFI, concurrency/data-oriented facilities, the interpreter, hot reload, and
-the final performance and ecosystem hardening phases.
+rule coverage, `UnsafeCell`, general automatic/derived `Hash` generation and
+ordinary `Map`/`Set`, the canonical semantic-fact migration, objects and
+managed ownership, effects and comptime, complete FFI, concurrency/data-oriented
+facilities, the interpreter, hot reload, and the final performance and
+ecosystem hardening phases.
 
 ## Examples
 
@@ -242,9 +246,9 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: finish `ARN-COLL-1`, continue the 0.9.6
-canonical-fact migration, implement `UnsafeCell`, close the remaining Phase 2
-tests and diagnostics, and only then advance to later phases.
+The immediate order is narrower: continue `ARCH-096-1` through real producers,
+consumers, and verifier boundaries; implement `UnsafeCell`; close the remaining
+Phase 2 tests and diagnostics; and only then advance to later phases.
 
 ## Contributing
 

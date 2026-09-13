@@ -18,10 +18,10 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `main` at `adfd5ea`, equal to
-`origin/main`. The live working tree is dirty with the uncommitted H4 cut and
-active compiler/runtime/test work. Always run `git status` and `git log -1`
-instead of treating this sentence as live Git state.
+**Last committed implementation baseline:** `825eac5` on `main`, followed by
+the documentation snapshot that records it. Both are pushed to `origin/main`
+at this checkpoint. Always run `git status` and `git log -1` instead of
+treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
     183 tests green      cargo test --workspace
@@ -34,8 +34,8 @@ instead of treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 86 top-level conformance rule directories, 274 `.em` files including support
- modules. 67 defects recorded, **none open**.
+ 95 top-level conformance rule directories, 305 `.em` files including support
+ modules. 72 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -221,7 +221,13 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Next task: resolve the H1 Arena-collection contract
+## 5. Next task: continue the 0.9.6 canonical-fact migration
+
+**Exact next task: `ARCH-096-1`.** Migrate one real semantic fact from its
+current producer through every consumer and the MIR verifier, with differential
+and adversarial evidence before deleting parallel state. Do not start with a
+large structural rewrite. `UnsafeCell` follows this architecture slice, then
+the remaining Phase 2 exit work.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -279,8 +285,9 @@ already clear; no specification or ADR changed.
    success/abort evidence are implemented. Source-declared generic methods,
    inference, bounds, interface conformance/defaults, callable expectations,
    monomorphisation, and generic-owner return provenance are also complete
-   under `GEN-METHOD-1`. `ArenaArray`/`ArenaMap` are now active under
-   **`ARN-COLL-1`**. ODR-011 is closed in H2: the owner selected fixed-capacity,
+   under `GEN-METHOD-1`. `ArenaArray`/`ArenaMap` are complete under
+   **`ARN-COLL-1`** at implementation commit `825eac5`. ODR-011 is closed in H2:
+   the owner selected fixed-capacity,
    single-allocation views; specified their operations, failure direction,
    `!needs_drop` boundary, and Map behavior; placed the six public types in
    `std.collections` without prelude exports; defined unit-only
@@ -292,9 +299,13 @@ already clear; no specification or ADR changed.
    and exact bulk-allocation fallback/drop behavior. H1 `[ARN-10]` clarifies
    that v1 panic aborts and requires no observable recovery or unwinding;
    rollback exists only for a separately specified recoverable transactional
-   API. Built-in-key collection behavior and the surrounding conformance matrix
-   are executable; H4 has closed ODR-013 and custom keys are active compiler
-   work through the static generic Hasher boundary.
+   API. Built-in and user-defined `Eq + Hash` key behavior, move-only
+   replacement/removal/compaction, the source-backed prelude boundary, and the
+   surrounding `[TST-24]`/`[HASH-*]` matrix are executable. H4's static generic
+   Hasher boundary is implemented without mandatory dynamic dispatch or a
+   frozen mixing algorithm. General automatic/derived `Hash` generation and
+   ordinary `Map`/`Set` remain later-phase work rather than part of this closed
+   Arena checkpoint.
    Implement the H10 contract exactly; do not substitute ad-hoc initialized
    bytes or implementation-defined conversion APIs.
 
@@ -370,7 +381,7 @@ semantic/API decision is currently open.**
   `CapacityError.Full`, `!needs_drop` contents, Map key/duplicate/order
   behavior, and the public `std.collections` surface. The owner selected named
   `@view` iterator types using `Iterator[Item = ...]`; none of the six names is
-  in the prelude. `ARN-COLL-1` is active implementation work.
+  in the prelude. `ARN-COLL-1` is complete at `825eac5`.
 * **ODR-012 — CLOSED.** H3 defines public `Hash`/`Hasher`, concrete
   `DefaultHasher`, Eq/hash coherence, read-only resident Map keys, and leaves
   the exact mixing algorithm implementation-defined.
@@ -397,7 +408,11 @@ semantic/API decision is currently open.**
   `GEN-METHOD-1`: explicit arguments outrank literal defaults, solved types
   reach callable expectations independent of argument order, and
   substitution/inference recurse through `Span`/`MutSpan` while preserving
-  generic-owner return provenance.
+  generic-owner return provenance. **D-054–D-058** close the H4 integration
+  defects: move-only Map internals, built-in bound consistency, concrete
+  monomorphization diagnostics, unreachable standard-body emission, and
+  imported/prelude interface identity. The specification was already correct
+  in every case and no frozen specification was edited.
 * **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
   (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
   (`extern class` parses and is refused), D4 (`E9012` registered and never
