@@ -215,6 +215,16 @@ makes the corresponding owner/parent conflict compile, so both are
 mutation-tested. Shared Span intentionally remains Copy rather than gaining a
 second explicit reborrow operation.
 
+The tuple-destructuring checkpoint is `dea6aa7`. It retains 189 Rust tests and
+raises executable coverage to 101 conformance directories and 347 Ember source
+files. `[GRM-5]` tuple/struct target lists, including nested and parenthesized
+forms, evaluate their RHS into one statement-scoped aggregate temporary before
+any destination place. Fresh names declare together, existing places assign
+together, fields move once, ignored non-`Copy` residuals drop at statement end,
+and ordinary overwrite, visibility, borrow, and coercion rules remain shared.
+Removing the temporary-drop registration leaks the ignored destructor and
+turns the dedicated run-pass case red.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

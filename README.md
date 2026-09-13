@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 100 rule directories and 341 Ember
+- the conformance runner passes across 101 rule directories and 347 Ember
   source files;
 - all six adopted-specification gates pass;
 - 80 recorded compiler defects are closed;
@@ -64,8 +64,8 @@ The reference compiler currently includes substantial support for:
 
 - lexical analysis, parsing, formatting, name resolution, type checking, HIR,
   MIR, safety analysis, C generation, native compilation, and execution;
-- scalar values, structs, enums, tuples, arrays, ranges, pattern matching, and
-  control flow;
+- scalar values, structs, enums, tuples, tuple/struct destructuring assignment,
+  arrays, ranges, pattern matching, and control flow;
 - generic functions, generic types, generic methods, interface bounds,
   associated types, and monomorphization;
 - ownership, moves, non-lexical borrows, mutable references, region-carrying

@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `24d8fbc` on `main`, followed by
+**Last committed implementation baseline:** `dea6aa7` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
@@ -34,7 +34,7 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 100 top-level conformance rule directories, 341 `.em` files including support
+ 101 top-level conformance rule directories, 347 `.em` files including support
  modules. 80 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -346,6 +346,16 @@ original owner provenance. Array and Span splits share one MIR check shape and
 one C result constructor. Explicit `MutSpan.reborrow()` now uses the same
 receiver-borrow and provenance facts without copying or moving the parent.
 `chunks`, iterators, and raw-pointer access remain.
+
+**`TUP-DST-1` is complete at `dea6aa7`.** Tuple/struct target lists now use one
+explicit HIR destructuring operation and one statement-scoped aggregate
+temporary. The RHS runs once before destination places; nested projections,
+fresh declarations, existing assignments, wildcard residual destruction,
+ordinary overwrite ordering, and non-`Copy` moves all pass adversarial cases.
+Mixed declaration/assignment modes, wrong arity, and non-aggregate RHS values
+are rejected. Removing the statement-temporary drop registration makes the
+ignored-field destructor disappear, proving that the test observes the
+required lifetime rather than merely the final values.
 
 ## 6. `[DIA-7..10]`, `[DIA-13]`, and `tests/ui/`
 

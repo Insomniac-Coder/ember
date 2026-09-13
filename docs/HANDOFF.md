@@ -283,13 +283,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_4**, with H3 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 adoption is implied by the file |
-| Current implementation checkpoint | `24d8fbc` (`Implement explicit MutSpan reborrow`), followed by the documentation-only snapshot containing this update |
-| Recent commits | `24d8fbc` explicit `MutSpan.reborrow` · `1fd7714` Span-split documentation · `1aaa98f` checked Span splitting · `f964e06` memory API documentation · `17ee5d1` `mem.forget`/`align_of` · `edd6bb9` FN-2a/B10 documentation · `8f16a7f` FN-2a/B10 diagnostic · `c520a32` OWN-6/O2/Windows panic runner · `f3224b9` approved post-H4 simplicity RFC · `3095f83` D-062 documentation · `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `dea6aa7` (`Implement tuple destructuring assignment`), followed by the documentation-only snapshot containing this update |
+| Recent commits | `dea6aa7` tuple/struct destructuring assignment · `187c09d` explicit-reborrow documentation · `24d8fbc` explicit `MutSpan.reborrow` · `1fd7714` Span-split documentation · `1aaa98f` checked Span splitting · `f964e06` memory API documentation · `17ee5d1` `mem.forget`/`align_of` · `edd6bb9` FN-2a/B10 documentation · `8f16a7f` FN-2a/B10 diagnostic · `c520a32` OWN-6/O2/Windows panic runner · `f3224b9` approved post-H4 simplicity RFC · `3095f83` D-062 documentation · `352ea64` Array split/D-062 · `190924c` diagnostic UI foundation · `bb1a347` H4 UnsafeCell documentation · `a02c0a5` H4 UnsafeCell/D-059 · `e39e33f` architecture snapshot · `66d0d43` verified initialization facts/backend MIR boundary · `2129322` H4 implementation snapshot · `825eac5` H4 Hash/Hasher and custom ArenaMap keys · `5a9eeae` H1–H4/README checkpoint · `adfd5ea` H10 Arena initialization contract · `58c6364` H9 ledger synchronization · `d2ec959` Arena core/H9 provenance · `51c2af8` implicit String→str/D-038 · `d0d7d65` Cell conformance/D-044 · `a658b31` D-042/D-043 closure · `9820d57` H8 callable-mode closure · `6aefe55` H4 migration intake/hardening · `6c77723` RefCell/D-041/RIDX-1 · `351e0e8` owner queue · `c330c35` owner rulings · `06c6f5c` D-030/D-040 · `23b2d8e` prologue · `5b6f307` D-035 sweep · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | **clean after the documentation snapshot commit**; the implementation and documentation commits are pushed together to `origin/main` |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 100 top-level rule directories, 341 `.em` files including support modules; the full conformance runner is green |
+| Conformance | 101 top-level rule directories, 347 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 80 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-013 are closed; ODR-003 is deferred editorial; **no owner semantic/API decision is open** |
 | Gates | **all green** (six, run individually below) |
 
@@ -2614,6 +2614,38 @@ H4 semantics, not a specification change. `SPN-API-1` remains partial:
 `chunks`, `iter`/`iter_mut`, raw-pointer access, and any other rule-named Span
 surface still require implementation and boundary verification.
 
+### 0.44 Tuple/struct destructuring assignment — 2026-09-13
+
+Implementation checkpoint `dea6aa7` closes `TUP-DST-1` and the deliberate
+`[GRM-5]` E1010 implementation stop. A destructuring assignment is represented
+explicitly in HIR rather than expanded into unrelated source-like statements:
+one compiler-private aggregate temporary is initialized before any destination
+place is evaluated, and its nested field projections feed fresh bindings or
+ordinary assignments. The temporary is statement-scoped, so wildcard and
+otherwise unmoved non-`Copy` residual fields are destroyed at statement end
+instead of leaking or being extended to block scope.
+
+Tuple and struct values, parenthesized and nested target lists, tuple swap,
+fresh-name declarations, existing-place assignments, and wildcard targets are
+covered. Fresh and existing targets cannot be mixed; duplicate fresh names,
+wrong arity, non-aggregate right-hand sides, and non-place assignment targets
+are rejected. Existing coercion, visibility, readonly-field, borrow, move,
+partial-initialization, and `[OWN-5]` overwrite paths remain the consumers;
+destructuring creates no parallel ownership or drop system.
+
+The non-`Copy` overwrite case observes RHS evaluation once, both old-value
+drops, both replacement values, and both final drops. A deliberate mutation
+that removed the aggregate temporary from statement-end destruction made the
+ignored `R(2)` destructor disappear, so the lifetime assertion is load-bearing;
+the mutation was reverted. Generated tuple and destructor programs compile and
+run under Clang C11 `-std=c11 -pedantic -Wall -Wextra -Werror`.
+
+The checkpoint retains 189 green Rust tests, advances conformance to 101 rule
+directories/347 Ember sources, keeps warning-free debug and release builds,
+and leaves all six gates green. It changes no specification text and implements
+the existing `[GRM-5]`, `[EXP-2]`, `[OWN-2]`, `[OWN-5]`, and `[DRP-3]`
+contracts.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2628,9 +2660,10 @@ UnsafeCell; §§0.36–0.37 record the diagnostic UI foundation and D-062/B1
 closure; §0.38 records the approved post-H4 simplicity policy; §0.39 records
 the OWN-6/O2 and panic-runner checkpoint; §0.40 records the FN-2a/B10 closure;
 §0.41 closes `MEM-API-1`; §0.42 records checked Span splitting; §0.43 records
-explicit `MutSpan.reborrow()`. The active Phase 2 work remains `SPN-API-1`, but
-the exact public boundaries of its remaining iterator, chunk, and raw-pointer
-surface must be verified before implementation. Diagnostic snapshots are added
+explicit `MutSpan.reborrow()`; §0.44 closes `TUP-DST-1`. The active Phase 2
+work remains `SPN-API-1`, but the exact public boundaries of its remaining
+iterator, chunk, and raw-pointer surface must be verified before implementation.
+Diagnostic snapshots are added
 only when a real producer exists, and the canonical-fact migration continues
 incrementally. Phase 2 rule closure and the multi-region work follow before
 the current target can be explicitly adopted.
