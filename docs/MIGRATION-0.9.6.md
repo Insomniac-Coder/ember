@@ -283,6 +283,21 @@ under a source `for`. Exact UI, fixed-companion, CTL-1, CTL-2, generated-C, and
 mutation evidence close D-070. Coverage is now 112 conformance directories and
 382 Ember sources; 189 Rust tests remain green.
 
+The first multi-region-view core checkpoint is `c913fbd`. Region inference now
+allocates compile-time-only slots for borrowed fields and computes backwards
+liveness over those slots. Direct struct, nested-struct, tuple, copy/move, and
+same-source flows preserve field provenance; independent fields shorten
+independently, matching-field conflicts remain E3021, fixed arrays
+conservatively retain every element region, and RefCell guard destruction
+continues to retain the source needed to release runtime borrow state.
+Generated C proves the slots are erased. Three mechanism mutations—collapsing
+aggregate routing, selecting every field on projection, and dropping the
+fixed-array conservative edge—make their adversarial cases fail and were
+reverted. Coverage is now 117 conformance directories and 392 Ember sources;
+189 Rust tests remain green. This checkpoint does not claim `[LT-22]`/`[LT-35]`
+callable summaries, `[LT-21]` field replacement, `E3065/B14`, invalidation,
+the complete escape/storage/enum/generic matrix, or MIR summary verification.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -333,9 +348,11 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Hash` and ordinary `Map`/`Set` remain later-phase work.
 - **`ARN-LATE-1`:** effect, `@must_drop`, `Send`/`Sync`, and `ThreadArena`
   obligations remain assigned to their later phases.
-- 0.9.5 inferred multi-region view structs, callable field/provenance summaries,
-  and their full conformance matrix are not implemented merely because H1
-  consolidates their architecture.
+- 0.9.5 inferred multi-region view structs are partially implemented at
+  `c913fbd`: direct aggregate slots, field projection, and field-sensitive NLL
+  are executable. Callable field/provenance summaries, field replacement,
+  `E3065/B14`, invalidation, and the full conformance matrix remain; H1's
+  architecture text is not itself implementation evidence.
 - **`UnsafeCell` is complete at `a02c0a5`.** It remains distinct from
   compiler-known `Cell`/`RefCell` and from Arena. Its `!Sync` and conditional
   `Send` behavior remains blocked only on the later threading-trait machinery,
@@ -466,9 +483,12 @@ proved.
    ODR-014 iterator, chunk, reborrow, zero-size, and raw-pointer contract using
    existing Iterator/borrow/region/MIR machinery, with mutation-sensitive
    `[TST-25]` evidence and no proof metadata in generated C.
-9. **Complete multi-region and callable summaries through H1 facts.** Cover
-   exact, audited-declared, unknown, generic, separate-compilation, dynamic,
-   and hot-reload cases with coupled invalidation and runtime erasure.
+9. **Complete multi-region and callable summaries through H1 facts.** The
+   direct region-vector/field-NLL core is complete at `c913fbd`; next add
+   `[LT-22]`/`[LT-35]` callable field/provenance summaries and `E3065/B14`, then
+   cover audited-declared, unknown, generic, separate-compilation, dynamic,
+   hot-reload, field-replacement, escape/storage, and verifier cases with
+   coupled invalidation and runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -531,9 +551,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Continue `ARCH-096-1` incrementally through the real iterator/region producer
-and consumer boundary established by `e0ba765`, then proceed to the H1
-multi-region and callable-summary work in item 9 of the implementation order.
-Do not fabricate the remaining class/thread/effect diagnostic shapes, add
-placeholder facts, or start a big-bang semantic-state rewrite. E3020/B2 is
-complete; a manually held iterator must continue to report ordinary E3021/B3.
+Implement `[LT-22]`/`[LT-35]` callable field/provenance summaries and
+`E3065/B14` on the `c913fbd` region-vector core, then add summary invalidation
+and MIR verifier checks. Preserve conservative all-slot behavior for unknown
+calls and ordinary E3021 for precise matching-field conflicts; do not retain
+legacy E3064 as target behavior. Keep `[LT-21]` field replacement, the
+escape/storage/enum/generic matrix, FFI/coroutine boundaries, and runtime
+erasure explicit in the remaining work. Do not fabricate class/thread/effect
+diagnostic shapes, add placeholder facts, or start a big-bang rewrite.

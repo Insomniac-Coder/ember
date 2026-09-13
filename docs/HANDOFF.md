@@ -288,13 +288,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `e0ba765` (`Fix for-loop borrowing and B2 diagnostics`), following `d077563` (complete H6 Span API) and `7958259` (H6/ODR-014 contract) |
-| Recent commits | `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Current implementation checkpoint | `c913fbd` (`Add field-sensitive multi-region inference`), following `e0ba765` (canonical Array-loop borrowing/E3020), `d077563` (complete H6 Span API), and `7958259` (H6/ODR-014 contract) |
+| Recent commits | `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
 | Working tree | Clean at the implementation checkpoint; this handoff/ledger update is the only subsequent documentation scope before its own commit |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 112 top-level rule directories, 382 `.em` files including support modules; the full conformance runner is green |
+| Conformance | 117 top-level rule directories, 392 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 84 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
 | Gates | **all green** (six, run individually below) |
 
@@ -919,8 +919,8 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Continue `ARCH-096-1` through the real iterator/region producer-consumer
-boundary, then begin H1 multi-region/callable-summary work.**
+**Implement `[LT-22]`/`[LT-35]` callable field/provenance summaries and
+`E3065/B14` on the `c913fbd` region-vector core.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -929,12 +929,14 @@ verified record. `UnsafeCell` is complete at `a02c0a5`; §0.35 records it, and
 Array-loop borrowing are complete at `e0ba765`; §0.48 records D-070, the exact
 snapshot and fixed companion, and the two mutation checks. Do not fabricate
 still-unreachable class/thread/effect shapes.
-Keep architecture migration incremental through real producers and consumers;
-do not create placeholder facts or attempt a big-bang rewrite.
+The direct multi-region aggregate/NLL core is complete at `c913fbd`; §0.49
+records its exact evidence and remaining boundary. Keep architecture migration
+incremental through real producers and consumers; do not create placeholder
+facts or attempt a big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
-remaining Phase 2 ownership/lifetime coverage before advancing to multi-region
-views.
+remaining multi-region and Phase 2 ownership/lifetime coverage before
+advancing to later phases.
 
 Read first:
 
@@ -948,10 +950,12 @@ Read first:
    `compiler/ember_typeck`, `compiler/ember_analysis`, HIR/MIR lowering and
    `compiler/ember_mir/src/verify.rs`.
 
-Alongside the diagnostic work, continue the remaining `ARCH-096-1` migration
-through real producers and consumers, then the 0.9.5/H1 multi-region-view work
-in the order recorded by `MIGRATION-0.9.6.md`. `VER-096-1` is complete, but
-accepting a version selector alone is not H6 adoption or conformance.
+Continue the region-vector work through callable result/access summaries,
+invalidation, and MIR verification in the order recorded by
+`MIGRATION-0.9.6.md`. Resume diagnostic shapes only as their real class,
+thread, effect, closure, and disjointness mechanisms become reachable.
+`VER-096-1` is complete, but accepting a version selector alone is not H6
+adoption or conformance.
 
 ### 0.15 The principles, in one place
 
@@ -2827,6 +2831,61 @@ start H1's multi-region and callable-summary implementation order. Do not add
 placeholder facts or manufacture the eight still-unreachable diagnostic
 shapes.
 
+### 0.49 Field-sensitive multi-region core complete — 2026-09-13
+
+Implementation commit `c913fbd` establishes the first executable
+`[LT-14]`–`[LT-20]` region-vector boundary. `Regions` no longer assigns one
+region variable to an entire view local. It retains a compile-time-only
+`ViewRegionSlot` vector keyed by borrowed-field projection, preserves those
+slots through direct struct, nested-struct, tuple, copy/move, and same-source
+aggregate flow, and computes NLL over field slots. Projection of one field no
+longer keeps an unrelated field's source borrowed. The representation remains
+outside source types, nominal identity, layout, symbols, ABI, and generated C.
+
+Ten new Ember cases cover two and eight independent sources, matching-field
+conflicts, fields sharing one source, nested/copied aggregates, tuple payloads,
+conservative fixed arrays, and generated-C erasure. Independent fields may end
+at different points; an active matching field and either live same-source
+field still reject with ordinary E3021. Fixed arrays deliberately retain one
+bounded conservative slot, but every element contributes provenance. Ordinary
+view drops do not artificially extend sources; compiler-known RefCell guards
+remain live through their destructor so runtime borrow release is sound.
+
+Three mutation checks prove the mechanisms rather than the filenames:
+
+1. routing each aggregate operand to every destination field made the
+   independent-field case reject;
+2. selecting every slot for a field projection made that case reject; and
+3. removing the conservative fixed-array construction edge made a dangling-
+   reference program compile.
+
+All mutations were reverted. The full workspace remains at 189 Rust tests,
+117 conformance directories, and 392 Ember sources; conformance and UI suites
+are green, debug/release builds are warning-free, all six adopted-source gates
+are green, and direct generated-C inspection contains the ordinary two-Span
+struct with no region-slot metadata. The test build retains only the known
+non-snake-case lexer test-name warning. No specification, ADR, defect, or owner
+queue entry changed: this is implementation of the frozen H6 target, not a new
+language decision.
+
+This checkpoint is deliberately partial. Calls still conservatively connect
+all tied source slots to all result slots because callable summaries do not
+yet exist. Legacy E3064/B13 remains reachable only on that migration path; H6
+reserves it, so it must disappear as summaries land rather than becoming
+target behavior. `[LT-21]` field replacement currently parses a borrowed field
+lvalue as write-through rather than rebind. `[LT-22]`/`[LT-35]` summaries,
+`E3065/B14`, invalidation, MIR verification, and the complete
+enum/Option/Result/generic, escape/storage, FFI, closure, interface, coroutine,
+and hot-reload matrices remain open.
+
+**Exact next task:** add callable result-provenance and parameter field-access
+summaries for direct functions first, emit E3065/B14 when a declared summary
+is violated, preserve conservative all-slot behavior for unknown calls, and
+verify summaries against actual MIR accesses. Then extend the same facts to
+generic, interface/dynamic, closure/coroutine, separate-compilation, and
+invalidation paths. Do not claim full multi-region conformance or remove the
+temporary conservative path before those consumers are real.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2846,9 +2905,9 @@ explicit `MutSpan.reborrow()`; §0.44 closes `TUP-DST-1`; §0.45 records the H5
 target cut; §0.46 completes the bounded concrete Box slice; and §0.47 records
 H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
 §0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing. The active
-Phase 2 boundary is now incremental canonical-fact migration through those
-real iterator/region producers and consumers, followed by multi-region and
-callable-summary work before target adoption.
+Phase 2 boundary is now §0.49's field-sensitive region-vector core, followed
+by callable result/access summaries, E3065/B14, invalidation, verifier checks,
+and the remaining multi-region matrix before target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner

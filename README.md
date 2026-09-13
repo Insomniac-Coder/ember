@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 112 rule directories and 382 Ember
+- the conformance runner passes across 117 rule directories and 392 Ember
   source files;
 - all six adopted-specification gates pass;
 - 84 recorded compiler defects are closed;
@@ -75,6 +75,16 @@ yields shared references, leaves the Array usable afterward, and reports
 E3020/B2 for conflicting mutation rather than moving the collection or falling
 back to a generic overlapping-loan diagnostic.
 
+The first multi-region-view core is complete at `c913fbd`: region inference
+uses compile-time-only field slots for direct structs, nested structs, tuples,
+and fixed arrays; aggregate construction preserves each field's provenance;
+and field-sensitive NLL permits one source borrow to end while another field
+remains live. Same-source and matching-field conflicts remain rejected, guard
+drops retain their runtime borrow source, and generated C contains no region
+metadata. Callable field/provenance summaries, field replacement, the complete
+escape/storage matrix, `E3065/B14`, invalidation, and verifier integration are
+not yet complete.
+
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
 compiler.
@@ -90,7 +100,8 @@ The reference compiler currently includes substantial support for:
 - generic functions, generic types, generic methods, interface bounds,
   associated types, and monomorphization;
 - ownership, moves, non-lexical borrows, mutable references, region-carrying
-  views, checked shared/mutable Span splitting, explicit mutable-span
+  views with field-sensitive direct aggregate provenance,
+  checked shared/mutable Span splitting, explicit mutable-span
   reborrowing, named shared/mutable Span iteration and chunking, safe raw-
   pointer extraction with unsafe-only use, deterministic destruction, drop
   flags, and partial moves;
@@ -278,10 +289,11 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: build the `[DIA-7..10]`/`[DIA-13]`
-diagnostic-shape snapshot suite in `tests/ui`; continue `ARCH-096-1` through
-real producers, consumers, and verifier boundaries; close the remaining Phase
-2 rule coverage; and only then advance to later phases.
+The immediate order is narrower: implement `[LT-22]`/`[LT-35]` callable
+field/provenance summaries and `E3065/B14` on top of the region-vector core;
+then add invalidation and verifier boundaries, complete the remaining
+multi-region/Phase 2 matrix, and continue the `[DIA-7..10]`/`[DIA-13]`
+diagnostic catalogue as its currently unreachable mechanisms become real.
 
 ## Contributing
 

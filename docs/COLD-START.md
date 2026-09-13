@@ -18,8 +18,9 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `e0ba765` on `main`, following
-`d077563` for the H6 Span implementation and `7958259` for the H6/ODR-014
+**Last committed implementation baseline:** `c913fbd` on `main`, following
+`e0ba765` for canonical Array-loop borrowing, `d077563` for the H6 Span
+implementation, and `7958259` for the H6/ODR-014
 contract. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
@@ -35,7 +36,7 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 112 top-level conformance rule directories, 382 `.em` files including support
+ 117 top-level conformance rule directories, 392 `.em` files including support
  modules. 84 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -235,13 +236,28 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Span API and B2 diagnostic complete; canonical facts are next
+## 5. Region-vector core complete; callable summaries are next
 
-**Exact next task: continue `ARCH-096-1` through the real iterator/region
-producer and consumer boundary, then begin the H1 multi-region/callable-summary
-work in the order in `MIGRATION-0.9.6.md`.** Do not fabricate the still-
-unreachable class/thread/effect diagnostic shapes, add placeholder semantic
-facts, or attempt a big-bang rewrite.
+**Exact next task: implement `[LT-22]`/`[LT-35]` callable field/provenance
+summaries and `E3065/B14` on the `c913fbd` region-vector core.** Then add
+summary invalidation and verifier boundaries in the order in
+`MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
+class/thread/effect diagnostic shapes, add placeholder semantic facts, or
+attempt a big-bang rewrite.
+
+**The first multi-region core is complete at `c913fbd`.** Analysis allocates a
+compile-time-only region slot for each borrowed field, preserves slots through
+direct struct/nested-struct/tuple construction and copies, and computes NLL
+over field slots rather than whole locals. Independent source fields shorten
+independently; same-source and active matching-field conflicts remain E3021;
+fixed arrays conservatively retain every element region; guard destruction
+still retains RefCell state; and generated C erases all region metadata.
+Mutation probes prove aggregate routing, field selection, and fixed-array
+provenance are load-bearing. This is not complete multi-region conformance:
+calls still use conservative all-source/all-result flow, legacy E3064 remains
+reachable only on that migration path, direct field replacement is not yet
+lowered as rebind, and callable summaries, E3065, invalidation, escape/storage,
+enum/generic, coroutine/FFI, and verifier coverage remain.
 
 **E3020/B2 is complete at `e0ba765`.** Direct Array iteration now borrows the
 Array through the existing shared-Span producer, yields `ref T`, and releases
