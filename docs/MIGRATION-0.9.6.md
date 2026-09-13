@@ -1,13 +1,13 @@
-# Migration intake — Ember 0.9.6_Hardened_4
+# Migration intake — Ember 0.9.6_Hardened_5
 
 **State as of 2026-09-13.** This file is the implementation and adoption map
 for the current frozen development target:
 
-    docs/spec-source/Ember_v0.9.6_Hardened_4.md
+    docs/spec-source/Ember_v0.9.6_Hardened_5.md
 
 It is not a second specification. The target document governs its own
 requirements; `docs/spec-source/ember-spec.md` remains the repository's sole
-normative source (`0.8.5_Hardened_1`) until H4 passes every adoption gate and
+normative source (`0.8.5_Hardened_1`) until H5 passes every adoption gate and
 the owner explicitly installs it.
 
 ## 1. Authority and custody
@@ -23,8 +23,9 @@ the owner explicitly installs it.
 | `docs/spec-source/as-received/ODR-012_Hasher_public_API_and_hashing_contract.md` | preserved owner-approved hashing ruling and canonical-mode reconciliation | SHA-256 `98337E1A382E921B74F375792C025C55E462E04C98C58E5C8ACE959DE221E367` |
 | `docs/spec-source/Ember_v0.9.6_Hardened_3.md` | immutable immediate predecessor; carries the ODR-013 finding | 769,660 bytes; 8,292 lines; SHA-256 `7544B1EBB9DADE8790F500DA5D77900064BC7DE0B20E3DC48674CD2F37422396` |
 | `docs/spec-source/as-received/ODR-013_Hash_static_Hasher_parameter.md` | preserved owner-approved static Hasher ruling and transport normalization | SHA-256 `20970F5C72AACD53F33584448A1AEC800A5B0126F2F63CACFFAD281F6EF60D14` |
-| `docs/spec-source/Ember_v0.9.6_Hardened_4.md` | current frozen development target | 772,027 bytes; 8,319 lines; SHA-256 `D32B945BAE77A612A4664DB9FCDA7F136E741599EBBB3EEC6171C9541DC57B5E` |
-| `docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md` | byte-for-byte owner-approved post-H4 architecture/process RFC; not a specification amendment | 27,488 bytes; 1,138 lines; SHA-256 `0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525` |
+| `docs/spec-source/Ember_v0.9.6_Hardened_4.md` | immutable immediate predecessor | 772,027 bytes; 8,319 lines; SHA-256 `D32B945BAE77A612A4664DB9FCDA7F136E741599EBBB3EEC6171C9541DC57B5E` |
+| `docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md` | byte-for-byte owner-approved post-H4 architecture/process RFC materialized by H5 | 27,488 bytes; 1,138 lines; SHA-256 `0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525` |
+| `docs/spec-source/Ember_v0.9.6_Hardened_5.md` | current frozen development target | 785,022 bytes; 8,453 lines; SHA-256 `86DDA4BC12D64BDED32B57BB6C146FD1C8A724A32705E2D1BC4D3048C8AD641B` |
 
 The owner approved Revision 5 as the design basis, selected the new 0.9.6
 architecture line, and separately approved the final `[ARN-10]` wording. The
@@ -41,11 +42,14 @@ Hasher-call ruling. H3 was not edited.
 ADR-034 preserves the separately approved post-H4 simplicity RFC. It directs
 implementation and process toward fewer public concepts, reused authoritative
 facts, derived-only caches/aggregates, and conservative unknown handling while
-retaining every H4 semantic distinction needed for safety. It does not amend
-the language, adopt H4, edit H4, or create H5.
+retaining every H4 semantic distinction needed for safety. The owner's later
+clarification requires those concrete architecture, tooling, documentation,
+and process changes to be materialized as H5. H4 remains immutable; H5 does
+not change source semantics and is not installed as the repository-normative
+source merely by existing.
 
 Any correction discovered after this freeze becomes
-`0.9.6_Hardened_5`; do not amend H4 in place or silently change its identity.
+`0.9.6_Hardened_6`; do not amend H5 in place or silently change its identity.
 
 ## 2. Change classification
 
@@ -109,9 +113,16 @@ statically generic over `H: Hasher`, concrete hasher types are inferred and
 normally monomorphized, `DefaultHasher implements Hasher`, and no implicit
 dynamic/interface coercion is introduced. H3 remains the immutable diff base.
 
+The H5 cut materializes the owner-approved post-H4 simplicity consolidation.
+It requires one authority per semantic invariant, derived-only aggregates and
+caches, conservative unknown handling, reuse/inference review before new source
+concepts, source-semantic diagnostics, generated view-contract documentation,
+complexity accounting, and separate authority/evidence ledgers. H4 remains the
+immutable diff base. No source-language semantic or public API is added.
+
 ## 3. What is implemented now
 
-H4 is a specification target, not an implementation claim. The inherited
+H5 is a specification target, not an implementation claim. The inherited
 repository baseline currently has executable evidence for:
 
 - the existing 0.8.5 parser/type/ownership/borrow/drop subset;
@@ -164,7 +175,7 @@ predecessor joins, then drives diagnostics from that record. The C backend now
 accepts only an opaque `VerifiedMir` that binds the exact body slice and type
 table checked by unconditional structural and view-provenance verification
 after final body pruning. This is an incremental `ARCH-096-1` checkpoint, not
-complete H4 adoption.
+complete H5 adoption.
 
 The subsequent diagnostic/ownership checkpoint is `c520a32`. It raises the
 workspace total to 189 tests and executable coverage to 99 conformance
@@ -328,7 +339,7 @@ Running the same audit directly against frozen H2 reports:
 
 H2 adds exactly `[ARN-5a]` through `[ARN-5g]` and `[TST-24]` over H1. Their
 conformance directories and executable Arena-collection matrix now exist under
-the completed `ARN-COLL-1` checkpoint. Other H1–H4 rules still lack complete
+the completed `ARN-COLL-1` checkpoint. Other H1–H5 rules still lack complete
 adoption evidence, so this progress is not evidence that the frozen target has
 been adopted.
 
@@ -403,7 +414,7 @@ proved.
    exact, audited-declared, unknown, generic, separate-compilation, dynamic,
    and hot-reload cases with coupled invalidation and runtime erasure.
 9. **Add the version selector and run adoption validation.** `VER-096-1` may
-   land earlier for testing, but H4 becomes normative only after every gate
+   land earlier for testing, but H5 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
 
 At each step, use minimal adversarial programs, mutate each new test red once,
@@ -412,29 +423,34 @@ record findings under the five-way classification before changing behavior.
 
 ## 7. Adoption gates
 
-H4 must not replace `ember-spec.md` until all of these are true:
+H5 must not replace `ember-spec.md` until all of these are true:
 
-1. **Custody:** H10, H1, H2, H3, and all as-received owner sources match this
-   record; H4 has exactly one version identity and H3 as its predecessor.
+1. **Custody:** H10, H1, H2, H3, H4, and all as-received owner sources match this
+   record; H5 has exactly one version identity and H4 as its predecessor.
 2. **Specification integrity:** alternate-source rule/index, grammar/fence,
    diagnostic, cross-reference, and version-lineage audits show no unintended
    regression.
-3. **Implementation matrix:** every H4 requirement is marked `SPECIFIED`,
+3. **Implementation matrix:** every H5 requirement is marked `SPECIFIED`,
    `IMPLEMENTED`, `VERIFIED`, or `CONFORMANT` from repository evidence; no
    version label is treated as proof.
-4. **Compiler/runtime:** all required H10, H1, H2, H3, and H4 mechanisms exist, including
+4. **Compiler/runtime:** all required H10, H1, H2, H3, H4, and H5 mechanisms exist, including
    selector support, initialization APIs, canonical facts, summaries,
    invalidation, verification, and runtime erasure.
 5. **Conformance:** every H10/H1/H2 condition remains green, the `[TST-24]`
    collection matrix passes, and `[HASH-1]`–`[HASH-4]` have adversarial
    custom-key, coherence, consuming-finalization, non-retention, and
    read-only-key evidence.
-6. **Repository gates:** `cargo build` is warning-free, `cargo test --workspace`
+6. **Simplicity architecture:** derived caches and aggregates are invalidated
+   with authoritative facts; unknown facts grant no capability; initialization
+   retains `Uninit | Maybe | Init`; no duplicate public interface or parallel
+   safety system appears; and diagnostics/documentation remain derived from
+   source-semantic contracts.
+7. **Repository gates:** `cargo build` is warning-free, `cargo test --workspace`
    passes, and all six CI specification gates pass against the adopted source.
-7. **Generated output:** C11 inspection proves portable identifiers, all three
+8. **Generated output:** C11 inspection proves portable identifiers, all three
    storage orderings, no proof-metadata ABI leakage, and required runtime
    checks/erasures.
-8. **Owner action:** the owner explicitly authorizes installing H4 as
+9. **Owner action:** the owner explicitly authorizes installing H5 as
    `docs/spec-source/ember-spec.md`; generated `docs/spec/` is then regenerated,
    never hand-edited.
 
@@ -442,7 +458,7 @@ H4 must not replace `ember-spec.md` until all of these are true:
 
 Before implementation, read in this order:
 
-1. `docs/spec-source/Ember_v0.9.6_Hardened_4.md`;
+1. `docs/spec-source/Ember_v0.9.6_Hardened_5.md`;
 2. this migration intake and `docs/HANDOFF.md` §0;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`,
    `docs/BACKLOG.md`, `docs/spec-errata.md`, and `docs/OWNER-QUEUE.md`;
@@ -458,10 +474,12 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement **`[DIA-7..10]` and `[DIA-13]` rendered diagnostic-shape coverage in
-`tests/ui/`**. Use the existing catalogue as the contract: each required shape
-gets a failing source/snapshot and a compilable `.fixed.em` companion, and any
-wrong-code or wrong-help result is classified as a compiler or test defect
-rather than papered over. Continue `ARCH-096-1` incrementally through real
-producers and consumers. Do not adopt H4, freeze the hash mixer, broaden
+Complete the already-started concrete, sized, default-allocator **`Box[T]`**
+slice. Its C representation is the specified `T*`; construction uses the
+runtime allocator, ordinary access auto-dereferences, moving while the payload
+is borrowed is rejected, dropping destroys `T` before freeing storage, and a
+non-static view cannot be stored in the owned box. Verify the generated C under
+strict C11. Do not infer `Box[dyn I]`, `Box[T, A]`, or complete effect-system
+support from this bounded slice. Continue `ARCH-096-1` through the real facts
+the implementation exposes, and do not adopt H5, freeze the hash mixer, broaden
 `Zeroable` or `Hash` by inference, or add a second unsafe tier.

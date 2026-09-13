@@ -74,15 +74,18 @@ consolidation architecture line and approved the abort-only `[ARN-10]`
 clarification. H2 then completed Arena-backed collections, and
 H3 records the public hashing protocol, and
 `Ember_v0.9.6_Hardened_4.md` closes its callable boundary with static generic
-`H: Hasher` dispatch. H4 is the frozen development
-target, but not yet the normative repository source. It retains the owner-
+`H: Hasher` dispatch. The owner subsequently clarified that approval of the
+post-H4 Revision 5 simplicity RFC was intended to produce the next hardened
+target. `Ember_v0.9.6_Hardened_5.md` now materializes that architecture,
+tooling, documentation, and development contract while keeping H4 immutable.
+H5 is the frozen development target, but not yet the normative repository
+source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied, and it requires one shared
 semantic-fact/MIR verification architecture without merging distinct language
-semantics. The owner has also approved the post-H4 Revision 5 simplicity RFC
-as architecture/process policy: reuse authoritative facts and abstractions,
-keep necessary semantic distinctions, and make unknown information
-conservative. That approval neither edits H4 nor creates H5. No
+semantics. The post-H4 Revision 5 simplicity RFC requires reuse of authoritative
+facts and abstractions, preservation of necessary semantic distinctions, and
+conservative unknown information. No
 0.9/0.9.5/0.9.6 implementation
 or conformance is implied by the target's version label.
 
@@ -132,7 +135,7 @@ the caveat.*
 ## 3. Versioning
 
 The adopted normative document is **v0.8.5_Hardened_1**; the frozen development
-target is **v0.9.6_Hardened_4**. Two numbers move independently:
+target is **v0.9.6_Hardened_5**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
@@ -150,8 +153,8 @@ That completed `VER-096-1` work is selector recognition, not evidence of
 adoption by itself.
 `docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the frozen adopted snapshot.
 The current development lineage first diffed H1 against immutable H10, H2
-against immutable H1, H3 against immutable H2, and H4 against immutable H3;
-any next 0.9.6 hardening diffs against frozen H4, never
+against immutable H1, H3 against immutable H2, H4 against immutable H3, and
+H5 against immutable H4; any next 0.9.6 hardening diffs against frozen H5, never
 against an as-received file.
 `Ember_v0.8.4_Hardened_1.md` and `Ember_v0.8.4_Hardened_2.md` are kept as prior
 baselines. The working source and the current snapshot are **identical** right
@@ -159,8 +162,9 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.6_Hardened_4`, per the owner's explicit
-completion of ODR-013. H3 is its immediate predecessor; H10 remains the
+The current development target is `0.9.6_Hardened_5`, per the owner's explicit
+materialization of the post-H4 simplicity RFC. H4 is its immediate predecessor;
+H10 remains the
 immutable architecture-line predecessor. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
 modes; H8 records helper input modes and compile-time mode preservation through
@@ -169,9 +173,10 @@ Arena initialization and `MaybeUninit` contract. The 0.9.5 multi-region-view
 feature itself is the owner-selected language change. H1 preserves 0.9.5's
 accepted/rejected ordinary-source sets while selecting the consolidated
 reference-compiler/conformance architecture. H2 completes the Arena-backed
-container contract, H3 completes the public hashing protocol, and H4 selects
-static generic Hasher dispatch without changing that architecture line. Any
-later correction must become `0.9.6_Hardened_5`, not an in-place H4 edit.
+container contract, H3 completes the public hashing protocol, H4 selects
+static generic Hasher dispatch, and H5 binds the approved post-H4 simplicity
+architecture/process contract without changing source semantics. Any later
+correction must become `0.9.6_Hardened_6`, not an in-place H5 edit.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped

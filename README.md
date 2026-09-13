@@ -21,12 +21,12 @@ The authority levels matter:
 | Role | Current artifact |
 |---|---|
 | Adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), Ember v0.8.5_Hardened_1 |
-| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_4.md`](docs/spec-source/Ember_v0.9.6_Hardened_4.md) |
-| Immediate target predecessor | Ember v0.9.6_Hardened_3, kept immutable |
+| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_5.md`](docs/spec-source/Ember_v0.9.6_Hardened_5.md) |
+| Immediate target predecessor | Ember v0.9.6_Hardened_4, kept immutable |
 | Implementation phase | Phase 2, ownership |
 | Completed phases | Exactly 1 of 9 |
 
-The v0.9.6_Hardened_4 target is not yet adopted as the normative source. It is
+The v0.9.6_Hardened_5 target is not yet adopted as the normative source. It is
 the contract the implementation is working toward. A version is adopted only
 after its implementation, conformance, documentation, and regression gates
 pass and the owner explicitly installs it.
@@ -215,7 +215,7 @@ The most useful project records are:
 - [`docs/DEFECTS.md`](docs/DEFECTS.md) — compiler defects and verification evidence;
 - [`docs/BACKLOG.md`](docs/BACKLOG.md) — implementation gaps and build order;
 - [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) — questions requiring owner authority;
-- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H4 adoption and implementation map.
+- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H5 adoption and implementation map.
 
 ## Development protocol
 
@@ -233,7 +233,7 @@ override it. Before changing semantics or implementation:
    conformance evidence.
 
 Frozen specification cuts are immutable. A newly discovered specification gap
-after H4 becomes H5; H4 is never edited in place. Generated specification
+after H5 becomes H6; H5 is never edited in place. Generated specification
 parts under `docs/spec/` are never hand-edited.
 
 A passing suite is necessary, not sufficient. Ownership and lifetime work is

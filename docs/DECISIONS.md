@@ -1162,10 +1162,17 @@ collection interfaces are reused only where their complete semantics match;
 this RFC adds no `Len` or `Capacity` interface and no parallel safety system.
 
 **Authority and version treatment.** This is an architecture/process decision,
-not a source-language amendment, implementation-status claim, or adoption of
-the 0.9.6 specification. The adopted normative source remains
-`docs/spec-source/ember-spec.md`; H4 remains the frozen development target.
-Approval does not edit H4 and does not create `0.9.6_Hardened_5`. A concrete
-future specification correction must be classified, owner-reviewed where
-semantic, materialized as a new immutable document, and passed through the
-ordinary hardening and conformance gates.
+not a source-language semantic amendment, implementation-status claim, or
+adoption of the 0.9.6 specification as repository-normative. The adopted
+normative source remains `docs/spec-source/ember-spec.md`.
+
+**Subsequent owner clarification, 2026-09-13.** The owner clarified that approval
+was intended to materialize the RFC's concrete architecture, tooling,
+documentation, and development-contract changes as the next hardening. Therefore
+`Ember_v0.9.6_Hardened_5.md` incorporates those requirements and becomes the
+frozen development target; H4 remains its immutable predecessor. This later
+ruling supersedes only the RFC's statements that adoption by itself would not
+create H5. It does not authorize a source-language semantic change, alter the
+accepted/rejected program sets, claim implementation/conformance, or install H5
+as `ember-spec.md`. HC-096-05 and the H4-to-H5 classified diff preserve the
+materialization evidence.

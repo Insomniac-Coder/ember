@@ -19,8 +19,8 @@ language number instead. Historically, the S1 cut was `0.8.4_Hardened_1` and
 not `0.8.3_Hardened_2` for exactly that reason — S1 changed what Ember accepts,
 so 0.8.3 could not absorb it and the hardening count started again. The current
 repository-normative source is `0.8.5_Hardened_1`; the separately frozen
-development target is `0.9.6_Hardened_4`, whose immutable immediate predecessor
-is `0.9.6_Hardened_3`.
+development target is `0.9.6_Hardened_5`, whose immutable immediate predecessor
+is `0.9.6_Hardened_4`.
 
 **When to cut one.** Whenever building the compiler turns up a detail whose
 absence made the work harder or produced a defect — found in discussion with the
@@ -74,6 +74,8 @@ completion; H1 remains unchanged.
 H2 remains unchanged.
 `0.9.6_Hardened_4` is the owner-approved ODR-013 static Hasher-call completion;
 H3 remains unchanged.
+`0.9.6_Hardened_5` is the owner-approved materialization of the post-H4
+simplicity architecture/process RFC; H4 remains unchanged.
 `docs/MIGRATION-0.9.5.md` inventories every H3→H4 through H9→H10 correction,
 and `docs/MIGRATION-0.9.6.md` inventories the H10→0.9.6 H1 cut. This ledger continues to declare
 differences in the currently adopted repository-normative source checked by
@@ -363,6 +365,32 @@ coherence, Map-key, ownership, effect, ABI, reload, or determinism rule beyond
 closing the previously explicit dispatch/representation choice. It becomes the
 new frozen development target without changing adopted `ember-spec.md` or
 claiming implementation/conformance.
+
+### HC-096-05 — H5 post-H4 simplicity-consolidation adoption
+
+**Class: IMPLEMENTATION INVARIANT, TOOLING/DOCUMENTATION HARDENING, and PROCESS
+HARDENING; SEMANTIC CHANGE: NONE.** The owner approved Revision 5 of the second
+0.9.6 Simplicity Consolidation RFC and subsequently clarified that approval was
+intended to materialize its concrete contracts as the next hardening. H5 keeps
+H4 byte-for-byte frozen and incorporates those requirements into existing
+implementation, diagnostic, documentation, budget, conformance, and custody
+boundaries rather than creating a parallel `SIMPL-*` language-rule family.
+
+H5 requires one authoritative representation per semantic invariant;
+derived-only and jointly invalidated caches, summaries, indexes, metadata, and
+`CallInfo`-style aggregates; conservative unknown handling; retention of the
+`Uninit | Maybe | Init` lattice and all H4 semantic axes; reuse and inference
+review before adding source concepts; source-semantic diagnostics; generated
+view-contract documentation where practical; explicit complexity accounting;
+and separate normative, implementation, owner-decision, and conformance
+ledgers. It adds no `Len`/`Capacity` interface, parallel safety system,
+automatic dynamic-borrow fallback, or runtime capability metadata.
+
+The RFC is preserved byte-for-byte under `docs/spec-source/as-received/`. The
+owner's later version ruling supersedes only its statements that adoption would
+not create H5; all semantic-preservation and evidence-boundary constraints remain
+in force. H5 becomes the frozen development target without replacing adopted
+`ember-spec.md` or claiming implementation/conformance.
 
 ### The four kinds, and what each is allowed to do
 
