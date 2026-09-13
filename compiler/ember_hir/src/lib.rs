@@ -327,6 +327,9 @@ pub enum Builtin {
     /// travels with the builtin so the C backend can construct the structural
     /// result without inventing a public helper ABI.
     ArraySplitAtMut { elem: Ty, pair: Ty },
+    /// `[SPN-3]` — split one Span borrow into two same-kind, disjoint views at
+    /// a checked boundary. A mutable receiver is reborrowed rather than moved.
+    SpanSplitAt { elem: Ty, pair: Ty, mutable: bool },
     /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
@@ -523,6 +526,7 @@ impl Builtin {
                 if mutable { "as_mut_span" } else { "as_span" }
             }
             Builtin::ArraySplitAtMut { .. } => "split_at_mut",
+            Builtin::SpanSplitAt { .. } => "split_at",
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",

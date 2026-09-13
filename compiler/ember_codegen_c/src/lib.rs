@@ -924,6 +924,33 @@ impl Emitter<'_> {
         .to_string()
     }
 
+    /// Build the representation-level result shared by Array and Span split
+    /// operations. Bounds and provenance are MIR facts; C emission only lays
+    /// out the two half-open views and avoids arithmetic on a null base for a
+    /// zero boundary.
+    fn split_views_expression(
+        &self,
+        source: &str,
+        boundary: &str,
+        elem: Ty,
+        pair: Ty,
+        mutable: bool,
+    ) -> String {
+        let pair = self.c_type(pair);
+        let elem = self.c_type(elem);
+        let view = if mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
+        let tail = if mutable {
+            format!("(void*)((({elem}*){source}.ptr) + {boundary})")
+        } else {
+            format!("(const void*)(((const {elem}*){source}.ptr) + {boundary})")
+        };
+        format!(
+            "({pair}){{ ({view}){{ {source}.ptr, {boundary} }}, \
+             ({view}){{ ({boundary} == 0 ? {source}.ptr : {tail}), \
+             {source}.len - {boundary} }} }}"
+        )
+    }
+
     fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
@@ -1123,16 +1150,30 @@ impl Emitter<'_> {
                     // Avoid even `null + 0` for an empty Array: C does not
                     // make pointer arithmetic on a null allocation portable.
                     Builtin::ArraySplitAtMut { elem, pair } => {
-                        let pair = self.c_type(*pair);
-                        let elem = self.c_type(*elem);
-                        let view = format!("{RT}mutspan");
                         let array = format!("(*{})", rendered[0]);
-                        let boundary = &rendered[1];
-                        return format!(
-                            "({pair}){{ ({view}){{ {array}.ptr, {boundary} }}, \
-                             ({view}){{ ({boundary} == 0 ? {array}.ptr : \
-                             (void*)((({elem}*){array}.ptr) + {boundary})), \
-                             {array}.len - {boundary} }} }}"
+                        return self.split_views_expression(
+                            &array,
+                            &rendered[1],
+                            *elem,
+                            *pair,
+                            true,
+                        );
+                    }
+                    // `[SPN-3]` — same checked split for an existing Span or
+                    // MutSpan. MIR has already checked `boundary <= len` and
+                    // made a named mutable receiver an explicit reborrow.
+                    Builtin::SpanSplitAt { elem, pair, mutable } => {
+                        let source = if matches!(self.types.kind(*arg_ty), TyKind::Ref { .. }) {
+                            format!("(*{})", rendered[0])
+                        } else {
+                            format!("({})", rendered[0])
+                        };
+                        return self.split_views_expression(
+                            &source,
+                            &rendered[1],
+                            *elem,
+                            *pair,
+                            *mutable,
                         );
                     }
                     Builtin::StringAsStr => {

@@ -1527,6 +1527,20 @@ impl<'a> Builder<'a> {
                 );
             }
             hir::ExprKind::Builtin {
+                which: hir::Builtin::SpanSplitAt { elem, pair, mutable },
+                args,
+            } => {
+                self.lower_span_split_at(
+                    place,
+                    &args[0],
+                    &args[1],
+                    *elem,
+                    *pair,
+                    *mutable,
+                    expr.span,
+                );
+            }
+            hir::ExprKind::Builtin {
                 which: hir::Builtin::MemReplace { elem },
                 args,
             } => {
@@ -3495,11 +3509,65 @@ impl<'a> Builder<'a> {
         pair: Ty,
         span: ember_span::Span,
     ) {
+        self.lower_checked_split(
+            dest,
+            receiver,
+            index,
+            pair,
+            true,
+            hir::Builtin::ArraySplitAtMut { elem, pair },
+            span,
+        );
+    }
+
+    /// `[SPN-3]` — `span.split_at(index)` for shared and mutable views.
+    ///
+    /// The mutable method receiver is an explicit reborrow when it names a
+    /// place and an already-proven view when called directly on a view
+    /// producer. In either form this operation evaluates the receiver and
+    /// boundary once, checks `boundary <= len`, and returns two same-kind
+    /// views carrying the receiver's provenance.
+    fn lower_span_split_at(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        elem: Ty,
+        pair: Ty,
+        mutable: bool,
+        span: ember_span::Span,
+    ) {
+        let receiver_is_reference = matches!(self.types.kind(receiver.ty), TyKind::Ref { .. });
+        self.lower_checked_split(
+            dest,
+            receiver,
+            index,
+            pair,
+            receiver_is_reference,
+            hir::Builtin::SpanSplitAt { elem, pair, mutable },
+            span,
+        );
+    }
+
+    /// One MIR shape for every checked view split. The source representation
+    /// differs (`Array` versus an existing span), but evaluate-once, bounds,
+    /// provenance, and result construction must not drift into parallel
+    /// implementations.
+    fn lower_checked_split(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        index: &'a hir::Expr,
+        pair: Ty,
+        deref_source: bool,
+        builtin: hir::Builtin,
+        span: ember_span::Span,
+    ) {
         debug_assert_eq!(self.locals[dest.local.0 as usize].ty, pair);
         let receiver_op = self.lower_operand_borrowed(receiver);
         let receiver_place = match &receiver_op {
             Operand::Copy(place) | Operand::Move(place) => place.clone(),
-            Operand::Const(_) => unreachable!("a split receiver is an explicit mutable borrow"),
+            Operand::Const(_) => unreachable!("a split receiver has addressable storage"),
         };
         let boundary = self.temp(self.usize_ty, index.span);
         let boundary_op = self.lower_operand(index);
@@ -3510,9 +3578,11 @@ impl<'a> Builder<'a> {
             rvalue: Rvalue::Use(boundary_op),
         });
 
-        let mut array = receiver_place;
-        array.projection.push(Projection::Deref);
-        let len = array.field(1);
+        let mut source = receiver_place;
+        if deref_source {
+            source.projection.push(Projection::Deref);
+        }
+        let len = source.field(1);
         let in_range = self.temp(self.bool_ty, span);
         self.push(StmtKind::Assign {
             place: Place::local(in_range),
@@ -3537,10 +3607,7 @@ impl<'a> Builder<'a> {
 
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Builtin {
-                which: hir::Builtin::ArraySplitAtMut { elem, pair },
-                arg_ty: receiver.ty,
-            },
+            func: FuncRef::Builtin { which: builtin, arg_ty: receiver.ty },
             args: vec![receiver_op, Operand::Copy(Place::local(boundary))],
             dest,
             next,

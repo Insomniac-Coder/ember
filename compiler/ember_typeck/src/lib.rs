@@ -11567,6 +11567,39 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_maybe_uninit_span_method(receiver, inner, name, args, span);
         }
         let usize_ty = self.common.usize;
+        if name.name.is("split_at") {
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`split_at` takes 1 argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let index = self.check_expr(&args[0].value, usize_ty);
+            let receiver = if mutable && is_place(&receiver.kind) {
+                self.pass_receiver(receiver, Mode::Mut, span)
+            } else if mutable && !self.viewed_place(&receiver) {
+                self.error(
+                    codes::E2140,
+                    span,
+                    "`split_at` needs a mutable span variable or a view of a mutable place",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            } else {
+                receiver
+            };
+            let view = self.types.intern(TyKind::Span { elem, mutable });
+            let pair = self.types.intern(TyKind::Tuple(vec![view, view]));
+            return Expr {
+                ty: pair,
+                kind: ExprKind::Builtin {
+                    which: Builtin::SpanSplitAt { elem, pair, mutable },
+                    args: vec![receiver, index],
+                },
+                span,
+            };
+        }
         let (which, arity, ret) = if name.name.is("len") {
             (Builtin::SpanLen, 0, usize_ty)
         } else if name.name.is("get") {
