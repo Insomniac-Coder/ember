@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `1aaa98f` on `main`, followed by
+**Last committed implementation baseline:** `24d8fbc` on `main`, followed by
 the documentation snapshot that records it. Both are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
@@ -34,7 +34,7 @@ treating this sentence as live Git state.
       python tools/check_branding.py       no hard-coded project names
       python tools/split_spec.py --check   docs/spec/ is the split of the source
 
- 100 top-level conformance rule directories, 337 `.em` files including support
+ 100 top-level conformance rule directories, 341 `.em` files including support
  modules. 80 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -339,12 +339,13 @@ suppressing their destructor; `std.mem.align_of[T]` uses the canonical layout
 descriptor after generic substitution. The later `[THR-6]` `@must_drop`
 rejection remains a dependency gap, and this slice does not invent that marker.
 
-**`SPN-API-1` advanced at `1aaa98f`.** `Span` and `MutSpan` now implement the
+**`SPN-API-1` advanced at `1aaa98f` and `24d8fbc`.** `Span` and `MutSpan` now implement the
 specified checked `split_at`; mutable named receivers are reborrowed, direct
 view-producing expressions remain valid, and both result halves retain the
 original owner provenance. Array and Span splits share one MIR check shape and
-one C result constructor. `reborrow`, `chunks`, iterators, and raw-pointer
-access remain.
+one C result constructor. Explicit `MutSpan.reborrow()` now uses the same
+receiver-borrow and provenance facts without copying or moving the parent.
+`chunks`, iterators, and raw-pointer access remain.
 
 ## 6. `[DIA-7..10]`, `[DIA-13]`, and `tests/ui/`
 

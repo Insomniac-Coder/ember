@@ -205,6 +205,16 @@ arithmetic. Removing either result provenance or the explicit reborrow makes
 the new adversarial cases compile incorrectly. `SPN-API-1` remains partial:
 `reborrow`, `chunks`, iterators, and raw-pointer access are still absent.
 
+The explicit-reborrow checkpoint is `24d8fbc`. It retains 189 Rust tests and
+raises executable coverage to 100 conformance directories and 341 Ember source
+files. `MutSpan.reborrow()` forms an ordinary mutable receiver loan, returns the
+same pointer/length representation with argument-0 provenance, works in generic
+and direct view-producing contexts, and leaves its parent usable after the
+child's last use. Removing either the provenance edge or the receiver loan
+makes the corresponding owner/parent conflict compile, so both are
+mutation-tested. Shared Span intentionally remains Copy rather than gaining a
+second explicit reborrow operation.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
