@@ -14,7 +14,7 @@ pub struct UnsafeCell[T]:
 pub fn drop[T](owned value: T):
     pass
 
-## `[OWN-6]`'s `take`, `replace`, and `swap` remain compiler-known while the
+## `[OWN-6]`'s `take`, `replace`, `swap`, and `forget` remain compiler-known while the
 ## standard library is staged; calls through this public module still use
 ## ordinary generic inference, mutable-place checks, borrows, and moves.
 pub fn replace[T](mut place: T, owned value: T) -> T:
@@ -25,3 +25,18 @@ pub fn take[T: Default](mut place: T) -> T:
 
 pub fn swap[T](mut a: T, mut b: T):
     pass
+
+## Consumes the value without running its destructor. `[THR-6]`'s rejection
+## for `@must_drop` values becomes active with that later type mechanism; this
+## operation does not invent a parallel marker in the meantime.
+pub fn forget[T](owned value: T):
+    pass
+
+## Part IX §5 — target-layout queries. These declarations make the public
+## `std.mem` paths real; the compiler folds them through its canonical layout
+## descriptor rather than executing these staging bodies.
+pub fn size_of[T]() -> usize:
+    return 0
+
+pub fn align_of[T]() -> usize:
+    return 0

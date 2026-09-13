@@ -299,6 +299,8 @@ pub enum Builtin {
     PtrWrite,
     /// `size_of[T]() -> usize`, which needs no `unsafe`.
     SizeOf,
+    /// `align_of[T]() -> usize`, folded from the canonical target layout.
+    AlignOf,
     /// `[OWN-6]` — atomically move the old value out of a mutable place and
     /// install an owned replacement without dropping the old value.
     MemReplace { elem: Ty },
@@ -307,6 +309,8 @@ pub enum Builtin {
     /// `[OWN-6]` — exchange two mutably borrowed places without moving either
     /// value into an Ember-visible temporary.
     MemSwap { elem: Ty },
+    /// `[OWN-6]` — consume one value and deliberately suppress its drop.
+    MemForget { elem: Ty },
     /// `[SPN-2]` — `s.len()`. The length field of the view.
     SpanLen,
     /// `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the checked-without-panic
@@ -505,9 +509,11 @@ impl Builtin {
             Builtin::PtrRead => "read",
             Builtin::PtrWrite => "write",
             Builtin::SizeOf => "size_of",
+            Builtin::AlignOf => "align_of",
             Builtin::MemReplace { .. } => "replace",
             Builtin::MemTake { .. } => "take",
             Builtin::MemSwap { .. } => "swap",
+            Builtin::MemForget { .. } => "forget",
             // `[RNG-10]`'s construction set. Named as they are
             // written, so a diagnostic quoting one reads as source.
             Builtin::SpanLen => "len",

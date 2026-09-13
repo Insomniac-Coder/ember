@@ -2811,7 +2811,7 @@ impl<'a> Checker<'a> {
         );
     }
 
-    /// `[OWN-6]` — `std.mem.take`, `replace`, and `swap` are the sanctioned
+    /// `[OWN-6]` — `std.mem.take`, `replace`, `swap`, and `forget` are the sanctioned
     /// operations that mutate a place while transferring its old ownership
     /// without first dropping it. They are compiler-known while `std.mem` is
     /// staged, but their operands still use ordinary place, mutability,
@@ -2830,6 +2830,8 @@ impl<'a> Checker<'a> {
             "take"
         } else if resolved.is("std.mem.swap") {
             "swap"
+        } else if resolved.is("std.mem.forget") {
+            "forget"
         } else {
             return None;
         };
@@ -2859,6 +2861,17 @@ impl<'a> Checker<'a> {
         if first.ty == self.common.error {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
+        let elem = explicit.first().copied().unwrap_or(first.ty);
+        if operation == "forget" {
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin {
+                    which: Builtin::MemForget { elem },
+                    args: vec![first],
+                },
+                span,
+            });
+        }
         if !is_place(&first.kind) {
             self.error(
                 codes::E2140,
@@ -2867,7 +2880,6 @@ impl<'a> Checker<'a> {
             );
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
-        let elem = explicit.first().copied().unwrap_or(first.ty);
         let first = self.pass_receiver(first, Mode::Mut, args[0].value.span);
 
         let result = match operation {
@@ -2936,9 +2948,8 @@ impl<'a> Checker<'a> {
     }
 
     /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
-    /// `read[T]`, `write[T]` and `size_of[T]`. Everything but `size_of` needs
-    /// an `unsafe` block (`[UNS-1]`); these are what the collections will be
-    /// written on top of.
+    /// `read[T]`, `write[T]`, `size_of[T]`, and `align_of[T]`. The two layout
+    /// queries need no `unsafe`; the raw-memory operations do (`[UNS-1]`).
     fn synth_memory_builtin(
         &mut self,
         name: Symbol,
@@ -2951,6 +2962,7 @@ impl<'a> Checker<'a> {
         }
         let usize_ty = self.common.usize;
         let void = self.common.void;
+        let resolved = self.resolve_name(name);
         let (which, arity, needs_unsafe) = if name.is("alloc") {
             (Builtin::MemAlloc, 1, true)
         } else if name.is("free") {
@@ -2959,8 +2971,10 @@ impl<'a> Checker<'a> {
             (Builtin::PtrRead, 2, true)
         } else if name.is("write") {
             (Builtin::PtrWrite, 3, true)
-        } else if name.is("size_of") {
+        } else if name.is("size_of") || resolved.is("std.mem.size_of") {
             (Builtin::SizeOf, 0, false)
+        } else if name.is("align_of") || resolved.is("std.mem.align_of") {
+            (Builtin::AlignOf, 0, false)
         } else {
             return None;
         };
@@ -2985,11 +2999,11 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
 
-        // `alloc[T]` and `size_of[T]` say their element type; `free`, `read`
-        // and `write` take it from the pointer they are given.
+        // `alloc[T]` and the layout queries say their element type; `free`,
+        // `read`, and `write` take it from the pointer they are given.
         let mut checked: Vec<Expr> = Vec::new();
         let elem = match which {
-            Builtin::MemAlloc | Builtin::SizeOf => match explicit.first() {
+            Builtin::MemAlloc | Builtin::SizeOf | Builtin::AlignOf => match explicit.first() {
                 Some(&ty) => ty,
                 None => {
                     self.error(
@@ -3033,9 +3047,10 @@ impl<'a> Checker<'a> {
             let value = self.check_expr(&arg.value, param_ty);
             checked.push(value);
         }
-        // `size_of` has no arguments, so the element type has to travel
-        // somewhere; a zero-sized placeholder of that type carries it.
-        if which == Builtin::SizeOf {
+        // Layout queries have no arguments, so the element type has to travel
+        // somewhere; a zero-sized placeholder of that type carries it through
+        // generic substitution.
+        if matches!(which, Builtin::SizeOf | Builtin::AlignOf) {
             checked.push(Expr { ty: elem, kind: ExprKind::Error, span });
         }
         Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })

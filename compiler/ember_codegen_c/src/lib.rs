@@ -853,6 +853,23 @@ impl Emitter<'_> {
                     self.line(&format!("    goto bb{};", next.0));
                 }
             }
+            Terminator::Call {
+                func: FuncRef::Builtin {
+                    which: Builtin::MemForget { .. },
+                    ..
+                },
+                args,
+                next,
+                ..
+            } => {
+                let value = self.operand(&args[0], body);
+                self.line(&format!("    (void)({value}); /* mem.forget */"));
+                if next.0 as usize == index + 1 {
+                    self.line("    /* fallthrough */");
+                } else {
+                    self.line(&format!("    goto bb{};", next.0));
+                }
+            }
             Terminator::Call { func, args, dest, next } => {
                 let call = self.call_expression(func, args, body);
                 let dest_ty = self.place_ty(dest, body);
@@ -939,6 +956,8 @@ impl Emitter<'_> {
                     | Builtin::MemReplace { .. }
                     | Builtin::MemTake { .. }
                     | Builtin::MemSwap { .. }
+                    | Builtin::MemForget { .. }
+                    | Builtin::AlignOf
                     | Builtin::UnsafeCellIntoInner
                     | Builtin::RefCellBorrow
                     | Builtin::RefCellBorrowMut

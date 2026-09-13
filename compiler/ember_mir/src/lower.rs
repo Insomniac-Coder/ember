@@ -959,6 +959,30 @@ impl<'a> Builder<'a> {
         self.current = next;
     }
 
+    /// `[OWN-6]` — consume the operand through ordinary move lowering, then
+    /// deliberately provide no owner that could run its destructor.
+    fn lower_mem_forget(
+        &mut self,
+        dest: Place,
+        value: &'a hir::Expr,
+        elem: Ty,
+        span: ember_span::Span,
+    ) {
+        let value = self.lower_operand(value);
+        self.at(span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::MemForget { elem },
+                arg_ty: elem,
+            },
+            args: vec![value],
+            dest,
+            next,
+        });
+        self.current = next;
+    }
+
     /// `[CELL-1]` — `c.into_inner()`, which takes `owned self`.
     ///
     /// The payload leaves and the cell must not be dropped behind it: the
@@ -1519,6 +1543,26 @@ impl<'a> Builder<'a> {
                 args,
             } => {
                 self.lower_mem_swap(place, &args[0], &args[1], *elem, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MemForget { elem },
+                args,
+            } => {
+                self.lower_mem_forget(place, &args[0], *elem, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::AlignOf,
+                args,
+            } => {
+                let queried = args.last().map(|arg| arg.ty).unwrap_or(expr.ty);
+                let layout: ember_types::LayoutDescriptor = self.types.layout(queried);
+                self.push(StmtKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                        value: layout.align as u128,
+                        ty: expr.ty,
+                    })),
+                });
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::MaybeUninitWrite { inner },
