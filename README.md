@@ -34,11 +34,11 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 188 Rust tests pass;
-- the conformance runner passes across 98 rule directories and 320 Ember
+- all 189 Rust tests pass;
+- the conformance runner passes across 100 rule directories and 330 Ember
   source files;
 - all six adopted-specification gates pass;
-- 73 recorded compiler defects are closed;
+- 80 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open.
 

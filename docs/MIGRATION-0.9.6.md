@@ -175,6 +175,14 @@ same-place mutable overlap. Windows aborting tests no longer invoke an
 interactive WerFault report, so the full conformance runner completes
 non-interactively while preserving `[PAN-1]` termination and panic text.
 
+The subsequent call-diagnostic checkpoint is `8f16a7f`. It retains 189 Rust
+tests and raises executable coverage to 100 conformance directories and 330
+Ember source files. `[FN-2a]` now emits the specified E3027/B10 identity and
+bind-to-local/owner-place repair when a `mut` argument has no mutable place;
+the owner-approved `[FN-1a]` mutable-view-value case remains accepted. B10 now
+has an exact rendered snapshot, a compiling fixed companion, positive and
+negative conformance, and an executable error page.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -233,6 +241,9 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Send` behavior remains blocked only on the later threading-trait machinery,
   an intentional dependency gap rather than a compiler defect.
 - Phase 2 UI/diagnostic snapshots and other long-standing exit work remain.
+  Sixteen of 25 ownership shapes now have executable snapshots; the nine
+  remaining shapes currently await their later semantic producers rather than
+  fabricated test-only diagnostics.
 - `MEM-API-1`: `[OWN-6]` `mem.forget` and Part XV's `align_of` remain after
   the completed `drop`/`take`/`replace`/`swap`/`size_of` subset.
 
