@@ -1,13 +1,13 @@
-# Migration intake — Ember 0.9.6_Hardened_5
+# Migration intake — Ember 0.9.6_Hardened_6
 
 **State as of 2026-09-13.** This file is the implementation and adoption map
 for the current frozen development target:
 
-    docs/spec-source/Ember_v0.9.6_Hardened_5.md
+    docs/spec-source/Ember_v0.9.6_Hardened_6.md
 
 It is not a second specification. The target document governs its own
 requirements; `docs/spec-source/ember-spec.md` remains the repository's sole
-normative source (`0.8.5_Hardened_1`) until H5 passes every adoption gate and
+normative source (`0.8.5_Hardened_1`) until H6 passes every adoption gate and
 the owner explicitly installs it.
 
 ## 1. Authority and custody
@@ -25,7 +25,9 @@ the owner explicitly installs it.
 | `docs/spec-source/as-received/ODR-013_Hash_static_Hasher_parameter.md` | preserved owner-approved static Hasher ruling and transport normalization | SHA-256 `20970F5C72AACD53F33584448A1AEC800A5B0126F2F63CACFFAD281F6EF60D14` |
 | `docs/spec-source/Ember_v0.9.6_Hardened_4.md` | immutable immediate predecessor | 772,027 bytes; 8,319 lines; SHA-256 `D32B945BAE77A612A4664DB9FCDA7F136E741599EBBB3EEC6171C9541DC57B5E` |
 | `docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md` | byte-for-byte owner-approved post-H4 architecture/process RFC materialized by H5 | 27,488 bytes; 1,138 lines; SHA-256 `0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525` |
-| `docs/spec-source/Ember_v0.9.6_Hardened_5.md` | current frozen development target | 785,022 bytes; 8,453 lines; SHA-256 `86DDA4BC12D64BDED32B57BB6C146FD1C8A724A32705E2D1BC4D3048C8AD641B` |
+| `docs/spec-source/Ember_v0.9.6_Hardened_5.md` | immutable immediate predecessor | 785,022 bytes; 8,453 lines; SHA-256 `86DDA4BC12D64BDED32B57BB6C146FD1C8A724A32705E2D1BC4D3048C8AD641B` |
+| `docs/spec-source/as-received/ODR-014_Span_MutSpan_API_completion.md` | byte-for-byte owner-approved Span API ruling; H6 normalizes only shared raw-pointer spelling | 5,228 bytes; 152 lines; SHA-256 `0B2BC1BCB6450F266EC9EC264035C2F6C4A469574591CD8C9BDC8B9421A7058F` |
+| `docs/spec-source/Ember_v0.9.6_Hardened_6.md` | current frozen development target | 797,288 bytes; 8,628 lines; SHA-256 `0B8611BBB52B7A806FE8536CFB832A221A27B7B010E4660F078A33563C548172` |
 
 The owner approved Revision 5 as the design basis, selected the new 0.9.6
 architecture line, and separately approved the final `[ARN-10]` wording. The
@@ -48,8 +50,13 @@ and process changes to be materialized as H5. H4 remains immutable; H5 does
 not change source semantics and is not installed as the repository-normative
 source merely by existing.
 
+ODR-014, ADR-035, and HC-096-06 preserve the subsequent owner-approved Span
+iterator, chunk, and raw-pointer completion. H5 was not edited. H6 normalizes
+the ruling's C/Rust-style `*const T` to Ember's existing shared raw-pointer
+spelling `*T` without changing its selected authority boundary.
+
 Any correction discovered after this freeze becomes
-`0.9.6_Hardened_6`; do not amend H5 in place or silently change its identity.
+`0.9.6_Hardened_7`; do not amend H6 in place or silently change its identity.
 
 ## 2. Change classification
 
@@ -120,9 +127,16 @@ concepts, source-semantic diagnostics, generated view-contract documentation,
 complexity accounting, and separate authority/evidence ledgers. H4 remains the
 immutable diff base. No source-language semantic or public API is added.
 
+The H6 cut completes the inherited Span method surface: four named public,
+non-prelude `@view` iterator/chunk types under `std.collections`; exact shared
+and mutable reborrow behavior; ordinary NLL/provenance/disjointness; all-profile
+panic for zero chunk sizes; and safe raw-pointer extraction with use governed
+by the existing unsafe contract. H5 remains the immutable diff base. No opaque
+return type or parallel iterator, ownership, lifetime, or unsafe model is added.
+
 ## 3. What is implemented now
 
-H5 is a specification target, not an implementation claim. The inherited
+H6 is a specification target, not an implementation claim. The inherited
 repository baseline currently has executable evidence for:
 
 - the existing 0.8.5 parser/type/ownership/borrow/drop subset;
@@ -175,7 +189,7 @@ predecessor joins, then drives diagnostics from that record. The C backend now
 accepts only an opaque `VerifiedMir` that binds the exact body slice and type
 table checked by unconditional structural and view-provenance verification
 after final body pruning. This is an incremental `ARCH-096-1` checkpoint, not
-complete H5 adoption.
+complete H6 adoption.
 
 The subsequent diagnostic/ownership checkpoint is `c520a32`. It raises the
 workspace total to 189 tests and executable coverage to 99 conformance
@@ -312,10 +326,9 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `size_of` subset. Only `[THR-6]`'s later `@must_drop` integration remains.
 
 The four open deviations remain D1–D4. D5 is closed and D6 withdrawn. There is
-no open compiler defect. ODR-011 through ODR-013 are closed; ODR-014 is the one
-open owner API decision and blocks only the unfinished Span iterator/chunk/raw-
-pointer surface. ODR-003 remains deferred editorial work with no semantic
-impact.
+no open compiler defect and no open owner semantic/API decision. ODR-011
+through ODR-014 are closed; ODR-003 remains deferred editorial work with no
+semantic impact.
 
 ## 5. Alternate-target audit result
 
@@ -350,7 +363,7 @@ Running the same audit directly against frozen H2 reports:
 
 H2 adds exactly `[ARN-5a]` through `[ARN-5g]` and `[TST-24]` over H1. Their
 conformance directories and executable Arena-collection matrix now exist under
-the completed `ARN-COLL-1` checkpoint. Other H1–H5 rules still lack complete
+the completed `ARN-COLL-1` checkpoint. Other H1–H6 rules still lack complete
 adoption evidence, so this progress is not evidence that the frozen target has
 been adopted.
 
@@ -425,7 +438,7 @@ proved.
    exact, audited-declared, unknown, generic, separate-compilation, dynamic,
    and hot-reload cases with coupled invalidation and runtime erasure.
 9. **Add the version selector and run adoption validation.** `VER-096-1` may
-   land earlier for testing, but H5 becomes normative only after every gate
+   land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
 
 At each step, use minimal adversarial programs, mutate each new test red once,
@@ -434,23 +447,24 @@ record findings under the five-way classification before changing behavior.
 
 ## 7. Adoption gates
 
-H5 must not replace `ember-spec.md` until all of these are true:
+H6 must not replace `ember-spec.md` until all of these are true:
 
-1. **Custody:** H10, H1, H2, H3, H4, and all as-received owner sources match this
-   record; H5 has exactly one version identity and H4 as its predecessor.
+1. **Custody:** H10, H1, H2, H3, H4, H5, and all as-received owner sources match
+   this record; H6 has exactly one version identity and H5 as its predecessor.
 2. **Specification integrity:** alternate-source rule/index, grammar/fence,
    diagnostic, cross-reference, and version-lineage audits show no unintended
    regression.
-3. **Implementation matrix:** every H5 requirement is marked `SPECIFIED`,
+3. **Implementation matrix:** every H6 requirement is marked `SPECIFIED`,
    `IMPLEMENTED`, `VERIFIED`, or `CONFORMANT` from repository evidence; no
    version label is treated as proof.
-4. **Compiler/runtime:** all required H10, H1, H2, H3, H4, and H5 mechanisms exist, including
+4. **Compiler/runtime:** all required H10, H1, H2, H3, H4, H5, and H6 mechanisms exist, including
    selector support, initialization APIs, canonical facts, summaries,
    invalidation, verification, and runtime erasure.
 5. **Conformance:** every H10/H1/H2 condition remains green, the `[TST-24]`
    collection matrix passes, and `[HASH-1]`–`[HASH-4]` have adversarial
    custom-key, coherence, consuming-finalization, non-retention, and
-   read-only-key evidence.
+   read-only-key evidence; `[TST-25]` covers the complete Span iterator, chunk,
+   reborrow, pointer, zero-size, generic-substitution, and metadata-erasure matrix.
 6. **Simplicity architecture:** derived caches and aggregates are invalidated
    with authoritative facts; unknown facts grant no capability; initialization
    retains `Uninit | Maybe | Init`; no duplicate public interface or parallel
@@ -461,7 +475,7 @@ H5 must not replace `ember-spec.md` until all of these are true:
 8. **Generated output:** C11 inspection proves portable identifiers, all three
    storage orderings, no proof-metadata ABI leakage, and required runtime
    checks/erasures.
-9. **Owner action:** the owner explicitly authorizes installing H5 as
+9. **Owner action:** the owner explicitly authorizes installing H6 as
    `docs/spec-source/ember-spec.md`; generated `docs/spec/` is then regenerated,
    never hand-edited.
 
@@ -469,7 +483,7 @@ H5 must not replace `ember-spec.md` until all of these are true:
 
 Before implementation, read in this order:
 
-1. `docs/spec-source/Ember_v0.9.6_Hardened_5.md`;
+1. `docs/spec-source/Ember_v0.9.6_Hardened_6.md`;
 2. this migration intake and `docs/HANDOFF.md` §0;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`,
    `docs/BACKLOG.md`, `docs/spec-errata.md`, and `docs/OWNER-QUEUE.md`;
@@ -485,11 +499,10 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Resolve **ODR-014**, then complete `SPN-API-1` using the exact owner-selected
-iterator, chunk, mutability, zero-size, and raw-pointer contracts. H5 names the
-surface but does not define enough of its public types and safety behavior for
-an implementation agent to choose without changing accepted programs. Once
-resolved, reuse the existing Iterator, borrow/provenance, checked bounds, and
-raw-pointer machinery. Continue `ARCH-096-1` through the real facts this work
-exposes; do not add opaque-return syntax, a parallel view abstraction, or an
-implementation-defined unsafe boundary.
+Complete `SPN-API-1` using H6's exact owner-selected iterator, chunk,
+mutability, zero-size, and raw-pointer contracts. Reuse the existing Iterator,
+borrow/provenance, checked bounds, and raw-pointer machinery. Preserve ordinary
+NLL and storage-identity disjointness, mutate each adversarial test red once,
+and inspect generated C for metadata erasure. Continue `ARCH-096-1` through
+the real facts this work exposes; do not add opaque-return syntax, a parallel
+view abstraction, or an implementation-defined unsafe boundary.

@@ -1176,3 +1176,40 @@ create H5. It does not authorize a source-language semantic change, alter the
 accepted/rejected program sets, claim implementation/conformance, or install H5
 as `ember-spec.md`. HC-096-05 and the H4-to-H5 classified diff preserve the
 materialization evidence.
+
+## ADR-035 — Span iteration, chunking, and pointer extraction use existing abstractions
+
+**Owner ruling resolving ODR-014, 2026-09-13.** H5 advertised `iter`,
+`iter_mut`, `chunks`, `chunks_mut`, and `as_ptr` across `Span[T]` and
+`MutSpan[T]`, but did not provide enough public type, receiver, failure, or
+unsafe-boundary information to implement those operations without choosing
+accepted-program behavior. The implementation stopped at that boundary.
+
+**Public iterator contract.** `std.collections` publicly exports
+`SpanIter[T]`, `MutSpanIter[T]`, `SpanChunks[T]`, and `MutSpanChunks[T]`; none
+is in the prelude. They are named `@view` types implementing the existing
+associated-type `Iterator` interface. Their items are respectively `ref T`,
+`ref mut T`, `Span[T]`, and `MutSpan[T]`. No opaque return type, compiler-only
+ownership category, or second iterator model is introduced.
+
+**Borrowing and failure.** A shared operation on `MutSpan` creates a shared
+reborrow. `iter_mut` and `chunks_mut` create mutable reborrows and do not
+consume the original view; ordinary NLL permits later reuse. Mutable chunks
+are non-overlapping and retain distinct storage ranges under `[BRW-5]`.
+`chunks(0)` and `chunks_mut(0)` panic through the existing failure mechanism
+in every supported profile and may not become empty, fallible, zero-width, or
+non-progressing iterators.
+
+**Raw pointers.** `Span.as_ptr` and `MutSpan.as_ptr` safely extract `*T`;
+`MutSpan.as_mut_ptr` takes a mutable reborrow and safely extracts `*mut T`.
+Extraction neither accesses memory nor retains or extends the source lifetime.
+Dereference, access, arithmetic, reference construction, aliasing, and validity
+remain obligations of the existing unsafe contract. The owner text's
+`*const T` is normalized to Ember's pre-existing `*T` spelling without a
+semantic change.
+
+**Version and evidence treatment.** H5 remains immutable and is succeeded by
+`0.9.6_Hardened_6`. `[SPN-4]`–`[SPN-10]`, `[TST-25]`, HC-096-06, closed
+ODR-014, and the preserved owner ruling form the authority chain. H6 is a
+frozen development target, not an implementation claim or adopted repository
+source.

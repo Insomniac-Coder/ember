@@ -392,6 +392,31 @@ not create H5; all semantic-preservation and evidence-boundary constraints remai
 in force. H5 becomes the frozen development target without replacing adopted
 `ember-spec.md` or claiming implementation/conformance.
 
+### HC-096-06 — H6 Span/MutSpan public API completion
+
+**Class: OWNER-APPROVED STANDARD-LIBRARY API AND SAFETY-BOUNDARY COMPLETION.**
+The inherited contract advertised `iter`, `iter_mut`, `chunks`, `chunks_mut`,
+and raw-pointer access on Span views, but did not define their concrete return
+types, exact receiver/reborrow modes, zero-size chunk behavior, module identity,
+or extraction-side unsafe boundary. ODR-014 stopped `SPN-API-1` rather than
+letting compiler structure decide those observable semantics.
+
+The owner selected four named public, non-prelude `@view` iterator types under
+`std.collections`, all using the existing associated-type `Iterator` contract.
+Shared forms yield `ref T` or `Span[T]`; mutable forms reborrow rather than
+consume and yield `ref mut T` or disjoint `MutSpan[T]`. Ordinary NLL,
+provenance, storage identity, and `[BRW-5]` remain authoritative. A zero chunk
+size panics through the existing failure path in every profile. Raw-pointer
+extraction is safe, does not retain source storage, and returns shared/mutable
+raw pointers whose use remains governed by the existing unsafe rules.
+
+The preserved owner text spells the shared raw pointer `*const T`. Ember's
+established source spelling is `*T` (`[TYP-7]`, `[UNS-1]`), so H6 normalizes
+only that notation while preserving the selected const authority. H5 remains
+byte-for-byte frozen. H6 adds `[SPN-4]`–`[SPN-10]` and `[TST-25]`, becomes the
+new frozen development target, does not replace adopted `ember-spec.md`, and
+claims no implementation or conformance merely from the completed contract.
+
 ### The four kinds, and what each is allowed to do
 
 The owner set this model on 2026-09-09. Every finding sorts into exactly one

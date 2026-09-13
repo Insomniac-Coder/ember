@@ -21,12 +21,12 @@ The authority levels matter:
 | Role | Current artifact |
 |---|---|
 | Adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), Ember v0.8.5_Hardened_1 |
-| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_5.md`](docs/spec-source/Ember_v0.9.6_Hardened_5.md) |
-| Immediate target predecessor | Ember v0.9.6_Hardened_4, kept immutable |
+| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_6.md`](docs/spec-source/Ember_v0.9.6_Hardened_6.md) |
+| Immediate target predecessor | Ember v0.9.6_Hardened_5, kept immutable |
 | Implementation phase | Phase 2, ownership |
 | Completed phases | Exactly 1 of 9 |
 
-The v0.9.6_Hardened_5 target is not yet adopted as the normative source. It is
+The v0.9.6_Hardened_6 target is not yet adopted as the normative source. It is
 the contract the implementation is working toward. A version is adopted only
 after its implementation, conformance, documentation, and regression gates
 pass and the owner explicitly installs it.
@@ -40,7 +40,7 @@ At the latest verified checkpoint:
 - all six adopted-specification gates pass;
 - 83 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
-- one owner API decision, ODR-014, is open for the remaining Span surface.
+- no owner semantic/API decision is currently open; ODR-014 is closed by H6.
 
 `ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
@@ -94,8 +94,8 @@ The reference compiler currently includes substantial support for:
   including operation ordering and exact occurrence counts.
 
 Important incomplete areas include the remainder of Phase 2 diagnostics and
-rule coverage, the owner-blocked remainder of the Span iterator/chunk/raw-
-pointer API, existential/custom-allocator Box forms, general automatic/derived `Hash` generation and
+rule coverage, H6's now-specified Span iterator/chunk/raw-pointer API,
+existential/custom-allocator Box forms, general automatic/derived `Hash` generation and
 ordinary `Map`/`Set`, the canonical semantic-fact migration, objects and
 managed ownership, effects and comptime, complete FFI, concurrency/data-oriented
 facilities, the interpreter, hot reload, and the final performance and
@@ -224,7 +224,7 @@ The most useful project records are:
 - [`docs/DEFECTS.md`](docs/DEFECTS.md) — compiler defects and verification evidence;
 - [`docs/BACKLOG.md`](docs/BACKLOG.md) — implementation gaps and build order;
 - [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) — questions requiring owner authority;
-- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H5 adoption and implementation map.
+- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H6 adoption and implementation map.
 
 ## Development protocol
 
@@ -242,7 +242,7 @@ override it. Before changing semantics or implementation:
    conformance evidence.
 
 Frozen specification cuts are immutable. A newly discovered specification gap
-after H5 becomes H6; H5 is never edited in place. Generated specification
+after H6 becomes H7; H6 is never edited in place. Generated specification
 parts under `docs/spec/` are never hand-edited.
 
 A passing suite is necessary, not sufficient. Ownership and lifetime work is

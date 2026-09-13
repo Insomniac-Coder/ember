@@ -11,8 +11,8 @@ context for the 0.9.5 intake and original phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..034 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..013 are closed; ODR-003 is deferred editorial; ODR-014 is the one open owner API decision |
+| `docs/DECISIONS.md` | ADR-001..035 |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is currently open |
 
 ---
 
@@ -76,9 +76,11 @@ H3 records the public hashing protocol, and
 `Ember_v0.9.6_Hardened_4.md` closes its callable boundary with static generic
 `H: Hasher` dispatch. The owner subsequently clarified that approval of the
 post-H4 Revision 5 simplicity RFC was intended to produce the next hardened
-target. `Ember_v0.9.6_Hardened_5.md` now materializes that architecture,
+target. `Ember_v0.9.6_Hardened_5.md` materializes that architecture,
 tooling, documentation, and development contract while keeping H4 immutable.
-H5 is the frozen development target, but not yet the normative repository
+The owner then closed ODR-014's remaining Span iterator, chunk, and raw-pointer
+boundary in `Ember_v0.9.6_Hardened_6.md`, keeping H5 immutable. H6 is the
+frozen development target, but not yet the normative repository
 source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied, and it requires one shared
@@ -135,7 +137,7 @@ the caveat.*
 ## 3. Versioning
 
 The adopted normative document is **v0.8.5_Hardened_1**; the frozen development
-target is **v0.9.6_Hardened_5**. Two numbers move independently:
+target is **v0.9.6_Hardened_6**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
@@ -154,7 +156,8 @@ adoption by itself.
 `docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the frozen adopted snapshot.
 The current development lineage first diffed H1 against immutable H10, H2
 against immutable H1, H3 against immutable H2, H4 against immutable H3, and
-H5 against immutable H4; any next 0.9.6 hardening diffs against frozen H5, never
+H5 against immutable H4, and H6 against immutable H5; any next 0.9.6 hardening
+diffs against frozen H6, never
 against an as-received file.
 `Ember_v0.8.4_Hardened_1.md` and `Ember_v0.8.4_Hardened_2.md` are kept as prior
 baselines. The working source and the current snapshot are **identical** right
@@ -162,8 +165,8 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.6_Hardened_5`, per the owner's explicit
-materialization of the post-H4 simplicity RFC. H4 is its immediate predecessor;
+The current development target is `0.9.6_Hardened_6`, per the owner's explicit
+ODR-014 Span API completion. H5 is its immediate predecessor;
 H10 remains the
 immutable architecture-line predecessor. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
@@ -174,9 +177,10 @@ feature itself is the owner-selected language change. H1 preserves 0.9.5's
 accepted/rejected ordinary-source sets while selecting the consolidated
 reference-compiler/conformance architecture. H2 completes the Arena-backed
 container contract, H3 completes the public hashing protocol, H4 selects
-static generic Hasher dispatch, and H5 binds the approved post-H4 simplicity
-architecture/process contract without changing source semantics. Any later
-correction must become `0.9.6_Hardened_6`, not an in-place H5 edit.
+static generic Hasher dispatch, H5 binds the approved post-H4 simplicity
+architecture/process contract without changing source semantics, and H6 fixes
+the public Span iterator/chunk/raw-pointer contract. Any later correction must
+become `0.9.6_Hardened_7`, not an in-place H6 edit.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -230,16 +234,16 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Box complete; next task is blocked on the remaining Span API boundary
+## 5. Box complete; Span API completion is the exact next implementation task
 
-**Exact next task: resolve ODR-014, then complete `SPN-API-1` against the owner-
-selected signatures.** H5 names `iter`, `iter_mut`, `chunks`, and `as_ptr` but
-does not fix their complete public types, mutable counterparts, zero-size chunk
-behavior, or raw-pointer safety boundary. Do not invent those accepted-program
-and safety details in the compiler. Once resolved, reuse ordinary Iterator,
-borrow/provenance, bounds, and raw-pointer machinery; do not create a parallel
-view model. Keep the first `ARCH-096-1` boundary from `66d0d43` load-bearing
-and continue that migration when a real producer and consumer are available.
+**Exact next task: complete `SPN-API-1` against H6's owner-selected signatures.**
+Implement the four named non-prelude `std.collections` iterator/chunk view
+types, shared and mutable reborrow behavior, ordinary NLL/conflict checks,
+all-profile zero-size panic, and safe `as_ptr`/`as_mut_ptr` extraction with
+unsafe-only pointer use. Reuse ordinary Iterator, borrow/provenance, bounds,
+and raw-pointer machinery; do not create a parallel view model. Keep the first
+`ARCH-096-1` boundary from `66d0d43` load-bearing and continue that migration
+when a real producer and consumer are available.
 
 **`Cell[T]` and `RefCell[T]` are both built.** The remaining buildable
 Cell/RefCell coverage closed on 2026-09-12: `[CELL-6a]` now runs both fallible
@@ -388,7 +392,7 @@ D-028 (a loop move as O1 not O3), D-034 (two mutable indices as `E3021` not
 `E3022`). `[DIA-7a]` makes the shape part of the conformance contract, so a
 snapshot per shape is what stops the next one.
 
-## 7. Open, and the owner's to answer
+## 7. Owner queue status
 
 **Everything that stood here on 2026-09-09 has been ruled on or closed.**
 ERR-041 and ERR-043 were decided by the owner on 2026-09-10; ERR-042 was
@@ -396,8 +400,8 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-013 are closed. ODR-003 is deferred editorial work. **ODR-014 is
-open and blocks only the unfinished Span iterator/chunk/raw-pointer surface.**
+through ODR-014 are closed. ODR-003 is deferred editorial work. **No owner
+semantic/API decision is currently open.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
@@ -443,11 +447,10 @@ open and blocks only the unfinished Span iterator/chunk/raw-pointer surface.**
   `fn hash[H: Hasher](self, mut h: H)`: `H` is inferred from the concrete
   context and normally monomorphized, `DefaultHasher implements Hasher`, and
   `Hash.hash` introduces no implicit or mandatory dynamic dispatch.
-* **ODR-014 — OPEN.** H5 names the remaining Span operations without fixing
-  their complete iterator/chunk types, mutable variants, zero-size behavior,
-  module/prelude identity, or raw-pointer safety boundary. These affect
-  accepted programs and safety. Obtain an owner ruling and cut the next
-  hardened target before implementing `SPN-API-1` further.
+* **ODR-014 — CLOSED.** H6 defines four named public, non-prelude
+  `std.collections` iterator/chunk `@view` types, exact shared/mutable reborrow
+  and `Iterator.Item` contracts, all-profile zero-size panic, safe raw-pointer
+  extraction, and unsafe-only pointer use. `SPN-API-1` is now unblocked.
 
 * **Historical tooling lesson from ODR-002.** Six valid rules (`[TYP-26]`,
   `[IFC-2]`, `[HND-2]`, `[GPU-7]`, `[VER-7]`, `[CTL-3a]`) used structural forms
