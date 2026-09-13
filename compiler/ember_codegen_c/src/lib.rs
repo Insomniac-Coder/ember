@@ -808,6 +808,51 @@ impl Emitter<'_> {
             Terminator::Unreachable => {
                 self.line("    EMBER_UNREACHABLE();");
             }
+            Terminator::Call {
+                func: FuncRef::Builtin {
+                    which: Builtin::MemReplace { elem },
+                    ..
+                },
+                args,
+                dest,
+                next,
+            } => {
+                let target = self.operand(&args[0], body);
+                let value = self.operand(&args[1], body);
+                let dest = self.place_in(dest, body);
+                let elem = self.c_type(*elem);
+                self.line(&format!("    {dest} = *(({elem}*)({target}));"));
+                self.line(&format!("    *(({elem}*)({target})) = {value};"));
+                if next.0 as usize == index + 1 {
+                    self.line("    /* fallthrough */");
+                } else {
+                    self.line(&format!("    goto bb{};", next.0));
+                }
+            }
+            Terminator::Call {
+                func: FuncRef::Builtin {
+                    which: Builtin::MemSwap { elem },
+                    ..
+                },
+                args,
+                next,
+                ..
+            } => {
+                let left = self.operand(&args[0], body);
+                let right = self.operand(&args[1], body);
+                let elem = self.c_type(*elem);
+                let temp = format!("_ember_swap_{index}");
+                self.line(&format!(
+                    "    {{ {elem} {temp} = *(({elem}*)({left})); \
+                     *(({elem}*)({left})) = *(({elem}*)({right})); \
+                     *(({elem}*)({right})) = {temp}; }}"
+                ));
+                if next.0 as usize == index + 1 {
+                    self.line("    /* fallthrough */");
+                } else {
+                    self.line(&format!("    goto bb{};", next.0));
+                }
+            }
             Terminator::Call { func, args, dest, next } => {
                 let call = self.call_expression(func, args, body);
                 let dest_ty = self.place_ty(dest, body);
@@ -891,6 +936,9 @@ impl Emitter<'_> {
                     | Builtin::CellUpdate
                     | Builtin::CellUpdateDefault { .. }
                     | Builtin::CellTake { .. }
+                    | Builtin::MemReplace { .. }
+                    | Builtin::MemTake { .. }
+                    | Builtin::MemSwap { .. }
                     | Builtin::UnsafeCellIntoInner
                     | Builtin::RefCellBorrow
                     | Builtin::RefCellBorrowMut

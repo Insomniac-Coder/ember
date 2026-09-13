@@ -962,7 +962,12 @@ fn check_point(
             }
 
             let name = place_name(body, types, loan_place);
-            let (code, message) = match (loan_mutable, access) {
+            // A two-phase reservation behaves as shared while its remaining
+            // arguments are evaluated, but it is still a mutable borrow for
+            // diagnostic identity. If another mutable argument overlaps it,
+            // the user wrote two mutable borrows of one place (E3022/B1), not
+            // a shared-plus-mutable overlap (E3021/B3).
+            let (code, message) = match (loan.capability.is_mut(), access) {
                 (true, Access::Borrow { mutable: true }) => (
                     codes::E3022,
                     format!("`{name}` is already mutably borrowed"),
@@ -1017,7 +1022,7 @@ fn check_point(
             } else {
                 (code, message)
             };
-            let kind = if loan_mutable { "mutable " } else { "" };
+            let kind = if loan.capability.is_mut() { "mutable " } else { "" };
             let indexed_conflict = code == codes::E3022
                 && loan_place
                     .projection
@@ -1027,6 +1032,7 @@ fn check_point(
                     .projection
                     .iter()
                     .any(|p| matches!(p, Projection::Index(_) | Projection::ConstIndex(_)));
+            let exact_mutable_conflict = code == codes::E3022 && loan_place == place;
             let owner = body
                 .local(loan_place.local)
                 .name
@@ -1046,33 +1052,38 @@ fn check_point(
                         bundled,
                         method_root.as_deref(),
                         indexed_conflict,
+                        exact_mutable_conflict,
                     ) {
-                        (_, true, _, _, _) => String::from(
+                        (_, true, _, _, _, _) => String::from(
                             "allocate from `scope` instead, or take this allocation before opening the scope",
                         ),
                         // `[DIA-7a]` shape B13's help, which is a different fix
                         // from B3's: the use keeping the loan alive may be of
                         // the *other* field, so shortening it is no answer.
-                        (_, _, true, _, _) => String::from(
+                        (_, _, true, _, _, _) => String::from(
                             "pass the two views as separate parameters rather than bundling \
                              them; or copy the shorter-lived data into an owned field",
                         ),
                         // `[DIA-7a]` shape B8's help: the call takes all of
                         // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, _, Some(_), _) => String::from(
+                        (_, _, _, Some(_), _, _) => String::from(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
-                        (_, _, _, _, true) => format!(
+                        (_, _, _, _, true, _) => format!(
                             "use `{owner}.split_at_mut(k)` to obtain two non-overlapping mutable \
                              spans; `chunks_mut`, `iter_mut`, and `columns_mut` cover other \
                              structural access patterns"
                         ),
-                        (Some(name), _, _, _, _) => format!(
+                        (_, _, _, _, _, true) => String::from(
+                            "use one mutable access rather than borrowing the same place twice; \
+                             use `split_at_mut` when the intended operands are disjoint parts of one owner"
+                        ),
+                        (Some(name), _, _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _, _, _) => format!(
+                        (None, _, _, _, _, _) => format!(
                             "bind the borrow of `{name}` to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name

@@ -2811,6 +2811,130 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[OWN-6]` — `std.mem.take`, `replace`, and `swap` are the sanctioned
+    /// operations that mutate a place while transferring its old ownership
+    /// without first dropping it. They are compiler-known while `std.mem` is
+    /// staged, but their operands still use ordinary place, mutability,
+    /// generic-inference, `Default`, borrow, and move rules.
+    fn synth_mem_ownership_builtin(
+        &mut self,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Option<Expr> {
+        let resolved = self.resolve_name(name);
+        let operation = if resolved.is("std.mem.replace") {
+            "replace"
+        } else if resolved.is("std.mem.take") {
+            "take"
+        } else if resolved.is("std.mem.swap") {
+            "swap"
+        } else {
+            return None;
+        };
+
+        if explicit.len() > 1 {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`mem.{operation}` takes one type argument, found {}", explicit.len()),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let arity = if operation == "replace" || operation == "swap" { 2 } else { 1 };
+        if args.len() != arity {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`mem.{operation}` takes {arity} arguments, found {}", args.len()),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+
+        let first = match explicit.first().copied() {
+            Some(expected) => self.check_expr(&args[0].value, expected),
+            None => self.synth_committed(&args[0].value),
+        };
+        if first.ty == self.common.error {
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        if !is_place(&first.kind) {
+            self.error(
+                codes::E2140,
+                args[0].value.span,
+                format!("`mem.{operation}` needs a mutable place as its first argument"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let elem = explicit.first().copied().unwrap_or(first.ty);
+        let first = self.pass_receiver(first, Mode::Mut, args[0].value.span);
+
+        let result = match operation {
+            "replace" => {
+                let value = self.check_expr(&args[1].value, elem);
+                Expr {
+                    ty: elem,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::MemReplace { elem },
+                        args: vec![first, value],
+                    },
+                    span,
+                }
+            }
+            "take" => {
+                let shown = self.types.display(elem);
+                let Some(constructor) = self.standard_associated_capability(
+                    elem,
+                    "std.core.Default",
+                    "default",
+                ) else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2040,
+                            span,
+                            format!(
+                                "`{shown}` does not implement `std.core.Default`, which `T` requires"
+                            ),
+                        )
+                        .help("implement `std.core.Default` or use `mem.replace(place, value)`")
+                        .note("`mem.take` must leave an initialized value in the source place [OWN-6]"),
+                    );
+                    return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                };
+                Expr {
+                    ty: elem,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::MemTake { elem, constructor },
+                        args: vec![first],
+                    },
+                    span,
+                }
+            }
+            _ => {
+                let second = self.check_expr(&args[1].value, elem);
+                if !is_place(&second.kind) {
+                    self.error(
+                        codes::E2140,
+                        args[1].value.span,
+                        "`mem.swap` needs a mutable place as its second argument",
+                    );
+                    return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                }
+                let second = self.pass_receiver(second, Mode::Mut, args[1].value.span);
+                Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::MemSwap { elem },
+                        args: vec![first, second],
+                    },
+                    span,
+                }
+            }
+        };
+        Some(result)
+    }
+
     /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
     /// `read[T]`, `write[T]` and `size_of[T]`. Everything but `size_of` needs
     /// an `unsafe` block (`[UNS-1]`); these are what the collections will be
@@ -2822,6 +2946,9 @@ impl<'a> Checker<'a> {
         explicit: &[Ty],
         span: Span,
     ) -> Option<Expr> {
+        if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
+            return Some(built);
+        }
         let usize_ty = self.common.usize;
         let void = self.common.void;
         let (which, arity, needs_unsafe) = if name.is("alloc") {
@@ -8024,6 +8151,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         explicit: Vec<Ty>,
         span: Span,
     ) -> Expr {
+        // Module-qualified calls (`import std.mem; mem.take(...)`) are parsed
+        // as method calls on a namespace and therefore do not pass through
+        // `synth_call`. Give them the same compiler-known memory-operation
+        // resolution as an unqualified imported name before instantiating the
+        // source-backed public declaration.
+        if let Some(built) = self.synth_memory_builtin(qualified, args, &explicit, span) {
+            return built;
+        }
         let Some(&def) = self.fn_ids.get(&qualified) else {
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };

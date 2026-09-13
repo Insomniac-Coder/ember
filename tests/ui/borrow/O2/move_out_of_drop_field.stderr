@@ -1,0 +1,10 @@
+error[E3010]: cannot move a field out of `drop`'s `mut self`
+  --> tests/ui/borrow/O2/move_out_of_drop_field.em:17:15
+   |
+17 |         old = self.item
+   |               ^^^^^^^^^ moved out here
+   |
+   = help: use `mem.take`, `mem.replace` or `swap` to leave a value in its place
+   = note: a `drop` method's `mut self` may not move fields out [DRP-5]; the field is dropped again after `drop` returns [EXP-6]
+
+error: could not compile due to 1 error(s)

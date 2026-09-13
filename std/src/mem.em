@@ -13,3 +13,15 @@ pub struct UnsafeCell[T]:
 ## ordinary scope-end destruction then runs its destructor exactly once.
 pub fn drop[T](owned value: T):
     pass
+
+## `[OWN-6]`'s `take`, `replace`, and `swap` remain compiler-known while the
+## standard library is staged; calls through this public module still use
+## ordinary generic inference, mutable-place checks, borrows, and moves.
+pub fn replace[T](mut place: T, owned value: T) -> T:
+    pass
+
+pub fn take[T: Default](mut place: T) -> T:
+    pass
+
+pub fn swap[T](mut a: T, mut b: T):
+    pass

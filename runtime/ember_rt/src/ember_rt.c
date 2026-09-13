@@ -460,6 +460,14 @@ static EMBER_NORETURN void panic_with(const char* msg, size_t len, ember_loc loc
         g_config.on_panic(msg, len);
     }
     fflush(stderr);
+#if defined(_WIN32)
+    /* `abort()` still terminates with the `[PAN-1]` status, but the UCRT's
+     * default `_CALL_REPORTFAULT` behavior opens a Windows Error Reporting
+     * dialog. That leaves non-interactive conformance runners waiting after
+     * the process has already panicked. Ember prints its own diagnostic above,
+     * so disable only the OS report hook before terminating. */
+    _set_abort_behavior(0, _CALL_REPORTFAULT);
+#endif
     abort();
 }
 

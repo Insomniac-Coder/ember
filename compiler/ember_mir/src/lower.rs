@@ -863,6 +863,102 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// `[OWN-6]` — replace a mutably borrowed place without dropping its old
+    /// value. The mutable reference is explicit MIR evidence, so ordinary
+    /// loan analysis rejects overlap with any live borrow; the backend's
+    /// builtin terminator performs the ownership exchange atomically from the
+    /// language's point of view.
+    fn lower_mem_replace(
+        &mut self,
+        dest: Place,
+        target: &'a hir::Expr,
+        value: &'a hir::Expr,
+        elem: Ty,
+        span: ember_span::Span,
+    ) {
+        // Function arguments evaluate left to right: resolve and borrow the
+        // destination place before evaluating the owned replacement.
+        let target = self.lower_operand(target);
+        let value = self.lower_operand(value);
+        self.at(span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::MemReplace { elem },
+                arg_ty: elem,
+            },
+            args: vec![target, value],
+            dest,
+            next,
+        });
+        self.current = next;
+    }
+
+    /// `[OWN-6]` — `mem.take` is `mem.replace(place, T.default())`, with the
+    /// replacement fully constructed while the source remains initialized.
+    fn lower_mem_take(
+        &mut self,
+        dest: Place,
+        target: &'a hir::Expr,
+        elem: Ty,
+        constructor: hir::DefId,
+        span: ember_span::Span,
+    ) {
+        let target = self.lower_operand(target);
+        self.at(span);
+        let replacement = self.temp(elem, span);
+        self.push(StmtKind::StorageLive(replacement));
+        let after_default = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Direct {
+                symbol: self.program.function(constructor).symbol.clone(),
+            },
+            args: Vec::new(),
+            dest: Place::local(replacement),
+            next: after_default,
+        });
+        self.current = after_default;
+
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::MemReplace { elem },
+                arg_ty: elem,
+            },
+            args: vec![target, self.read(Place::local(replacement), elem)],
+            dest,
+            next,
+        });
+        self.current = next;
+    }
+
+    /// `[OWN-6]` — exchange two mutable places. Both references remain call
+    /// arguments, so the ordinary borrow checker must prove that the two
+    /// exclusive loans do not overlap before the backend may exchange bytes.
+    fn lower_mem_swap(
+        &mut self,
+        dest: Place,
+        left: &'a hir::Expr,
+        right: &'a hir::Expr,
+        elem: Ty,
+        span: ember_span::Span,
+    ) {
+        let left = self.lower_operand(left);
+        let right = self.lower_operand(right);
+        self.at(span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::MemSwap { elem },
+                arg_ty: elem,
+            },
+            args: vec![left, right],
+            dest,
+            next,
+        });
+        self.current = next;
+    }
+
     /// `[CELL-1]` — `c.into_inner()`, which takes `owned self`.
     ///
     /// The payload leaves and the cell must not be dropped behind it: the
@@ -1405,6 +1501,24 @@ impl<'a> Builder<'a> {
                     *pair,
                     expr.span,
                 );
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MemReplace { elem },
+                args,
+            } => {
+                self.lower_mem_replace(place, &args[0], &args[1], *elem, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MemTake { elem, constructor },
+                args,
+            } => {
+                self.lower_mem_take(place, &args[0], *elem, *constructor, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MemSwap { elem },
+                args,
+            } => {
+                self.lower_mem_swap(place, &args[0], &args[1], *elem, expr.span);
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::MaybeUninitWrite { inner },
