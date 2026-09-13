@@ -238,14 +238,13 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Callable declaration contracts are in EMIF; member declarations are next
+## 5. Callable declaration contracts cover current method forms; non-direct work is next
 
-**Exact next task: extend declaration-first canonical signature collection to
-visible members, generic methods, interface members, and extensions before
-using EMIF identity for safe incremental reuse.** Continue in the order in
-`MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable class/thread/
-effect diagnostic shapes, add placeholder semantic facts, or attempt a
-big-bang rewrite.
+**Exact next task: continue the non-direct and remaining multi-region
+conformance matrix before adding interface sections for layouts, effects, or
+inline eligibility.** Continue in the order in `MIGRATION-0.9.6.md`. Do not
+fabricate still-unreachable class/thread/effect diagnostic shapes, add
+placeholder semantic facts, or attempt a big-bang rewrite.
 
 **The direct callable-summary slice is complete at `90059c8`.** Building on
 `c913fbd`, analysis infers exact result-field provenance and parameter-field
@@ -310,12 +309,22 @@ top-level body receives its independently verified summary in the same atom.
 Changing a public generic bound invalidates an unchanged importer's cache key.
 Private body changes retain the existing local-only behavior.
 
+`6e37063` completes that declaration-first path for every method form the
+current compiler lowers and moves `EMIF` to schema 5. Visible struct/enum
+members, generic struct members, interface members, and extensions now carry
+source contracts. Generic owner contracts retain a canonical symbolic receiver
+identity and owner binders before method binders; interface `Self` is
+interface-scoped. Concrete direct bodies attach independently verified
+metadata, whereas generic/interface declarations retain `metadata = None`.
+Schema-4 artifacts are incompatible tooling data and invalidate before use;
+the regression proves a private member body change remains outside the helper
+interface and importer cache keys.
+
 This is still not complete public-interface or incremental-compilation work:
-visible members/generic methods/interface members/extensions remain on the
-earlier body-derived bridge, callable types nested inside a type identity still
-need their own mode-preserving representation, and layouts, effects, inline
-eligibility, non-direct targets, and actual reuse have no approved producer /
-consumer path yet.
+class-member lowering is not implemented, callable types nested inside a type
+identity still need their own mode-preserving representation, and layouts,
+effects, inline eligibility, non-direct targets, and actual reuse have no
+approved producer / consumer path yet.
 
 **D-116 is fixed in the same checkpoint.** `[LT-21]` field replacement now
 uses a forward point-sensitive value/provenance fixpoint: an assignment

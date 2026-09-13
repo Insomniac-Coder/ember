@@ -365,6 +365,19 @@ round-tripped. Existing visible-member records remain body-derived pending the
 same source-declaration collector for members, generic methods, interfaces,
 and extensions. Layout/effect/inline sections and safe reuse remain open.
 
+`6e37063` completes that collector for every method form currently lowered and
+advances `EMIF` to schema 5, without adopting H6 or changing language
+semantics. Visible struct/enum members, generic struct members, interface
+members, and extensions now serialize declaration-first contracts. Generic
+owner contracts use canonical symbolic receiver identity and retain owner
+binder facts before method binders; interface `Self` is interface-scoped.
+Concrete direct bodies attach independently verified callable metadata, while
+generic and interface declarations use no fabricated summary. Schema-4 cache
+records invalidate before use. The regression proves a generic-owner-bound
+change affects the helper interface and an unchanged importer, while a private
+member-body change remains local. Class-member lowering is not currently
+implemented; layouts/effects/inline sections and safe reuse remain open.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -569,12 +582,13 @@ proved.
    direct method/generic/monomorphized-interface cases, and closes `[LT-21]`
    point-sensitive replacement. `9ade1d0` adds the first real interface/cache
    artifact and `[LT-40]` identity invalidation. `7bcca7f` makes its callable
-   section import-precise, and `6ad9834` adds declaration-first top-level
-   signatures and generic bounds. Next extend the same source declaration
-   path to visible members/generic methods/interfaces/extensions before using
-   it for safe reuse, then cover audited-declared, unknown,
-   separate-compilation, dynamic, hot-reload, escape/storage, and remaining
-   verifier cases while preserving runtime erasure.
+   section import-precise, `6ad9834` adds declaration-first top-level
+   signatures and generic bounds, and `6e37063` completes source declaration
+   contracts for every method form currently lowered. Next cover
+   audited-declared, unknown, separate-compilation, dynamic, hot-reload,
+   escape/storage, and remaining verifier cases while preserving runtime
+   erasure. Class-member lowering and nested callable mode-preserving type
+   identity remain separate prerequisites; do not publish placeholders.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -637,12 +651,11 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Extend `6ad9834`'s declaration-first EMIF contract to visible members,
-generic methods, interface members, and extensions, then prove that a member
-generic-bound or signature change invalidates importers while a private member
-body change does not. Preserve conservative all-slot behavior for unknown calls
-and ordinary E3021 for precise matching-field conflicts; E3064 remains a
-reserved historical identity rather than target behavior. Do not start cache
-reuse, layouts/effects/inline sections, or a big-bang rewrite as part of that
-slice. Then extend the non-direct, escape/storage/enum, FFI/coroutine, and
-hot-reload matrices without leaking proof metadata into runtime layout.
+Continue the non-direct, escape/storage/enum, FFI/coroutine, and hot-reload
+matrices after `6e37063`'s completed source declaration boundary. Preserve
+conservative all-slot behavior for unknown calls and ordinary E3021 for precise
+matching-field conflicts; E3064 remains a reserved historical identity rather
+than target behavior. Treat class-member lowering and nested callable
+mode-preserving type identity as distinct later prerequisites. Do not start
+cache reuse, layouts/effects/inline sections, or a big-bang rewrite as part of
+this slice, and do not leak proof metadata into runtime layout.

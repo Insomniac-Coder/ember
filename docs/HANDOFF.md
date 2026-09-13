@@ -288,11 +288,11 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `6ad9834` (`Cache resolved callable declarations in EMIF`), following `7bcca7f` (import-visible callable sections), `9ade1d0` (validated EMIF artifact/identity), `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
-| Recent commits | `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | Clean immediately after source checkpoint `6ad9834`; this handoff synchronization is documentation-only. Always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | `6e37063` (`Cache visible member declarations in EMIF`), following `6ad9834` (top-level declaration contracts), `7bcca7f` (import-visible callable sections), `9ade1d0` (validated EMIF artifact/identity), `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
+| Recent commits | `6e37063` schema-5 declaration-first contracts for current lowered member forms · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Working tree | Clean immediately after source checkpoint `6e37063`; this handoff synchronization is documentation-only. Always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** |
-| `cargo test --workspace` | **205 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
+| `cargo test --workspace` | **206 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 123 top-level rule directories, 412 `.em` files including support modules; the full conformance runner is green |
 | Ledgers | 86 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
@@ -919,10 +919,11 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Extend `6ad9834`'s declaration-first EMIF contract to visible members,
-generic methods, interface members, and extensions before using its BLAKE3
-identity for safe incremental reuse; §0.54 records the exact boundary. Then
-continue the non-direct and remaining multi-region conformance matrix.**
+**Continue the non-direct and remaining multi-region conformance matrix after
+`6e37063` completed declaration-first contracts for every method form the
+current compiler lowers; §0.55 records the exact boundary. Do not begin safe
+reuse, layouts/effects/inline sections, or class-member lowering as part of
+that slice.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -939,8 +940,9 @@ consume it, independently rederives and verifies it before code generation,
 and closes `[LT-21]` field replacement through point-sensitive provenance;
 §0.51 records the exact in-MIR boundary, §0.52 records its serialized
 `EMIF`/cache continuation, §0.53 narrows that callable section to import-
-visible records, and §0.54 adds declaration-first top-level signatures and
-generic bounds. Keep architecture migration incremental through real producers
+visible records, §0.54 adds declaration-first top-level signatures and generic
+bounds, and §0.55 completes source contracts for the method forms currently
+lowered. Keep architecture migration incremental through real producers
 and consumers; do not create placeholder facts or attempt a big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
@@ -3184,6 +3186,50 @@ runtime metadata erasure, whole-program rechecking, and conservative behavior.
 Do not begin cache reuse, layouts/effects/inline sections, or new language
 semantics as part of that slice.
 
+### 0.55 Resolved visible member declaration contracts — 2026-09-13
+
+Implementation commit `6e37063` completes the exact next slice from §0.54
+without changing the adopted specification, frozen H6 target, or language
+semantics. `EMIF` is now schema 5. Schema 4 records are structurally valid but
+incomplete for current source contracts, so they are incompatible tooling data
+and invalidate before use; malformed, noncanonical, stale, or contract-
+disagreeing schema-5 records remain hard compiler errors.
+
+The declaration-first collector now covers every method form the current
+compiler lowers: visible struct/enum members, generic struct members,
+interface members, and visible extensions. A generic owner contract uses a
+canonical source identity such as `Owner[$P0]` and carries owner generic
+binders before method generic binders, so a specialization cannot masquerade
+as the public declaration. An interface member uses an interface-scoped `Self`
+identity. These source identities are deliberately distinct from emitted C
+method symbols. Concrete direct bodies attach independently verified callable
+metadata to the same contract; generic and interface declarations retain
+`metadata = None` rather than fabricated MIR provenance.
+
+The regression includes a visible generic owner/member, a visible extension,
+a private extension, and a visible interface member. It proves the generic
+owner contract preserves both binder layers, a direct extension body attaches
+metadata, interface `Self` has source-level identity without a fake body, a
+generic-owner-bound change alters the helper interface and an unchanged
+importer key, and a private member-body change alters neither. The current
+class-member pipeline is not lowered by this compiler, so no declaration entry
+is fabricated for it; that is a separate implementation prerequisite.
+
+The complete workspace is green at 206 Rust tests, 123 conformance directories,
+and 412 Ember sources; debug/release builds are warning-free and all six
+adopted-source gates pass. The only test-build warning remains the pre-existing
+non-snake-case lexer test-name style warning. This remains short of full
+`[BLD-2]`: nested callable type identity, layouts, effects, inline eligibility,
+non-direct targets, actual item/generic reuse, and the remaining multi-region
+matrix still need real producers and consumers.
+
+**Exact next task:** continue the non-direct and remaining multi-region
+conformance matrix. Preserve the schema-5 hard validation boundary, whole-
+program rechecking, conservative unknown behavior, runtime metadata erasure,
+and the distinct ordinary-assignment, `Cell.set`, and `MaybeUninit.write`
+orderings. Do not begin cache reuse, layouts/effects/inline sections,
+class-member lowering, or new language semantics as part of that slice.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -3208,10 +3254,12 @@ result/access summaries and E3065/B14; §0.51 persists and verifies those
 summaries in MIR while closing D-116's field-replacement defect; §0.52
 serializes/validates them in the first real `EMIF` cache artifact and couples
 dependency summary changes to `[LT-40]` cache identity; §0.53 scopes the
-callable section to import-visible `pub`/`pub(package)` records; and §0.54
-adds declaration-first top-level signatures and generic bounds. Visible member
-declarations, layouts/effects/inline sections, actual reuse, non-direct
-dispatch, and the remaining multi-region matrix precede target adoption.
+callable section to import-visible `pub`/`pub(package)` records; §0.54 adds
+declaration-first top-level signatures and generic bounds; and §0.55 completes
+source contracts for every method form currently lowered. Class-member
+lowering, nested callable mode-preserving type identity, layouts/effects/inline
+sections, actual reuse, non-direct dispatch, and the remaining multi-region
+matrix precede target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
 count (§0.11). Report and checkpoint each task; continue until a genuine owner

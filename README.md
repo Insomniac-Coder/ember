@@ -34,7 +34,7 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 205 Rust tests pass;
+- all 206 Rust tests pass;
 - the conformance runner passes across 123 rule directories and 412 Ember
   source files;
 - all six adopted-specification gates pass;
@@ -95,10 +95,18 @@ schema 4: import-visible top-level declarations now carry canonical resolved
 parameter/result types, `borrowed`/`mut`/`owned` modes, `@borrows`, unsafe/ABI
 status, and generic bounds (including implicit Callable bounds). This includes
 an uninstantiated public generic, whose declaration is now cached without
-pretending it has an emitted MIR body. Visible-member declarations still use
-the existing body-derived bridge; layouts, effects, inline eligibility,
-item-granular reuse, non-direct dispatch, and the complete escape/storage
-matrix remain incomplete; unknown calls stay conservative.
+pretending it has an emitted MIR body. `6e37063` advances the artifact to
+schema 5 and adds declaration-first source contracts for every method form the
+current compiler lowers: visible struct/enum members, generic struct members,
+interface members, and extensions. Generic owners use a canonical symbolic
+receiver identity and carry owner binders before method binders; interface
+`Self` is likewise interface-scoped. Concrete direct bodies attach their
+independently verified metadata, while generic/interface declarations retain
+`metadata = None` rather than a fabricated summary. Schema-4 cache records
+invalidate before use, and a private member remains local. Class-member
+lowering, layouts, effects, inline eligibility, item-granular reuse,
+non-direct dispatch, and the complete escape/storage matrix remain incomplete;
+unknown calls stay conservative.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
