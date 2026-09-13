@@ -114,7 +114,10 @@ pub struct Place {
 
 impl Place {
     pub fn local(local: LocalId) -> Place {
-        Place { local, projection: Vec::new() }
+        Place {
+            local,
+            projection: Vec::new(),
+        }
     }
 
     pub fn field(mut self, index: usize) -> Place {
@@ -166,7 +169,10 @@ pub enum Projection {
 /// locals, so this is suitable for an interface artifact.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ResultRegionSource {
-    View { argument: usize, projection: Vec<Projection> },
+    View {
+        argument: usize,
+        projection: Vec<Projection>,
+    },
     /// `[LT-4a]`'s narrow non-view Arena provenance source.
     Arena { argument: usize },
 }
@@ -272,7 +278,11 @@ impl CallableRegionMetadata {
             }
             result.fields = merged;
         }
-        let mut metadata = Self { access, result, fingerprint: 0 };
+        let mut metadata = Self {
+            access,
+            result,
+            fingerprint: 0,
+        };
         metadata.fingerprint = metadata.compute_fingerprint();
         metadata
     }
@@ -327,7 +337,10 @@ impl CallableRegionMetadata {
                     hash.usize(field.sources.len());
                     for source in &field.sources {
                         match source {
-                            ResultRegionSource::View { argument, projection } => {
+                            ResultRegionSource::View {
+                                argument,
+                                projection,
+                            } => {
                                 hash.byte(0);
                                 hash.usize(*argument);
                                 hash.projections(projection);
@@ -342,6 +355,342 @@ impl CallableRegionMetadata {
             }
         }
         hash.finish()
+    }
+
+    /// Encode the canonical `[MIR-REG-1]` summary for a module interface
+    /// artifact. This deliberately uses a small explicit format rather than
+    /// Rust object serialization: interface artifacts cross compiler runs and
+    /// must not inherit implementation-defined layout or map iteration order.
+    ///
+    /// The trailing FNV-1a value is redundant with the payload on purpose. It
+    /// makes a stale or damaged record fail at the artifact boundary before a
+    /// caller treats it as a region contract.
+    pub fn to_interface_bytes(&self) -> Result<Vec<u8>, CallableRegionMetadataCodecError> {
+        if !self.fingerprint_is_valid() {
+            return Err(CallableRegionMetadataCodecError::StaleFingerprint);
+        }
+        let mut out = self.canonical_payload_bytes();
+        out.extend_from_slice(&self.fingerprint.to_le_bytes());
+        Ok(out)
+    }
+
+    /// Decode one complete canonical summary from an interface artifact.
+    /// Rejecting non-canonical encodings matters: two byte representations of
+    /// the same contract would make `[LT-40]` cache identity depend on an
+    /// incidental writer rather than the semantic summary.
+    pub fn from_interface_bytes(bytes: &[u8]) -> Result<Self, CallableRegionMetadataCodecError> {
+        let mut reader = InterfaceReader::new(bytes);
+        let access = match reader.byte()? {
+            0 => CallableAccessSummary::All,
+            1 => {
+                let count = reader.count()?;
+                let mut fields = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let argument = reader.usize()?;
+                    let projection = reader.projections()?;
+                    let operation_count = reader.count()?;
+                    let mut operations = Vec::with_capacity(operation_count);
+                    for _ in 0..operation_count {
+                        operations.push(reader.region_access_kind()?);
+                    }
+                    fields.push(ParameterFieldAccess {
+                        argument,
+                        projection,
+                        operations,
+                    });
+                }
+                CallableAccessSummary::Fields(fields)
+            }
+            tag => {
+                return Err(CallableRegionMetadataCodecError::InvalidTag {
+                    kind: "access",
+                    tag,
+                });
+            }
+        };
+        let result = match reader.byte()? {
+            0 => None,
+            1 => {
+                let count = reader.count()?;
+                let mut fields = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let result_projection = reader.projections()?;
+                    let source_count = reader.count()?;
+                    let mut sources = Vec::with_capacity(source_count);
+                    for _ in 0..source_count {
+                        let source = match reader.byte()? {
+                            0 => ResultRegionSource::View {
+                                argument: reader.usize()?,
+                                projection: reader.projections()?,
+                            },
+                            1 => ResultRegionSource::Arena {
+                                argument: reader.usize()?,
+                            },
+                            tag => {
+                                return Err(CallableRegionMetadataCodecError::InvalidTag {
+                                    kind: "result source",
+                                    tag,
+                                });
+                            }
+                        };
+                        sources.push(source);
+                    }
+                    fields.push(ResultFieldProvenance {
+                        result_projection,
+                        sources,
+                    });
+                }
+                Some(ResultProvenanceSummary { fields })
+            }
+            tag => {
+                return Err(CallableRegionMetadataCodecError::InvalidTag {
+                    kind: "result",
+                    tag,
+                });
+            }
+        };
+
+        let payload_end = reader.position();
+        let stored_fingerprint = reader.u64()?;
+        if !reader.is_finished() {
+            return Err(CallableRegionMetadataCodecError::TrailingBytes);
+        }
+
+        let metadata = Self::new(access, result);
+        if metadata.fingerprint != stored_fingerprint {
+            return Err(CallableRegionMetadataCodecError::StaleFingerprint);
+        }
+        if metadata.canonical_payload_bytes() != bytes[..payload_end] {
+            return Err(CallableRegionMetadataCodecError::NonCanonical);
+        }
+        Ok(metadata)
+    }
+
+    fn canonical_payload_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        match &self.access {
+            CallableAccessSummary::All => out.push(0),
+            CallableAccessSummary::Fields(fields) => {
+                out.push(1);
+                push_count(&mut out, fields.len());
+                for field in fields {
+                    push_usize(&mut out, field.argument);
+                    push_projections(&mut out, &field.projection);
+                    push_count(&mut out, field.operations.len());
+                    for operation in &field.operations {
+                        out.push(match operation {
+                            RegionAccessKind::Read => 0,
+                            RegionAccessKind::Write => 1,
+                            RegionAccessKind::BorrowShared => 2,
+                            RegionAccessKind::BorrowMut => 3,
+                            RegionAccessKind::Move => 4,
+                            RegionAccessKind::Return => 5,
+                            RegionAccessKind::Publish => 6,
+                        });
+                    }
+                }
+            }
+        }
+        match &self.result {
+            None => out.push(0),
+            Some(result) => {
+                out.push(1);
+                push_count(&mut out, result.fields.len());
+                for field in &result.fields {
+                    push_projections(&mut out, &field.result_projection);
+                    push_count(&mut out, field.sources.len());
+                    for source in &field.sources {
+                        match source {
+                            ResultRegionSource::View {
+                                argument,
+                                projection,
+                            } => {
+                                out.push(0);
+                                push_usize(&mut out, *argument);
+                                push_projections(&mut out, projection);
+                            }
+                            ResultRegionSource::Arena { argument } => {
+                                out.push(1);
+                                push_usize(&mut out, *argument);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The interface-artifact codec's errors are deliberately distinguished from
+/// ordinary source diagnostics. A malformed or stale compiler artifact is a
+/// compiler/build failure under `[LT-40]`, never an optimisation fallback.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CallableRegionMetadataCodecError {
+    UnexpectedEof,
+    LengthOverflow,
+    InvalidTag { kind: &'static str, tag: u8 },
+    StaleFingerprint,
+    NonCanonical,
+    TrailingBytes,
+}
+
+impl std::fmt::Display for CallableRegionMetadataCodecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnexpectedEof => write!(f, "truncated callable-region metadata"),
+            Self::LengthOverflow => write!(f, "callable-region metadata has an invalid length"),
+            Self::InvalidTag { kind, tag } => {
+                write!(f, "callable-region metadata has invalid {kind} tag {tag}")
+            }
+            Self::StaleFingerprint => {
+                write!(
+                    f,
+                    "callable-region metadata fingerprint is stale or corrupt"
+                )
+            }
+            Self::NonCanonical => write!(f, "callable-region metadata is not canonical"),
+            Self::TrailingBytes => write!(f, "callable-region metadata has trailing bytes"),
+        }
+    }
+}
+
+impl std::error::Error for CallableRegionMetadataCodecError {}
+
+fn push_count(out: &mut Vec<u8>, value: usize) {
+    out.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn push_usize(out: &mut Vec<u8>, value: usize) {
+    out.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn push_projections(out: &mut Vec<u8>, projections: &[Projection]) {
+    push_count(out, projections.len());
+    for projection in projections {
+        match projection {
+            Projection::Field(field) => {
+                out.push(0);
+                push_usize(out, *field);
+            }
+            Projection::Index(local) => {
+                out.push(1);
+                out.extend_from_slice(&local.0.to_le_bytes());
+            }
+            Projection::ConstIndex(index) => {
+                out.push(2);
+                out.extend_from_slice(&index.to_le_bytes());
+            }
+            Projection::Deref => out.push(3),
+            Projection::Downcast(variant) => {
+                out.push(4);
+                push_usize(out, *variant);
+            }
+            Projection::Column(column) => {
+                out.push(5);
+                push_usize(out, *column);
+            }
+        }
+    }
+}
+
+struct InterfaceReader<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> InterfaceReader<'a> {
+    const MAX_COUNT: usize = 1_000_000;
+
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn position(&self) -> usize {
+        self.position
+    }
+
+    fn is_finished(&self) -> bool {
+        self.position == self.bytes.len()
+    }
+
+    fn byte(&mut self) -> Result<u8, CallableRegionMetadataCodecError> {
+        let byte = *self
+            .bytes
+            .get(self.position)
+            .ok_or(CallableRegionMetadataCodecError::UnexpectedEof)?;
+        self.position += 1;
+        Ok(byte)
+    }
+
+    fn fixed<const N: usize>(&mut self) -> Result<[u8; N], CallableRegionMetadataCodecError> {
+        let end = self
+            .position
+            .checked_add(N)
+            .ok_or(CallableRegionMetadataCodecError::LengthOverflow)?;
+        let bytes = self
+            .bytes
+            .get(self.position..end)
+            .ok_or(CallableRegionMetadataCodecError::UnexpectedEof)?;
+        self.position = end;
+        bytes
+            .try_into()
+            .map_err(|_| CallableRegionMetadataCodecError::UnexpectedEof)
+    }
+
+    fn u64(&mut self) -> Result<u64, CallableRegionMetadataCodecError> {
+        Ok(u64::from_le_bytes(self.fixed()?))
+    }
+
+    fn usize(&mut self) -> Result<usize, CallableRegionMetadataCodecError> {
+        usize::try_from(self.u64()?).map_err(|_| CallableRegionMetadataCodecError::LengthOverflow)
+    }
+
+    fn count(&mut self) -> Result<usize, CallableRegionMetadataCodecError> {
+        let count = self.usize()?;
+        if count > Self::MAX_COUNT {
+            return Err(CallableRegionMetadataCodecError::LengthOverflow);
+        }
+        Ok(count)
+    }
+
+    fn projections(&mut self) -> Result<Vec<Projection>, CallableRegionMetadataCodecError> {
+        let count = self.count()?;
+        let mut projections = Vec::with_capacity(count);
+        for _ in 0..count {
+            let projection = match self.byte()? {
+                0 => Projection::Field(self.usize()?),
+                1 => Projection::Index(LocalId(u32::from_le_bytes(self.fixed()?))),
+                2 => Projection::ConstIndex(self.u64()?),
+                3 => Projection::Deref,
+                4 => Projection::Downcast(self.usize()?),
+                5 => Projection::Column(self.usize()?),
+                tag => {
+                    return Err(CallableRegionMetadataCodecError::InvalidTag {
+                        kind: "projection",
+                        tag,
+                    });
+                }
+            };
+            projections.push(projection);
+        }
+        Ok(projections)
+    }
+
+    fn region_access_kind(&mut self) -> Result<RegionAccessKind, CallableRegionMetadataCodecError> {
+        match self.byte()? {
+            0 => Ok(RegionAccessKind::Read),
+            1 => Ok(RegionAccessKind::Write),
+            2 => Ok(RegionAccessKind::BorrowShared),
+            3 => Ok(RegionAccessKind::BorrowMut),
+            4 => Ok(RegionAccessKind::Move),
+            5 => Ok(RegionAccessKind::Return),
+            6 => Ok(RegionAccessKind::Publish),
+            tag => Err(CallableRegionMetadataCodecError::InvalidTag {
+                kind: "operation",
+                tag,
+            }),
+        }
     }
 }
 
@@ -411,8 +760,14 @@ pub enum Operand {
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Const {
-    Int { value: u128, ty: Ty },
-    Float { value: f64, ty: Ty },
+    Int {
+        value: u128,
+        ty: Ty,
+    },
+    Float {
+        value: f64,
+        ty: Ty,
+    },
     Bool(bool),
     /// A string literal with static region (`[LEX-20]`).
     Str(String),
@@ -433,21 +788,41 @@ pub enum Const {
 #[derive(Clone, Debug)]
 pub enum Rvalue {
     Use(Operand),
-    BinaryOp { op: BinOp, lhs: Operand, rhs: Operand },
-    UnaryOp { op: UnOp, operand: Operand },
-    Cast { kind: CastKind, operand: Operand, to: Ty },
+    BinaryOp {
+        op: BinOp,
+        lhs: Operand,
+        rhs: Operand,
+    },
+    UnaryOp {
+        op: UnOp,
+        operand: Operand,
+    },
+    Cast {
+        kind: CastKind,
+        operand: Operand,
+        to: Ty,
+    },
     /// Building a struct, tuple or array from its elements, in order.
-    Aggregate { kind: AggregateKind, operands: Vec<Operand> },
+    Aggregate {
+        kind: AggregateKind,
+        operands: Vec<Operand>,
+    },
     /// `[value; count]`. Kept apart from `Aggregate` so that a large array
     /// stays one statement instead of `count` operands — `[0; 4096]` would
     /// otherwise be four thousand entries in the IR and in the emitted C.
-    Repeat { value: Operand, count: u64 },
+    Repeat {
+        value: Operand,
+        count: u64,
+    },
     /// The tag of an enum value, as its repr integer. This is what `match`
     /// switches on and what `as` on a unit-only enum reads (`[ENM-3]`).
     Discriminant(Place),
     /// The address of a place. A `mut` argument is passed this way, so the
     /// callee writes through to the caller's variable.
-    Ref { place: Place, mutable: bool },
+    Ref {
+        place: Place,
+        mutable: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -485,14 +860,23 @@ impl Stmt {
 
 #[derive(Debug)]
 pub enum StmtKind {
-    Assign { place: Place, rvalue: Rvalue },
+    Assign {
+        place: Place,
+        rvalue: Rvalue,
+    },
     /// Arithmetic that reports whether it overflowed.
     ///
     /// Rust MIR models this as an rvalue producing a `(T, bool)` tuple. Here
     /// it writes two places instead, which maps directly onto the C helper
     /// `bool ember_ck_add_i32(a, b, &dest)` and needs no tuple support in the
     /// backend. The `Assert` on `overflow` follows in the terminator.
-    CheckedBinaryOp { dest: Place, overflow: Place, op: BinOp, lhs: Operand, rhs: Operand },
+    CheckedBinaryOp {
+        dest: Place,
+        overflow: Place,
+        op: BinOp,
+        lhs: Operand,
+        rhs: Operand,
+    },
     /// A local comes into scope. Drives `[DRP-2]`'s reverse-order drops and,
     /// from Phase 2, the borrow checker's loan-kill analysis.
     StorageLive(LocalId),
@@ -503,7 +887,10 @@ pub enum StmtKind {
     ///
     /// `flag` is `[OWN-3]`'s drop flag: a local that says whether the value
     /// is still there on this path. `None` means it always is.
-    Drop { place: Place, flag: Option<LocalId> },
+    Drop {
+        place: Place,
+        flag: Option<LocalId>,
+    },
     Nop,
 }
 
@@ -537,10 +924,19 @@ pub enum Terminator {
     /// Case values are signed: an enum discriminant may be negative
     /// (`Forward = -1`), and rendering one through `u128` would print a huge
     /// positive number into the emitted `switch`.
-    SwitchInt { discr: Operand, targets: Vec<(i128, BasicBlockId)>, otherwise: BasicBlockId },
+    SwitchInt {
+        discr: Operand,
+        targets: Vec<(i128, BasicBlockId)>,
+        otherwise: BasicBlockId,
+    },
     Return,
     Unreachable,
-    Call { func: FuncRef, args: Vec<Operand>, dest: Place, next: BasicBlockId },
+    Call {
+        func: FuncRef,
+        args: Vec<Operand>,
+        dest: Place,
+        next: BasicBlockId,
+    },
     /// A runtime check. Control reaches `next` when `cond` equals `expected`;
     /// otherwise the program panics with `msg`.
     ///
@@ -606,7 +1002,10 @@ pub enum FuncRef {
     /// the callee, so the region machinery sees it as an ordinary read.
     Indirect(Operand),
     /// A call the compiler provides itself, lowered to an `ember_rt` entry.
-    Builtin { which: ember_hir::Builtin, arg_ty: Ty },
+    Builtin {
+        which: ember_hir::Builtin,
+        arg_ty: Ty,
+    },
 }
 
 /// `--emit=mir`: a stable textual form, for snapshot tests.
@@ -616,11 +1015,7 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
     for body in bodies {
         let _ = writeln!(out, "fn {}:", body.symbol);
         if let Some(metadata) = &body.callable_regions {
-            let _ = writeln!(
-                out,
-                "  callable-regions {:016x}:",
-                metadata.fingerprint()
-            );
+            let _ = writeln!(out, "  callable-regions {:016x}:", metadata.fingerprint());
             match &metadata.access {
                 CallableAccessSummary::All => {
                     let _ = writeln!(out, "    access all-fields");
@@ -693,7 +1088,10 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
 
 fn dump_region_source(source: &ResultRegionSource) -> String {
     match source {
-        ResultRegionSource::View { argument, projection } => {
+        ResultRegionSource::View {
+            argument,
+            projection,
+        } => {
             format!("arg{argument}{}", dump_region_path(projection))
         }
         ResultRegionSource::Arena { argument } => format!("arena-arg{argument}"),
@@ -720,7 +1118,13 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
         StmtKind::Assign { place, rvalue } => {
             format!("{} = {}", dump_place(place), dump_rvalue(rvalue, types))
         }
-        StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => format!(
+        StmtKind::CheckedBinaryOp {
+            dest,
+            overflow,
+            op,
+            lhs,
+            rhs,
+        } => format!(
             "({}, {}) = checked {} {} {}",
             dump_place(dest),
             dump_place(overflow),
@@ -780,7 +1184,12 @@ fn dump_rvalue(rvalue: &Rvalue, types: &ember_types::TypeTable) -> String {
         ),
         Rvalue::UnaryOp { op, operand } => format!("{op:?} {}", dump_operand(operand, types)),
         Rvalue::Cast { kind, operand, to } => {
-            format!("{:?}({}) as {}", kind, dump_operand(operand, types), types.display(*to))
+            format!(
+                "{:?}({}) as {}",
+                kind,
+                dump_operand(operand, types),
+                types.display(*to)
+            )
         }
         Rvalue::Aggregate { kind, operands } => {
             let inner: Vec<String> = operands.iter().map(|o| dump_operand(o, types)).collect();
@@ -809,9 +1218,15 @@ fn dump_rvalue(rvalue: &Rvalue, types: &ember_types::TypeTable) -> String {
 fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> String {
     match terminator {
         Terminator::Goto(bb) => format!("goto bb{}", bb.0),
-        Terminator::SwitchInt { discr, targets, otherwise } => {
-            let arms: Vec<String> =
-                targets.iter().map(|(v, bb)| format!("{v} -> bb{}", bb.0)).collect();
+        Terminator::SwitchInt {
+            discr,
+            targets,
+            otherwise,
+        } => {
+            let arms: Vec<String> = targets
+                .iter()
+                .map(|(v, bb)| format!("{v} -> bb{}", bb.0))
+                .collect();
             format!(
                 "switchInt({}) [{}, otherwise -> bb{}]",
                 dump_operand(discr, types),
@@ -819,7 +1234,13 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                 otherwise.0
             )
         }
-        Terminator::Assert { cond, expected, msg, next, .. } => format!(
+        Terminator::Assert {
+            cond,
+            expected,
+            msg,
+            next,
+            ..
+        } => format!(
             "assert({}{}) -> [success: bb{}, {:?}]",
             if *expected { "" } else { "!" },
             dump_operand(cond, types),
@@ -828,14 +1249,24 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
         ),
         Terminator::Return => "return".to_string(),
         Terminator::Unreachable => "unreachable".to_string(),
-        Terminator::Call { func, args, dest, next } => {
+        Terminator::Call {
+            func,
+            args,
+            dest,
+            next,
+        } => {
             let inner: Vec<String> = args.iter().map(|a| dump_operand(a, types)).collect();
             let name = match func {
                 FuncRef::Direct { symbol } => symbol.clone(),
                 FuncRef::Builtin { which, .. } => which.name().to_string(),
                 FuncRef::Indirect(operand) => dump_operand(operand, types),
             };
-            format!("{} = {name}({}) -> bb{}", dump_place(dest), inner.join(", "), next.0)
+            format!(
+                "{} = {name}({}) -> bb{}",
+                dump_place(dest),
+                inner.join(", "),
+                next.0
+            )
         }
     }
 }

@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod interface;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Profile {
     #[default]
@@ -67,8 +69,12 @@ impl Toolchain {
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
-            Some("clang") => Self::find_on_path("clang").map(Toolchain::Clang).ok_or(BuildError::NoToolchain("clang")),
-            Some("gcc") => Self::find_on_path("gcc").map(Toolchain::Gcc).ok_or(BuildError::NoToolchain("gcc")),
+            Some("clang") => Self::find_on_path("clang")
+                .map(Toolchain::Clang)
+                .ok_or(BuildError::NoToolchain("clang")),
+            Some("gcc") => Self::find_on_path("gcc")
+                .map(Toolchain::Gcc)
+                .ok_or(BuildError::NoToolchain("gcc")),
             Some(other) => Err(BuildError::UnknownToolchain(other.to_string())),
             None => Self::find_msvc()
                 .or_else(|| Self::find_on_path("clang").map(Toolchain::Clang))
@@ -78,7 +84,11 @@ impl Toolchain {
     }
 
     fn find_on_path(name: &str) -> Option<PathBuf> {
-        let exe = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+        let exe = if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_string()
+        };
         // A bare name works when the program is on PATH; test it by asking for
         // its version rather than by scanning PATH ourselves.
         let ok = Command::new(&exe)
@@ -108,7 +118,10 @@ impl Toolchain {
         let vcvars = Self::find_vcvars()?;
         let env = capture_environment(&vcvars)?;
         // With the captured environment, `cl` resolves through its own PATH.
-        Some(Toolchain::Msvc { cl: PathBuf::from("cl.exe"), env })
+        Some(Toolchain::Msvc {
+            cl: PathBuf::from("cl.exe"),
+            env,
+        })
     }
 
     fn find_vcvars() -> Option<PathBuf> {
@@ -163,7 +176,10 @@ pub enum BuildError {
     /// The C compiler ran and failed. Its own output is carried through, since
     /// a failure here is a compiler defect (`[CG-C-1]`) and the message is the
     /// evidence.
-    CompilerFailed { command: String, output: String },
+    CompilerFailed {
+        command: String,
+        output: String,
+    },
 }
 
 impl std::fmt::Display for BuildError {
@@ -294,7 +310,10 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
     if !output.status.success() {
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&output.stderr));
-        return Err(BuildError::CompilerFailed { command: rendered, output: text });
+        return Err(BuildError::CompilerFailed {
+            command: rendered,
+            output: text,
+        });
     }
     Ok(())
 }

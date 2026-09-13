@@ -26,6 +26,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Insomniac-Coder/ember"
 
 [workspace.dependencies]
+blake3 = "1"
 ember_branding = { path = "compiler/ember_branding" }
 ember_span = { path = "compiler/ember_span" }
 ember_diag = { path = "compiler/ember_diag" }

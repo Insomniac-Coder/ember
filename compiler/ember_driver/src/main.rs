@@ -7,7 +7,11 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use ember_build::{LinkRequest, Layout, Profile, Toolchain};
+use ember_build::interface::{
+    CallableInterfaceRecord, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
+    build_artifacts, cache_directory, prepare_interface_cache, round_trip_artifacts,
+};
+use ember_build::{Layout, LinkRequest, Profile, Toolchain};
 use ember_diag::Sink;
 use ember_span::SourceMap;
 use ember_types::TypeTable;
@@ -74,7 +78,9 @@ fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
     }
 
     while let Some(symbol) = pending.pop() {
-        let Some(&index) = by_symbol.get(&symbol) else { continue };
+        let Some(&index) = by_symbol.get(&symbol) else {
+            continue;
+        };
         let mut referenced = BTreeSet::new();
         collect_body_function_symbols(&bodies[index], &mut referenced);
         for target in referenced {
@@ -225,7 +231,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "explain" => {
-            let code = args.get(1).ok_or("`ember explain` needs a code, e.g. E3040")?;
+            let code = args
+                .get(1)
+                .ok_or("`ember explain` needs a code, e.g. E3040")?;
             explain(code)
         }
         "build" | "run" | "check" => {
@@ -305,11 +313,15 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         let arg = args[index].as_str();
         let value = |index: &mut usize, name: &str| -> Result<String, String> {
             *index += 1;
-            args.get(*index).cloned().ok_or_else(|| format!("`{name}` needs a value"))
+            args.get(*index)
+                .cloned()
+                .ok_or_else(|| format!("`{name}` needs a value"))
         };
         match arg {
-            "--profile" => options.profile = Profile::from_name(&value(&mut index, arg)?)
-                .ok_or("profile must be debug, release or shipping")?,
+            "--profile" => {
+                options.profile = Profile::from_name(&value(&mut index, arg)?)
+                    .ok_or("profile must be debug, release or shipping")?
+            }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
@@ -353,8 +365,10 @@ fn write_unclassified_log(sink: &ember_diag::Sink, options: &Options) {
         .unwrap_or_else(|| PathBuf::from("target").join(options.profile.name()));
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("unclassified-borrow-errors.log");
-    let body = entries.join("
-") + "
+    let body = entries.join(
+        "
+",
+    ) + "
 ";
     let _ = std::fs::write(&path, body);
     eprintln!(
@@ -447,7 +461,10 @@ fn load_modules(
             wanted.push((names, import.span));
         }
 
-        loaded.push(ember_typeck::LoadedModule { path: path.clone(), module });
+        loaded.push(ember_typeck::LoadedModule {
+            path: path.clone(),
+            module,
+        });
 
         for (names, span) in wanted {
             let key = names.join(".");
@@ -460,7 +477,10 @@ fn load_modules(
                 // library can supply each one, so an import of a `std` module
                 // that has no file yet is not an error — it is a module this
                 // phase has not written.
-                if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE) {
+                if names
+                    .first()
+                    .is_some_and(|f| f == ember_branding::STD_PACKAGE)
+                {
                     continue;
                 }
                 sink.emit(ember_diag::Diagnostic::error(
@@ -490,6 +510,196 @@ fn load_modules(
     loaded
 }
 
+/// `[BLD-2]` / `[LT-40]` — build one canonical module-interface record per
+/// loaded source module, reread it before borrow analysis consumes it, and
+/// defer the write transaction until the completed MIR is verified. The
+/// compiler still rechecks the whole graph today; the artifact establishes the
+/// dependency identity and stale-record boundary required before later
+/// incremental reuse can be sound.
+fn prepare_callable_interface_cache(
+    input: &Path,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    bodies: &mut [ember_mir::Body],
+    types: &TypeTable,
+    options: &Options,
+) -> Result<PreparedInterfaceCache, String> {
+    ember_analysis::install_callable_regions_all(bodies, types);
+
+    let inputs = module_interface_inputs(modules, map, bodies, options)?;
+    let fresh = build_artifacts(&inputs, env!("CARGO_PKG_VERSION")).map_err(|error| {
+        format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
+    })?;
+    // The fresh record takes the same encode/decode path as a cache hit, so
+    // every caller consumes the artifact representation even on its first
+    // build rather than only on a later, incidental cache reuse.
+    let fresh = round_trip_artifacts(&fresh).map_err(|error| {
+        format!("internal compiler error: [LT-40] cannot round-trip interface artifact: {error}")
+    })?;
+
+    let target_root = options
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target"));
+    let profile_root = target_root.join(options.profile.name());
+    let package_identity = input
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let directory = cache_directory(&profile_root, &package_identity);
+    let prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
+        format!("internal compiler error: [LT-40] cannot load interface cache: {error}")
+    })?;
+    install_callable_metadata_from_artifacts(bodies, prepared.artifacts())?;
+    Ok(prepared)
+}
+
+fn module_interface_inputs(
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    bodies: &[ember_mir::Body],
+    options: &Options,
+) -> Result<Vec<ModuleInterfaceInput>, String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let module_names: BTreeMap<ember_span::FileId, String> = modules
+        .iter()
+        .map(|loaded| (loaded.module.span.file, module_identity(&loaded.path)))
+        .collect();
+    let known_modules: BTreeSet<String> = module_names.values().cloned().collect();
+    let mut records_by_file: BTreeMap<ember_span::FileId, Vec<CallableInterfaceRecord>> =
+        BTreeMap::new();
+    for body in bodies {
+        let metadata = body.callable_regions.as_ref().ok_or_else(|| {
+            format!(
+                "internal compiler error: [MIR-REG-1] callable metadata missing before interface serialization for `{}`",
+                body.symbol
+            )
+        })?;
+        if !metadata.fingerprint_is_valid() {
+            return Err(format!(
+                "internal compiler error: [MIR-REG-1] callable metadata stale before interface serialization for `{}`",
+                body.symbol
+            ));
+        }
+        if !module_names.contains_key(&body.span.file) {
+            return Err(format!(
+                "internal compiler error: [BLD-2] callable `{}` has no source module for its interface artifact",
+                body.symbol
+            ));
+        }
+        records_by_file
+            .entry(body.span.file)
+            .or_default()
+            .push(CallableInterfaceRecord {
+                symbol: body.symbol.clone(),
+                metadata: metadata.clone(),
+            });
+    }
+
+    let implicit_prelude: Vec<String> = ["std.core", "std.collections"]
+        .into_iter()
+        .filter(|module| known_modules.contains(*module))
+        .map(str::to_string)
+        .collect();
+    let package_config = format!("profile={}", options.profile.name());
+    let mut inputs = Vec::with_capacity(modules.len());
+    for loaded in modules {
+        let module = module_identity(&loaded.path);
+        let mut dependencies = BTreeSet::new();
+        for import in &loaded.module.imports {
+            let path = match &import.kind {
+                ember_ast::ImportKind::Module { path, .. }
+                | ember_ast::ImportKind::Items { path, .. } => path
+                    .iter()
+                    .map(|segment| segment.name.to_string())
+                    .collect::<Vec<_>>()
+                    .join("."),
+                ember_ast::ImportKind::Foreign { .. } => continue,
+            };
+            if known_modules.contains(&path) && path != module {
+                dependencies.insert(path);
+            }
+        }
+        if !module.starts_with("std.") {
+            for dependency in &implicit_prelude {
+                if dependency != &module {
+                    dependencies.insert(dependency.clone());
+                }
+            }
+        }
+        let language_version = loaded
+            .module
+            .directive
+            .as_ref()
+            .filter(|directive| directive.name.name.is("language"))
+            .map(|directive| directive.value.clone())
+            // The adopted normative source is currently 0.8.5. The compiler
+            // has no manifest parser yet, so this is the explicit default
+            // cache input until package configuration becomes real.
+            .unwrap_or_else(|| "0.8.5".to_string());
+        inputs.push(ModuleInterfaceInput {
+            module,
+            source: map.file(loaded.module.span.file).text.clone(),
+            language_version,
+            package_config: package_config.clone(),
+            direct_dependencies: dependencies.into_iter().collect(),
+            callables: records_by_file
+                .remove(&loaded.module.span.file)
+                .unwrap_or_default(),
+        });
+    }
+    if let Some((file, records)) = records_by_file.into_iter().next() {
+        return Err(format!(
+            "internal compiler error: [BLD-2] {} callable interface record(s) have no loaded module for source file {}",
+            records.len(),
+            file.0
+        ));
+    }
+    Ok(inputs)
+}
+
+fn install_callable_metadata_from_artifacts(
+    bodies: &mut [ember_mir::Body],
+    artifacts: &[ModuleInterfaceArtifact],
+) -> Result<(), String> {
+    use std::collections::BTreeMap;
+
+    let mut records: BTreeMap<String, ember_mir::CallableRegionMetadata> = BTreeMap::new();
+    for artifact in artifacts {
+        for (symbol, metadata) in &artifact.callables {
+            if records.insert(symbol.clone(), metadata.clone()).is_some() {
+                return Err(format!(
+                    "internal compiler error: [LT-40] callable `{symbol}` is present in more than one interface artifact"
+                ));
+            }
+        }
+    }
+    for body in bodies {
+        body.callable_regions = Some(records.remove(&body.symbol).ok_or_else(|| {
+            format!(
+                "internal compiler error: [LT-40] interface artifact omits callable `{}`",
+                body.symbol
+            )
+        })?);
+    }
+    if let Some((symbol, _)) = records.into_iter().next() {
+        return Err(format!(
+            "internal compiler error: [LT-40] interface artifact contains stale callable `{symbol}`"
+        ));
+    }
+    Ok(())
+}
+
+fn module_identity(path: &[String]) -> String {
+    if path.is_empty() {
+        "root".to_string()
+    } else {
+        path.join(".")
+    }
+}
+
 /// `[MOD-1]`, `[MOD-3]` — where a module path's file is.
 ///
 /// A path beginning `std` names the standard library package, whose sources
@@ -499,7 +709,10 @@ fn load_modules(
 /// from `src/`", so `std.span` is `span.em` under `std`'s own `src/` and not
 /// `std/span.em` under this package's.
 fn resolve_module(root_dir: &Path, names: &[String]) -> Option<std::path::PathBuf> {
-    if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE) {
+    if names
+        .first()
+        .is_some_and(|f| f == ember_branding::STD_PACKAGE)
+    {
         let std_root = ember_branding::std_root()?;
         // `import std` alone names the package root module.
         if names.len() == 1 {
@@ -563,7 +776,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[MOD-1]` — follow the imports and load every module they reach. The
     // root module is the file named on the command line; its directory is the
     // package root until `ember.toml` is read.
-    let root_dir = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let root_dir = input
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -572,8 +788,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Check.
     let (mut types, common) = TypeTable::new();
     // [TYP-8] -- the profile chooses the default overflow policy.
-    let program =
-        ember_typeck::check(&modules, &mut types, &common, &mut sink, overflow_policy(options.profile));
+    let program = ember_typeck::check(
+        &modules,
+        &mut types,
+        &common,
+        &mut sink,
+        overflow_policy(options.profile),
+    );
     if options.emit.as_deref() == Some("hir") {
         print!("{}", ember_hir::dump(&program, &types));
         return Ok(finish(&sink, &map, options));
@@ -595,11 +816,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // fixpoint describes this initial MIR before diagnostics consume it and
     // before drop elaboration transforms the CFG.
     ember_analysis::verify_initialization_facts_all(&bodies, &initialization_facts);
-    ember_analysis::check_definite_init_all_with_facts(
-        &bodies,
-        &initialization_facts,
-        &mut sink,
-    );
+    ember_analysis::check_definite_init_all_with_facts(&bodies, &initialization_facts, &mut sink);
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
@@ -607,9 +824,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
     // by `ember lint`. A lint that fires on a separate command does not close
     // the footgun `[GRM-4]` opens.
+    // `[MIR-REG-1]` / `[LT-40]` — callable summaries are produced from the
+    // post-drop MIR, round-trip through the canonical module-interface
+    // artifact, then become the only contracts borrow checking consumes. The
+    // cache write itself waits until the complete semantic verification below
+    // succeeds, so an erroneous program never overwrites a verified record.
+    let interface_cache =
+        prepare_callable_interface_cache(input, &modules, &map, &mut bodies, &types, options)?;
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
-    ember_analysis::check_borrows_all(&mut bodies, &types, &mut sink);
+    ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
     if !sink.has_errors() {
         verify_callable_regions_or_panic(&bodies, &types);
     }
@@ -631,11 +855,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Ok(finish(&sink, &map, options));
     }
     if command == "check" {
+        interface_cache
+            .commit()
+            .map_err(|error| error.to_string())?;
         report(&sink, &map, options);
         return Ok(ExitCode::SUCCESS);
     }
 
     if options.emit.as_deref() == Some("mir") {
+        interface_cache
+            .commit()
+            .map_err(|error| error.to_string())?;
         print!("{}", ember_mir::dump(&bodies, &types));
         return Ok(finish(&sink, &map, options));
     }
@@ -650,17 +880,24 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
     // transformation, so release builds cannot emit stale or malformed MIR.
-    let verified_mir = ember_mir::verify::for_codegen(&bodies, &types).unwrap_or_else(|violations| {
-        panic!(
-            "MIR code-generation verification failed:\n{}",
-            violations
-                .iter()
-                .map(|v| format!("  {}: {}", v.body, v.message))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    });
-    let module_name = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let verified_mir =
+        ember_mir::verify::for_codegen(&bodies, &types).unwrap_or_else(|violations| {
+            panic!(
+                "MIR code-generation verification failed:\n{}",
+                violations
+                    .iter()
+                    .map(|v| format!("  {}: {}", v.body, v.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        });
+    interface_cache
+        .commit()
+        .map_err(|error| error.to_string())?;
+    let module_name = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let emitted = ember_codegen_c::emit(verified_mir, &map, &module_name, program.main.is_some());
     if options.emit.as_deref() == Some("c") {
         print!("{}", emitted.c_source);
@@ -675,13 +912,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
 
     // Write, compile and link.
-    let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+    let target_dir = options
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     let c_path = layout.c.join(format!("{module_name}.c"));
     std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
 
     let runtime = runtime_dir()?;
-    let exe_name = if cfg!(windows) { format!("{module_name}.exe") } else { module_name.clone() };
+    let exe_name = if cfg!(windows) {
+        format!("{module_name}.exe")
+    } else {
+        module_name.clone()
+    };
     let exe = layout.bin.join(exe_name);
 
     let toolchain = Toolchain::detect(options.cc.as_deref()).map_err(|e| e.to_string())?;
@@ -703,7 +947,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     report(&sink, &map, options);
 
     if command == "run" {
-        let status = std::process::Command::new(&exe).status().map_err(|e| e.to_string())?;
+        let status = std::process::Command::new(&exe)
+            .status()
+            .map_err(|e| e.to_string())?;
         // A panic calls abort(), and Windows reports that as a status well
         // outside 0..=255 (0xC0000409 arrives as a large negative i32).
         // Clamping it into a u8 turned a crash into a clean exit, so anything
@@ -725,7 +971,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 fn runtime_dir() -> Result<PathBuf, String> {
     let from_env = std::env::var_os("EMBER_RUNTIME_DIR").map(PathBuf::from);
     if let Some(dir) = from_env {
-        if dir.join(format!("include/{}", ember_branding::runtime_header())).is_file() {
+        if dir
+            .join(format!("include/{}", ember_branding::runtime_header()))
+            .is_file()
+        {
             return Ok(dir);
         }
     }
@@ -733,7 +982,10 @@ fn runtime_dir() -> Result<PathBuf, String> {
     let mut dir = exe.parent().map(Path::to_path_buf);
     while let Some(candidate) = dir {
         let runtime = candidate.join(format!("runtime/{}_rt", ember_branding::SYMBOL_PREFIX));
-        if runtime.join(format!("include/{}", ember_branding::runtime_header())).is_file() {
+        if runtime
+            .join(format!("include/{}", ember_branding::runtime_header()))
+            .is_file()
+        {
             return Ok(runtime);
         }
         dir = candidate.parent().map(Path::to_path_buf);

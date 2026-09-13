@@ -53,7 +53,10 @@ struct Verifier<'a> {
 
 impl Verifier<'_> {
     fn fail(&mut self, message: String) {
-        self.violations.push(Violation { body: self.symbol.to_string(), message });
+        self.violations.push(Violation {
+            body: self.symbol.to_string(),
+            message,
+        });
     }
 
     fn local(&mut self, id: LocalId, at: &str) {
@@ -99,7 +102,10 @@ impl Verifier<'_> {
 
     fn target(&mut self, target: BasicBlockId, at: &str) {
         if target.0 >= self.block_count {
-            self.fail(format!("{at} jumps to bb{}, which does not exist", target.0));
+            self.fail(format!(
+                "{at} jumps to bb{}, which does not exist",
+                target.0
+            ));
         }
     }
 }
@@ -149,7 +155,13 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.place(place, &at);
                     v.rvalue(rvalue, &at);
                 }
-                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                StmtKind::CheckedBinaryOp {
+                    dest,
+                    overflow,
+                    lhs,
+                    rhs,
+                    ..
+                } => {
                     v.place(dest, &at);
                     v.place(overflow, &at);
                     v.operand(lhs, &at);
@@ -167,21 +179,29 @@ pub fn verify(body: &Body) -> Vec<Violation> {
         }
         match &block.terminator {
             Terminator::Goto(bb) => v.target(*bb, &at),
-            Terminator::SwitchInt { discr, targets, otherwise } => {
+            Terminator::SwitchInt {
+                discr,
+                targets,
+                otherwise,
+            } => {
                 v.operand(discr, &at);
                 for (_, bb) in targets {
                     v.target(*bb, &at);
                 }
                 v.target(*otherwise, &at);
             }
-            Terminator::Call { args, dest, next, .. } => {
+            Terminator::Call {
+                args, dest, next, ..
+            } => {
                 for a in args {
                     v.operand(a, &at);
                 }
                 v.place(dest, &at);
                 v.target(*next, &at);
             }
-            Terminator::Assert { cond, msg, next, .. } => {
+            Terminator::Assert {
+                cond, msg, next, ..
+            } => {
                 v.operand(cond, &at);
                 if let crate::AssertKind::Bounds { len, index } = msg {
                     v.operand(len, &at);
@@ -235,10 +255,21 @@ mod tests {
     /// make fail is a comment.
     #[test]
     fn a_statement_without_a_span_is_a_violation() {
-        let stmt = Stmt::new(StmtKind::Drop { place: Place::local(LocalId(0)), flag: None }, Span::DUMMY);
-        let violations = verify(&body_with(vec![stmt], Span::new(ember_span::FileId(0), 0, 1)));
+        let stmt = Stmt::new(
+            StmtKind::Drop {
+                place: Place::local(LocalId(0)),
+                flag: None,
+            },
+            Span::DUMMY,
+        );
+        let violations = verify(&body_with(
+            vec![stmt],
+            Span::new(ember_span::FileId(0), 0, 1),
+        ));
         assert!(
-            violations.iter().any(|v| v.message.contains("no source span")),
+            violations
+                .iter()
+                .any(|v| v.message.contains("no source span")),
             "expected a missing-span violation, got {violations:?}"
         );
     }
@@ -247,7 +278,9 @@ mod tests {
     fn a_terminator_without_a_span_is_a_violation() {
         let violations = verify(&body_with(Vec::new(), Span::DUMMY));
         assert!(
-            violations.iter().any(|v| v.message.contains("terminator has no source span")),
+            violations
+                .iter()
+                .any(|v| v.message.contains("terminator has no source span")),
             "expected a missing-span violation, got {violations:?}"
         );
     }
@@ -255,7 +288,10 @@ mod tests {
     #[test]
     fn bookkeeping_statements_need_no_span() {
         let stmt = Stmt::new(StmtKind::StorageLive(LocalId(0)), Span::DUMMY);
-        let violations = verify(&body_with(vec![stmt], Span::new(ember_span::FileId(0), 0, 1)));
+        let violations = verify(&body_with(
+            vec![stmt],
+            Span::new(ember_span::FileId(0), 0, 1),
+        ));
         assert!(violations.is_empty(), "got {violations:?}");
     }
 
@@ -266,7 +302,11 @@ mod tests {
         let Err(violations) = for_codegen(&bodies, &types) else {
             panic!("structurally invalid MIR crossed the codegen boundary");
         };
-        assert!(violations.iter().any(|v| v.message.contains("terminator has no source span")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("terminator has no source span"))
+        );
     }
 
     #[test]
@@ -277,7 +317,11 @@ mod tests {
         let Err(violations) = for_codegen(&bodies, &types) else {
             panic!("MIR without callable-region metadata crossed the codegen boundary");
         };
-        assert!(violations.iter().any(|v| v.message.contains("metadata is missing")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("metadata is missing"))
+        );
     }
 
     #[test]
@@ -295,7 +339,11 @@ mod tests {
         let Err(violations) = for_codegen(&bodies, &types) else {
             panic!("corrupt callable-region metadata crossed the codegen boundary");
         };
-        assert!(violations.iter().any(|v| v.message.contains("stale or corrupt")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("stale or corrupt"))
+        );
     }
 
     #[test]
@@ -396,6 +444,22 @@ mod tests {
             )
             .fingerprint()
         );
+
+        // `[MIR-REG-1]` — the interface artifact receives canonical bytes,
+        // not a Rust-memory snapshot. A damaged trailing identity must be
+        // refused before a caller treats the decoded record as a contract.
+        let encoded = returns_second.to_interface_bytes().unwrap();
+        assert_eq!(
+            crate::CallableRegionMetadata::from_interface_bytes(&encoded).unwrap(),
+            returns_second
+        );
+        let mut corrupt = encoded;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert!(matches!(
+            crate::CallableRegionMetadata::from_interface_bytes(&corrupt),
+            Err(crate::CallableRegionMetadataCodecError::StaleFingerprint)
+        ));
     }
 }
 
@@ -457,12 +521,17 @@ pub fn verify_all(bodies: &[Body]) {
 pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut fail = |message: String| {
-        violations.push(Violation { body: body.symbol.to_string(), message });
+        violations.push(Violation {
+            body: body.symbol.to_string(),
+            message,
+        });
     };
 
     for (index, block) in body.blocks.iter().enumerate() {
         for stmt in &block.stmts {
-            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
             if !types.is_view(place_ty(body, types, place)) {
                 continue;
             }
@@ -569,8 +638,7 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
 /// violation. Called from the driver in debug builds, after the borrow checker
 /// has run on the same MIR.
 pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
-    let violations: Vec<Violation> =
-        bodies.iter().flat_map(|b| verify_views(b, types)).collect();
+    let violations: Vec<Violation> = bodies.iter().flat_map(|b| verify_views(b, types)).collect();
     assert!(
         violations.is_empty(),
         "MIR view verification failed:\n{}",
@@ -639,7 +707,10 @@ mod view_invariant_tests {
     fn env_body(rvalue: Rvalue) -> (Body, TypeTable) {
         let (mut types, common) = TypeTable::new();
         let i32_ty = common.i32;
-        let borrow = types.intern(TyKind::Ref { mutable: false, inner: i32_ty });
+        let borrow = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: i32_ty,
+        });
         let env = types.add_struct(StructDef {
             name: Symbol::intern("closure0_env"),
             fields: vec![FieldDef {
@@ -663,7 +734,12 @@ mod view_invariant_tests {
             name: "t".to_string(),
             symbol: ember_branding::mangled("t"),
             locals: vec![
-                LocalDecl { ty: env_ty, name: None, kind: LocalKind::Return, span: Span::DUMMY },
+                LocalDecl {
+                    ty: env_ty,
+                    name: None,
+                    kind: LocalKind::Return,
+                    span: Span::DUMMY,
+                },
                 LocalDecl {
                     ty: common.i32,
                     name: None,
@@ -673,7 +749,10 @@ mod view_invariant_tests {
             ],
             blocks: vec![BasicBlock {
                 stmts: vec![Stmt::new(
-                    StmtKind::Assign { place: Place::local(LocalId(0)), rvalue },
+                    StmtKind::Assign {
+                        place: Place::local(LocalId(0)),
+                        rvalue,
+                    },
                     span,
                 )],
                 terminator: Terminator::Return,
@@ -721,7 +800,11 @@ mod view_invariant_tests {
         let Err(violations) = for_codegen(&bodies, &types) else {
             panic!("a provenance-free view crossed the codegen boundary");
         };
-        assert!(violations.iter().any(|v| v.message.contains("carries no borrow")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("carries no borrow"))
+        );
     }
 
     fn body_ty_placeholder() -> Ty {

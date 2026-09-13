@@ -6,18 +6,21 @@
 //! helpers.
 
 pub mod borrows;
-pub mod facts;
-pub mod regions;
 pub mod definite_init;
 pub mod drops;
+pub mod facts;
+pub mod regions;
 pub mod unused;
 
+pub use borrows::{
+    check_all as check_borrows_all, check_all_with_installed_callable_regions,
+    install_callable_regions_all, verify_callable_regions_all,
+};
 pub use definite_init::{
     analyze_all as analyze_definite_init_all, analyze_definite_init,
-    check_all as check_definite_init_all, check_all_with_facts as check_definite_init_all_with_facts,
-    check_definite_init, check_definite_init_with_facts, verify_initialization_facts,
-    verify_initialization_facts_all,
+    check_all as check_definite_init_all,
+    check_all_with_facts as check_definite_init_all_with_facts, check_definite_init,
+    check_definite_init_with_facts, verify_initialization_facts, verify_initialization_facts_all,
 };
 pub use drops::{elaborate as elaborate_drops, elaborate_all as elaborate_drops_all};
-pub use borrows::{check_all as check_borrows_all, verify_callable_regions_all};
 pub use unused::check_all as check_unused_all;

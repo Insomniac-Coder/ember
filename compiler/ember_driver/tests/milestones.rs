@@ -20,6 +20,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ember_build::interface::ModuleInterfaceArtifact;
+
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
 fn workspace_root() -> PathBuf {
@@ -143,7 +145,9 @@ fn parse_expectations(source: &str) -> Expectations {
                 .strip_prefix("contains(")
                 .and_then(|s| s.strip_suffix(')'))
             {
-                expectations.assert_c.push((expect_present, inner.trim_matches('"').to_string()));
+                expectations
+                    .assert_c
+                    .push((expect_present, inner.trim_matches('"').to_string()));
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("assert-c-count:") {
@@ -255,8 +259,10 @@ fn without_source_echo(stderr: &str) -> String {
             !(digits.len() < t.len() && digits.trim_start().starts_with('|'))
         })
         .collect::<Vec<_>>()
-        .join("
-")
+        .join(
+            "
+",
+        )
 }
 
 fn ember(args: &[&str], root: &Path) -> Run {
@@ -312,7 +318,11 @@ fn assert_diagnostic_helps(relative: &str, stderr: &str, expectations: &Expectat
 fn check_file(path: &Path, root: &Path) {
     let source = std::fs::read_to_string(path).expect("the test file is readable");
     let expectations = parse_expectations(&source);
-    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
 
     // `parse-pass` / `parse-fail` run `ember check --syntax-only` (`[CLI-9]`),
     // which reports only `E00xx` and `E01xx`. They are how a rule whose
@@ -353,7 +363,9 @@ fn check_file(path: &Path, root: &Path) {
         _ => {}
     }
     let out_dir = std::env::temp_dir().join("ember-tests").join(
-        path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
     );
     let profiles = profiles(&expectations);
 
@@ -415,7 +427,10 @@ stderr:
     // The emitted C, for `assert-c-order`.
     if !expectations.assert_c_order.is_empty() {
         for profile in &profiles {
-            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
+            let emitted = ember(
+                &["build", &relative, "--emit", "c", "--profile", profile],
+                root,
+            );
             assert_eq!(
                 emitted.exit, 0,
                 "emitting C for {relative} [{profile}] failed:\n{}",
@@ -427,7 +442,11 @@ stderr:
                 let (Some(at_first), Some(at_second)) = (at_first, at_second) else {
                     panic!(
                         "{relative} [{profile}]: assert-c-order needs both needles present; {} is missing\n--- emitted C ---\n{}",
-                        if at_first.is_none() { format!("{first:?}") } else { format!("{second:?}") },
+                        if at_first.is_none() {
+                            format!("{first:?}")
+                        } else {
+                            format!("{second:?}")
+                        },
                         emitted.stdout
                     );
                 };
@@ -443,7 +462,10 @@ stderr:
     // The emitted C, for `assert-c`.
     if !expectations.assert_c.is_empty() {
         for profile in &profiles {
-            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
+            let emitted = ember(
+                &["build", &relative, "--emit", "c", "--profile", profile],
+                root,
+            );
             assert_eq!(
                 emitted.exit, 0,
                 "emitting C for {relative} [{profile}] failed:\n{}",
@@ -452,9 +474,14 @@ stderr:
             for (expect_present, needle) in &expectations.assert_c {
                 let present = emitted.stdout.contains(needle.as_str());
                 assert_eq!(
-                    present, *expect_present,
+                    present,
+                    *expect_present,
                     "{relative} [{profile}]: expected the emitted C {} {needle:?}\n--- emitted C ---\n{}",
-                    if *expect_present { "to contain" } else { "not to contain" },
+                    if *expect_present {
+                        "to contain"
+                    } else {
+                        "not to contain"
+                    },
                     emitted.stdout
                 );
             }
@@ -466,7 +493,10 @@ stderr:
     // allocates once and every subsequent operation must reuse that storage.
     if !expectations.assert_c_count.is_empty() {
         for profile in &profiles {
-            let emitted = ember(&["build", &relative, "--emit", "c", "--profile", profile], root);
+            let emitted = ember(
+                &["build", &relative, "--emit", "c", "--profile", profile],
+                root,
+            );
             assert_eq!(
                 emitted.exit, 0,
                 "emitting C for {relative} [{profile}] failed:\n{}",
@@ -487,7 +517,14 @@ stderr:
         let profile_out_dir = out_dir.join(profile);
         let out_dir_arg = profile_out_dir.to_string_lossy().into_owned();
         let run = ember(
-            &["run", &relative, "--out-dir", &out_dir_arg, "--profile", profile],
+            &[
+                "run",
+                &relative,
+                "--out-dir",
+                &out_dir_arg,
+                "--profile",
+                profile,
+            ],
             root,
         );
 
@@ -549,7 +586,10 @@ fn check_directory(name: &str) -> usize {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("the test directory is readable")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| e == ember_branding::SOURCE_EXT)
+        })
         .collect();
     entries.sort();
     for path in entries {
@@ -606,7 +646,10 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
             .expect("the directory is readable")
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e == ember_branding::SOURCE_EXT)
+            })
             .collect();
         entries.sort();
         for path in entries {
@@ -617,7 +660,11 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
                 .replace('\\', "/");
 
             let once = ember(&["fmt", &relative], &root);
-            assert_eq!(once.exit, 0, "`ember fmt {relative}` failed:\n{}", once.stderr);
+            assert_eq!(
+                once.exit, 0,
+                "`ember fmt {relative}` failed:\n{}",
+                once.stderr
+            );
 
             // Formatting the output again must change nothing.
             let scratch = std::env::temp_dir().join("ember-fmt-once.em");
@@ -630,7 +677,10 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
 
             // And the formatted source must parse to the same tree.
             let before = ember(&["build", &relative, "--emit", "ast"], &root);
-            let after = ember(&["build", &scratch.to_string_lossy(), "--emit", "ast"], &root);
+            let after = ember(
+                &["build", &scratch.to_string_lossy(), "--emit", "ast"],
+                &root,
+            );
             assert_eq!(
                 before.stdout, after.stdout,
                 "{relative}: parse(fmt(x)) differs from parse(x)"
@@ -646,20 +696,119 @@ fn hello_world_builds_and_runs() {
     // Phase 0's exit criterion (Part XX.2).
     let root = workspace_root();
     let out_dir = std::env::temp_dir().join("ember-tests").join("hello");
+    let hello = format!("examples/{}", ember_branding::source_file("hello"));
     let run = ember(
-        &["run", "examples/hello.em", "--out-dir", &out_dir.to_string_lossy()],
+        &[
+            "run",
+            &hello,
+            "--out-dir",
+            &out_dir.to_string_lossy(),
+        ],
         &root,
     );
     assert_eq!(run.exit, 0, "hello.em failed:\n{}", run.stderr);
     assert_eq!(run.stdout.trim_end(), "hello, world");
 }
 
+/// `[LT-40]` / `[BLD-2]` — changing an imported callable's verified region
+/// summary changes the imported module's interface hash and therefore the
+/// caller's cache key, even though the caller source stays byte-identical.
+/// This proves a real cross-build dependency identity rather than merely an
+/// in-memory metadata fingerprint.
+#[test]
+fn callable_region_summary_changes_invalidate_importers_interface_key() {
+    let workspace = workspace_root();
+    let test_root =
+        std::env::temp_dir().join(format!("ember-lt40-interface-{}", std::process::id()));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create LT-40 package");
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n",
+    )
+    .expect("write initial helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import select\n\nfn main():\n    first: Array[i32] = Array[i32]()\n    first.push(10)\n    second: Array[i32] = Array[i32]()\n    second.push(20)\n    selected = select(first.as_span(), second.as_span())\n    println(selected[0])\n",
+    )
+    .expect("write importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for LT-40");
+        assert!(
+            output.status.success(),
+            "{label} check failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    check("initial");
+    let before_root = cached_interface(&out_dir, "root");
+    let before_helper = cached_interface(&out_dir, "helper");
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+    )
+    .expect("change callable summary");
+    check("after imported summary change");
+    let after_root = cached_interface(&out_dir, "root");
+    let after_helper = cached_interface(&out_dir, "helper");
+
+    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(before_root.cache_key, after_root.cache_key);
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
+fn cached_interface(out_dir: &Path, module: &str) -> ModuleInterfaceArtifact {
+    let directory = out_dir.join("debug").join("interface");
+    for package in std::fs::read_dir(&directory).expect("interface cache has a package directory") {
+        let package = package.expect("read interface package directory").path();
+        if !package.is_dir() {
+            continue;
+        }
+        for artifact in std::fs::read_dir(&package).expect("read interface cache files") {
+            let artifact = artifact.expect("read interface artifact").path();
+            if artifact
+                .extension()
+                .is_none_or(|extension| extension != "emif")
+            {
+                continue;
+            }
+            let bytes = std::fs::read(&artifact).expect("read interface artifact bytes");
+            let parsed = ModuleInterfaceArtifact::from_bytes(&bytes)
+                .unwrap_or_else(|error| panic!("{}: {error}", artifact.display()));
+            if parsed.module == module {
+                return parsed;
+            }
+        }
+    }
+    panic!("interface artifact for module `{module}` was not written")
+}
+
 #[test]
 fn the_emitted_c_compiles_without_warnings() {
     // `[CG-C-1]` — warning-free under -std=c11 -Wall -Wextra.
     let root = workspace_root();
+    let milestone = format!(
+        "tests/milestones/{}",
+        ember_branding::source_file("m1_value_code_has_no_runtime_cost")
+    );
     let emitted = ember(
-        &["build", "tests/milestones/m1_value_code_has_no_runtime_cost.em", "--emit", "c"],
+        &[
+            "build",
+            &milestone,
+            "--emit",
+            "c",
+        ],
         &root,
     );
     assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
@@ -680,7 +829,8 @@ fn the_emitted_c_compiles_without_warnings() {
 fn parse_expectations_reads_the_annotation_forms() {
     let alloc = ember_branding::runtime("alloc");
     let arena_alloc = ember_branding::runtime("arena_alloc");
-    let source = format!("\
+    let source = format!(
+        "\
 #$ test: run-pass
 #$ profiles: debug, release, shipping
 struct S:
@@ -691,7 +841,8 @@ struct S:
 #$ help: keep one owner
 #$ not-help: RefCell
 #$ exit: 0
-");
+"
+    );
     let parsed = parse_expectations(&source);
     assert_eq!(parsed.kind.as_deref(), Some("run-pass"));
     assert_eq!(parsed.stdout.as_deref(), Some("5"));
@@ -719,25 +870,36 @@ fn the_conformance_suite_runs() {
         .filter(|p| p.is_dir())
         .collect();
     rules.sort();
-    assert!(!rules.is_empty(), "tests/conformance holds no rule directories");
+    assert!(
+        !rules.is_empty(),
+        "tests/conformance holds no rule directories"
+    );
 
     for rule_dir in rules {
         let rule = rule_dir.file_name().unwrap().to_string_lossy().into_owned();
         let mut files: Vec<PathBuf> = std::fs::read_dir(&rule_dir)
             .expect("a rule directory is readable")
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == ember_branding::SOURCE_EXT))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e == ember_branding::SOURCE_EXT)
+            })
             .collect();
         files.sort();
-        assert!(!files.is_empty(), "tests/conformance/{rule}/ holds no programs");
+        assert!(
+            !files.is_empty(),
+            "tests/conformance/{rule}/ holds no programs"
+        );
 
         // `[TST-4a]` — an accept case always, and a reject case for a rule
         // that can reject source. Which rules need one is `[TST-4b]`'s
         // mechanical question, answered from the rule→code map; here the
         // file name carries the answer, and a directory with neither is a
         // directory that tests nothing.
-        let names: Vec<String> =
-            files.iter().map(|p| p.file_stem().unwrap().to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
         assert!(
             names.iter().any(|n| n.starts_with("accept_")),
             "tests/conformance/{rule}/ has no accept_* case ([TST-4a])"

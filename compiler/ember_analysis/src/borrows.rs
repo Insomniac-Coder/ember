@@ -38,15 +38,13 @@ use ember_mir::{
     ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, StmtKind,
     Terminator,
 };
-use ember_types::{Ty, TyKind, TypeTable};
 use ember_span::Span;
+use ember_types::{Ty, TyKind, TypeTable};
 
 use crate::facts::{
     AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
-use crate::regions::{
-    CallRegionContract, CallResultContract, Elision, Origin, Point, Regions,
-};
+use crate::regions::{CallRegionContract, CallResultContract, Elision, Origin, Point, Regions};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
@@ -85,24 +83,27 @@ enum Access {
     /// though the generated C expression looks like an ordinary read.
     Move,
     Write,
-    Borrow { mutable: bool },
+    Borrow {
+        mutable: bool,
+    },
 }
 
 pub fn check_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) {
+    install_callable_regions_all(bodies, types);
+    check_all_with_installed_callable_regions(bodies, types, sink);
+}
+
+/// `[MIR-REG-1]` — derive and install the canonical callable contract before
+/// any caller consumes it. The driver may serialize/deserialize the installed
+/// records at an interface-artifact boundary before invoking
+/// [`check_all_with_installed_callable_regions`]; this producer stays separate
+/// so a cache artifact cannot be confused with a second inference table.
+pub fn install_callable_regions_all(bodies: &mut [Body], types: &TypeTable) {
     // `[LT-1]` is a property of the *callee's* signature, so a call in one
     // body is read against another's. The table is built once.
     let mut signatures: HashMap<String, Elision> = HashMap::new();
     for body in &*bodies {
         signatures.insert(body.symbol.clone(), elision_of(body, types));
-    }
-    // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
-    // direct call to one of these bodies is a method call. Read once here
-    // because the conflict is reported while checking the *caller's* body.
-    let mut methods: HashSet<String> = HashSet::new();
-    for body in &*bodies {
-        if is_method_body(body) {
-            methods.insert(body.symbol.clone());
-        }
     }
     let inferred = infer_callable_summaries(bodies, types, &signatures);
     for body in &mut *bodies {
@@ -111,13 +112,35 @@ pub fn check_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) {
             .expect("callable summary inference omitted a MIR body");
         body.callable_regions = Some(metadata_from_contract(contract));
     }
+}
+
+/// Consume only the callable-region metadata already installed on MIR. A
+/// missing or corrupt record is an internal compiler failure: `[LT-40]` does
+/// not permit treating stale metadata as an optimisation hint or silently
+/// widening it to an unknown call.
+pub fn check_all_with_installed_callable_regions(
+    bodies: &[Body],
+    types: &TypeTable,
+    sink: &mut Sink,
+) {
+    let signatures: HashMap<String, Elision> = bodies
+        .iter()
+        .map(|body| (body.symbol.clone(), elision_of(body, types)))
+        .collect();
+    // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
+    // direct call to one of these bodies is a method call. Read once here
+    // because the conflict is reported while checking the *caller's* body.
+    let methods: HashSet<String> = bodies
+        .iter()
+        .filter(|body| is_method_body(body))
+        .map(|body| body.symbol.clone())
+        .collect();
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
     let summaries = contracts_from_metadata(bodies, &signatures);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
-    let invalid_result_bodies =
-        infer_invalid_result_bodies(bodies, types, &call_contract);
+    let invalid_result_bodies = infer_invalid_result_bodies(bodies, types, &call_contract);
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
         _ => false,
@@ -168,7 +191,10 @@ fn contracts_from_metadata(
             );
             (
                 body.symbol.clone(),
-                CallRegionContract { access: metadata.access.clone(), result },
+                CallRegionContract {
+                    access: metadata.access.clone(),
+                    result,
+                },
             )
         })
         .collect()
@@ -375,8 +401,8 @@ fn inferred_callable_summary(
 ) -> CallRegionContract {
     let mut accesses = Vec::new();
     for (local, _) in body.args() {
-        let whole_value_move = regions.local_regions(local).len() > 1
-            && !body.borrowed_params.contains(&local);
+        let whole_value_move =
+            regions.local_regions(local).len() > 1 && !body.borrowed_params.contains(&local);
         for slot in regions.local_regions(local) {
             let mut operations: Vec<RegionAccessKind> =
                 regions.accesses(slot.region).iter().copied().collect();
@@ -431,7 +457,9 @@ fn inferred_result_summary(
             let parameter_slots = regions.local_regions(local);
             if parameter_slots.is_empty() {
                 if is_growing_arena_ty(types, decl.ty)
-                    && regions.origins(result.region).contains(&Origin::Param(local))
+                    && regions
+                        .origins(result.region)
+                        .contains(&Origin::Param(local))
                 {
                     sources.push(ResultRegionSource::Arena { argument });
                 }
@@ -566,7 +594,10 @@ fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
     if receiver_is_a_view(body, types) {
         return vec![LocalId(1)];
     }
-    body.args().filter(|(_, decl)| types.is_view(decl.ty)).map(|(local, _)| local).collect()
+    body.args()
+        .filter(|(_, decl)| types.is_view(decl.ty))
+        .map(|(local, _)| local)
+        .collect()
 }
 
 /// `E3062` — the returned view points into a parameter elision did not tie it
@@ -643,7 +674,10 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
         sink.emit_classified(
             Diagnostic::error(codes::E3062, span, message)
                 .primary_label("returned here")
-                .secondary(decl.span, format!("`{name}` is the parameter it points into"))
+                .secondary(
+                    decl.span,
+                    format!("`{name}` is the parameter it points into"),
+                )
                 .help(help)
                 .note("`@borrows` is what ties a return to a parameter elision would not (LT-1a)"),
         );
@@ -703,22 +737,24 @@ fn check_multi_result_summary(
 /// only when every carried region is static. This check belongs after region
 /// inference: spelling the same static view through a local or a zero-input
 /// function must not change whether the program is accepted.
-fn check_box_storage_regions(
-    body: &Body,
-    types: &TypeTable,
-    regions: &Regions,
-    sink: &mut Sink,
-) {
+fn check_box_storage_regions(body: &Body, types: &TypeTable, regions: &Regions, sink: &mut Sink) {
     for (block_index, block) in body.blocks.iter().enumerate() {
         let Terminator::Call {
-            func: FuncRef::Builtin { which: Builtin::BoxNew { elem, .. }, .. },
+            func:
+                FuncRef::Builtin {
+                    which: Builtin::BoxNew { elem, .. },
+                    ..
+                },
             args,
             ..
         } = &block.terminator
         else {
             continue;
         };
-        let point = Point { block: block_index, index: block.stmts.len() };
+        let point = Point {
+            block: block_index,
+            index: block.stmts.len(),
+        };
         if !types.is_view(*elem)
             || args
                 .first()
@@ -749,7 +785,9 @@ fn check_box_storage_regions(
 
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol } => symbol.as_str() == body.symbol.as_str() && is_method_body(body),
+        FuncRef::Direct { symbol } => {
+            symbol.as_str() == body.symbol.as_str() && is_method_body(body)
+        }
         _ => false,
     };
     check_body(
@@ -792,19 +830,32 @@ fn check_body(
 
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
-            let point = Point { block: block_index, index };
+            let point = Point {
+                block: block_index,
+                index,
+            };
             let mut accesses = Vec::new();
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     // A borrow is not a conflicting read of its own operand.
-                    if let Rvalue::Ref { place: borrowed, mutable } = rvalue {
+                    if let Rvalue::Ref {
+                        place: borrowed,
+                        mutable,
+                    } = rvalue
+                    {
                         accesses.push((borrowed.clone(), Access::Borrow { mutable: *mutable }));
                     } else {
                         rvalue_reads(rvalue, &mut accesses);
                     }
                     accesses.push((place.clone(), Access::Write));
                 }
-                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                StmtKind::CheckedBinaryOp {
+                    dest,
+                    overflow,
+                    lhs,
+                    rhs,
+                    ..
+                } => {
                     operand_read(lhs, &mut accesses);
                     operand_read(rhs, &mut accesses);
                     accesses.push((dest.clone(), Access::Write));
@@ -840,7 +891,10 @@ fn check_body(
             );
         }
 
-        let point = Point { block: block_index, index: block.stmts.len() };
+        let point = Point {
+            block: block_index,
+            index: block.stmts.len(),
+        };
         let mut accesses = Vec::new();
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
@@ -877,14 +931,30 @@ fn check_body(
         // call that could re-enter the same cell. Conservative: any call while
         // a guard loan is live lints (a lint, never an error, and not opt-in).
         if let Terminator::Call { .. } = &block.terminator {
-            check_refcell_call(body, types, &loans, &regions, point, block.terminator_span, sink);
+            check_refcell_call(
+                body,
+                types,
+                &loans,
+                &regions,
+                point,
+                block.terminator_span,
+                sink,
+            );
         }
 
         // §4.7 step 6 — a loan still live where the borrowed place's storage
         // ends. Returning is the case that matters: the reference leaves the
         // frame while what it points at does not.
         if matches!(block.terminator, Terminator::Return) {
-            check_escapes(body, types, &loans, &regions, point, block.terminator_span, sink);
+            check_escapes(
+                body,
+                types,
+                &loans,
+                &regions,
+                point,
+                block.terminator_span,
+                sink,
+            );
         }
     }
 }
@@ -907,7 +977,10 @@ fn check_escapes(
     sink: &mut Sink,
 ) {
     for loan in in_scope(loans, regions, point) {
-        let place = loan.capability.source_place().expect("a loan has source storage");
+        let place = loan
+            .capability
+            .source_place()
+            .expect("a loan has source storage");
         let root = body.local(place.local);
         if root.kind == LocalKind::Arg
             && (types.is_view(root.ty) || is_named_arena_origin(body, place.local, types))
@@ -918,9 +991,9 @@ fn check_escapes(
         // The label is about the *owner*, which for `self.n` is `self`.
         let owner = place_name(body, types, &Place::local(place.local));
         let storage = match root.kind {
-            LocalKind::Arg => format!(
-                "`{owner}` is passed by value, so the copy's storage ends with the frame"
-            ),
+            LocalKind::Arg => {
+                format!("`{owner}` is passed by value, so the copy's storage ends with the frame")
+            }
             _ => format!("`{owner}` is a local, so its storage ends with the frame"),
         };
         let is_arena = is_arena_ty(types, root.ty);
@@ -950,7 +1023,10 @@ fn check_escapes(
                     format!("arena allocation cannot outlive `{owner}`"),
                 )
                 .primary_label("this allocation view escapes the arena's region")
-                .secondary(loan.span, format!("`{owner}` is borrowed for the allocation here"))
+                .secondary(
+                    loan.span,
+                    format!("`{owner}` is borrowed for the allocation here"),
+                )
                 .secondary(root.span, origin_label)
                 .help(help)
                 .note(note),
@@ -1046,15 +1122,19 @@ fn check_refcell_call(
         }
     }
     let cell = place_name(body, types, &display);
-    sink.emit(Diagnostic::lint(
-        codes::L3011,
-        span,
-        format!("a `RefCell` guard for `{cell}` is live across this call"),
-    )
-    .primary_label("call happens here")
-    .secondary(loan.span, "guard borrowed here")
-    .help("drop the guard before the call, or put the call in a block of its own")
-    .note("a guard live across a call that re-enters the same cell panics at run time [CELL-7]"));
+    sink.emit(
+        Diagnostic::lint(
+            codes::L3011,
+            span,
+            format!("a `RefCell` guard for `{cell}` is live across this call"),
+        )
+        .primary_label("call happens here")
+        .secondary(loan.span, "guard borrowed here")
+        .help("drop the guard before the call, or put the call in a block of its own")
+        .note(
+            "a guard live across a call that re-enters the same cell panics at run time [CELL-7]",
+        ),
+    );
 }
 
 /// Every explicit `Rvalue::Ref` in the body, plus `[LT-4a]`'s narrow
@@ -1072,10 +1152,23 @@ fn collect_loans(
     let mut loans = Vec::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
-            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
-            let Rvalue::Ref { place: borrowed, mutable } = rvalue else { continue };
-            let created_at = Point { block: block_index, index };
-            let Some(region) = regions.loan_region(created_at) else { continue };
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            let Rvalue::Ref {
+                place: borrowed,
+                mutable,
+            } = rvalue
+            else {
+                continue;
+            };
+            let created_at = Point {
+                block: block_index,
+                index,
+            };
+            let Some(region) = regions.loan_region(created_at) else {
+                continue;
+            };
             let permission = if *mutable {
                 AccessPermission::Mut
             } else {
@@ -1105,7 +1198,10 @@ fn collect_loans(
             });
         }
 
-        let Terminator::Call { func, args, dest, .. } = &block.terminator else {
+        let Terminator::Call {
+            func, args, dest, ..
+        } = &block.terminator
+        else {
             continue;
         };
         let Some(region) = regions.local_region(dest.local) else {
@@ -1122,7 +1218,10 @@ fn collect_loans(
             if !is_growing_arena_ty(types, place_ty(body, types, borrowed)) {
                 continue;
             }
-            let created_at = Point { block: block_index, index: block.stmts.len() };
+            let created_at = Point {
+                block: block_index,
+                index: block.stmts.len(),
+            };
             let capability = BorrowCapability::statically_checked_reference(
                 place_ty(body, types, borrowed),
                 provenance_root(body, borrowed.local),
@@ -1158,7 +1257,11 @@ fn provenance_root(body: &Body, local: LocalId) -> ProvenanceRoot {
 fn borrower_feeds_arena_scope(body: &Body, borrower: LocalId) -> bool {
     body.blocks.iter().any(|block| {
         let Terminator::Call {
-            func: FuncRef::Builtin { which: Builtin::ArenaScope { .. }, .. },
+            func:
+                FuncRef::Builtin {
+                    which: Builtin::ArenaScope { .. },
+                    ..
+                },
             args,
             ..
         } = &block.terminator
@@ -1198,7 +1301,9 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
     // Bounded by the block count: argument evaluation is a chain, and a loop
     // back into it would mean the borrow is used more than once anyway.
     for _ in 0..body.blocks.len() {
-        let Some(block) = body.blocks.get(block_index) else { return HashSet::new() };
+        let Some(block) = body.blocks.get(block_index) else {
+            return HashSet::new();
+        };
 
         for (index, stmt) in block.stmts.iter().enumerate().skip(start) {
             let mut reads = Vec::new();
@@ -1219,10 +1324,16 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
             if reads.iter().any(|(p, _)| p.local == borrower) {
                 return HashSet::new();
             }
-            window.insert(Point { block: block_index, index });
+            window.insert(Point {
+                block: block_index,
+                index,
+            });
         }
 
-        let terminator_point = Point { block: block_index, index: block.stmts.len() };
+        let terminator_point = Point {
+            block: block_index,
+            index: block.stmts.len(),
+        };
         match &block.terminator {
             Terminator::Call { args, next, .. } => {
                 let used = args.iter().any(|a| match a {
@@ -1270,8 +1381,13 @@ fn method_autoref_target(
     is_method: &dyn Fn(&FuncRef) -> bool,
 ) -> Option<Place> {
     let stmt = body.blocks.get(point.block)?.stmts.get(point.index)?;
-    let StmtKind::Assign { place: borrower, rvalue: Rvalue::Ref { place: borrowed, mutable: true } } =
-        &stmt.kind
+    let StmtKind::Assign {
+        place: borrower,
+        rvalue: Rvalue::Ref {
+            place: borrowed,
+            mutable: true,
+        },
+    } = &stmt.kind
     else {
         return None;
     };
@@ -1318,7 +1434,9 @@ fn method_autoref_target(
         }
 
         match &block.terminator {
-            Terminator::Call { func, args, next, .. } => {
+            Terminator::Call {
+                func, args, next, ..
+            } => {
                 let receiver = args.first().and_then(|arg| match arg {
                     Operand::Copy(p) | Operand::Move(p) => Some(p.local),
                     Operand::Const(_) => None,
@@ -1326,7 +1444,11 @@ fn method_autoref_target(
                 if receiver == Some(borrower) {
                     // The temporary is this call's receiver: B8 exactly when
                     // the callee is a method.
-                    return if is_method(func) { Some(borrowed) } else { None };
+                    return if is_method(func) {
+                        Some(borrowed)
+                    } else {
+                        None
+                    };
                 }
                 if args.iter().any(|arg| match arg {
                     Operand::Copy(p) | Operand::Move(p) => p.local == borrower,
@@ -1383,7 +1505,10 @@ fn check_point(
     }
     for (place, access) in accesses {
         for loan in &scope {
-            let loan_place = loan.capability.source_place().expect("a loan has source storage");
+            let loan_place = loan
+                .capability
+                .source_place()
+                .expect("a loan has source storage");
             if !overlaps(loan_place, place) {
                 continue;
             }
@@ -1447,7 +1572,10 @@ fn check_point(
                 continue;
             }
 
-            let key = (loan.created_at.block * 4096 + loan.created_at.index, point.block * 4096 + point.index);
+            let key = (
+                loan.created_at.block * 4096 + loan.created_at.index,
+                point.block * 4096 + point.index,
+            );
             if !reported.insert(key) {
                 continue;
             }
@@ -1467,13 +1595,18 @@ fn check_point(
                     codes::E3021,
                     format!("`{name}` is borrowed here and mutably borrowed elsewhere"),
                 ),
-                (true, Access::Read) => {
-                    (codes::E3021, format!("`{name}` cannot be read while it is mutably borrowed"))
-                }
-                (_, Access::Move) => {
-                    (codes::E3021, format!("`{name}` cannot be moved while it is borrowed"))
-                }
-                _ => (codes::E3021, format!("`{name}` cannot be written while it is borrowed")),
+                (true, Access::Read) => (
+                    codes::E3021,
+                    format!("`{name}` cannot be read while it is mutably borrowed"),
+                ),
+                (_, Access::Move) => (
+                    codes::E3021,
+                    format!("`{name}` cannot be moved while it is borrowed"),
+                ),
+                _ => (
+                    codes::E3021,
+                    format!("`{name}` cannot be written while it is borrowed"),
+                ),
             };
 
             // `[DIA-3]` — the borrow site, the conflicting access, and the
@@ -1491,15 +1624,17 @@ fn check_point(
             // manually created iterator remains an ordinary E3021/B3 loan;
             // inferring this distinction from `__it` or source spans would be
             // both fragile and user-spellable.
-            let iteration_borrow = matches!(access, Access::Write | Access::Borrow { mutable: true })
-                && loan_held_by_for_iterator(body, regions, loan);
+            let iteration_borrow =
+                matches!(access, Access::Write | Access::Borrow { mutable: true })
+                    && loan_held_by_for_iterator(body, regions, loan);
             // `[BRW-4]` — when the conflicting access is a method call's
             // receiver autoref, disjoint-field access is defeated by the call:
             // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
             // function's `mut` argument lowers through the same temporary, so
             // the consuming call must be to a method body — otherwise a
             // whole-place `mut` argument misreports as B8 rather than B1.
-            let method_root = if loan_mutable && matches!(access, Access::Borrow { mutable: true }) {
+            let method_root = if loan_mutable && matches!(access, Access::Borrow { mutable: true })
+            {
                 method_autoref_target(body, point, is_method)
                     .map(|taken| place_name(body, types, &taken))
             } else {
@@ -1520,7 +1655,11 @@ fn check_point(
             } else {
                 (code, message)
             };
-            let kind = if loan.capability.is_mut() { "mutable " } else { "" };
+            let kind = if loan.capability.is_mut() {
+                "mutable "
+            } else {
+                ""
+            };
             let indexed_conflict = code == codes::E3022
                 && loan_place
                     .projection
@@ -1649,7 +1788,9 @@ fn keeper(
         if body.local(*holder).name.is_none() {
             continue;
         }
-        let Some(spans) = reads.get(holder) else { continue };
+        let Some(spans) = reads.get(holder) else {
+            continue;
+        };
         for span in spans {
             if span.file != conflict.file || span.start <= conflict.start {
                 continue;
@@ -1676,7 +1817,10 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
         for (place, access) in accesses {
             // A write through a reference reads the reference itself.
             let reading = matches!(access, Access::Read | Access::Move)
-                || place.projection.iter().any(|p| matches!(p, Projection::Deref));
+                || place
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, Projection::Deref));
             if reading {
                 reads.entry(place.local).or_default().push(span);
             }
@@ -1752,7 +1896,7 @@ fn overlaps(a: &Place, b: &Place) -> bool {
             // borrow is still caught.
             (Projection::Field(_), Projection::Index(_) | Projection::ConstIndex(_))
             | (Projection::Index(_) | Projection::ConstIndex(_), Projection::Field(_)) => {
-                return false
+                return false;
             }
             _ => {}
         }
@@ -1765,7 +1909,10 @@ fn overlaps(a: &Place, b: &Place) -> bool {
 /// `p.0`. A tuple keeps its number, because that is what the source says too.
 fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
     let decl = body.local(place.local);
-    let mut out = decl.name.clone().unwrap_or_else(|| format!("_{}", place.local.0));
+    let mut out = decl
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("_{}", place.local.0));
     let mut ty = decl.ty;
     let mut at = 0;
     while at < place.projection.len() {
@@ -1817,9 +1964,11 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
 
 fn field_name(types: &TypeTable, ty: Ty, index: usize) -> Option<String> {
     match types.kind(ty) {
-        TyKind::Struct(id) => {
-            types.struct_def(*id).fields.get(index).map(|f| f.name.to_string())
-        }
+        TyKind::Struct(id) => types
+            .struct_def(*id)
+            .fields
+            .get(index)
+            .map(|f| f.name.to_string()),
         _ => None,
     }
 }
@@ -1988,7 +2137,11 @@ mod callable_region_metadata_tests {
             None,
         ));
         let violations = verify_callable_regions_all(&bodies, &types);
-        assert!(violations.iter().any(|v| v.message.contains("disagrees with the MIR body")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("disagrees with the MIR body"))
+        );
     }
 
     #[test]
@@ -2003,7 +2156,9 @@ mod callable_region_metadata_tests {
             BasicBlock {
                 stmts: Vec::new(),
                 terminator: Terminator::Call {
-                    func: FuncRef::Direct { symbol: "empty".to_string() },
+                    func: FuncRef::Direct {
+                        symbol: "empty".to_string(),
+                    },
                     args: Vec::new(),
                     dest: Place::local(ember_mir::RETURN_LOCAL),
                     next: BasicBlockId(1),
@@ -2028,6 +2183,10 @@ mod callable_region_metadata_tests {
             None,
         ));
         let violations = verify_callable_regions_all(&bodies, &types);
-        assert!(violations.iter().any(|v| v.message.contains("names absent argument 0")));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.message.contains("names absent argument 0"))
+        );
     }
 }
