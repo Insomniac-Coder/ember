@@ -35,10 +35,10 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 189 Rust tests pass;
-- the conformance runner passes across 120 rule directories and 399 Ember
+- the conformance runner passes across 122 rule directories and 410 Ember
   source files;
 - all six adopted-specification gates pass;
-- 85 recorded compiler defects are closed;
+- 86 recorded compiler defects are closed;
 - four known deviations remain open (D1–D4);
 - no owner semantic/API decision is currently open; ODR-014 is closed by H6.
 
@@ -75,16 +75,20 @@ yields shared references, leaves the Array usable afterward, and reports
 E3020/B2 for conflicting mutation rather than moving the collection or falling
 back to a generic overlapping-loan diagnostic.
 
-The direct-call multi-region slice is complete at `90059c8`, building on
-`c913fbd`'s field-sensitive region vectors. Direct function summaries now
-retain exact result-field provenance and parameter-field access, transitive
-wrappers reach a fixpoint, known split operations publish exact result
-relations, and opaque multi-region results fail with `E3065/B14` rather than
-being widened to the obsolete one-region intersection. Field replacement uses
-the destination projection rather than the containing local, and generated C
-contains no region metadata. Summary serialization/verification and
-invalidation, non-direct dispatch, and the complete escape/storage matrix
-remain incomplete; unknown calls stay conservative.
+The direct-call multi-region slice begins at `90059c8`, building on
+`c913fbd`'s field-sensitive region vectors, and its verified MIR boundary is
+now complete at `af7c525`. Direct function summaries retain exact result-field
+provenance and parameter-field access; transitive wrappers reach a fixpoint;
+known split operations publish exact result relations; and opaque multi-region
+results fail with `E3065/B14`. Canonical summary metadata is installed in MIR,
+fingerprinted deterministically, consumed by borrow checking, independently
+rederived, and rejected before code generation when missing, corrupt, or
+semantically stale. `[LT-21]` field replacement now recomputes provenance at
+the assignment, including through CFG joins and returned wrappers (D-116).
+Generated C contains no region metadata. Separate interface-file
+serialization and `[LT-40]` cache invalidation, non-direct dispatch, and the
+complete escape/storage matrix remain incomplete; unknown calls stay
+conservative.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -290,9 +294,9 @@ The nine-phase plan proceeds from the completed core-language phase through:
 8. full conformance, performance validation, external-package validation, and
    the 1.0 hardening pass.
 
-The immediate order is narrower: carry the direct `[LT-22]`/`[LT-35]`
-field/provenance summaries into verified MIR/interface metadata and add
-`[LT-40]` invalidation; then complete the remaining
+The immediate order is narrower: serialize the verified MIR
+`[LT-22]`/`[LT-35]` field/provenance metadata into a real interface/cache
+artifact and add `[LT-40]` invalidation; then complete the remaining
 multi-region/Phase 2 matrix, and continue the `[DIA-7..10]`/`[DIA-13]`
 diagnostic catalogue as its currently unreachable mechanisms become real.
 

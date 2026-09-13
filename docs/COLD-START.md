@@ -18,10 +18,10 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `90059c8` on `main`, following
-`c913fbd` for field-sensitive region vectors, `e0ba765` for canonical
-Array-loop borrowing, `d077563` for the H6 Span implementation, and `7958259`
-for the H6/ODR-014 contract. All are pushed to `origin/main`
+**Last committed implementation baseline:** `af7c525` on `main`, following
+`90059c8` for direct callable summaries, `c913fbd` for field-sensitive region
+vectors, `e0ba765` for canonical Array-loop borrowing, and `d077563` for the H6
+Span implementation. All are pushed to `origin/main`
 at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -37,8 +37,8 @@ treating this sentence as live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 120 top-level conformance rule directories, 399 `.em` files including support
- modules. 85 defects recorded, **none open**.
+ 122 top-level conformance rule directories, 410 `.em` files including support
+ modules. 86 defects recorded, **none open**.
  **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
@@ -237,11 +237,11 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Direct callable summaries complete; verified metadata is next
+## 5. Verified callable metadata complete; interface invalidation is next
 
-**Exact next task: persist the direct `[LT-22]`/`[LT-35]` callable
-field/provenance summaries as verified MIR/interface metadata, then implement
-`[LT-40]` summary invalidation.** Continue in the order in
+**Exact next task: serialize the verified `[LT-22]`/`[LT-35]` callable
+field/provenance metadata in a real interface/cache artifact and implement
+`[LT-40]` dependency invalidation.** Continue in the order in
 `MIGRATION-0.9.6.md`. Do not fabricate the still-unreachable
 class/thread/effect diagnostic shapes, add placeholder semantic facts, or
 attempt a big-bang rewrite.
@@ -259,12 +259,26 @@ assigned into one field legal. E3064/B13 is retained only as a historical,
 reserved diagnostic identity.
 
 Mutation checks separately proved result routing, access precision, E3065,
-and projected-destination handling are load-bearing. Generated C for the
-two-Span aggregate contains no provenance metadata. The summaries are still
-analysis-local: they are not yet serialized in MIR/interface artifacts,
-verified at the consumer boundary, or coupled to `[LT-40]` invalidation.
-Generic/interface/virtual/dynamic/FFI/closure/coroutine and the complete
-escape/storage matrices remain open.
+and projected-destination handling are load-bearing. `af7c525` moves the
+canonical record into MIR, computes a deterministic fingerprint, makes borrow
+checking consume the installed record, independently rederives it from MIR,
+and rejects missing/corrupt/false metadata at the final code-generation
+boundary. Direct methods, generic functions, and statically monomorphized
+interface bounds are covered. Generated C for the two-Span aggregate contains
+no provenance metadata. The remaining `[LT-40]` gap is cross-build rather than
+in-memory: there is no separate interface/cache artifact system yet in which
+to serialize the record or invalidate dependants. Virtual/dynamic/FFI/closure/
+coroutine and the complete escape/storage matrices remain open.
+
+**D-116 is fixed in the same checkpoint.** `[LT-21]` field replacement now
+uses a forward point-sensitive value/provenance fixpoint: an assignment
+replaces the destination fact and a CFG join conservatively merges possible
+facts. Old sources are released, new sources remain constrained, conditional
+paths remain safe, and returned wrapper summaries contain only the sources
+that can actually reach each field at `return`. Six adversarial LT-21 cases
+pin these boundaries; changing replacement back into union reproduces the
+original false E3021. The specification was already correct and was not
+changed.
 
 **The first multi-region core is complete at `c913fbd`.** Analysis allocates a
 compile-time-only region slot for each borrowed field, preserves slots through

@@ -310,10 +310,23 @@ precision, E3065, and destination-projection classification; generated C
 again contains no proof metadata. Coverage is now 120 conformance directories
 and 399 Ember sources; 189 Rust tests remain green.
 
-This does not complete H1's summary architecture. The contracts are still
-whole-program analysis values rather than serialized MIR/interface metadata;
-`[VERIFY-3]` verification, `[LT-40]` cache/invalidation coupling, non-direct
-dispatch, and the full escape/storage/enum/generic matrix remain.
+The verified-MIR checkpoint is `af7c525`. Canonical callable-region metadata
+now lives on each MIR body, is normalized and deterministically fingerprinted,
+drives the caller-side borrow check, and is independently rederived before
+code generation. Missing, corrupt, and semantically false records are hard
+internal failures. Direct methods, generic functions, and statically
+monomorphized interface-bound calls have adversarial coverage. The same
+checkpoint replaces the old global region-edge closure with a point-sensitive
+value/provenance fixpoint, closing D-116: `[LT-21]` field replacement releases
+the old source, retains the new source, merges conditional alternatives, and
+publishes only return-reaching sources in wrapper summaries. Coverage is now
+122 conformance directories and 410 Ember sources; 189 Rust tests remain green.
+
+This still does not complete H1's summary architecture. The metadata is an
+in-memory MIR artifact; the repository has no separate interface/incremental-
+cache artifact in which to serialize it or implement `[LT-40]` dependency
+invalidation. Non-direct dispatch and the full escape/storage/enum/generic
+matrix also remain.
 
 ## 4. Known implementation gaps
 
@@ -331,9 +344,11 @@ preparatory "Phase 0" is not part of this current nine-phase count.
 - **`VER-096-1` is complete:** selector recognition is implemented and tested.
   This does not adopt H1 or enable a newer contract for older selectors.
 - H1's exact direct callable access/provenance behavior is implemented at
-  `90059c8`, including E3065/B14 and runtime erasure. Persisted summary
-  metadata, verification, invalidation, dynamic targets, stale-metadata
-  handling, and the wider dispatch matrix remain incomplete.
+  `90059c8`, including E3065/B14 and runtime erasure. `af7c525` installs and
+  verifies canonical fingerprinted MIR metadata and closes point-sensitive
+  `[LT-21]` replacement. Interface-file serialization, `[LT-40]` cross-build
+  invalidation, dynamic targets, and the wider dispatch matrix remain
+  incomplete.
 - The H1 equivalence matrix across references, spans, view fields, Arena
   results, RefCell guards, and FFI views has no complete conformance evidence.
 
@@ -368,11 +383,12 @@ preparatory "Phase 0" is not part of this current nine-phase count.
 - **`ARN-LATE-1`:** effect, `@must_drop`, `Send`/`Sync`, and `ThreadArena`
   obligations remain assigned to their later phases.
 - 0.9.5 inferred multi-region view structs are partially implemented through
-  `c913fbd` and `90059c8`: direct aggregate slots, field projection,
-  field-sensitive NLL, direct callable field/provenance summaries, and
-  E3065/B14 are executable. Persisted/verified summaries, invalidation,
-  non-direct dispatch, and the full conformance matrix remain; H1's
-  architecture text is not itself implementation evidence.
+  `c913fbd`, `90059c8`, and `af7c525`: direct aggregate slots, field projection,
+  field-sensitive NLL, point-sensitive replacement, direct callable
+  field/provenance summaries, canonical verified MIR metadata, and E3065/B14
+  are executable. Interface serialization/invalidation, non-direct dispatch,
+  and the full conformance matrix remain; H1's architecture text is not itself
+  implementation evidence.
 - **`UnsafeCell` is complete at `a02c0a5`.** It remains distinct from
   compiler-known `Cell`/`RefCell` and from Arena. Its `!Sync` and conditional
   `Send` behavior remains blocked only on the later threading-trait machinery,
@@ -507,13 +523,14 @@ proved.
    `[TST-25]` evidence and no proof metadata in generated C.
 9. **In progress — complete multi-region and callable summaries through H1
    facts.** The direct region-vector/field-NLL core is complete at `c913fbd`;
-   `90059c8` adds analysis-local direct-call `[LT-22]`/`[LT-35]` result/access
-   summaries, known split-result relations, and `E3065/B14` for opaque
-   multi-region results. Next persist and verify those summaries in MIR and
-   interface artifacts and couple them to `[LT-40]` invalidation, then cover
-   audited-declared, unknown, generic, separate-compilation, dynamic,
-   hot-reload, field-replacement, escape/storage, and verifier cases while
-   preserving runtime erasure.
+   `90059c8` adds direct-call `[LT-22]`/`[LT-35]` result/access summaries, known
+   split-result relations, and `E3065/B14`; `af7c525` installs canonical
+   fingerprinted MIR metadata, verifies producer/consumer agreement, covers
+   direct method/generic/monomorphized-interface cases, and closes `[LT-21]`
+   point-sensitive replacement. Next add a real interface/cache artifact and
+   `[LT-40]` invalidation, then cover audited-declared, unknown, separate-
+   compilation, dynamic, hot-reload, escape/storage, and remaining verifier
+   cases while preserving runtime erasure.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -576,12 +593,13 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Persist `90059c8`'s analysis-local `[LT-22]`/`[LT-35]` direct callable
-field/provenance summaries in verified MIR/interface metadata, then add
-`[LT-40]` summary invalidation. Preserve conservative all-slot behavior for
-unknown calls and ordinary E3021 for precise matching-field conflicts;
-E3064 remains a reserved historical identity rather than target behavior.
-Keep `[LT-21]` field replacement, the
-escape/storage/enum/generic matrix, FFI/coroutine boundaries, and runtime
-erasure explicit in the remaining work. Do not fabricate class/thread/effect
-diagnostic shapes, add placeholder facts, or start a big-bang rewrite.
+Implement the smallest real interface/cache artifact path that serializes
+`af7c525`'s verified `[LT-22]`/`[LT-35]` callable metadata, incorporates its
+deterministic fingerprint into dependency identity, and rejects stale or
+missing records under `[LT-40]`/`[MIR-REG-1]`. Preserve conservative all-slot
+behavior for unknown calls and ordinary E3021 for precise matching-field
+conflicts; E3064 remains a reserved historical identity rather than target
+behavior. Then extend the non-direct, escape/storage/enum, FFI/coroutine, and
+hot-reload matrices without leaking proof metadata into runtime layout. Do not
+fabricate class/thread/effect diagnostic shapes, add placeholder facts, or
+start a big-bang rewrite.

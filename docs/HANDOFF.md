@@ -288,14 +288,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.6_Hardened_6**, with H5 as its immutable immediate predecessor and H10 as the architecture-line predecessor; no 0.9.5/0.9.6 repository-normative adoption is implied by the file |
-| Current implementation checkpoint | `90059c8` (`Add direct callable region summaries`), following `c913fbd` (field-sensitive region vectors), `e0ba765` (canonical Array-loop borrowing/E3020), and `d077563` (complete H6 Span API) |
-| Recent commits | `90059c8` direct callable region summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | Clean at the implementation checkpoint; this handoff/ledger update is the only subsequent documentation scope before its own commit |
+| Current implementation checkpoint | `af7c525` (`Verify callable regions and field replacement`), following `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
+| Recent commits | `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
+| Working tree | Clean immediately after pushed implementation commit `af7c525`; the handoff/ledger synchronization is the only subsequent documentation scope before its own commit |
 | `cargo build` | **0 warnings** |
 | `cargo test --workspace` | **189 tests, all passing**, 0 failures (2026-09-13). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count does not move when conformance cases are added — one `#[test]` walks a directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 120 top-level rule directories, 399 `.em` files including support modules; the full conformance runner is green |
-| Ledgers | 85 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
+| Conformance | 122 top-level rule directories, 410 `.em` files including support modules; the full conformance runner is green |
+| Ledgers | 86 defects, **none open**. **4 open deviations** (D1–D4). ODR-004 through ODR-014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is open |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -919,8 +919,9 @@ dependency gap until `Send`/`Sync` and threads exist.
 
 ### 0.14 The next task
 
-**Persist `90059c8`'s direct `[LT-22]`/`[LT-35]` callable summaries as
-verified MIR/interface metadata and implement `[LT-40]` invalidation.**
+**Complete `[LT-40]` interface/cache invalidation for the verified callable-
+region metadata now installed by `af7c525`, then continue the non-direct and
+remaining multi-region conformance matrix.**
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -931,9 +932,15 @@ snapshot and fixed companion, and the two mutation checks. Do not fabricate
 still-unreachable class/thread/effect shapes.
 The direct multi-region aggregate/NLL core is complete at `c913fbd`; §0.49
 records its exact evidence. Direct result/access summaries and E3065/B14 are
-complete at `90059c8`; §0.50 records their evidence and the remaining artifact
-boundary. Keep architecture migration incremental through real producers and
-consumers; do not create placeholder facts or attempt a big-bang rewrite.
+complete at `90059c8`; §0.50 records their first evidence. `af7c525` installs
+canonical, fingerprinted metadata in every MIR body, makes borrow checking
+consume it, independently rederives and verifies it before code generation,
+and closes `[LT-21]` field replacement through point-sensitive provenance;
+§0.51 records the exact boundary. Interface serialization and cache
+invalidation remain because this repository does not yet have a separate
+interface/cache artifact system. Keep architecture migration incremental
+through real producers and consumers; do not create placeholder facts or
+attempt a big-bang rewrite.
 Preserve exact diagnostics, runtime erasure, and the distinct ordinary-
 assignment, `Cell.set`, and `MaybeUninit.write` orderings. Then close the
 remaining multi-region and Phase 2 ownership/lifetime coverage before
@@ -2955,6 +2962,74 @@ identity to `[LT-40]` invalidation. Preserve the current direct-call behavior
 and conservative unknown-call fallback while doing so; do not claim the wider
 dispatch matrix before it has adversarial coverage.
 
+### 0.51 Verified callable metadata and location-sensitive replacement — 2026-09-13
+
+Implementation commit `af7c525` completes the in-memory MIR half of §0.50's
+artifact boundary. `CallableRegionMetadata` is now the single canonical record
+for parameter-field accesses and exact result-field provenance. Construction
+sorts, deduplicates, and merges equivalent entries, then computes a stable
+FNV-1a fingerprint over the canonical form. The fingerprint deliberately does
+not use Rust's implementation-defined hashing. MIR dumps expose the record for
+inspection, including explicit `borrow_shared`/`borrow_mut` operation names;
+the generated C contains none of it.
+
+The producer/consumer order is load-bearing. Initial MIR has no record. The
+direct-call fixpoint derives one, installs it on every `Body`, and borrow
+checking rebuilds its call contracts from those installed records rather than
+from the temporary inference map. `verify_callable_regions_all` independently
+rederives the summaries from MIR and rejects missing, corrupt, or semantically
+different metadata. `ember_mir::verify::for_codegen` also rejects a missing or
+bad fingerprint unconditionally. The driver performs semantic verification
+both before and after standard-body pruning, so the final code-generation
+boundary cannot silently consume stale metadata. Unit tests pin missing and
+corrupt records, a validly fingerprinted but false summary, an absent argument
+reference, fingerprint sensitivity, and canonical equality under reordered
+input.
+
+This work also exposed and fixed D-116. The old region graph attached every
+assignment edge permanently to one region slot. That was adequate for
+single-assignment reference locals but contradicted `[LT-21]`, which permits a
+borrowed field to be replaced and requires its provenance to be recomputed.
+After
+
+    pair = Pair(old.as_span(), stable.as_span())
+    pair.selected = replacement.as_span()
+
+a later `pair.selected` use incorrectly kept `old` borrowed. The new solver
+computes a forward value/provenance state at every MIR point: an assignment
+replaces the destination fact, while CFG joins conservatively merge possible
+facts. Field-slot NLL, origins, callable accesses, and result summaries all
+consume that same point-sensitive state. This also prevents a wrapper that
+returns the replaced field from publishing both its historical and current
+sources.
+
+Six LT-21 programs pin straight-line old-source release, new-source retention,
+wrapper-result provenance in both directions, a conditional path that may
+retain the old source, and two replacing branches. The wrapper MIR contains
+`result.0 <- arg2` and `result.1 <- arg1`, never historical `arg0`. Changing
+replacement back into union reproduces the original E3021 on the positive
+program. Direct method, generic-function, and statically monomorphized
+interface-bound summary cases also pass; matching-field mutation remains
+E3021. The full workspace remains green at 189 tests, 122 conformance
+directories, and 410 Ember sources; debug/release builds are warning-free; all
+six adopted-source gates and Appendix A pass.
+
+No specification, amendment, ADR, or owner-queue entry changed. `[LT-21]` and
+`[VERIFY-3]` were already explicit; this was a compiler defect, not a reason to
+weaken the frozen H6 target. The remaining `[LT-40]` work is honest and narrow:
+the repository has no separate interface serialization or incremental cache
+yet, so the deterministic fingerprint is an input to that future boundary,
+not evidence that cross-build invalidation already exists. Dynamic/non-direct
+dispatch and the wider enum/Option/Result, closure, coroutine, FFI,
+escape/storage, and hot-reload matrices also remain incomplete.
+
+**Exact next task:** implement the smallest real interface/cache artifact path
+that can serialize canonical callable-region metadata, incorporate its
+fingerprint into dependency identity, and reject stale/missing metadata at the
+consumer boundary under `[LT-40]`/`[MIR-REG-1]`. Do not claim cross-build or
+incremental invalidation from the in-memory fingerprint alone. Then extend the
+non-direct and remaining multi-region matrix conservatively.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
@@ -2973,10 +3048,11 @@ the OWN-6/O2 and panic-runner checkpoint; §0.40 records the FN-2a/B10 closure;
 explicit `MutSpan.reborrow()`; §0.44 closes `TUP-DST-1`; §0.45 records the H5
 target cut; §0.46 completes the bounded concrete Box slice; and §0.47 records
 H6, closed ODR-014, and the completed Span iterator/chunk/raw-pointer surface;
-§0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing. The active
-Phase 2 boundary is now §0.50: §0.49's field-sensitive region-vector core and
-direct callable result/access summaries plus E3065/B14 are executable;
-persisted verified summaries, invalidation, non-direct dispatch, and the
+§0.48 closes D-070 and E3020/B2 with canonical Array-loop borrowing; §0.49
+installs the field-sensitive region-vector core; §0.50 adds direct callable
+result/access summaries and E3065/B14; and §0.51 persists and verifies those
+summaries in MIR while closing D-116's field-replacement defect. Interface-file
+serialization and `[LT-40]` cache invalidation, non-direct dispatch, and the
 remaining multi-region matrix precede target adoption.
 
 **Ask before spawning subagents or a workflow, and state the worst-case agent
