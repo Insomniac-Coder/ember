@@ -11567,6 +11567,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_maybe_uninit_span_method(receiver, inner, name, args, span);
         }
         let usize_ty = self.common.usize;
+        if mutable && name.name.is("reborrow") {
+            if !args.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`reborrow` takes 0 arguments, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let receiver = if is_place(&receiver.kind) {
+                self.pass_receiver(receiver, Mode::Mut, span)
+            } else if self.viewed_place(&receiver) {
+                receiver
+            } else {
+                self.error(
+                    codes::E2140,
+                    span,
+                    "`reborrow` needs a mutable span variable or a view of a mutable place",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let view = self.types.intern(TyKind::Span { elem, mutable: true });
+            return Expr {
+                ty: view,
+                kind: ExprKind::Builtin {
+                    which: Builtin::SpanReborrow,
+                    args: vec![receiver],
+                },
+                span,
+            };
+        }
         if name.name.is("split_at") {
             if args.len() != 1 {
                 self.error(

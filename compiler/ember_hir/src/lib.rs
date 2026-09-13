@@ -330,6 +330,8 @@ pub enum Builtin {
     /// `[SPN-3]` — split one Span borrow into two same-kind, disjoint views at
     /// a checked boundary. A mutable receiver is reborrowed rather than moved.
     SpanSplitAt { elem: Ty, pair: Ty, mutable: bool },
+    /// `[SPN-3]` — explicitly reborrow a move-only mutable span.
+    SpanReborrow,
     /// `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two compares and a
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
@@ -527,6 +529,7 @@ impl Builtin {
             }
             Builtin::ArraySplitAtMut { .. } => "split_at_mut",
             Builtin::SpanSplitAt { .. } => "split_at",
+            Builtin::SpanReborrow => "reborrow",
             Builtin::RangeChecked(_) => "checked",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",

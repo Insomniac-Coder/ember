@@ -951,6 +951,17 @@ impl Emitter<'_> {
         )
     }
 
+    /// A mutable view operation receives either the Span value produced by a
+    /// preceding expression or a pointer created by an explicit reborrow of a
+    /// named Span place. Normalize those two MIR representations once.
+    fn span_value_expression(&self, operand: &str, arg_ty: Ty) -> String {
+        if matches!(self.types.kind(arg_ty), TyKind::Ref { .. }) {
+            format!("(*{operand})")
+        } else {
+            format!("({operand})")
+        }
+    }
+
     fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
@@ -1163,17 +1174,19 @@ impl Emitter<'_> {
                     // MutSpan. MIR has already checked `boundary <= len` and
                     // made a named mutable receiver an explicit reborrow.
                     Builtin::SpanSplitAt { elem, pair, mutable } => {
-                        let source = if matches!(self.types.kind(*arg_ty), TyKind::Ref { .. }) {
-                            format!("(*{})", rendered[0])
-                        } else {
-                            format!("({})", rendered[0])
-                        };
+                        let source = self.span_value_expression(&rendered[0], *arg_ty);
                         return self.split_views_expression(
                             &source,
                             &rendered[1],
                             *elem,
                             *pair,
                             *mutable,
+                        );
+                    }
+                    Builtin::SpanReborrow => {
+                        let source = self.span_value_expression(&rendered[0], *arg_ty);
+                        return format!(
+                            "(({RT}mutspan){{ {source}.ptr, {source}.len }})"
                         );
                     }
                     Builtin::StringAsStr => {
