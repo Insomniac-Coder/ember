@@ -9,7 +9,8 @@ use std::process::ExitCode;
 
 use ember_build::interface::{
     CallableInterfaceRecord, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
-    build_artifacts, cache_directory, prepare_interface_cache, round_trip_artifacts,
+    build_artifacts, cache_directory, compiler_identity, prepare_interface_cache,
+    round_trip_artifacts,
 };
 use ember_build::{Layout, LinkRequest, Profile, Toolchain};
 use ember_diag::Sink;
@@ -526,8 +527,8 @@ fn prepare_callable_interface_cache(
 ) -> Result<PreparedInterfaceCache, String> {
     ember_analysis::install_callable_regions_all(bodies, types);
 
-    let inputs = module_interface_inputs(modules, map, bodies, options)?;
-    let fresh = build_artifacts(&inputs, env!("CARGO_PKG_VERSION")).map_err(|error| {
+    let (inputs, import_visible_symbols) = module_interface_inputs(modules, map, bodies, options)?;
+    let fresh = build_artifacts(&inputs, &compiler_identity()).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
     })?;
     // The fresh record takes the same encode/decode path as a cache hit, so
@@ -551,7 +552,11 @@ fn prepare_callable_interface_cache(
     let prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot load interface cache: {error}")
     })?;
-    install_callable_metadata_from_artifacts(bodies, prepared.artifacts())?;
+    install_callable_metadata_from_artifacts(
+        bodies,
+        prepared.artifacts(),
+        &import_visible_symbols,
+    )?;
     Ok(prepared)
 }
 
@@ -560,7 +565,7 @@ fn module_interface_inputs(
     map: &SourceMap,
     bodies: &[ember_mir::Body],
     options: &Options,
-) -> Result<Vec<ModuleInterfaceInput>, String> {
+) -> Result<(Vec<ModuleInterfaceInput>, std::collections::BTreeSet<String>), String> {
     use std::collections::{BTreeMap, BTreeSet};
 
     let module_names: BTreeMap<ember_span::FileId, String> = modules
@@ -570,7 +575,15 @@ fn module_interface_inputs(
     let known_modules: BTreeSet<String> = module_names.values().cloned().collect();
     let mut records_by_file: BTreeMap<ember_span::FileId, Vec<CallableInterfaceRecord>> =
         BTreeMap::new();
+    let import_visible_spans = import_visible_callable_spans(modules);
+    let mut import_visible_symbols = BTreeSet::new();
     for body in bodies {
+        if !import_visible_spans.contains(&span_key(body.span)) {
+            // The fresh MIR record remains installed for this compilation's
+            // whole-program verification, but a private body is not part of
+            // the import interface hash under `[BLD-2]`.
+            continue;
+        }
         let metadata = body.callable_regions.as_ref().ok_or_else(|| {
             format!(
                 "internal compiler error: [MIR-REG-1] callable metadata missing before interface serialization for `{}`",
@@ -596,6 +609,7 @@ fn module_interface_inputs(
                 symbol: body.symbol.clone(),
                 metadata: metadata.clone(),
             });
+        import_visible_symbols.insert(body.symbol.clone());
     }
 
     let implicit_prelude: Vec<String> = ["std.core", "std.collections"]
@@ -657,12 +671,13 @@ fn module_interface_inputs(
             file.0
         ));
     }
-    Ok(inputs)
+    Ok((inputs, import_visible_symbols))
 }
 
 fn install_callable_metadata_from_artifacts(
     bodies: &mut [ember_mir::Body],
     artifacts: &[ModuleInterfaceArtifact],
+    expected_symbols: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
     use std::collections::BTreeMap;
 
@@ -676,13 +691,21 @@ fn install_callable_metadata_from_artifacts(
             }
         }
     }
+    for symbol in expected_symbols {
+        if !records.contains_key(symbol) {
+            return Err(format!(
+                "internal compiler error: [LT-40] interface artifact omits import-visible callable `{symbol}`"
+            ));
+        }
+    }
     for body in bodies {
-        body.callable_regions = Some(records.remove(&body.symbol).ok_or_else(|| {
-            format!(
-                "internal compiler error: [LT-40] interface artifact omits callable `{}`",
-                body.symbol
-            )
-        })?);
+        if let Some(metadata) = records.remove(&body.symbol) {
+            // Public/package-visible contracts cross the artifact boundary.
+            // Private bodies retain the freshly derived record that produced
+            // this compilation, so all current whole-program checks remain
+            // exact without publishing private implementation detail.
+            body.callable_regions = Some(metadata);
+        }
     }
     if let Some((symbol, _)) = records.into_iter().next() {
         return Err(format!(
@@ -690,6 +713,64 @@ fn install_callable_metadata_from_artifacts(
         ));
     }
     Ok(())
+}
+
+/// `[MOD-2]` / `[BLD-2]` — spans of callable declarations observable by an
+/// importing module. `pub(package)` is deliberately included: it is part of
+/// this package's import graph even though it is absent from a dependant's
+/// public API. Module-private item and member bodies must not perturb the
+/// interface hash.
+fn import_visible_callable_spans(
+    modules: &[ember_typeck::LoadedModule],
+) -> std::collections::BTreeSet<(ember_span::FileId, u32, u32)> {
+    use ember_ast::{ItemKind, VisKind};
+
+    let mut spans = std::collections::BTreeSet::new();
+    for loaded in modules {
+        for item in &loaded.module.items {
+            match &item.kind {
+                ItemKind::Fn(_) if item.vis.kind != VisKind::Private => {
+                    spans.insert(span_key(item.span));
+                }
+                // A member is import-visible only through a visible named
+                // type/interface. `extend` contributes public members to its
+                // target's existing interface, so its own item visibility is
+                // not a second gate.
+                ItemKind::Struct(decl) if item.vis.kind != VisKind::Private => {
+                    add_import_visible_members(&mut spans, &decl.members);
+                }
+                ItemKind::Class(decl) if item.vis.kind != VisKind::Private => {
+                    add_import_visible_members(&mut spans, &decl.members);
+                }
+                ItemKind::Enum(decl) if item.vis.kind != VisKind::Private => {
+                    add_import_visible_members(&mut spans, &decl.members);
+                }
+                ItemKind::Interface(decl) if item.vis.kind != VisKind::Private => {
+                    add_import_visible_members(&mut spans, &decl.members);
+                }
+                ItemKind::Extend(decl) => add_import_visible_members(&mut spans, &decl.members),
+                _ => {}
+            }
+        }
+    }
+    spans
+}
+
+fn add_import_visible_members(
+    spans: &mut std::collections::BTreeSet<(ember_span::FileId, u32, u32)>,
+    members: &[ember_ast::Member],
+) {
+    for member in members {
+        if member.vis.kind != ember_ast::VisKind::Private
+            && matches!(member.kind, ember_ast::MemberKind::Fn(_))
+        {
+            spans.insert(span_key(member.span));
+        }
+    }
+}
+
+fn span_key(span: ember_span::Span) -> (ember_span::FileId, u32, u32) {
+    (span.file, span.start, span.end)
 }
 
 fn module_identity(path: &[String]) -> String {

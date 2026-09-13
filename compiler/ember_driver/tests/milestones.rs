@@ -727,12 +727,12 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     std::fs::create_dir_all(&test_root).expect("create LT-40 package");
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n",
     )
     .expect("write initial helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import select\n\nfn main():\n    first: Array[i32] = Array[i32]()\n    first.push(10)\n    second: Array[i32] = Array[i32]()\n    second.push(20)\n    selected = select(first.as_span(), second.as_span())\n    println(selected[0])\n",
+        "from helper import select, package_select\n\nfn main():\n    first: Array[i32] = Array[i32]()\n    first.push(10)\n    second: Array[i32] = Array[i32]()\n    second.push(20)\n    selected = select(first.as_span(), second.as_span())\n    package_selected = package_select(first.as_span(), second.as_span())\n    println(selected[0])\n    println(package_selected[0])\n",
     )
     .expect("write importer");
 
@@ -753,18 +753,50 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     check("initial");
     let before_root = cached_interface(&out_dir, "root");
     let before_helper = cached_interface(&out_dir, "helper");
+    assert_eq!(before_helper.callables.len(), 2);
+    assert!(before_helper
+        .callables
+        .contains_key(&ember_branding::mangled("helper.select")));
+    assert!(before_helper
+        .callables
+        .contains_key(&ember_branding::mangled("helper.package_select")));
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
     )
-    .expect("change callable summary");
-    check("after imported summary change");
-    let after_root = cached_interface(&out_dir, "root");
-    let after_helper = cached_interface(&out_dir, "helper");
+    .expect("change private callable summary");
+    check("after private summary change");
+    let after_private_root = cached_interface(&out_dir, "root");
+    let after_private_helper = cached_interface(&out_dir, "helper");
 
-    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
-    assert_ne!(before_root.cache_key, after_root.cache_key);
+    assert_ne!(before_helper.cache_key, after_private_helper.cache_key);
+    assert_eq!(before_helper.interface_hash, after_private_helper.interface_hash);
+    assert_eq!(before_root.cache_key, after_private_root.cache_key);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return second\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+    )
+    .expect("change package-visible callable summary");
+    check("after package-visible summary change");
+    let after_package_root = cached_interface(&out_dir, "root");
+    let after_package_helper = cached_interface(&out_dir, "helper");
+
+    assert_ne!(after_private_helper.interface_hash, after_package_helper.interface_hash);
+    assert_ne!(after_private_root.cache_key, after_package_root.cache_key);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\npub(package) fn package_select(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n\nfn hidden(first: Span[i32], second: Span[i32]) -> Span[i32]:\n    return first\n",
+    )
+    .expect("change public callable summary");
+    check("after public summary change");
+    let after_public_root = cached_interface(&out_dir, "root");
+    let after_public_helper = cached_interface(&out_dir, "helper");
+
+    assert_ne!(after_package_helper.interface_hash, after_public_helper.interface_hash);
+    assert_ne!(after_package_root.cache_key, after_public_root.cache_key);
     let _ = std::fs::remove_dir_all(&test_root);
 }
 

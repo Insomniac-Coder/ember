@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use ember_mir::{CallableRegionMetadata, CallableRegionMetadataCodecError};
 
 const MAGIC: &[u8; 4] = b"EMIF";
-const SCHEMA_VERSION: u32 = 1;
+// Schema v2 narrows the callable section from every analyzed body to import-
+// visible bodies. A v1 record is not malformed; it is an incompatible tooling
+// cache entry and is safely invalidated before it can be consumed.
+const SCHEMA_VERSION: u32 = 2;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -34,7 +37,10 @@ impl InterfaceHash {
     }
 }
 
-/// One callable contract exported by the current interface-artifact slice.
+/// One import-visible callable contract exported by the current
+/// interface-artifact slice. This includes `pub(package)` names used within
+/// the package as well as `pub` names visible to dependants, but excludes
+/// module-private bodies.
 /// A future signature/type/effect section will extend the same artifact
 /// schema; it must not create a parallel cache file.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -56,7 +62,7 @@ pub struct ModuleInterfaceInput {
     pub callables: Vec<CallableInterfaceRecord>,
 }
 
-/// The schema-v1 module artifact. Its interface hash presently contains the
+/// The schema-v2 module artifact. Its interface hash presently contains the
 /// canonical callable-region section; source/cache identity already has the
 /// shape required to absorb signatures, layouts, effects, and inline bodies
 /// as those compiler facts obtain real producers.
@@ -71,6 +77,14 @@ pub struct ModuleInterfaceArtifact {
     pub callables: BTreeMap<String, CallableRegionMetadata>,
     pub interface_hash: InterfaceHash,
     pub cache_key: InterfaceHash,
+}
+
+/// The cache identity for this compiler/artifact decoder pair. Cargo's package
+/// version alone is not enough to distinguish a cache schema change during
+/// source development, so the schema version is deliberately part of the
+/// compiler-version input required by `[BLD-2]`.
+pub fn compiler_identity() -> String {
+    format!("{}+emif{SCHEMA_VERSION}", env!("CARGO_PKG_VERSION"))
 }
 
 /// Whether a prior artifact was reused or its dependency identity changed.
@@ -236,12 +250,24 @@ pub fn prepare_interface_cache(
         let path = artifact_path(directory, &artifact.module);
         match std::fs::read(&path) {
             Ok(bytes) => {
-                let existing = ModuleInterfaceArtifact::from_bytes(&bytes).map_err(|error| {
-                    InterfaceArtifactError::StoredArtifact {
-                        path: path.clone(),
-                        error: Box::new(error),
+                let existing = match ModuleInterfaceArtifact::from_bytes(&bytes) {
+                    Ok(existing) => existing,
+                    // A recognized but superseded schema is an ordinary cache
+                    // invalidation, not malformed semantic metadata. It is
+                    // never consumed and cannot become an unknown summary.
+                    Err(InterfaceArtifactError::UnsupportedSchema(_)) => {
+                        report.invalidated += 1;
+                        writes.push((path, artifact.to_bytes()?));
+                        artifacts.push(artifact.clone());
+                        continue;
                     }
-                })?;
+                    Err(error) => {
+                        return Err(InterfaceArtifactError::StoredArtifact {
+                            path: path.clone(),
+                            error: Box::new(error),
+                        });
+                    }
+                };
                 if existing.module != artifact.module {
                     return Err(InterfaceArtifactError::ModulePathCollision {
                         path,
@@ -764,6 +790,35 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, InterfaceArtifactError::StaleSummary { .. }));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn an_incompatible_schema_is_invalidated_without_becoming_an_unknown_contract() {
+        let test_identity = InterfaceHash::of_bytes(
+            std::thread::current()
+                .name()
+                .unwrap_or("interface-schema-test")
+                .as_bytes(),
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "ember-interface-schema-test-{}-{}",
+            std::process::id(),
+            test_identity.hex()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
+        let path = artifact_path(&directory, "root");
+        let mut incompatible = fresh[0].to_bytes().unwrap();
+        incompatible[4..8].copy_from_slice(&(SCHEMA_VERSION - 1).to_le_bytes());
+        std::fs::write(&path, incompatible).unwrap();
+
+        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        assert_eq!(prepared.artifacts(), fresh.as_slice());
+        assert_eq!(prepared.commit().unwrap().invalidated, 1);
+        let rewritten = ModuleInterfaceArtifact::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(rewritten, fresh[0]);
         let _ = std::fs::remove_dir_all(&directory);
     }
 }
