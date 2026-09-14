@@ -38,7 +38,7 @@ At the latest verified checkpoint:
 - the conformance runner passes across 133 rule directories and 476 Ember
   source files;
 - all six adopted-specification gates pass;
-- 96 recorded compiler defects are closed;
+- 97 recorded compiler defects are closed;
 - three known deviations remain open (D1, D3, and D4); D2 is closed;
 - ODR-015 is closed by the owner-approved `@latebound` callable-type boundary;
   the H1 implementation now has a verified first slice, while the remaining

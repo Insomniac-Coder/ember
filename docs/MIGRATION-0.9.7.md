@@ -463,6 +463,12 @@ contract is consumed. This is an implementation-integrity fix under `[BLD-2]`
 and `[LT-40]`; it does not change the language specification or claim that
 independent package compilation is complete.
 
+`c4fccdc` closes D-127 at the same boundary: an explicit `@borrows` vector
+must contain at least one parameter under `[LT-1a]`, and EMIF contract
+validation now rejects an empty vector before it can be serialized or consumed.
+This is another fail-closed compiler-integrity correction; it does not alter
+the language contract.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

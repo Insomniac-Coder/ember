@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — EMIF accepted an empty explicit borrow contract
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-127 | **The module-interface validator accepted `borrows = Some([])` even though `[LT-1a]` requires `@borrows` to name one or more parameters.** A forged or stale artifact could therefore cross the decode boundary with an impossible explicit return-region contract. | `[LT-1a]`, `[BLD-2]`, `[LT-40]`, `[IMP-7]` | **fixed** | `c4fccdc` rejects an empty borrow-position vector during callable-contract validation and adds an artifact-builder regression. This is a compiler integrity defect against an existing specification invariant; no specification or owner ruling changed. |
+
+---
+
 ## 2026-09-14 — EMIF decoding did not verify the cache-key inputs
 
 | # | Defect | Rule | Status | Fixed in |
