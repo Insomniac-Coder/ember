@@ -8,11 +8,12 @@ that the compiler moves rather than the document: when the two disagree and the
 rule is sound, the rule wins. Everything here is either waiting on a phase that
 has not started, or waiting on a mechanism that does not exist yet.
 
-**One entry here is not debt but a standoff.** D5 exists because the document
-contradicts itself and the owner has not ruled: the compiler cannot comply
-without making the specification's own example uncompilable, and it cannot be
-said to conform either. Recording it is the whole point — an unratified reading
-left only in the code is indistinguishable from a bug.
+**Historical note: D5 was once a standoff, but is now closed.** It existed
+because the document contradicted itself and the compiler could not comply
+with the literal reading without making the specification's own example
+uncompilable. The owner ruled on 2026-09-10 that the worked example governs;
+`[FN-1a]` records that clarification and the closed entry below preserves the
+history. There is no current owner standoff in this file.
 
 **What does not belong here.** A rule with nothing built against it is a *gap*,
 not a deviation — the document states on the order of 820 rules and 37 have
