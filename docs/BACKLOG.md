@@ -103,6 +103,12 @@ when their defaults are literal values that reuse the existing literal typing
 and coercion machinery. Non-literal defaults, defaulted custom-`init` fields,
 and inherited construction remain outstanding and are intentionally fail-closed.
 
+The constructor dataflow also covers `while`/`for` `else` blocks. The `else`
+path is checked from the join of loop entry and body state, preserving the
+zero-iteration case; a body-only initialization fact cannot make a field
+readable in `else`. `break`/`continue` and other unsupported constructor exits
+remain fail-closed.
+
 `ARCH-096-1` continuation checkpoints: `d35e94f` routes Arena allocation-return
 escape checking through canonical `StorageIdentity::ArenaAllocation` ownership,
 `30836ee` makes the same checker honor the canonical

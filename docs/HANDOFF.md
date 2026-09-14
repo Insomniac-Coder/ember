@@ -5736,3 +5736,28 @@ its exit gate, and phase accounting remains exactly **1 of 9 complete**.
 The next constructor boundaries are full default-expression evaluation,
 inherited/base initialization, and the ownership/drop protocol for those
 paths; none is claimed by this checkpoint.
+
+### 0.92 Phase 3 loop-`else` constructor initialization — 2026-09-14
+
+The custom class-constructor dataflow now admits `while` and `for` statements
+with an `else` block. The checker analyzes the loop body from the loop-entry
+state, then checks the `else` block from the conservative join of the entry
+state and the body state because the loop may execute zero times. The state
+after the statement is the state produced by that checked `else` block; the
+constructor-shape validator still rejects `break`/`continue` and unsupported
+loop/control-flow forms, so this boundary does not guess about alternate
+exits.
+
+This closes a real soundness boundary in the earlier fail-closed behavior:
+the `else` block no longer inherits a body-only initialization fact. A field
+written only in the loop body remains `Maybe` in `else`, and a read there
+reports E2100. Both counted `for` lowering and iterator/collection lowering
+preserve the same state join before their `else` blocks. Run-pass coverage
+exercises both loop forms; an adversarial compile-fail case exercises the
+read-before-initialization path.
+
+This is implementation-only progress: no specification, ADR, adopted source,
+or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
+its exit gate, and phase accounting remains exactly **1 of 9 complete**.
+The remaining constructor boundaries include inherited/base initialization,
+full default-expression handling, and dynamic exclusivity.

@@ -5620,9 +5620,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Validate the first source-reachable constructor slice. The runtime
     /// object is allocated before the body runs, so this conservative shape
     /// admits direct field initialization, `pass`, nested `if` blocks,
-    /// block-bodied exhaustive `match` arms, and `while`/`for` bodies without
-    /// an `else`. Loop entry is always possible, so each loop merge remains
-    /// conservative. Loop-`else`, expression-bodied match arms, and other
+    /// block-bodied exhaustive `match` arms, and `while`/`for` bodies with an
+    /// optional `else`. Loop entry is always possible, so each loop merge
+    /// remains conservative. Expression-bodied match arms and other
     /// control-flow forms remain outside the slice until their constructor
     /// dataflow is connected. Whole-`self` use is checked against the current
     /// field state below.
@@ -5661,17 +5661,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         self.validate_class_init_shape(block, span);
                     }
                 }
-                ast::StmtKind::While { else_block: None, body, .. } => {
+                ast::StmtKind::While { body, .. } => {
                     self.validate_class_init_shape(body, span);
                 }
-                ast::StmtKind::For { else_block: None, body, .. } => {
+                ast::StmtKind::For { body, .. } => {
                     self.validate_class_init_shape(body, span);
                 }
                 _ => {
                     self.error(
                         codes::E1010,
                         stmt.span,
-                        "class `init` currently supports direct field assignments, `pass`, `if`, block-bodied `match` arms, and loops without `else`",
+                        "class `init` currently supports direct field assignments, `pass`, `if`, block-bodied `match` arms, and loop bodies",
                     );
                 }
             }
@@ -6293,8 +6293,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.loop_labels.push(label.map(|l| l.name));
                 let body = self.check_block(body);
                 self.loop_labels.pop();
-                let else_block = else_block.as_ref().map(|b| self.check_block(b));
                 let body_class_init = self.class_init.clone();
+                if else_block.is_some() && incoming_class_init.is_some() {
+                    // A loop may execute zero times before its `else` runs.
+                    // Check the else block from the join of loop entry and
+                    // one-or-more body iterations, not from the body alone.
+                    // Otherwise a field written only by the body would look
+                    // definitely initialized in the else block.
+                    self.class_init = Self::merge_class_init_paths(
+                        incoming_class_init.clone(),
+                        body_class_init.clone(),
+                    );
+                }
+                let else_block = else_block.as_ref().map(|b| self.check_block(b));
                 if incoming_class_init.is_some() && else_block.is_none() {
                     // A while body may execute zero times. Initialization
                     // performed only in the body is therefore not definite
@@ -7085,6 +7096,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
         let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &iter.kind else {
             // `[CTL-1]` — anything else is driven through `next()`.
             return self.check_for_iterator(label, pattern, iter, body, else_block, span);
@@ -7131,6 +7143,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.loop_labels.pop();
         self.scopes.pop();
 
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(
+                incoming_class_init.clone(),
+                body_class_init,
+            );
+        }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         let _ = span;
         Some(Stmt::ForRange {
@@ -7167,6 +7186,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
         let (iterable, elem) = source;
         let usize_ty = self.common.usize;
         let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
@@ -7224,6 +7244,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.scopes.pop();
         inner.extend(checked.stmts);
 
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(
+                incoming_class_init,
+                body_class_init,
+            );
+        }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         self.scopes.pop();
 
@@ -7267,6 +7294,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
         let iterable = self.synth_committed(iter);
         if iterable.ty == self.common.error {
             return None;
@@ -7433,6 +7461,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
         };
 
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(
+                incoming_class_init,
+                body_class_init,
+            );
+        }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         self.scopes.pop();
 
