@@ -109,10 +109,19 @@ conformance matrix remain open.
 `OBJ-RT-1` current checkpoint also includes literal-default memberwise
 construction for non-inheriting classes: omitted fields are materialized only
 when their defaults are literal values that reuse the existing literal typing
-and coercion machinery. Non-literal defaults, defaulted custom-`init` fields,
-and defaulted derived construction remain outstanding and are intentionally
-fail-closed. Explicit derived constructors now preserve inherited initialization
-through the direct-base `super.init(...)` slice described above.
+and coercion machinery. Non-literal defaults and defaulted derived construction
+remain outstanding and are intentionally fail-closed. Explicit derived
+constructors now preserve inherited initialization through the direct-base
+`super.init(...)` slice described above.
+
+`OBJ-RT-1` continuation: custom `init` now accepts literal defaults on a
+non-inheriting class. HIR carries the literal values, MIR materializes them
+after allocation and before the constructor body, and definite-initialization
+checking treats them as already live. An explicit assignment to such a field
+uses ordinary overwrite lowering, preserving `[OWN-5]` drop-before-store
+ordering. Non-literal defaults and inherited/defaulted derived construction
+remain fail-closed until the expression evaluator and base-constructor
+materialization path can carry the same facts safely.
 
 `OBJ-RT-1` continuation: inherited source-destructor chaining is now emitted
 for concrete single-inheritance classes. Release invokes the most-derived

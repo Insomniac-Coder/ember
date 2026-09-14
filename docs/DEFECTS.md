@@ -62,6 +62,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — custom class init rejected literal field defaults
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-138 | **A user-defined class `init` rejected all defaulted fields even though `[CLS-2]` permits a field with a default to be omitted.** The compiler already had a narrow literal-default materialization path for memberwise classes, but the custom-constructor path rejected it before checking the constructor body. | `[CLS-1]`, `[CLS-2]`, `[CLS-3]`, `[OWN-5]` | **fixed** | Commit `01a1eab` carries literal defaults through HIR and MIR, stores them after allocation and before the custom `init` body, and marks those fields readable during definite-initialization checking. An explicit constructor assignment to a defaulted field remains an ordinary overwrite, including drop-before-store ordering for a future drop-capable literal. Non-literal defaults and inherited/defaulted derived construction remain fail-closed with `E1010` because their evaluator and base-constructor materialization paths are not implemented in this phase. `tests/run-pass/class_construct_init_default_literals.em` covers readable defaults, explicit overwrite, generated construction, and all profiles; `tests/compile-fail/class_construct_init_nonliteral_default.em` preserves the unsupported boundary. No specification, ADR, or owner decision changed. |
+
+---
+
 ## 2026-09-14 — indexed class-field mutable arguments were fail-closed
 
 | # | Defect | Rule | Status | Fixed in |

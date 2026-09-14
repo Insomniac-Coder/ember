@@ -6155,3 +6155,36 @@ static elision, generic-class, and full Phase 3 matrix work. No specification,
 ADR, or owner decision changed. The
 phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active and
 Phase 3 has not passed its exit gate.
+
+### 0.108 Phase 3 literal defaults in custom class constructors — 2026-09-14
+
+`[CLS-2]` permits a class field with a default to be omitted from construction,
+but the custom `init` path rejected every defaulted field even though the
+memberwise class path already had a proven literal-default materialization
+mechanism. This was an implementation defect, recorded as D-138, not a
+specification ambiguity.
+
+Commit `01a1eab` extends only that proven literal subset. The type checker
+retains the initial `Default` state for literal-default fields, allows those
+fields to be read in the constructor, and records the field indices that were
+live before the body. HIR carries the literal default expressions through
+`ClassNew`; MIR stores them immediately after object allocation and before
+calling the user-defined `init`. If the constructor assigns one of those
+fields, the compiler uses ordinary overwrite lowering, so `[OWN-5]` remains
+drop-old-value-before-store-new-value rather than treating the field as a fresh
+slot. The pre-body field list is captured before constructor analysis so an
+explicit overwrite cannot accidentally erase this distinction.
+
+`tests/run-pass/class_construct_init_default_literals.em` proves that a
+defaulted field is readable inside `init`, that an explicit argument overwrites
+another default, and that the result is correct in debug, release, and
+shipping. `tests/compile-fail/class_construct_init_nonliteral_default.em`
+preserves the fail-closed boundary for defaults that are not literal. The
+implementation also rejects inherited/defaulted derived construction in this
+phase: `super.init` currently invokes the base body directly and does not yet
+carry the base's default expressions to the correct object-layout offset.
+Non-literal evaluation, base-default materialization, and the broader Phase 3
+constructor matrix remain open. Full workspace tests pass; the known lexer
+unit-test naming warning remains unchanged. No specification, ADR, or adopted
+source changed. Phase accounting remains exactly **1 of 9 complete**; Phase 2
+remains active and Phase 3 has not passed its exit gate.
