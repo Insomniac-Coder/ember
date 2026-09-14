@@ -553,9 +553,10 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `Send` behavior remains blocked only on the later threading-trait machinery,
   an intentional dependency gap rather than a compiler defect.
 - Phase 2 UI/diagnostic snapshots and other long-standing exit work remain.
-  Seventeen of 25 ownership shapes now have executable snapshots; the eight
-  remaining shapes currently await their later semantic producers rather than
-  fabricated test-only diagnostics.
+  `eeddb90` adds the reachable O5 `CallableOnce` snapshot; 18 of 25 ownership
+  shapes now have executable snapshots. The seven remaining shapes currently
+  await their later semantic producers rather than fabricated test-only
+  diagnostics.
 - **`MEM-API-1` is complete at `17ee5d1`:** `[OWN-6]` `mem.forget` and Part
   XV's `align_of` now join the existing `drop`/`take`/`replace`/`swap`/
   `size_of` subset. Only `[THR-6]`'s later `@must_drop` integration remains.

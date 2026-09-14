@@ -541,9 +541,10 @@ required lifetime rather than merely the final values.
 
 A Phase 2 *exit* criterion now in progress. `compiler/ember_diag/src/shapes.rs`
 holds every shape; `[DIA-13]` wants a rendered snapshot per shape plus
-`[PHIL-8a]`'s `.fixed.em` companion. Seventeen of 25 ownership shapes have exact
-snapshots and compiling repairs; the remaining eight await real semantic
-producers rather than fabricated diagnostics.
+`[PHIL-8a]`'s `.fixed.em` companion. `eeddb90` adds the reachable O5
+`CallableOnce` case; 18 of 25 ownership shapes now have exact snapshots and
+compiling repairs. The remaining seven await real semantic producers rather
+than fabricated diagnostics.
 
 Note the pattern four defects took: **the compiler rejects the right program
 under the wrong shape**, so the *help* is wrong. D-011 (`E3064` reported as B3),
