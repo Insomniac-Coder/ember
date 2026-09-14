@@ -6032,3 +6032,29 @@ The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active
 and Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed
 dynamic-access sharing, static access elision, generic classes, and the full
 Phase 3 conformance matrix remain open.
+
+### 0.104 Phase 3 named memberwise class construction — 2026-09-14
+
+The no-`init` class constructor is memberwise under `[CLS-3]`, and the existing
+memberwise struct contract permits positional or named field arguments. The
+class path nevertheless rejected every named argument with `E1010`, so a valid
+call such as `Point(y=2, x=1)` could not compile. This was a compiler defect,
+not a specification ambiguity.
+
+The type checker now uses the established struct-style field binding for
+memberwise classes: named arguments select fields by name and may be supplied
+out of declaration order; duplicate fields are diagnosed; missing fields still
+use the existing literal-default path or produce the existing error. Positional
+memberwise construction is unchanged. Named arguments for a user-defined
+`init` remain explicitly fail-closed because those names are constructor
+parameter names and require a separate function-call binding implementation;
+this slice does not infer that behavior from field names.
+
+`tests/run-pass/class_named_memberwise_construct.em` verifies the new behavior
+and prints `3` in debug, release, and shipping. It was red before the change
+and green after it. Commit `2b70423` contains the implementation and test. No
+specification, ADR, adopted source, or diagnostic semantics changed. The phase
+ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
+has not passed its exit gate. Virtual/interface dispatch, indexed
+dynamic-access sharing, static access elision, generic classes, and the full
+Phase 3 conformance matrix remain open.

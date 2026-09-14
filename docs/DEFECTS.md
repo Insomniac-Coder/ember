@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — memberwise class construction rejected named fields
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-133 | **The memberwise class-constructor path rejected every named argument even though `[CLS-3]` makes a no-`init` class constructor memberwise, and `[STR-1]` defines memberwise positional/named binding.** `Point(y=2, x=1)` was therefore rejected with `E1010` despite containing valid field values. | `[CLS-2]`, `[CLS-3]`, `[STR-1]`, `[TYP-25]` | **fixed** | `2b70423` applies the established struct-style named-field binding to memberwise classes, including out-of-order fields, duplicate-field diagnostics, missing/defaulted fields, and existing positional behavior. `tests/run-pass/class_named_memberwise_construct.em` was red before the fix and is green in debug, release, and shipping. Named binding for user-defined `init` remains an explicitly fail-closed implementation gap because it requires the separate constructor-parameter binding path. No specification, ADR, or owner decision changed. |
+
+---
+
 ## 2026-09-14 — copied aggregates duplicated class handles without retaining
 
 | # | Defect | Rule | Status | Fixed in |

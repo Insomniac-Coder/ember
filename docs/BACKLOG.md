@@ -187,6 +187,14 @@ class handle nested in a copied struct survives the source scope and remains
 valid in the Array. Virtual/interface dispatch, indexed access sharing, static
 elision, generic classes, and the complete Phase 3 matrix remain open.
 
+`OBJ-RT-1` continuation: memberwise classes now accept named field arguments in
+the same way as memberwise structs, including out-of-order field selection and
+duplicate-field diagnostics. `class_named_memberwise_construct.em` covers the
+new path in all profiles. Named arguments for user-defined class `init` remain
+fail-closed because parameter binding there is a separate implementation slice;
+virtual/interface dispatch, indexed access sharing, static elision, generic
+classes, and the complete Phase 3 matrix remain open.
+
 ---
 
 ## Build order
