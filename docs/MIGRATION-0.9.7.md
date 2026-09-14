@@ -55,9 +55,13 @@ publication paths. The current worktree now has a partial **IMPLEMENTED and
 VERIFIED** slice: parser/type identity, callable-bound propagation, EMIF schema
 7/cache invalidation, invocation-local region markers, return rejection, and
 unbounded-Box storage rejection. H1 remains frozen and **not adopted**. The
-precision matrix for statically independent results, freshness separation, and
-FFI publication remains incomplete; nested scalar, view-escape, and
-owned-capture publication boundaries now have direct evidence.
+precision matrix for freshness separation, FFI publication, and
+separate-compilation consumers remains incomplete. The compiler now preserves
+a known capture-free callback value through a reusable latebound generic
+instance, consumes its one-field result summary, and accepts a statically
+independent result through `with_views2`, including `Box[str]` storage; nested
+scalar, view-escape, and owned-capture publication boundaries also have direct
+evidence.
 
 ADR-034 preserves the separately approved post-H4 simplicity RFC. It directs
 implementation and process toward fewer public concepts, reused authoritative
@@ -428,8 +432,9 @@ The storage conformance case is intentionally reachable from `main`: an early
 version put the violating operation only in an uninstantiated implicit generic
 body, which produced no MIR and falsely passed. D-125 records that test defect.
 This is the standing coverage rule in executable form: a directory named after
-a rule does not prove that the rule is exercised. Nested scalar composition and
-nested view escape are also covered directly; the remaining freshness and
+a rule does not prove that the rule is exercised. Nested scalar composition,
+nested view escape, and a statically independent callback result are also
+covered directly; the remaining freshness, FFI, and separate-compilation
 precision cases remain implementation work.
 
 ## 4. Known implementation gaps
@@ -677,8 +682,9 @@ proved.
    compiler-only invocation origins, and return/Box publication rejection.
    D-125 records and fixes the first storage-test reachability defect. Complete
    the remaining precision and adversarial matrix—freshness, nested boundaries,
-   static-independent results, FFI publication, and
-   separate-compilation consumers—while preserving runtime erasure. Dynamic
+   FFI publication, and separate-compilation consumers—while preserving runtime
+   erasure. Static-independent capture-free callback results now have a direct
+   implementation/conformance slice. Dynamic
    dispatch, class-member lowering, layouts/effects/inline sections, and safe
    reuse remain separate prerequisites; do not publish placeholders.
 10. **Run adoption validation.** `VER-096-1` may land earlier for testing, but
@@ -746,10 +752,11 @@ make an implementation or current test easier.
 Continue the `@latebound` implementation as the smallest general
 callable-boundary fact. The first slice is complete and verified for parser/type
 identity, callable-bound propagation, EMIF/cache invalidation, invocation-local
-origin tracking, return escape, mutable return escape, and unbounded-Box
-storage escape. Next add and verify freshness, nested-boundary separation,
-static-independent owned results, owned-capture publication, FFI publication,
-and separate-compilation consumer cases using the existing region/escape
+origin tracking, return escape, mutable return escape, unbounded-Box storage
+escape, and statically independent capture-free callback results through
+`Box[str]`. Next add and verify freshness, nested-boundary separation,
+owned-capture publication, FFI publication, and separate-compilation consumer
+cases using the existing region/escape
 machinery. Begin each missing case with a minimal adversarial program and keep
 unknown indirect results conservative.
 Do not special-case `std.borrow` names, expose named lifetimes, add runtime/ABI

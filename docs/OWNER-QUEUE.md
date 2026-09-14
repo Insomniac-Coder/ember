@@ -55,10 +55,10 @@ Arena-collection, hashing, and UnsafeCell slices now have executable evidence.
 H1's `@latebound` implementation and remaining conformance matrix are
 implementation/conformance work, not owner questions. The current worktree
 has verified the first `@latebound` slice, including nested scalar composition,
-nested view-escape rejection, and owned-capture publication rejection;
-static-independent-result, freshness, FFI, and separate-compilation evidence
-remain implementation work. Other gaps are likewise implementation/conformance
-work.
+nested view-escape rejection, owned-capture publication rejection, and a
+statically independent capture-free callback result through `Box[str]`;
+freshness, FFI, and separate-compilation evidence remain implementation work.
+Other gaps are likewise implementation/conformance work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**

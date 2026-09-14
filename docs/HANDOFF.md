@@ -289,13 +289,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, and the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, committed as `2087600` (`Implement latebound callable boundaries`). H1 remains a frozen development target, not the adopted repository-normative source |
-| Recent commits | `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
-| Working tree | Clean after the verified `2087600` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, and the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, extended by `6ccb873` (`Preserve static results across latebound callbacks`). H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `6ccb873` preserved statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Working tree | Clean after the verified `6ccb873` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 133 top-level rule directories, 469 `.em` files including support modules; the focused and full conformance runner is green after the latebound storage case was made reachable and nested/owned-capture cases were added (2026-09-14) |
+| Conformance | 133 top-level rule directories, 470 `.em` files including support modules; the focused and full conformance runner is green after static-independent callback-result coverage was added (2026-09-14) |
 | Ledgers | 95 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
@@ -3509,7 +3509,8 @@ names into an ad-hoc special case.
 ### 0.64 `@latebound` callable-boundary implementation — 2026-09-14
 
 The owner-approved 0.9.7 H1 callable-boundary slice is implemented and
-committed at `2087600`. This is compiler evidence against the frozen
+committed at `2087600`, with the statically independent-result extension
+committed at `6ccb873`. This is compiler evidence against the frozen
 target, not adoption of H1 and not a change to the adopted `0.8.5_Hardened_1`
 source.
 
@@ -3543,14 +3544,17 @@ preserves the standing lesson that a test named for a rule is not evidence of
 coverage until the violating path is actually reached.
 
 The implementation is intentionally conservative at this checkpoint. Fresh
-call identity is represented in analysis by MIR `Point` plus callback argument,
-and nested scalar/escape boundaries plus owned-closure publication have direct
-evidence, but a complete precision matrix for statically independent callback
-results, freshness separation, and FFI publication remains future
+call identity is represented in analysis by MIR `Point` plus callback argument.
+The compiler now preserves a known capture-free function value through a
+reusable `@latebound` generic instance, consumes its one-field result summary,
+and accepts a statically independent result through the wrapper, including
+unbounded `Box` storage. Ordinary callback summaries and `CallableOnce` remain
+conservative and are not specialized by this path. Freshness separation, FFI
+publication, and separate-compilation precision remain future
 conformance/implementation work. No `std.borrow` name is special-cased,
 no named lifetime syntax was added, and ordinary callbacks remain ordinary.
 
-Validation after the reachable-storage correction: parser tests pass; EMIF
+Validation after the static-independent-result correction: parser tests pass; EMIF
 round-trip/cache tests pass; the focused compile-pass/compile-fail checks pass;
 the full conformance runner passes; `cargo build --workspace` is warning-free;
 and `cargo test --workspace` passes all 210 tests. The test build retains one

@@ -1262,9 +1262,11 @@ language-revision successor. The target is not adopted. The current compiler
 checkpoint implements and verifies the first slice: the minimal
 `with_views2(..., first)` escape reproducer, mutable and lambda result escape,
 nested scalar composition and view-escape rejection, EMIF
-identity/invalidation, and generated-code erasure. Freshness, statically
-independent results, and FFI-publication cases remain required evidence before
-adoption; owned-capture publication now has a direct negative conformance case.
+identity/invalidation, and generated-code erasure. A known capture-free callback
+that returns a statically independent `str` now has direct positive evidence,
+including `Box[str]` storage. Freshness, FFI-publication, and
+separate-compilation cases remain required evidence before adoption;
+owned-capture publication has a direct negative conformance case.
 
 **Implementation status note — 2026-09-14 (non-normative).** The callable
 modifier now survives parsing, canonical type identity, callable bounds,
