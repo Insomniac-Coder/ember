@@ -5601,11 +5601,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Validate the first source-reachable constructor slice. The runtime
     /// object is allocated before the body runs, so this conservative shape
     /// admits direct field initialization, `pass`, nested `if` blocks,
-    /// block-bodied exhaustive `match` arms, and `while` bodies without an
-    /// `else`. Loop entry is always possible, so the loop merge remains
-    /// conservative. `for`, loop-`else`, expression-bodied match arms,
-    /// whole-`self` uses, and other control-flow forms remain outside the
-    /// slice until their constructor dataflow is connected.
+    /// block-bodied exhaustive `match` arms, and `while`/`for` bodies without
+    /// an `else`. Loop entry is always possible, so each loop merge remains
+    /// conservative. Loop-`else`, expression-bodied match arms, whole-`self`
+    /// uses, and other control-flow forms remain outside the slice until
+    /// their constructor dataflow is connected.
     fn validate_class_init_shape(&mut self, block: &ast::Block, span: Span) {
         if self.class_init.is_none() {
             return;
@@ -5644,11 +5644,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::StmtKind::While { else_block: None, body, .. } => {
                     self.validate_class_init_shape(body, span);
                 }
+                ast::StmtKind::For { else_block: None, body, .. } => {
+                    self.validate_class_init_shape(body, span);
+                }
                 _ => {
                     self.error(
                         codes::E1010,
                         stmt.span,
-                        "class `init` currently supports direct field assignments, `pass`, `if`, block-bodied `match` arms, and `while` without `else`",
+                        "class `init` currently supports direct field assignments, `pass`, `if`, block-bodied `match` arms, and loops without `else`",
                     );
                 }
             }
@@ -6252,8 +6255,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 out.push(Stmt::While { cond, body, else_block });
             }
             ast::StmtKind::For { label, pattern, iter, body, else_block } => {
+                let incoming_class_init = self.class_init.clone();
                 if let Some(stmt) = self.check_for(*label, pattern, iter, body, else_block, stmt.span)
                 {
+                    let body_class_init = self.class_init.clone();
+                    if incoming_class_init.is_some() && else_block.is_none() {
+                        // A for loop may have zero iterations. The body can
+                        // establish a field only on the iterated path, so
+                        // merge it with the state before lowering/desugaring
+                        // the loop.
+                        self.class_init = Self::merge_class_init_paths(
+                            incoming_class_init,
+                            body_class_init,
+                        );
+                    }
                     out.push(stmt);
                 }
             }

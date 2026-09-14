@@ -5676,3 +5676,20 @@ constructor forms remain fail-closed with E1010. No specification or
 diagnostic semantics changed; the run-pass and compile-fail fixtures preserve
 the zero-iteration invariant. Phase 2 is active, Phase 3 has not passed its
 exit gate, and phase accounting remains exactly **1 of 9 complete**.
+
+### 0.89 Phase 3 conservative for-loop constructor initialization — 2026-09-14
+
+The same zero-iteration dataflow now covers `for` bodies without an `else`.
+The checker preserves the constructor state at loop entry, checks the body
+through the existing counted-loop or iterator/collection lowering, and joins
+the body state back with the entry state. Initialization performed only by a
+loop iteration therefore remains non-definite, while reads after an earlier
+definite initialization are allowed inside the loop.
+
+Loop-`else`, whole-`self` use, guarded or expression-bodied `match` arms,
+inheritance/base initialization, defaulted fields, and other unsupported
+constructor forms remain fail-closed with E1010. The run-pass and
+compile-fail regressions cover the accepted read and rejected loop-only
+initialization cases. This is implementation-only progress; no specification
+or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
+its exit gate, and phase accounting remains exactly **1 of 9 complete**.
