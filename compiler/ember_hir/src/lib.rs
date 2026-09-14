@@ -15,7 +15,7 @@
 //! the full one so that later phases add cases rather than reshaping it.
 
 use ember_span::{Span, Symbol};
-use ember_types::{EnumId, OverflowPolicy, RangeId, StructId, Ty};
+use ember_types::{ClassId, EnumId, OverflowPolicy, RangeId, StructId, Ty};
 
 /// A resolved item: a function, a struct, a constant.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -322,6 +322,11 @@ pub enum Builtin {
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
     /// compiler-known type until Phase 2's generics.
     ArrayNew,
+    /// `[CLS-1]` — allocate a class object whose constructor has no user
+    /// fields or initialization work. The nominal class identity travels with
+    /// the builtin so the backend can select the matching `TypeInfo` record.
+    /// Field-bearing and user-initialized classes remain outside this slice.
+    ClassNew { class_id: ClassId },
     /// `[HEAP-1]`, `[DRP-6]` — `Box(owned value)`. The payload and concrete
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.
@@ -575,6 +580,7 @@ impl Builtin {
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
+            Builtin::ClassNew { .. } => "class",
             Builtin::BoxNew { .. } => "Box",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",

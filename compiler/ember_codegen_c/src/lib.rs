@@ -1331,6 +1331,18 @@ impl Emitter<'_> {
                             rendered[0], rendered[1]
                         );
                     }
+                    // `[CLS-1]` — an empty class constructor allocates the
+                    // complete object header through the runtime. The cast is
+                    // the nominal class-handle boundary; the runtime returns
+                    // the common header pointer after validating the emitted
+                    // type information.
+                    Builtin::ClassNew { class_id } => {
+                        let class_ty = self.c_type(*arg_ty);
+                        let type_info = ember_branding::type_info(
+                            &self.types.class_def(*class_id).name.to_string(),
+                        );
+                        return format!("(({class_ty}){RT}obj_new(&{type_info}))");
+                    }
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }

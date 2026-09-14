@@ -8268,6 +8268,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_struct_literal(id, name, args, span);
         }
 
+        // `[CLS-1]` — the first source-reachable class construction slice.
+        // Keep this deliberately narrow until field initialization, user
+        // constructors, and recursive ownership lowering are all available:
+        // an object must never become reachable with an invented or partial
+        // field state. An empty, non-inheriting class with no `init` or `drop`
+        // can be allocated safely because its runtime header is the complete
+        // object state.
+        if let Some(&id) = self.class_ids.get(&self.resolve_name(name)) {
+            return self.synth_class_constructor(id, name, args, &explicit, span);
+        }
+
         // `[ERR-1]` — `Some(x)`, `Ok(x)` and `Err(e)` build the compiler-known
         // enums. The expected type says which one when it is known; otherwise
         // the payload's own type decides and the other parameter stays open,
@@ -14514,6 +14525,59 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }
+    }
+
+    fn synth_class_constructor(
+        &mut self,
+        id: ClassId,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Expr {
+        let ty = self.class_ty(id).unwrap_or(self.common.error);
+        let (openness, has_fields, has_base, has_drop) = {
+            let def = self.types.class_def(id);
+            (def.openness, !def.fields.is_empty(), def.base.is_some(), def.has_drop)
+        };
+        let has_init = self
+            .methods
+            .contains_key(&(ty, Symbol::intern("init")));
+
+        if !explicit.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` does not take type arguments in this phase"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if openness == ClassOpenness::Abstract {
+            self.error(codes::E2020, span, format!("cannot instantiate abstract class `{name}`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}()` takes no arguments in this phase"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if has_fields || has_base || has_init || has_drop {
+            self.error(
+                codes::E1010,
+                span,
+                format!("class construction for `{name}` is not implemented yet in this phase"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        Expr {
+            ty,
+            kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id }, args: Vec::new() },
+            span,
+        }
     }
 
     fn zero_of(&mut self, ty: Ty, span: Span) -> Expr {

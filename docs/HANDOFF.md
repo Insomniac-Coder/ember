@@ -5479,3 +5479,29 @@ existing object runtime coherently: allocation, initialized fields, and the
 constructor/`init` boundary must be introduced together with verified
 ownership and drop behavior. Do not expose a partial constructor that can
 publish an uninitialized or unowned object.
+
+### 0.82 Phase 3 empty-class construction boundary — 2026-09-14
+
+The class construction slice is now source-reachable for the deliberately
+conservative case: an empty, non-generic, non-inheriting, non-abstract class
+with no user `init` and no `drop` can be written as `Empty()`. Type checking
+lowers this to a compiler-known `ClassNew` operation carrying the nominal
+`ClassId`; MIR uses the existing builtin-call boundary; and the C backend casts
+the runtime's validated object-header result to the generated class-handle type
+and passes the matching compiler-emitted `TypeInfo` record to `obj_new`.
+
+The resulting object begins with strong count 1 and the implicit weak count,
+and ordinary class-handle drop emits the matching strong release. A compile-pass
+and run-pass fixture prove the source construction, method use, generated
+`obj_new` call, output, and warning-free C path. The implementation rejects
+field-bearing, inherited, custom-`init`, `drop`, generic, and abstract class
+construction rather than manufacturing a partial object or silently skipping
+initialization. This preserves `[CLS-1]`/`[CLS-2]` while the field initialization
+and constructor machinery is still absent.
+
+This remains an implementation slice, not a specification change and not Phase
+3 completion. Phase accounting is still exactly **1 of 9 complete**; Phase 2
+remains active and Phase 3 has not passed its exit gate. The next construction
+work must add verified field initialization and the `init` boundary together,
+including recursive ownership/drop handling; do not broaden `ClassNew` by
+guessing defaults or emitting null drop/constructor glue for reachable objects.
