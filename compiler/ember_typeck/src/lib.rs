@@ -688,6 +688,22 @@ impl<'a> Checker<'a> {
             return None;
         };
 
+        if attr.args.is_empty() {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2031,
+                    attr.span,
+                    "`@borrows` must name at least one parameter",
+                )
+                .primary_label("name one or more view-typed or Arena parameters")
+                .help("name the parameter(s) that the returned view derives from"),
+            );
+            // Match the existing invalid-attribute paths above: report the
+            // source error, then let later checks use ordinary elision rather
+            // than manufacturing an empty provenance contract.
+            return None;
+        }
+
         if !self.types.is_view(ret) {
             let shown = self.types.display(ret);
             self.sink.emit(
@@ -711,12 +727,37 @@ impl<'a> Checker<'a> {
 
         let mut named_positions = Vec::new();
         for arg in &attr.args {
-            let ast::AttrArg::Expr(expr) = arg else { continue };
-            let ast::ExprKind::Path { segments } = &expr.kind else { continue };
-            if segments.len() != 1 {
-                continue;
-            }
-            let named = segments[0].name;
+            let (named, arg_span) = match arg {
+                ast::AttrArg::Expr(expr) => match &expr.kind {
+                    ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                        (segments[0].name, expr.span)
+                    }
+                    _ => {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2031,
+                                expr.span,
+                                "each `@borrows` argument must be a parameter name",
+                            )
+                            .primary_label("expected one parameter name")
+                            .help("write `@borrows(parameter)` using a view-typed or Arena parameter"),
+                        );
+                        continue;
+                    }
+                },
+                ast::AttrArg::Named { name, .. } => {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2031,
+                            name.span,
+                            "each `@borrows` argument must be a parameter name",
+                        )
+                        .primary_label("named arguments are not valid here")
+                        .help("write `@borrows(parameter)` using a view-typed or Arena parameter"),
+                    );
+                    continue;
+                }
+            };
             if let Some(position) = params.iter().position(|(name, _, _, _)| *name == named) {
                 named_positions.push(position);
             }
@@ -733,7 +774,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(
                             codes::E2031,
-                            expr.span,
+                            arg_span,
                             format!("`@borrows` names `{named}`, which is not a parameter"),
                         )
                         .help(known),
@@ -749,7 +790,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(
                             codes::E2031,
-                            expr.span,
+                            arg_span,
                             format!("`@borrows` names `{named}`, which is not view-typed"),
                         )
                         .secondary(*span, format!("`{named}` is `{shown}`, which borrows nothing"))
