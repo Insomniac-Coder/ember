@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `523c030` on `main`, following
+**Last committed implementation baseline:** `c4aa813` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
@@ -29,7 +29,9 @@ checkpoint in the latebound arity matrix; `41d65ed` is the static-view
 provenance checkpoint; `5332572` closes D-126 by validating the serialized
 EMIF cache key at decode time; `c4fccdc` closes D-127 by rejecting an empty
 explicit `@borrows` contract at the artifact boundary; `523c030` closes D-128
-by rejecting empty and malformed source `@borrows` arguments. Verify push state
+by rejecting empty and malformed source `@borrows` arguments. `d35e94f`,
+`30836ee`, and `c4aa813` record the subsequent canonical Arena storage and
+escape-constraint consumers and their final validation. Verify push state
 before handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
@@ -221,8 +223,8 @@ borrow errors across the whole corpus.*
 M2 exists (`tests/milestones/`) and no unclassified log is produced, so what is
 left is coverage:
 
-    OWN   6/8    missing OWN-6 (mem.take/replace/swap/forget), OWN-8 (Clone,
-                 @derive(Clone)) — both are unbuilt features, not missing tests
+    OWN   7/8    missing OWN-8 (Clone, @derive(Clone)) — an unbuilt feature,
+                 not a missing test; OWN-6 is complete at MEM-API-1
     BRW   7/9    missing BRW-8 (an ABI decision, "never observable" — assert on
                  emitted C), BRW-9
     LT    6/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
@@ -234,7 +236,8 @@ left is coverage:
     OWN-5        both clauses now, after D-035 — see the note below
     CELL  11/13  Cell/RefCell cases exist for every currently buildable rule;
                  CELL-3 and CELL-8 (`!Sync`) wait for Send/Sync/threads. See §5
-    DIA   0/5    needs tests/ui snapshots — see §6
+    DIA   0/5    rule-family exit count remains incomplete; 18/25 ownership
+                 shapes have exact UI snapshots, with seven blocked — see §6
 
 **A directory named for a rule is not coverage of the rule.**
 `tests/conformance/OWN-5/` existed and passed while the compiler ran no
