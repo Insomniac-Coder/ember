@@ -144,8 +144,18 @@ generated C11 runtime exposes the specified class-object header and type-info
 layout, plain/atomic strong and weak reference-count operations, weak upgrade,
 destruction/resurrection checks, base-chain downcast, and the !Sync
 exclusivity word. This does not claim that Ember classes are implemented:
-class type identity, constructors, field/drop glue, dispatch, compiler
-lowering, and Phase 3 conformance remain outstanding.
+constructors, ownership retain/release lowering, field/drop glue, dynamic
+exclusivity, dispatch, compiler completion, and Phase 3 conformance remain
+outstanding.
+
+The compiler-side class foundation is checkpointed at `6a281f3`: non-generic
+class declarations are collected with nominal identity, openness, inheritance,
+and fields; class field reads and read-only methods lower through generated C
+object layouts with base fields before derived fields. Mutable class-field
+writes remain explicitly rejected until dynamic exclusivity and class-handle
+ownership lowering are implemented. Generic classes, constructors, retain/
+release lowering, type-info/drop glue, dispatch, and end-to-end class programs
+remain incomplete.
 
 An imported `@latebound` helper is also covered through the LT-40 interface
 artifact path: the root module calls a support-module function whose callback

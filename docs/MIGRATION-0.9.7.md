@@ -498,11 +498,23 @@ truth and the generated outputs are checked in through `generate_runtime.py`.
 Strict Clang C11 compilation with `-pedantic -Wall -Wextra -Werror` passed,
 as did the runtime generator regression, the full workspace/conformance run,
 and all six adopted-source gates. This is an implementation foundation only:
-the compiler still has no class type identity, constructor/field lowering,
-generated `TypeInfo` records, class drop glue, virtual/interface dispatch, or
-the Phase 3 class conformance matrix. Phase accounting therefore remains
-exactly **1 of 9 phases complete**; Phase 2 is still active and Phases 3–9
-have not passed their exit gates.
+constructors, class-handle retain/release lowering, generated `TypeInfo`
+records, class drop glue, dynamic exclusivity, virtual/interface dispatch, and
+the Phase 3 class conformance matrix remain incomplete. Phase accounting
+therefore remains exactly **1 of 9 phases complete**; Phase 2 is still active
+and Phases 3–9 have not passed their exit gates.
+
+Commit `a63ff1d` adds the matching compiler type-model foundation: nominal
+`ClassId`/`ClassDef`/`TyKind::Class` identity, pointer-sized handle layout,
+class-handle `Copy`/drop properties, non-view and non-zeroable classification,
+canonical/display names, and branded C handle spelling. Commit `6a281f3`
+extends that foundation into type checking and layout projection: non-generic
+class declarations collect fields, openness, and single-inheritance identity;
+class field reads and read-only methods lower through generated object structs
+with base fields first. Mutable class-field writes are rejected until the
+dynamic exclusivity/ownership slice exists. Constructors, retain/release
+lowering, drop/type-info glue, dispatch, generic classes, and end-to-end class
+programs remain incomplete, so the phase count does not advance.
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
 and substantial but has not passed every exit criterion; Phases 3–9 have not

@@ -3845,11 +3845,12 @@ then releases the implicit weak reference as required by `[OBJ-3]`, `[OBJ-5]`,
 The same boundary exposes the !Sync `access_state` read/write helpers and a
 runtime exclusivity diagnostic. A Sync object is rejected by these plain
 access helpers so they cannot be mistaken for the later synchronization
-contract. The implementation is deliberately runtime-only: no class type
-identity, constructor lowering, generated `TypeInfo` records, field/drop-glue
-generation, handle lowering, or virtual/interface dispatch has been added.
-`TypeTable`, type checking, MIR, and C code generation still have no class
-representation, so no Ember class program is claimed to compile.
+contract. The implementation is deliberately runtime-only: no constructor
+lowering, generated `TypeInfo` records, class-handle ownership lowering,
+field/drop-glue generation, dynamic exclusivity, or virtual/interface
+dispatch has been added. The compiler-side class representation is introduced
+by the later checkpoint below; no class constructor or complete class program
+is claimed to compile.
 
 The runtime templates remain authoritative and the checked-in C files were
 regenerated. Verification passed with strict Clang C11
@@ -3859,6 +3860,35 @@ No specification, ADR, adopted source, or phase status changed. The runtime
 object boundary is an implementation foundation tracked as `OBJ-RT-1`; it is
 not Phase 3 completion. Phase accounting remains exactly 1 of 9 complete,
 with Phase 2 active.
+
+### 0.80 Phase 3 compiler class identity foundation — 2026-09-14
+
+Commit `a63ff1d` adds the compiler-side counterpart to the runtime checkpoint.
+`ember_types` now has a nominal `ClassId`, `ClassDef`, and `TyKind::Class`.
+Class values are modeled as pointer-sized counted handles: they are `Copy` at
+the language level because later ownership lowering will emit retain/release,
+they need destruction for the handle release, they are not views, zeroable
+values, or ordinary `@layout(c)` value types, and distinct class declarations
+remain distinct identities even when both are represented by pointers. Class
+definitions retain openness, a base identity, fields, declaration module, and
+the same nominal-origin slot used by future generic recipes.
+
+The C backend now derives the class-object spelling from the single runtime
+branding prefix (`struct <prefix>obj_<Class>*`).
+
+Commit `6a281f3` carries the model through the current compiler boundaries.
+Non-generic class declarations are collected with resolved fields, openness,
+single-inheritance identity, and `drop` presence. Class field lookup is
+inheritance-aware, with base fields before derived fields; class field reads,
+read-only class methods, and their MIR projections now lower through generated
+C object structs containing the runtime header followed by the flattened
+object fields. Mutable class-field writes are explicitly rejected until the
+dynamic exclusivity and class-handle ownership slice exists. Generic classes,
+constructors, retain/release lowering, generated type-info/drop glue, dynamic
+exclusivity, dispatch, and the complete Phase 3 conformance matrix remain
+unimplemented. Focused type, type-checker, MIR, C-backend, and compile-pass
+tests pass. This is a compiler foundation, not Phase 3 completion and not a
+specification change.
 
 ## The task list — where to begin
 
