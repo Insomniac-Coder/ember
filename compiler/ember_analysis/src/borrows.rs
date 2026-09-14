@@ -1461,8 +1461,20 @@ fn check_escapes(
             .source_place()
             .expect("a loan has source storage");
         let root = body.local(place.local);
+        // `[IMP-7]` — allocation-return loans carry a canonical concrete
+        // storage owner. Keep the source-type fallback for ordinary explicit
+        // borrows of an Arena value, whose storage identity is still a place
+        // root rather than an allocation site.
+        let arena_owner = loan
+            .capability
+            .storage_identity
+            .arena_owner()
+            .or_else(|| is_arena_ty(types, root.ty).then_some(place.local));
         if root.kind == LocalKind::Arg
-            && (types.is_view(root.ty) || is_named_arena_origin(body, place.local, types))
+            && (types.is_view(root.ty)
+                || arena_owner.is_some_and(|owner| {
+                    is_named_arena_origin(body, owner, types)
+                }))
         {
             continue;
         }
@@ -1475,21 +1487,23 @@ fn check_escapes(
             }
             _ => format!("`{owner}` is a local, so its storage ends with the frame"),
         };
-        let is_arena = is_arena_ty(types, root.ty);
+        let is_arena = arena_owner.is_some();
         if is_arena {
+            let owner_local = arena_owner.expect("arena diagnostic has an owner");
+            let owner_name = place_name(body, types, &Place::local(owner_local));
             let (origin_label, help, note) = if root.kind == LocalKind::Arg {
                 (
                     format!(
-                        "`{owner}` is a parameter, but the signature does not tie the return to it"
+                        "`{owner_name}` is a parameter, but the signature does not tie the return to it"
                     ),
                     format!(
-                        "write `@borrows({owner})` above the wrapper, or return an owned value"
+                        "write `@borrows({owner_name})` above the wrapper, or return an owned value"
                     ),
                     "an Arena parameter is a return-provenance source only when `@borrows` names it (LT-4a)",
                 )
             } else {
                 (
-                    format!("`{owner}` is local to this frame"),
+                    format!("`{owner_name}` is local to this frame"),
                     "move the `Arena` to an outer scope, or copy the value out before it is reset"
                         .to_string(),
                     "Arena allocation views carry the region of the arena borrow (LT-4, ARN-1)",
@@ -1499,12 +1513,12 @@ fn check_escapes(
                 Diagnostic::error(
                     codes::E3061,
                     span,
-                    format!("arena allocation cannot outlive `{owner}`"),
+                    format!("arena allocation cannot outlive `{owner_name}`"),
                 )
                 .primary_label("this allocation view escapes the arena's region")
                 .secondary(
                     loan.span,
-                    format!("`{owner}` is borrowed for the allocation here"),
+                    format!("`{owner_name}` is borrowed for the allocation here"),
                 )
                 .secondary(root.span, origin_label)
                 .help(help)

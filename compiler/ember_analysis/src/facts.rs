@@ -87,6 +87,19 @@ pub enum StorageIdentity {
     Static,
 }
 
+impl StorageIdentity {
+    /// Return the Arena parameter that owns this concrete allocation, when
+    /// the producer has proved that relationship. Provenance and storage
+    /// remain separate: this is only the concrete storage owner, not a
+    /// lifetime region.
+    pub fn arena_owner(self) -> Option<LocalId> {
+        match self {
+            StorageIdentity::ArenaAllocation { arena, .. } => Some(arena),
+            StorageIdentity::PlaceRoot(_) | StorageIdentity::Static => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum AccessPermission {
     Shared,
