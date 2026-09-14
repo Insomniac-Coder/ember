@@ -98,11 +98,13 @@ do yet, found while applying v0.5.
 
 `ARCH-096-1` continuation checkpoints: `d35e94f` routes Arena allocation-return
 escape checking through canonical `StorageIdentity::ArenaAllocation` ownership,
-and `30836ee` makes the same checker honor the canonical
-`EscapeConstraint::MustNotOutliveStorage` constraint. The source-type fallback
-for ordinary Arena place borrows remains. These preserve behavior and are
-implementation-architecture migrations under `[IMP-7]`; no new semantic fact
-or placeholder consumer was introduced.
+`30836ee` makes the same checker honor the canonical
+`EscapeConstraint::MustNotOutliveStorage` constraint, and `90ddefb` routes the
+borrow scope, iterator-retention, and diagnostic keeper consumers through the
+canonical `ValidityInterval`. The source-type fallback for ordinary Arena
+place borrows remains. These preserve behavior and are implementation-
+architecture migrations under `[IMP-7]`; no new semantic fact or placeholder
+consumer was introduced.
 
 ---
 

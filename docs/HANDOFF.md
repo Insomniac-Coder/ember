@@ -3791,6 +3791,26 @@ documentation checkpoint was committed and pushed, the full workspace
 regression passed with 210 Rust tests and the six repository gates remained
 green; `cargo build --workspace --locked` was warning-free.
 
+### 0.77 ARCH-096-1 — canonical validity-interval consumers — 2026-09-14
+
+`90ddefb` continues the same producer/consumer migration without changing the
+borrow model. The borrow checker now uses
+`BorrowCapability.validity_interval.0` as the source of truth for loan scope,
+for-loop iterator retention, and the diagnostic keeper's holder lookup. Those
+consumers previously read the duplicate `BorrowCapability.region` field even
+though the canonical architecture names the lifetime fact as
+`ValidityInterval`.
+
+This is an `[IMP-7]` implementation-architecture correction only. Existing
+borrow conflicts, regions, diagnostics, generated output, and accepted/rejected
+programs are preserved. `BorrowCapability.region` remains retained as an
+internal compatibility field until the remaining fact migration can remove
+duplicate storage as part of a verified producer/consumer change; it is no
+longer used by these consumers. `cargo test -p ember_analysis`, the UI test,
+and the complete 15-test milestone/conformance run passed. The repository-wide
+`cargo fmt --all -- --check` still reports pre-existing formatting drift in
+unrelated files; no formatter rewrite was included in this checkpoint.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
