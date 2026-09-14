@@ -289,8 +289,8 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-128 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, fail-closed EMIF cache-key validation, and rejection of empty or malformed explicit `@borrows` arguments. H1 remains a frozen development target, not the adopted repository-normative source |
-| Recent commits | `523c030` rejects malformed source `@borrows` arguments · `c4fccdc` rejects empty explicit EMIF borrow contracts · `acd7d86` refreshed the defect count and current handoff ledgers · `451a4d4` recorded the D-126 EMIF cache-key integrity fix and synchronized the cold-start/handoff ledgers · `5332572` rejects self-inconsistent EMIF cache keys at the decode boundary · `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-128 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, fail-closed EMIF cache-key validation, rejection of empty or malformed explicit `@borrows` arguments, and the completed RT-GEN-1 runtime-output generator. H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `d941511` generates runtime C outputs from the canonical branding source · `d55f580` records malformed `@borrows` source hardening · `523c030` rejects malformed source `@borrows` arguments · `c4fccdc` rejects empty explicit EMIF borrow contracts · `acd7d86` refreshed the defect count and current handoff ledgers · `451a4d4` recorded the D-126 EMIF cache-key integrity fix and synchronized the cold-start/handoff ledgers · `5332572` rejects self-inconsistent EMIF cache keys at the decode boundary · `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
 | Working tree | Expected clean after the current verified implementation and synchronized documentation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
@@ -3681,6 +3681,32 @@ manufacturing an empty provenance contract. Three LT-1a conformance cases cover
 the empty, numeric, and named forms. The EMIF validator's D-127 check remains in
 place as defense in depth. This is a compiler/diagnostic correction against the
 existing specification; no specification or ADR changed.
+
+### 0.72 RT-GEN-1 — runtime output generation — 2026-09-14
+
+`d941511` closes the self-contained runtime-branding tooling debt. The
+runtime's C11 header and implementation are now rendered from checked-in
+`.in` templates by `tools/generate_runtime.py`. The generator reads the
+canonical `symbol_prefix!` macro from `compiler/ember_branding`, derives the
+lower-case C prefix and upper-case ABI macro prefix, and writes the matching
+`include/<prefix>_rt.h` and `src/<prefix>_rt.c` outputs. The default output is
+the existing `ember_rt` runtime, so the compiler's ABI and generated C are
+unchanged.
+
+`--check` compares both checked-in outputs with a fresh render and is wired
+into CI. `tools/test_runtime_generation.py` also renders a custom prefix in a
+temporary directory and proves that function identifiers, ABI macros, and the
+source include name change together. The generated files carry a marker and
+are validated by the generator; `check_branding.py` no longer exempts them as
+hand-authored files. Hand-authored compiler/runtime sources remain subject to
+the branding scan. Strict C11 compilation passed, and the full workspace
+regression remained green at 210 tests with 479 conformance sources.
+
+This is a tooling/implementation-boundary completion under `[RT-5]`, not a
+language change, runtime ABI change, or specification adoption. The next
+architecture work must still be selected from a real producer/consumer gap;
+do not invent manifest, FFI, effects, threading, or separate-compilation
+semantics merely to make a backlog item look complete.
 
 ## The task list — where to begin
 

@@ -635,6 +635,11 @@ semantic/API decision is currently open.**
   monomorphization diagnostics, unreachable standard-body emission, and
   imported/prelude interface identity. The specification was already correct
   in every case and no frozen specification was edited.
+* **`RT-GEN-1` is complete.** Commit `d941511` generates the runtime header and
+  source from the canonical branding prefix through checked-in templates and a
+  deterministic generator check. The generated outputs are validated as
+  outputs, while hand-authored compiler/runtime sources remain covered by the
+  branding scan. Strict C11 compilation and the full workspace regression pass.
 * **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
   (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
   (`extern class` parses and is refused), D4 (`E9012` registered and never

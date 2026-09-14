@@ -18,7 +18,7 @@ cannot go in `std` at all, because `[STD-1]` holds `std.core`, `std.mem`,
 | | |
 |---|---|
 | Total | 47 tracked items — 20 must-have, 12 nice-to-have, 15 compiler-debt items |
-| Completed | 10 compiler-debt items (`LT-REG-1`, `RIDX-1`, `CELL-DEF-1`, `ARN-INIT-1`, `ARN-COLL-1`, `GEN-METHOD-1`, `VER-096-1`, `MEM-API-1`, `TUP-DST-1`, `SPN-API-1`) |
+| Completed | 11 compiler-debt items (`RT-GEN-1`, `LT-REG-1`, `RIDX-1`, `CELL-DEF-1`, `ARN-INIT-1`, `ARN-COLL-1`, `GEN-METHOD-1`, `VER-096-1`, `MEM-API-1`, `TUP-DST-1`, `SPN-API-1`) |
 | Started | `ARCH-096-1`, `DIA-UI-1` |
 | Blocked on phases | all library tasks; each compiler-debt row states its own gate |
 
@@ -77,7 +77,7 @@ do yet, found while applying v0.5.
 
 | Id | Task | Gate | Done when |
 |---|---|---|---|
-| **RT-GEN-1** | Generate `ember_rt.h` and `ember_rt.c` from `EMBER_SYMBOL_PREFIX` | 0 | `[RT-5]` calls them "generation output"; ours are hand-written, so `tools/check_branding.py` exempts them. Done when the generator exists and the exemption is deleted |
+| ~~**RT-GEN-1**~~ | ~~Generate `ember_rt.h` and `ember_rt.c` from `EMBER_SYMBOL_PREFIX`~~ | — | **done 2026-09-14 in `d941511`.** `tools/generate_runtime.py` reads the canonical `symbol_prefix!` branding macro, renders the C11 header/source from `.in` templates, and supports deterministic `--check` verification. The checked-in outputs carry a generated-file marker, are validated by the generator rather than treated as hand-authored branding, and the branding checker no longer exempts them. A custom-prefix regression proves the emitted identifiers and include name change together; strict C11 compilation and the workspace/conformance suites remain green |
 | ~~**LT-REG-1**~~ | ~~Real region variables with a constraint graph~~ | — | **done 2026-09-09.** `compiler/ember_analysis/src/regions.rs`; `[LT-1]`'s elision is in at the call site and in the body (`E3062`). `[LT-2]`'s view structs and `[LT-7]`'s callback regions build on it |
 | **LNT-CFG-1** | `[MAN-3]`'s `[lints]` configuration | 2 | `[LT-1b]`'s `L3014` is an opt-in lint and there is nowhere to opt in |
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |

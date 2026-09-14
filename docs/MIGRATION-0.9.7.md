@@ -193,6 +193,11 @@ repository baseline currently has executable evidence for:
   diagnostic repair; and
 - exact `0.9`, `0.9.5`, `0.9.6`, and `0.9.7` source-selector recognition,
   while unknown patch contracts remain E0006.
+- generated C runtime outputs from the canonical `ember_branding` prefix:
+  `tools/generate_runtime.py` renders the checked-in C11 header/source from
+  templates, and `--check` prevents stale generated output. This is the
+  completed `RT-GEN-1` tooling boundary; it changes no source-language
+  semantics or runtime ABI.
 
 The H4 Arena-collection implementation checkpoint is `825eac5`. It has 183
 Rust tests green and a green conformance runner over 95 top-level rule
