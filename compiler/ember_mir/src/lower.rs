@@ -176,6 +176,9 @@ struct Builder<'a> {
     void_ty: Ty,
     /// The span statements pushed right now belong to.
     current_span: ember_span::Span,
+    /// `[CLS-2]` — a constructor's direct field writes initialize storage
+    /// allocated by `ClassNew`, so they must not drop an old value.
+    class_init: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -208,6 +211,7 @@ impl<'a> Builder<'a> {
         }
 
         let arg_count = function.params.len();
+        let class_init = function.class_init;
         // `[FN-1]` transfers an `owned` argument into the callee. Its lifetime
         // is therefore the function body just like an owned local's, and
         // `[OWN-2]` requires the callee to destroy it on every exit unless it
@@ -260,6 +264,7 @@ impl<'a> Builder<'a> {
             usize_ty: common.usize,
             void_ty: common.void,
             current_span: function.span,
+            class_init,
         }
     }
 
@@ -708,6 +713,14 @@ impl<'a> Builder<'a> {
     /// conditionally-moved local gets a flag, and the temporary's own
     /// statement-end drop goes away because storing it here is a move.
     fn lower_assign(&mut self, place: Place, expr: &'a hir::Expr) {
+        if self.class_init && self.is_class_init_field(&place) {
+            // The object allocation created no initialized field value. A
+            // constructor's first direct write is initialization, not
+            // `[OWN-5]` overwrite; dropping the bytes before storing would
+            // interpret uninitialized storage as an owned value.
+            self.lower_into(place, expr);
+            return;
+        }
         if !self.types.needs_drop(expr.ty) {
             self.lower_into(place, expr);
             return;
@@ -1574,10 +1587,10 @@ impl<'a> Builder<'a> {
                 self.current = next;
             }
             hir::ExprKind::Builtin {
-                which: hir::Builtin::ClassNew { class_id },
+                which: hir::Builtin::ClassNew { class_id, init },
                 args,
             } => {
-                self.lower_class_new(place, *class_id, args, expr.ty, expr.span);
+                self.lower_class_new(place, *class_id, *init, args, expr.ty, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
@@ -4429,20 +4442,25 @@ impl<'a> Builder<'a> {
         Operand::Copy(Place::local(temp))
     }
 
-    /// `[CLS-1]`/`[CLS-3]` — allocate a class object, then initialize its
-    /// already-checked memberwise fields. The allocator call is kept separate
-    /// from the field assignments so the object header is established by the
-    /// runtime and every field write remains visible to MIR ownership and
-    /// definite-initialization analyses.
+    /// `[CLS-1]`/`[CLS-2]`/`[CLS-3]` — allocate a class object, then initialize
+    /// it through either the already-checked memberwise fields or its narrow
+    /// user `init` body. The allocator call is kept separate from all
+    /// initialization work so the object header is established by the runtime
+    /// and field writes remain visible to MIR ownership and definite-
+    /// initialization analyses.
     ///
-    /// Type checking admits this path only for a non-inheriting class without
-    /// custom `init`/`drop` and with fields that do not need drop glue. That is
-    /// the boundary at which a partially initialized object cannot lose an
-    /// owned field during the current runtime metadata stage.
+    /// The memberwise path is still limited to a non-inheriting class without
+    /// custom `init`/`drop` and with fields that do not need drop glue. The
+    /// supported custom-init path is likewise non-inheriting and has no
+    /// defaulted fields; type checking admits only a straight-line sequence
+    /// of one direct assignment to each field. The first write to each field
+    /// is initialization, not an `[OWN-5]` overwrite, so lowering must not
+    /// drop the uninitialized storage returned by the allocator.
     fn lower_class_new(
         &mut self,
         place: Place,
         class_id: ember_types::ClassId,
+        init: Option<hir::DefId>,
         args: &'a [hir::Expr],
         ty: Ty,
         span: ember_span::Span,
@@ -4451,7 +4469,7 @@ impl<'a> Builder<'a> {
         self.at(span);
         self.terminate(Terminator::Call {
             func: FuncRef::Builtin {
-                which: hir::Builtin::ClassNew { class_id },
+                which: hir::Builtin::ClassNew { class_id, init: None },
                 arg_ty: ty,
             },
             args: Vec::new(),
@@ -4460,9 +4478,46 @@ impl<'a> Builder<'a> {
         });
         self.current = allocated;
 
-        for (index, arg) in args.iter().enumerate() {
-            self.lower_into(place.clone().field(index), arg);
+        if let Some(init) = init {
+            let function = self.program.function(init);
+            let receiver_ty = function
+                .params
+                .first()
+                .map(|param| function.local(param.local).ty)
+                .expect("class constructor has a receiver parameter");
+            let receiver = self.temp(receiver_ty, span);
+            self.push(StmtKind::Assign {
+                place: Place::local(receiver),
+                rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
+            });
+            let mut call_args = vec![Operand::Copy(Place::local(receiver))];
+            for (arg, param) in args.iter().zip(function.params.iter().skip(1)) {
+                let operand = match param.mode {
+                    hir::Mode::Owned => self.lower_operand(arg),
+                    _ => self.lower_operand_borrowed(arg),
+                };
+                call_args.push(operand);
+            }
+            let next = self.new_block();
+            let sink = self.temp(self.void_ty, span);
+            self.terminate(Terminator::Call {
+                func: FuncRef::Direct { symbol: function.symbol.clone(), latebound: false },
+                args: call_args,
+                dest: Place::local(sink),
+                next,
+            });
+            self.current = next;
+        } else {
+            for (index, arg) in args.iter().enumerate() {
+                self.lower_into(place.clone().field(index), arg);
+            }
         }
+    }
+
+    fn is_class_init_field(&self, place: &Place) -> bool {
+        self.class_init
+            && place.local == LocalId(1)
+            && matches!(place.projection.as_slice(), [Projection::Deref, Projection::Field(_)])
     }
 
     /// An argument read in `[FN-1]`'s default **borrow** mode: the callee sees

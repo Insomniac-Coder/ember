@@ -76,6 +76,10 @@ pub struct Param {
 pub struct Function {
     pub def: DefId,
     pub name: Symbol,
+    /// `[CLS-2]` — this is a type-checked class `init` body whose direct
+    /// field writes initialize freshly allocated storage. This is compiler
+    /// metadata, not a source-level constructor trait or ABI flag.
+    pub class_init: bool,
     /// The mangled symbol this function gets in the emitted C (`[MNG-1]`), or
     /// the name given by `@export` (`[MNG-2]`).
     pub symbol: String,
@@ -322,11 +326,12 @@ pub enum Builtin {
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
     /// compiler-known type until Phase 2's generics.
     ArrayNew,
-    /// `[CLS-1]` — allocate a class object whose constructor has no user
-    /// fields or initialization work. The nominal class identity travels with
-    /// the builtin so the backend can select the matching `TypeInfo` record.
-    /// Field-bearing and user-initialized classes remain outside this slice.
-    ClassNew { class_id: ClassId },
+    /// `[CLS-1]` — allocate a class object, optionally followed by its
+    /// compiler-known `init` method. The nominal class identity travels with
+    /// the builtin so the backend can select the matching `TypeInfo` record;
+    /// `init` is invoked after allocation and before the value is returned to
+    /// source code. `None` retains the memberwise-construction path.
+    ClassNew { class_id: ClassId, init: Option<DefId> },
     /// `[HEAP-1]`, `[DRP-6]` — `Box(owned value)`. The payload and concrete
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.

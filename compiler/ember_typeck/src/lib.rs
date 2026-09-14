@@ -370,6 +370,19 @@ struct DestructureLeaf<'a> {
     projection: Vec<usize>,
 }
 
+/// The deliberately narrow first constructor slice for `[CLS-2]`. The
+/// checker permits only a straight-line sequence of direct `self.field = ...`
+/// writes (plus `pass`) for a class `init` with no base and no defaulted
+/// fields. This is an implementation boundary, not a new language rule: it
+/// keeps the current lowering from publishing a partially initialized object
+/// until full per-path field dataflow is available.
+#[derive(Clone)]
+struct ClassInitState {
+    owner: ClassId,
+    receiver: LocalId,
+    initialized: Vec<bool>,
+}
+
 /// A declared interface: the methods a type must provide, and which of them
 /// carry a default body.
 struct InterfaceDef {
@@ -491,6 +504,13 @@ struct Checker<'a> {
     /// else; this side table supplies only its deliberately narrow method and
     /// trait behavior.
     unsafe_cells: HashMap<StructId, Ty>,
+    /// `[CLS-2]` — field initialization facts while a narrow class
+    /// constructor body is checked.
+    class_init: Option<ClassInitState>,
+    /// A field expression is a place, not a read, while the assignment target
+    /// is being synthesized. This prevents constructor writes from tripping
+    /// the read-before-initialization check on their own left-hand side.
+    in_assignment_target: bool,
     /// `[CELL-7]` — every `Ref[T]`/`RefMut[T]` guard built so far, and the
     /// `T` plus mutability it views. A transparent one-field struct holding a
     /// `ref`/`ref mut`, so `[TYP-15]` applies via `is_view` and the region
@@ -614,6 +634,8 @@ impl<'a> Checker<'a> {
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
+            class_init: None,
+            in_assignment_target: false,
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
             fixed_arenas: HashSet::new(),
@@ -4908,6 +4930,7 @@ impl<'a> Checker<'a> {
             functions.push(Function {
                 def,
                 name,
+                class_init: false,
                 symbol,
                 is_unsafe: decl.is_unsafe,
                 abi: decl.abi.clone(),
@@ -5272,6 +5295,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Function {
             def,
             name,
+            class_init: false,
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
@@ -5492,7 +5516,39 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let outer_self = self.self_ty.replace(owner);
+        let outer_class_init = self.class_init.take();
+        let class_init = match self.types.kind(owner) {
+            TyKind::Class(id)
+                if decl.name.name.is("init")
+                    && signature_params.first().is_some_and(|(_, _, mode, _)| *mode == Mode::Mut)
+                    && decl.params.first().is_some_and(|param| {
+                        matches!(param.kind, ast::ParamKind::Receiver { .. })
+                    }) =>
+            {
+                let def = self.types.class_def(*id);
+                if def.base.is_some() || def.fields.iter().any(|field| field.has_default) {
+                    None
+                } else {
+                    let receiver = params
+                        .first()
+                        .map(|param| param.local)
+                        .expect("a class init with mut self has a receiver local");
+                    Some(ClassInitState {
+                        owner: *id,
+                        receiver,
+                        initialized: vec![false; def.fields.len()],
+                    })
+                }
+            }
+            _ => None,
+        };
+        let is_class_init = class_init.is_some();
+        self.class_init = class_init;
+        if self.class_init.is_some() {
+            self.validate_class_init_shape(block, span);
+        }
         let body = self.check_block(block);
+        self.class_init = outer_class_init;
         self.self_ty = outer_self;
         let overflow = self.overflow_policy(attrs, span);
         self.in_static_safe = outer_static_safe;
@@ -5501,6 +5557,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some(Function {
             def,
             name,
+            class_init: is_class_init,
             symbol: method_symbol(&self.types.display(owner), name),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
@@ -5514,6 +5571,108 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             closure_environment: None,
             closure_captures_by_move: false,
         })
+    }
+
+    /// Validate the first source-reachable constructor slice. The runtime
+    /// object is allocated before the body runs, so this conservative shape
+    /// admits only direct field initialization and keeps all control-flow and
+    /// whole-`self` uses outside the slice until the full per-path definite-init
+    /// analysis is connected to class construction.
+    fn validate_class_init_shape(&mut self, block: &ast::Block, span: Span) {
+        let Some(state) = self.class_init.as_ref() else { return };
+        let fields: Vec<Symbol> = self
+            .types
+            .class_def(state.owner)
+            .fields
+            .iter()
+            .map(|field| field.name)
+            .collect();
+        let mut seen = vec![false; fields.len()];
+        for stmt in &block.stmts {
+            let field = match &stmt.kind {
+                ast::StmtKind::Pass => continue,
+                ast::StmtKind::Assign { targets, op: None, .. } if targets.len() == 1 => {
+                    Self::class_init_target_name(&targets[0])
+                }
+                _ => None,
+            };
+            let Some(field) = field else {
+                self.error(
+                    codes::E1010,
+                    stmt.span,
+                    "class `init` currently supports only direct field assignments",
+                );
+                continue;
+            };
+            let Some(index) = fields.iter().position(|name| *name == field) else {
+                // Normal field lookup emits the more precise unknown-field
+                // diagnostic while checking the body. Keep this shape check
+                // quiet for that case to avoid a duplicate error.
+                continue;
+            };
+            if seen[index] {
+                self.error(
+                    codes::E1010,
+                    stmt.span,
+                    format!("class `init` assigns field `{field}` more than once in this phase"),
+                );
+            }
+            seen[index] = true;
+        }
+        for (index, initialized) in seen.into_iter().enumerate() {
+            if !initialized {
+                self.error(
+                    codes::E2100,
+                    span,
+                    format!("field `{}` is not definitely initialized by class `init`", fields[index]),
+                );
+            }
+        }
+    }
+
+    fn class_init_target_name(expr: &ast::Expr) -> Option<Symbol> {
+        match &expr.kind {
+            ast::ExprKind::Field { base, name }
+                if matches!(base.kind, ast::ExprKind::SelfExpr) =>
+            {
+                Some(name.name)
+            }
+            _ => None,
+        }
+    }
+
+    fn class_init_field_index(&self, expr: &Expr) -> Option<usize> {
+        let state = self.class_init.as_ref()?;
+        let ExprKind::Field { base, index } = &expr.kind else { return None };
+        let ExprKind::Deref(receiver) = &base.kind else { return None };
+        let ExprKind::Local(local) = &receiver.kind else { return None };
+        if *local != state.receiver {
+            return None;
+        }
+        matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == state.owner)
+            .then_some(*index)
+    }
+
+    fn check_class_init_field_read(&mut self, index: usize, span: Span) {
+        let Some(state) = self.class_init.as_ref() else { return };
+        if state.initialized.get(index).copied().unwrap_or(true) {
+            return;
+        }
+        let Some(field) = self.types.class_def(state.owner).fields.get(index) else { return };
+        self.error(
+            codes::E2100,
+            span,
+            format!("field `{}` is read before it is initialized", field.name),
+        );
+    }
+
+    fn mark_class_init_field(&mut self, place: &Expr) {
+        let Some(index) = self.class_init_field_index(place) else { return };
+        if let Some(state) = self.class_init.as_mut() {
+            if let Some(initialized) = state.initialized.get_mut(index) {
+                *initialized = true;
+            }
+        }
     }
 
     /// `[TYP-8]` — `@overflow(panic|wrap|saturate)` overrides the profile.
@@ -5784,7 +5943,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                 }
 
+                let previous_target = self.in_assignment_target;
+                self.in_assignment_target = true;
                 let place = self.synth(target);
+                self.in_assignment_target = previous_target;
                 // A written local no longer holds whatever `[RNG-4]` derived
                 // at its initialiser. Dropped rather than joined: the
                 // conservative direction here is a check that gets emitted.
@@ -5867,6 +6029,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     None => self.check_expr(value, place_ty),
                 };
+                if op.is_none() {
+                    self.mark_class_init_field(&place);
+                }
                 out.push(Stmt::Assign { place, value });
             }
             ast::StmtKind::If(if_stmt) => {
@@ -7659,7 +7824,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         Some((index, owner, field)) => {
                             let ty = field.ty;
                             self.check_class_field_visible(owner, field.vis, field.name, name.span);
-                            Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
+                            let field_expr =
+                                Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span };
+                            if !self.in_assignment_target
+                                && self.class_init_field_index(&field_expr).is_some()
+                            {
+                                self.check_class_init_field_read(index, span);
+                            }
+                            field_expr
                         }
                         None => {
                             let class_name = self.types.class_def(id).name;
@@ -10156,11 +10328,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             match &current.kind {
                 ExprKind::Field { base, index } => {
                     if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
-                        self.error(
-                            codes::E1010,
-                            span,
-                            "mutable class-field access is not implemented yet in this phase",
-                        );
+                        if self.class_init_field_index(place).is_none() {
+                            self.error(
+                                codes::E1010,
+                                span,
+                                "mutable class-field access is not implemented yet in this phase",
+                            );
+                        }
                     } else if let TyKind::Struct(id) = *self.types.kind(base.ty) {
                         let def = self.types.struct_def(id);
                         if let Some(field) = def.fields.get(*index) {
@@ -11406,6 +11580,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.lambdas.push(Function {
             def,
             name: Symbol::intern(&symbol),
+            class_init: false,
             symbol,
             is_unsafe: false,
             abi: None,
@@ -14572,13 +14747,61 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if has_base || has_init {
+        if has_base {
             self.error(
                 codes::E1010,
                 span,
                 format!("class construction for `{name}` is not implemented yet in this phase"),
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+
+        if has_init {
+            let init = self
+                .methods
+                .get(&(ty, Symbol::intern("init")))
+                .map(|entry| entry.def)
+                .expect("has_init implies a registered constructor");
+            let signature_params = self.signatures[init.0 as usize].params.clone();
+            let Some((_, _, receiver_mode, _)) = signature_params.first() else {
+                self.error(codes::E1010, span, format!("class `{name}` has an invalid `init`"));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            if *receiver_mode != Mode::Mut {
+                self.error(
+                    codes::E1010,
+                    span,
+                    format!("class `{name}` constructor must declare `mut self`"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if fields.iter().any(|field| field.has_default) {
+                self.error(
+                    codes::E1010,
+                    span,
+                    format!("class construction for `{name}` with defaulted fields is not implemented yet in this phase"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let params = &signature_params[1..];
+            if args.len() != params.len() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}()` takes {} arguments, found {}", params.len(), args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let values = args
+                .iter()
+                .zip(params.iter())
+                .map(|(arg, (_, param_ty, mode, _))| self.check_argument(&arg.value, *param_ty, *mode))
+                .collect();
+            return Expr {
+                ty,
+                kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: Some(init) }, args: values },
+                span,
+            };
         }
 
         let values = args
@@ -14589,7 +14812,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         Expr {
             ty,
-            kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id }, args: values },
+            kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: None }, args: values },
             span,
         }
     }

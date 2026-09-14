@@ -1,8 +1,10 @@
 #$ test: compile-fail
 #$ rules: CLS-1, CLS-2
-#$ error[E1010]: class construction for `WithInit` is not implemented yet in this phase
+#$ error[E2100]: field `value` is not definitely initialized by class `init`
 
 class WithInit:
+    value: i32
+
     fn init(mut self):
         pass
 

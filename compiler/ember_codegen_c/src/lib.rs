@@ -1450,7 +1450,7 @@ impl Emitter<'_> {
                     // the nominal class-handle boundary; the runtime returns
                     // the common header pointer after validating the emitted
                     // type information.
-                    Builtin::ClassNew { class_id } => {
+                    Builtin::ClassNew { class_id, .. } => {
                         let class_ty = self.c_type(*arg_ty);
                         let type_info = ember_branding::type_info(
                             &self.types.class_def(*class_id).name.to_string(),

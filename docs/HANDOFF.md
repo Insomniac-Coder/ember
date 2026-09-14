@@ -5563,3 +5563,44 @@ complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
 The next safe boundary is the constructor/`init` protocol, which must be
 implemented with verified definite initialization and failure/drop handling
 rather than by making partially initialized objects reachable.
+
+### 0.85 Phase 3 narrow user-constructor boundary — 2026-09-14
+
+The next constructor slice is now source-reachable for a deliberately narrow
+class `init` form. A non-inheriting class with no defaulted fields may define
+`fn init(mut self, ...)`; construction allocates the object, creates a mutable
+reference to the destination handle, invokes the checked `init` method, and
+only then publishes the constructed value to source code. The HIR
+`ClassNew` operation carries an optional constructor `DefId`; `None` retains
+the existing memberwise path. Constructor arguments use the ordinary
+parameter modes, so an `owned` argument is moved into `init` while borrowed
+and mutable arguments retain their existing call checking.
+
+The first body-checking boundary is intentionally straight-line: the body
+may contain `pass` and direct assignments of the form `self.field = value`,
+each field must be assigned exactly once, and every field must be definitely
+initialized before the body completes. Reads of a direct `self.field` before
+its assignment report E2100; unsupported control flow, compound assignments,
+duplicate assignments, and other shapes remain rejected with E1010 until the
+full per-path definite-initialization analysis is connected to class
+construction. A compiler-internal `class_init` marker, rather than a name or
+signature heuristic in MIR, identifies the already-checked constructor body.
+
+Constructor field writes are lowered as initialization stores: they bypass
+`[OWN-5]`'s old-value drop because `ember_obj_new` provides object storage but
+does not provide initialized field values. This is required for owned fields,
+where dropping the uninitialized bytes would be invalid. The run-pass
+regressions cover scalar construction and an owned `Array` field with a
+custom `drop`; the latter confirms that the owned constructor argument moves
+into the field and that the existing user-drop adapter and field-drop glue
+remain active afterward.
+
+This is implementation-only progress. No specification, ADR, adopted source,
+or phase status changed. Inherited constructors and base initialization,
+defaulted fields, named/multiple constructor forms, full per-path
+definite-initialization, inherited drop chaining, dynamic class exclusivity,
+dispatch, generic classes, and the complete Phase 3 conformance matrix remain
+open. Phase accounting is still exactly **1 of 9 complete**; Phase 2 remains
+active and Phase 3 has not passed its exit gate. The next work must preserve
+the fail-closed boundary while adding the missing constructor ownership and
+control-flow mechanisms rather than publishing partially initialized objects.
