@@ -22,7 +22,7 @@ use ember_mir::{
 use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
-use ember_span::SourceMap;
+use ember_span::{SourceMap, Symbol};
 use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -967,7 +967,8 @@ impl Emitter<'_> {
                 // pointer becomes visible in its destination.  This is kept
                 // in the backend's explicit ownership boundary rather than
                 // relying on C's pointer assignment, which has no Ember
-                // reference-count semantics.
+                // reference-count semantics.  The walk is recursive so a
+                // copied aggregate cannot silently duplicate an owned handle.
                 let mut retains = Vec::new();
                 self.retain_lines_for_rvalue(rvalue, ty, body, &mut retains);
                 for line in retains {
@@ -1061,13 +1062,91 @@ impl Emitter<'_> {
     }
 
     /// Emit the strong-reference increments required by an Ember `Copy`
-    /// operation.  Class handles are the one language-level `Copy` category
+    /// operation. Class handles are the one language-level `Copy` category
     /// whose C representation cannot be copied bitwise without changing
-    /// ownership.  Moves transfer the existing reference and therefore do not
-    /// retain.  The current class construction slice only exposes direct
-    /// handle copies and nominal upcasts; aggregate ownership is deliberately
-    /// left to the same recursive lowering boundary when those constructors
-    /// become source-reachable.
+    /// ownership. Moves transfer the existing reference and therefore do not
+    /// retain. A copied aggregate is walked recursively so its nested class
+    /// handles receive the same ownership treatment as a direct handle.
+    fn retain_lines_for_value(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
+        match self.types.kind(ty) {
+            TyKind::Class(_) => {
+                out.push(format!(
+                    "{}(({}*){});",
+                    ember_branding::runtime("retain"),
+                    ember_branding::runtime("obj_header"),
+                    access
+                ));
+            }
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                // `[ARN-8]` — MaybeUninit's field is layout storage, not an
+                // initialized owner. Copying it is a byte copy and must not
+                // retain a value that may not exist yet.
+                if def.name.as_str().starts_with("MaybeUninit_") || !def.drops_fields {
+                    return;
+                }
+                let fields: Vec<(Symbol, Ty)> =
+                    def.fields.iter().map(|field| (field.name, field.ty)).collect();
+                for (name, field_ty) in fields {
+                    self.retain_lines_for_value(&format!("{access}.{name}"), field_ty, out);
+                }
+            }
+            TyKind::Tuple(items) => {
+                let items = items.clone();
+                for (index, item) in items.into_iter().enumerate() {
+                    self.retain_lines_for_value(&format!("{access}._{index}"), item, out);
+                }
+            }
+            TyKind::Array { elem, len } => {
+                for index in 0..*len {
+                    self.retain_lines_for_value(&format!("{access}._0[{index}]"), *elem, out);
+                }
+            }
+            TyKind::Enum(id) => {
+                let variants: Vec<(i128, Symbol, Vec<(Symbol, Ty)>)> = self
+                    .types
+                    .enum_def(*id)
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        (
+                            variant.discriminant,
+                            variant.name,
+                            variant.fields.iter().map(|field| (field.name, field.ty)).collect(),
+                        )
+                    })
+                    .collect();
+                let mut arms = Vec::new();
+                for (discriminant, variant, fields) in variants {
+                    let mut retains = Vec::new();
+                    for (name, field_ty) in fields {
+                        self.retain_lines_for_value(
+                            &format!("{access}.payload.{variant}.{name}"),
+                            field_ty,
+                            &mut retains,
+                        );
+                    }
+                    if !retains.is_empty() {
+                        arms.push(format!(
+                            "case {discriminant}: {{ {} }} break;",
+                            retains.join(" ")
+                        ));
+                    }
+                }
+                if !arms.is_empty() {
+                    out.push(format!(
+                        "switch ({access}.tag) {{ {} default: break; }}",
+                        arms.join(" ")
+                    ));
+                }
+            }
+            // Views, raw pointers and scalar values have no owned class
+            // handle hidden in their representation. Growable arrays are
+            // move-only, so no valid `Copy` boundary reaches this arm.
+            _ => {}
+        }
+    }
+
     fn retain_lines_for_rvalue(
         &self,
         rvalue: &Rvalue,
@@ -1077,13 +1156,42 @@ impl Emitter<'_> {
     ) {
         match rvalue {
             Rvalue::Use(Operand::Copy(place)) => {
-                if matches!(self.types.kind(target), TyKind::Class(_)) {
-                    out.push(format!(
-                        "{}(({}*){});",
-                        ember_branding::runtime("retain"),
-                        ember_branding::runtime("obj_header"),
-                        self.place_in(place, body)
-                    ));
+                self.retain_lines_for_value(&self.place_in(place, body), target, out);
+            }
+            Rvalue::Aggregate { kind, operands } => {
+                // Aggregate construction is still a copy boundary when an
+                // operand is `Copy`. Derive each operand's type from the
+                // aggregate shape so nested class handles are retained before
+                // the C initializer duplicates their pointer bits.
+                let operand_types: Vec<Ty> = match kind {
+                    AggregateKind::Struct(id) => self
+                        .types
+                        .struct_def(*id)
+                        .fields
+                        .iter()
+                        .map(|field| field.ty)
+                        .collect(),
+                    AggregateKind::Tuple => match self.types.kind(target) {
+                        TyKind::Tuple(items) => items.clone(),
+                        _ => Vec::new(),
+                    },
+                    AggregateKind::Array => match self.types.kind(target) {
+                        TyKind::Array { elem, len } => vec![*elem; *len as usize],
+                        _ => Vec::new(),
+                    },
+                    AggregateKind::Enum(id, variant) => self
+                        .types
+                        .enum_def(*id)
+                        .variants
+                        .get(*variant)
+                        .map(|variant| variant.fields.iter().map(|field| field.ty).collect())
+                        .unwrap_or_default(),
+                };
+                for (operand, operand_ty) in operands.iter().zip(operand_types) {
+                    if matches!(operand, Operand::Copy(_)) {
+                        let value = self.operand(operand, body);
+                        self.retain_lines_for_value(&value, operand_ty, out);
+                    }
                 }
             }
             Rvalue::Cast { kind: CastKind::ClassUpcast, operand: Operand::Copy(place), .. } => {
@@ -1258,20 +1366,19 @@ impl Emitter<'_> {
                 ..
             } => {
                 // `[RC-1]` — `Array.push` consumes its value argument, but a
-                // class handle is a language-level `Copy` value.  The byte
-                // copy performed by `ember_vec_push` therefore needs the
-                // same strong-reference increment as any other class-handle
-                // copy; otherwise the caller's later release leaves the
-                // array with a dangling handle.
+                // `Copy` value may contain class handles. The byte copy
+                // performed by `ember_vec_push` therefore needs the same
+                // recursive strong-reference increments as any other copy;
+                // otherwise the caller's later release leaves the array with
+                // a dangling handle.
                 let elem = self.element_of(*arg_ty);
-                if matches!(self.types.kind(elem), TyKind::Class(_)) {
+                if matches!(args.get(1), Some(Operand::Copy(_))) {
                     let value = self.operand(&args[1], body);
-                    self.line(&format!(
-                        "    {}(({}*){});",
-                        ember_branding::runtime("retain"),
-                        ember_branding::runtime("obj_header"),
-                        value
-                    ));
+                    let mut retains = Vec::new();
+                    self.retain_lines_for_value(&value, elem, &mut retains);
+                    for line in retains {
+                        self.line(&format!("    {line}"));
+                    }
                 }
                 let call = self.call_expression(func, args, body);
                 self.line(&format!("    {call};"));
