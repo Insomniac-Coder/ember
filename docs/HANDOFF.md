@@ -291,6 +291,7 @@ work.
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
 | Current implementation checkpoint | Current worktree contains the D-117 through D-128 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, fail-closed EMIF cache-key validation, rejection of empty or malformed explicit `@borrows` arguments, the completed RT-GEN-1 runtime-output generator, and the reachable O5 `CallableOnce` ownership UI snapshot with a compiling repair. H1 remains a frozen development target, not the adopted repository-normative source |
 | Latest continuation checkpoint | `eeddb90` adds the reachable O5 `CallableOnce` ownership UI snapshot, exact `E3030` rendering, and a compiling `owned f:` repair; the focused UI harness passes |
+| Latest architecture checkpoint | `7291248` makes the borrow checker consume canonical `BorrowCapability.reference_kind` for existing RefCell guard loans; the place-based classifier remains for newly examined accesses |
 | Recent commits | `812b9eb` corrects the closed-deviation ledger wording · `ba91755` records the runtime-generation checkpoint · `d941511` generates runtime C outputs from the canonical branding source · `d55f580` records malformed `@borrows` source hardening · `523c030` rejects malformed source `@borrows` arguments · `c4fccdc` rejects empty explicit EMIF borrow contracts · `acd7d86` refreshed the defect count and current handoff ledgers · `451a4d4` recorded the D-126 EMIF cache-key integrity fix and synchronized the cold-start/handoff ledgers · `5332572` rejects self-inconsistent EMIF cache keys at the decode boundary · `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
 | Working tree | Expected clean after the current verified implementation and synchronized documentation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
@@ -3726,6 +3727,24 @@ shapes are still intentionally deferred until their real closure, class,
 disjointness, effect, or concurrency producers exist; no test-only diagnostic
 was fabricated. The focused UI test, full workspace regression, and all six
 repository gates pass with the exact snapshot and compiling repair retained.
+
+### 0.74 ARCH-096-1 — canonical RefCell guard fact consumer — 2026-09-14
+
+`7291248` advances the semantic-fact migration through an existing producer
+and consumer boundary. `collect_loans` already produces
+`BorrowCapability.reference_kind`, distinguishing `RuntimeGuard` loans from
+ordinary references. The RefCell guard-call lint and the static conflict
+checker now consume that canonical field for the loan being examined instead
+of re-deriving guard identity from the source-place shape. Place-shape
+classification remains intentionally in use for a prospective access, which
+has not yet become a `BorrowCapability`.
+
+This is an implementation-architecture refactor under `[IMP-7]` and does not
+change RefCell, borrow, lifetime, or diagnostic semantics. The targeted
+`ember_analysis` tests and the full workspace regression passed; the six
+adopted-source gates remained green. The remaining fact fields and larger
+`OwnershipGraph`/`EffectSet` migration still require real producers and
+consumers and must not be filled with placeholder state.
 
 ## The task list — where to begin
 
