@@ -780,6 +780,52 @@ impl TypeTable {
         self.classes.iter().enumerate().map(|(i, d)| (ClassId(i as u32), d))
     }
 
+    /// Look up a field in a class or one of its single-inheritance bases.
+    /// The returned index is the object-layout index: base fields precede
+    /// derived fields, matching `[CLS-4]` and the generated object layout.
+    pub fn class_field(&self, id: ClassId, name: Symbol) -> Option<(usize, &FieldDef)> {
+        self.class_field_info(id, name)
+            .map(|(index, _, field)| (index, field))
+    }
+
+    /// Like [`TypeTable::class_field`], retaining the declaration that owns
+    /// the field so module-visibility checks can follow inherited fields.
+    pub fn class_field_info(
+        &self,
+        id: ClassId,
+        name: Symbol,
+    ) -> Option<(usize, ClassId, &FieldDef)> {
+        let def = self.class_def(id);
+        if let Some((index, field)) = def.field(name) {
+            let base_fields = def.base.map_or(0, |base| self.class_field_count(base));
+            return Some((base_fields + index, id, field));
+        }
+        def.base.and_then(|base| self.class_field_info(base, name))
+    }
+
+    /// Resolve a class object-layout field index, including inherited fields.
+    pub fn class_field_at(&self, id: ClassId, index: usize) -> Option<&FieldDef> {
+        self.class_field_at_info(id, index).map(|(_, field)| field)
+    }
+
+    /// Resolve an object-layout field index and retain its declaring class.
+    pub fn class_field_at_info(&self, id: ClassId, index: usize) -> Option<(ClassId, &FieldDef)> {
+        let def = self.class_def(id);
+        let base_count = def.base.map_or(0, |base| self.class_field_count(base));
+        if index < base_count {
+            return def.base.and_then(|base| self.class_field_at_info(base, index));
+        }
+        def.fields
+            .get(index - base_count)
+            .map(|field| (id, field))
+    }
+
+    /// Number of fields physically present in the object, including bases.
+    pub fn class_field_count(&self, id: ClassId) -> usize {
+        let def = self.class_def(id);
+        def.fields.len() + def.base.map_or(0, |base| self.class_field_count(base))
+    }
+
     /// `[RNG-2]` — every declaration gets its own id, so two range types
     /// over the same representation with the same bounds are distinct types.
     pub fn add_range(&mut self, def: RangeDef) -> RangeId {
@@ -1607,6 +1653,16 @@ mod tests {
         assert!(!table.is_ffi_safe(player));
         assert!(!table.is_builtin_zeroable(player));
         assert_ne!(entity, player, "distinct classes must not collapse to pointer identity");
+        let (base_index, base_field) = table.class_field(derived, Symbol::intern("id")).unwrap();
+        assert_eq!(base_index, 0);
+        assert_eq!(base_field.ty, c.u64);
+        let (derived_index, derived_field) =
+            table.class_field(derived, Symbol::intern("health")).unwrap();
+        assert_eq!(derived_index, 1);
+        assert_eq!(derived_field.ty, c.f32);
+        assert_eq!(table.class_field_count(derived), 2);
+        assert_eq!(table.class_field_at(derived, 0).unwrap().name, Symbol::intern("id"));
+        assert_eq!(table.class_field_at(derived, 1).unwrap().name, Symbol::intern("health"));
     }
 
     #[test]

@@ -25,8 +25,9 @@ use ember_hir::{
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
-    Bound, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis, OverflowPolicy, RangeDef, StructDef,
-    StructId, Ty, TyKind, TypeTable, UintTy, VariantDef, FnParam, FnParamMode, int_max,
+    Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
+    OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
+    FnParam, FnParamMode, int_max,
 };
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
@@ -381,8 +382,9 @@ struct Checker<'a> {
     common: &'a CommonTypes,
     sink: &'a mut Sink,
     struct_ids: HashMap<Symbol, StructId>,
+    class_ids: HashMap<Symbol, ClassId>,
     enum_ids: HashMap<Symbol, EnumId>,
-    /// Every named type in scope — structs and enums both.
+    /// Every named type in scope — structs, classes, and enums.
     named_types: HashMap<Symbol, Ty>,
     fn_ids: HashMap<Symbol, DefId>,
     signatures: Vec<Signature>,
@@ -574,6 +576,7 @@ impl<'a> Checker<'a> {
             common,
             sink,
             struct_ids: HashMap::new(),
+            class_ids: HashMap::new(),
             enum_ids: HashMap::new(),
             named_types: HashMap::new(),
             fn_ids: HashMap::new(),
@@ -1616,6 +1619,30 @@ impl<'a> Checker<'a> {
                     self.struct_ids.insert(name, id);
                     self.named_types.insert(name, ty);
                 }
+                ast::ItemKind::Class(decl) if decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    if self.named_types.contains_key(&name) {
+                        self.error(
+                            codes::E1030,
+                            decl.name.span,
+                            format!("`{name}` is already declared in this module"),
+                        );
+                        continue;
+                    }
+                    let id = self.types.add_class(ClassDef {
+                        name,
+                        fields: Vec::new(),
+                        span: item.span,
+                        openness: class_openness(decl.openness),
+                        base: None,
+                        has_drop: false,
+                        origin: None,
+                        declaring_module: self.current_module,
+                    });
+                    let ty = self.types.intern(TyKind::Class(id));
+                    self.class_ids.insert(name, id);
+                    self.named_types.insert(name, ty);
+                }
                 ast::ItemKind::Enum(decl) => {
                     let name = self.qualified(decl.name.name);
                     if self.named_types.contains_key(&name) {
@@ -1803,6 +1830,50 @@ impl<'a> Checker<'a> {
                         }
                         let _ = ty;
                     }
+                }
+                ast::ItemKind::Class(decl) => {
+                    let Some(&id) = self.class_ids.get(&self.qualified(decl.name.name)) else {
+                        // Generic classes are intentionally still outside
+                        // this bootstrap collection path.
+                        continue;
+                    };
+                    let fields = decl
+                        .members
+                        .iter()
+                        .filter_map(|member| match &member.kind {
+                            ast::MemberKind::Field(field) => Some(FieldDef {
+                                name: field.name.name,
+                                ty: self.resolve_type(&field.ty),
+                                span: member.span,
+                                has_default: field.default.is_some(),
+                                read_only_outside: member.read_only_outside,
+                                vis: field_vis(member.vis.kind),
+                            }),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    let has_drop = decl.members.iter().any(|member| {
+                        matches!(&member.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
+                    });
+                    let base = decl.base.as_ref().and_then(|base| {
+                        let resolved = self.resolve_type(base);
+                        match self.types.kind(resolved) {
+                            TyKind::Class(base_id) => Some(*base_id),
+                            _ if resolved == self.common.error => None,
+                            _ => {
+                                self.error(
+                                    codes::E2020,
+                                    base.span,
+                                    "a class base must name another class",
+                                );
+                                None
+                            }
+                        }
+                    });
+                    let def = self.types.class_def_mut(id);
+                    def.fields = fields;
+                    def.base = base;
+                    def.has_drop = has_drop;
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
@@ -2106,6 +2177,18 @@ impl<'a> Checker<'a> {
         for (item_index, item) in module.items.iter().enumerate() {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
+                    let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
+                    self.collect_members(
+                        ty,
+                        &decl.members,
+                        None,
+                        item.vis.kind != ast::VisKind::Private,
+                        item.span,
+                        item_index,
+                    );
+                    self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                }
+                ast::ItemKind::Class(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
                     self.collect_members(
                         ty,
@@ -5081,6 +5164,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::ItemKind::Struct(decl) => {
                     (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
                 }
+                ast::ItemKind::Class(decl) => {
+                    (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
+                }
                 ast::ItemKind::Enum(decl) => {
                     (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
                 }
@@ -7403,32 +7489,50 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
                 }
-                let TyKind::Struct(id) = *self.types.kind(base.ty) else {
-                    if base.ty != self.common.error {
-                        let shown = self.types.display(base.ty);
-                        self.error(
-                            codes::E2020,
-                            span,
-                            format!("`{shown}` has no field `{}`", name.name),
-                        );
-                    }
-                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-                };
-                match self.types.struct_def(id).field(name.name) {
-                    Some((index, field)) => {
-                        let ty = field.ty;
-                        // Resolve, then check, then build. One check on one
-                        // path — see `check_field_visible`.
-                        self.check_field_visible(id, field.vis, field.name, name.span);
-                        Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
-                    }
-                    None => {
-                        let struct_name = self.types.struct_def(id).name;
-                        self.error(
-                            codes::E2020,
-                            name.span,
-                            format!("`{struct_name}` has no field `{}`", name.name),
-                        );
+                match *self.types.kind(base.ty) {
+                    TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
+                        Some((index, field)) => {
+                            let ty = field.ty;
+                            // Resolve, then check, then build. One check on one
+                            // path — see `check_field_visible`.
+                            self.check_field_visible(id, field.vis, field.name, name.span);
+                            Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
+                        }
+                        None => {
+                            let struct_name = self.types.struct_def(id).name;
+                            self.error(
+                                codes::E2020,
+                                name.span,
+                                format!("`{struct_name}` has no field `{}`", name.name),
+                            );
+                            Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                        }
+                    },
+                    TyKind::Class(id) => match self.types.class_field_info(id, name.name) {
+                        Some((index, owner, field)) => {
+                            let ty = field.ty;
+                            self.check_class_field_visible(owner, field.vis, field.name, name.span);
+                            Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
+                        }
+                        None => {
+                            let class_name = self.types.class_def(id).name;
+                            self.error(
+                                codes::E2020,
+                                name.span,
+                                format!("`{class_name}` has no field `{}`", name.name),
+                            );
+                            Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                        }
+                    },
+                    _ => {
+                        if base.ty != self.common.error {
+                            let shown = self.types.display(base.ty);
+                            self.error(
+                                codes::E2020,
+                                span,
+                                format!("`{shown}` has no field `{}`", name.name),
+                            );
+                        }
                         Expr { ty: self.common.error, kind: ExprKind::Error, span }
                     }
                 }
@@ -9648,6 +9752,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         );
     }
 
+    fn check_class_field_visible(
+        &mut self,
+        id: ClassId,
+        vis: FieldVis,
+        field: Symbol,
+        span: Span,
+    ) {
+        if vis != FieldVis::Private {
+            return;
+        }
+        let def = self.types.class_def(id);
+        if def.declaring_module == self.current_module {
+            return;
+        }
+        let owner = def.name.to_string();
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E1020,
+                span,
+                format!("`{field}` is private to `{owner}`'s module"),
+            )
+            .help(format!(
+                "declare it `pub {field}: …` to read it anywhere, or `pub(read) {field}: …` to make it readable and not writable"
+            ))
+            .note("a field is private unless it says otherwise [MOD-2]"),
+        );
+    }
+
     /// `[STR-1]` — whether the memberwise constructor may be called here.
     ///
     /// "It is `pub` iff all fields are `pub` (a `pub(read)` field makes it
@@ -9865,7 +9997,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         loop {
             match &current.kind {
                 ExprKind::Field { base, index } => {
-                    if let TyKind::Struct(id) = *self.types.kind(base.ty) {
+                    if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
+                        self.error(
+                            codes::E1010,
+                            span,
+                            "mutable class-field access is not implemented yet in this phase",
+                        );
+                    } else if let TyKind::Struct(id) = *self.types.kind(base.ty) {
                         let def = self.types.struct_def(id);
                         if let Some(field) = def.fields.get(*index) {
                             if field.read_only_outside
@@ -9887,6 +10025,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     .note(
                                         "a method on the declaring type is the way to change it \
                                          from outside [MOD-7]",
+                                    ),
+                                );
+                            }
+                        }
+                    } else if let TyKind::Class(id) = *self.types.kind(base.ty) {
+                        if let Some((owner_id, field)) = self.types.class_field_at_info(id, *index) {
+                            if field.read_only_outside
+                                && self.types.class_def(owner_id).declaring_module
+                                    != self.current_module
+                            {
+                                let owner = self.types.class_def(owner_id).name.to_string();
+                                let field = field.name.to_string();
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E1050,
+                                        span,
+                                        format!("`{owner}.{field}` is read-only outside its module"),
+                                    )
+                                    .primary_label("written here".to_string())
+                                    .help(format!(
+                                        "`{owner}` declares `{field}` as `pub(read)`: anyone may read it, and only `{owner}`'s own module may write it"
+                                    ))
+                                    .note(
+                                        "a method on the declaring type is the way to change it from outside [MOD-7]",
                                     ),
                                 );
                             }
@@ -14483,6 +14645,14 @@ fn mode_of(mode: ast::Mode) -> Mode {
     }
 }
 
+fn class_openness(openness: ast::Openness) -> ClassOpenness {
+    match openness {
+        ast::Openness::Final => ClassOpenness::Final,
+        ast::Openness::Open => ClassOpenness::Open,
+        ast::Openness::Abstract => ClassOpenness::Abstract,
+    }
+}
+
 /// `[FN-6]`/`[FN-6a]` — callable type parameters use precisely the ordinary
 /// parameter-mode vocabulary.  Keep this conversion at the AST/HIR boundary
 /// so the type representation never needs to know about parser details.
@@ -14571,6 +14741,7 @@ fn item_name(item: &ast::Item) -> Option<Symbol> {
 fn item_members(item: &ast::Item) -> Option<&[ast::Member]> {
     match &item.kind {
         ast::ItemKind::Struct(decl) => Some(&decl.members),
+        ast::ItemKind::Class(decl) => Some(&decl.members),
         ast::ItemKind::Enum(decl) => Some(&decl.members),
         ast::ItemKind::Interface(decl) => Some(&decl.members),
         ast::ItemKind::Extend(decl) => Some(&decl.members),

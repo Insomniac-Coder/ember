@@ -646,6 +646,9 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
             }
+            (Projection::Field(i), TyKind::Class(id)) => {
+                ty = types.class_field_at(*id, *i).map(|f| f.ty).unwrap_or(ty);
+            }
             (Projection::Field(i), TyKind::Tuple(items)) => {
                 ty = items.get(*i).copied().unwrap_or(ty);
             }

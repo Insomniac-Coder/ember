@@ -23,7 +23,7 @@ use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
 use ember_span::SourceMap;
-use ember_types::{EnumId, FloatTy, FnParam, FnParamMode, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
+use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Output {
@@ -117,6 +117,7 @@ enum Definition {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TypeNode {
     Struct(StructId),
+    Class(ClassId),
     Enum(EnumId),
     Structural(Ty),
 }
@@ -199,6 +200,9 @@ impl Emitter<'_> {
     fn node_name(&self, node: TypeNode) -> String {
         match node {
             TypeNode::Struct(id) => c_name(&self.types.struct_def(id).name.to_string()),
+            TypeNode::Class(id) => {
+                ember_branding::object_struct(&self.types.class_def(id).name.to_string())
+            }
             TypeNode::Enum(id) => c_name(&self.types.enum_def(id).name.to_string()),
             TypeNode::Structural(ty) => self.structural_name(ty),
         }
@@ -236,6 +240,19 @@ impl Emitter<'_> {
                         .map(|f| format!("{} {}", self.c_type(f.ty), f.name))
                         .collect(),
                 )
+            }
+            TypeNode::Class(id) => {
+                // Class handles point at an object whose fixed runtime header
+                // is followed by base fields and then derived fields. The
+                // flattened member list matches the single-inheritance
+                // layout while keeping field projections deterministic.
+                let mut members = vec![format!("{RT}obj_header _header")];
+                for index in 0..self.types.class_field_count(id) {
+                    if let Some(field) = self.types.class_field_at(id, index) {
+                        members.push(format!("{} {}", self.c_type(field.ty), field.name));
+                    }
+                }
+                Definition::Struct(members)
             }
             // `[ENM-3]` — a unit-only enum *is* its discriminant, so it is a
             // name for the repr integer and nothing more. `[TYP-12]` — a
@@ -1485,6 +1502,11 @@ impl Emitter<'_> {
                             out.push_str(&format!(".{}", def.fields[*index].name));
                         }
                     }
+                    (_, TyKind::Class(id)) => {
+                        if let Some(field) = self.types.class_field_at(*id, *index) {
+                            out.push_str(&format!("->{}", field.name));
+                        }
+                    }
                     // An `Array[T]` is the runtime's buffer: pointer, length,
                     // capacity, in that order. A view is the same shape with
                     // no capacity (Part VII §7).
@@ -1557,6 +1579,12 @@ impl Emitter<'_> {
                 let fields = &self.types.struct_def(*id).fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
             }
+            (Projection::Field(index), TyKind::Class(id)) => plain(
+                self.types
+                    .class_field_at(*id, *index)
+                    .map(|field| field.ty)
+                    .unwrap_or(at.ty),
+            ),
             (Projection::Field(index), TyKind::Tuple(items)) => {
                 plain(items.get(*index).copied().unwrap_or(at.ty))
             }
@@ -1768,13 +1796,12 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
             // Class handles are pointers to the compiler-generated object
-            // struct. The class object definition/constructor lowering is a
-            // later Phase 3 consumer; keeping the handle spelling here makes
-            // the type mapping explicit without pretending that class code
-            // can already be emitted end-to-end.
-            TyKind::Class(id) => {
-                format!("struct {RT}obj_{}*", c_name(&self.types.class_def(*id).name.to_string()))
-            }
+            // struct. The name comes from the shared branding helper so a
+            // future prefix change cannot create a mismatched type spelling.
+            TyKind::Class(id) => format!(
+                "struct {}*",
+                ember_branding::object_struct(&self.types.class_def(*id).name.to_string())
+            ),
             TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
             // `[COST-3]` — a range type is "not observable": erased to the
             // representation, with the construction site carrying the check.
@@ -1827,6 +1854,11 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
         taken: types
             .structs()
             .map(|(_, d)| c_name(&d.name.to_string()))
+            .chain(
+                types
+                    .classes()
+                    .map(|(_, d)| ember_branding::object_struct(&d.name.to_string())),
+            )
             .chain(types.enums().map(|(_, d)| c_name(&d.name.to_string())))
             .collect(),
     };
@@ -1835,6 +1867,10 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
     let structs: Vec<StructId> = types.structs().map(|(id, _)| id).collect();
     for id in structs {
         planner.visit(TypeNode::Struct(id));
+    }
+    let classes: Vec<ClassId> = types.classes().map(|(id, _)| id).collect();
+    for id in classes {
+        planner.visit(TypeNode::Class(id));
     }
     let enums: Vec<EnumId> = types.enums().map(|(id, _)| id).collect();
     for id in enums {
@@ -1875,6 +1911,17 @@ impl Planner<'_> {
             TypeNode::Struct(id) => {
                 let fields: Vec<Ty> =
                     self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
+                for field in fields {
+                    self.require(field);
+                }
+            }
+            TypeNode::Class(id) => {
+                if let Some(base) = self.types.class_def(id).base {
+                    self.visit(TypeNode::Class(base));
+                }
+                let fields: Vec<Ty> = (0..self.types.class_field_count(id))
+                    .filter_map(|index| self.types.class_field_at(id, index).map(|field| field.ty))
+                    .collect();
                 for field in fields {
                     self.require(field);
                 }
@@ -1921,6 +1968,7 @@ impl Planner<'_> {
     fn require(&mut self, ty: Ty) {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.visit(TypeNode::Struct(*id)),
+            TyKind::Class(id) => self.visit(TypeNode::Class(*id)),
             TyKind::Enum(id) => self.visit(TypeNode::Enum(*id)),
             TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Fn { .. } => {
                 self.visit(TypeNode::Structural(ty))
