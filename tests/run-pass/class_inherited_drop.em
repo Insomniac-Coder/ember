@@ -1,9 +1,8 @@
 #$ test: run-pass
 #$ rules: CLS-4, CLS-6, DRP-1, OWN-2
 #$ profiles: debug, release, shipping
-#$ assert-c-order: "em_Derived_drop(&" then "em_Base_drop(&"
+#$ assert-c-order: "em_Derived_drop(&handle)" then "em_Base_drop(&base_handle_0)"
 #$ stdout: derived
-#$ derived
 #$ base
 
 open class Base:
