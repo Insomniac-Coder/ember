@@ -794,21 +794,32 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Continue the `@latebound` implementation as the smallest general
-callable-boundary fact. The first slice is complete and verified for parser/type
-identity, callable-bound propagation, EMIF/cache invalidation, invocation-local
-origin tracking, return escape, mutable return escape, unbounded-Box storage
-escape, and statically independent capture-free callback results through
-`Box[str]`. Next add and verify freshness, nested-boundary separation,
-owned-capture publication, FFI publication, and separate-compilation consumer
-cases using the existing region/escape
-machinery. Begin each missing case with a minimal adversarial program and keep
-unknown indirect results conservative.
-Do not special-case `std.borrow` names, expose named lifetimes, add runtime/ABI
-metadata, or turn ordinary callbacks into late-bound callbacks by inference.
-Preserve conservative all-slot behavior for unknown calls and ordinary E3021
-for precise matching-field conflicts; E3064 remains a reserved historical
-identity rather than target behavior. Treat class-member lowering and nested
-callable mode-preserving type identity as distinct later prerequisites. Do not
-start cache reuse, layouts/effects/inline sections, or a big-bang rewrite as
-part of this slice, and do not leak proof metadata into runtime layout.
+The implementable `@latebound` precision slice is complete for the currently
+available compiler boundaries. Repository evidence covers parser/type identity,
+callable-bound propagation, EMIF/cache invalidation, invocation-local origin
+tracking, return and mutable-return escape, unbounded-`Box` storage escape,
+freshness across sequential invocations, nested-boundary separation,
+owned-capture publication rejection, all shared/mutable helper arities,
+statically independent capture-free callback results through `Box[str]`, and an
+imported latebound consumer through the validated interface-artifact path.
+
+The remaining `@latebound` items are explicit phase boundaries rather than
+missing cases that can be completed safely in this slice:
+
+1. foreign callback publication, which requires the later FFI function-value /
+   foreign-boundary machinery; and
+2. a true separate-compilation consumer, which requires independent package
+   compilation and reuse rather than the current same-invocation interface
+   artifact test.
+
+Do not fabricate either boundary, add name-specific compiler behavior, expose
+named lifetimes, add runtime/ABI metadata, or turn ordinary callbacks into
+late-bound callbacks by inference. When one of the prerequisite phases lands,
+begin its coverage with a minimal adversarial program and keep unknown indirect
+results conservative. Preserve conservative all-slot behavior for unknown calls
+and ordinary E3021 for precise matching-field conflicts; E3064 remains a
+reserved historical identity rather than target behavior. Treat class-member
+lowering and nested callable mode-preserving type identity as distinct later
+prerequisites. Do not start cache reuse, layouts/effects/inline sections, or a
+big-bang rewrite as part of this slice, and do not leak proof metadata into
+runtime layout.
