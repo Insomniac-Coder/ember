@@ -45,7 +45,7 @@ live Git state.
                                              docs/spec/ is the split of the source
 
  133 top-level conformance rule directories, 476 `.em` files including support
- modules. 95 defects recorded, **none open**.
+ modules. 96 defects recorded, **none open**.
 **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **D-126 is fixed:** EMIF decoding recomputes the cache key from the artifact's
 identity inputs and rejects self-inconsistent metadata before consumption.
