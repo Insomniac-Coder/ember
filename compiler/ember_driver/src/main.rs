@@ -127,6 +127,8 @@ fn collect_body_function_symbols(
                 ember_mir::StmtKind::StorageLive(_)
                 | ember_mir::StmtKind::StorageDead(_)
                 | ember_mir::StmtKind::Drop { .. }
+                | ember_mir::StmtKind::BeginAccess { .. }
+                | ember_mir::StmtKind::EndAccess { .. }
                 | ember_mir::StmtKind::Nop => {}
             }
         }

@@ -718,6 +718,8 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
                 | StmtKind::Drop { .. }
+                | StmtKind::BeginAccess { .. }
+                | StmtKind::EndAccess { .. }
                 | StmtKind::Nop => {}
             }
         }
@@ -808,6 +810,8 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
                 StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
                 | StmtKind::Drop { .. }
+                | StmtKind::BeginAccess { .. }
+                | StmtKind::EndAccess { .. }
                 | StmtKind::Nop => {}
             }
             rewritten.push(stmt);

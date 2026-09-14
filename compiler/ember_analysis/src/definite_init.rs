@@ -275,7 +275,7 @@ fn transfer(
             StmtKind::Drop { place, .. } => {
                 read_place(place, &state, stmt.span, &mut reporter);
             }
-            StmtKind::Nop => {}
+            StmtKind::BeginAccess { .. } | StmtKind::EndAccess { .. } | StmtKind::Nop => {}
         }
     }
 

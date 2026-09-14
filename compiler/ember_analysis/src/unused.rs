@@ -54,6 +54,9 @@ pub fn check(body: &Body, sink: &mut Sink) {
                         read.insert(*flag);
                     }
                 }
+                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                    mark_place_indices(place, &mut read);
+                }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
         }

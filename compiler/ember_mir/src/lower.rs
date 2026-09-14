@@ -179,6 +179,10 @@ struct Builder<'a> {
     /// `[CLS-2]` — a constructor's direct field writes initialize storage
     /// allocated by `ClassNew`, so they must not drop an old value.
     class_init: bool,
+    /// `[CLS-7]`/`[EXC-1]` — the dereferenced class receiver for a `mut self`
+    /// method.  Keeping this as a MIR place lets all exits close the same
+    /// interval and keeps runtime instrumentation out of type checking.
+    class_access: Option<Place>,
 }
 
 impl<'a> Builder<'a> {
@@ -211,6 +215,18 @@ impl<'a> Builder<'a> {
         }
 
         let arg_count = function.params.len();
+        let class_access = function.params.first().and_then(|param| {
+            if param.mode != hir::Mode::Mut {
+                return None;
+            }
+            let param_ty = function.local(param.local).ty;
+            match types.kind(param_ty) {
+                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_)) => {
+                    Some(Place { local: LocalId(1), projection: vec![Projection::Deref] })
+                }
+                _ => None,
+            }
+        });
         let class_init = function.class_init;
         // `[FN-1]` transfers an `owned` argument into the callee. Its lifetime
         // is therefore the function body just like an owned local's, and
@@ -265,6 +281,7 @@ impl<'a> Builder<'a> {
             void_ty: common.void,
             current_span: function.span,
             class_init,
+            class_access,
         }
     }
 
@@ -378,6 +395,9 @@ impl<'a> Builder<'a> {
 
     fn build(&mut self) {
         let body = &self.function.body;
+        if let Some(place) = self.class_access.clone() {
+            self.push(StmtKind::BeginAccess { place, mutable: true });
+        }
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
         // slot as it stands. `[FN-8]`'s `main` is the common case. Owned
@@ -387,7 +407,14 @@ impl<'a> Builder<'a> {
         // `emit_drops_from(0)` while lowering that statement.
         if matches!(self.blocks[self.current.0 as usize].terminator, Terminator::Unreachable) {
             self.emit_drops_from(0);
+            self.end_class_access();
             self.terminate(Terminator::Return);
+        }
+    }
+
+    fn end_class_access(&mut self) {
+        if let Some(place) = self.class_access.clone() {
+            self.push(StmtKind::EndAccess { place, mutable: true });
         }
     }
 
@@ -510,6 +537,7 @@ impl<'a> Builder<'a> {
                 // own, before it goes.
                 self.emit_defers_from(0);
                 self.emit_drops_from(0);
+                self.end_class_access();
                 self.terminate(Terminator::Return);
                 // Anything after a `return` in the same block is unreachable;
                 // start a fresh block so later statements still lower cleanly.

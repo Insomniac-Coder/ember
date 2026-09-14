@@ -529,6 +529,12 @@ struct Checker<'a> {
     /// `[CLS-2]` — field initialization facts while a narrow class
     /// constructor body is checked.
     class_init: Option<ClassInitState>,
+    /// `[CLS-7]`/`[EXC-1]` — the receiver of the class method currently being
+    /// checked when it is a `mut self` method.  This is separate from
+    /// `class_init`: mutable methods may write through their own receiver,
+    /// while constructor fields still have the definite-initialization
+    /// lattice and its special first-write rule.
+    class_method_receiver: Option<(ClassId, LocalId)>,
     /// Literal defaults retained for the narrow synthesized class constructor
     /// path. The full `[STR-2]` default-expression evaluator is still a later
     /// dependency; non-literal class defaults remain fail-closed.
@@ -661,6 +667,7 @@ impl<'a> Checker<'a> {
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
             class_init: None,
+            class_method_receiver: None,
             class_default_literals: HashMap::new(),
             in_assignment_target: false,
             ref_guards: HashMap::new(),
@@ -5558,6 +5565,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let outer_self = self.self_ty.replace(owner);
         let outer_class_init = self.class_init.take();
+        let outer_class_method_receiver = self.class_method_receiver.take();
+        self.class_method_receiver = match self.types.kind(owner) {
+            TyKind::Class(id)
+                if signature_params.first().is_some_and(|(_, _, mode, _)| *mode == Mode::Mut)
+                    && decl.params.first().is_some_and(|param| {
+                        matches!(param.kind, ast::ParamKind::Receiver { .. })
+                    }) =>
+            {
+                params.first().map(|param| (*id, param.local))
+            }
+            _ => None,
+        };
         let class_init = match self.types.kind(owner) {
             TyKind::Class(id)
                 if decl.name.name.is("init")
@@ -5593,6 +5612,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.report_missing_class_init_fields(span);
         }
         self.class_init = outer_class_init;
+        self.class_method_receiver = outer_class_method_receiver;
         self.self_ty = outer_self;
         let overflow = self.overflow_policy(attrs, span);
         self.in_static_safe = outer_static_safe;
@@ -5854,6 +5874,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == state.owner)
             .then_some(*index)
+    }
+
+    /// Return the field index when `expr` is rooted in the current class
+    /// method's `mut self` receiver.  Unlike the constructor helper above,
+    /// this deliberately ignores the initialization lattice: a mutable class
+    /// method may update an already initialized field, including through an
+    /// index or another nested projection.  The caller walks to the root
+    /// field before asking, so a write such as `self.items[i] = value` is
+    /// covered without accidentally admitting `other.items[i]`.
+    fn class_method_field_index(&self, expr: &Expr) -> Option<usize> {
+        let (owner, receiver) = self.class_method_receiver?;
+        let ExprKind::Field { base, index } = &expr.kind else { return None };
+        let ExprKind::Deref(receiver_expr) = &base.kind else { return None };
+        let ExprKind::Local(local) = &receiver_expr.kind else { return None };
+        if *local != receiver {
+            return None;
+        }
+        matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == owner).then_some(*index)
     }
 
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
@@ -10668,11 +10706,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             match &current.kind {
                 ExprKind::Field { base, index } => {
                     if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
-                        if self.class_init_field_index(place).is_none() {
+                        if self.class_init_field_index(place).is_none()
+                            && self.class_method_field_index(current).is_none()
+                        {
                             self.error(
                                 codes::E1010,
                                 span,
-                                "mutable class-field access is not implemented yet in this phase",
+                                "mutable class-field access requires a `mut self` class method in this phase",
                             );
                         }
                     } else if let TyKind::Struct(id) = *self.types.kind(base.ty) {

@@ -162,6 +162,9 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.place(place, &at);
                     v.rvalue(rvalue, &at);
                 }
+                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                    v.place(place, &at);
+                }
                 StmtKind::CheckedBinaryOp {
                     dest,
                     overflow,

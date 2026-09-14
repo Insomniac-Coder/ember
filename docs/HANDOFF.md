@@ -5761,3 +5761,29 @@ or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
 its exit gate, and phase accounting remains exactly **1 of 9 complete**.
 The remaining constructor boundaries include inherited/base initialization,
 full default-expression handling, and dynamic exclusivity.
+
+### 0.93 Phase 3 class `mut self` access interval — 2026-09-14
+
+Class methods with `mut self` now admit writes rooted in their actual class
+receiver. The type checker keeps the boundary narrow: a direct receiver field
+and projections rooted in that field are permitted, while writes through a
+non-mutating receiver or a distinct class object remain rejected with E1010.
+This carries the `[CLS-7]`/`[EXC-1]` method-duration access into MIR as explicit
+`BeginAccess`/`EndAccess` statements and lowers it to the existing runtime
+`ember_access_begin_write`/`ember_access_end_write` operations. The interval
+is closed on every return path and on ordinary fallthrough, so this slice uses
+the runtime's checked counter rather than silently eliding the required
+exclusivity boundary.
+
+The run-pass fixture mutates a class field from a `mut self` method, observes
+the updated value, and asserts both generated runtime access calls. An
+adversarial compile-fail fixture confirms that a read-only class method cannot
+write a field. Analysis, MIR verification, driver traversal, and unused-index
+handling treat the new executable statements explicitly; they do not create
+static loans or region facts because the dynamic interval is a runtime access
+contract. This is implementation-only progress: no specification, ADR,
+adopted source, or diagnostic semantics changed. Phase 2 is active, Phase 3
+has not passed its exit gate, and phase accounting remains exactly
+**1 of 9 complete**. Static access elision, complete shared/weak access
+semantics, dispatch, inheritance, and the remaining Phase 3 conformance
+matrix are still outstanding.

@@ -1353,7 +1353,14 @@ fn check_body(
                         accesses.push((place.clone(), Access::Write));
                     }
                 }
-                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+                // Dynamic class access intervals are checked by the runtime;
+                // they do not create static loans for the ordinary borrow
+                // checker to compare here.
+                StmtKind::BeginAccess { .. }
+                | StmtKind::EndAccess { .. }
+                | StmtKind::StorageLive(_)
+                | StmtKind::StorageDead(_)
+                | StmtKind::Nop => {}
             }
             check_point(
                 body,

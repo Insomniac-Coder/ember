@@ -949,6 +949,26 @@ impl Emitter<'_> {
                 let rhs = self.rvalue(rvalue, body, ty);
                 self.line(&format!("    {lhs} = {rhs};"));
             }
+            StmtKind::BeginAccess { place, mutable } => {
+                self.emit_line_directive(stmt.span);
+                let operation = if *mutable { "begin_write" } else { "begin_read" };
+                let object = self.access_object(place, body);
+                let what = c_string_literal(&body.symbol);
+                let location = self.location(stmt.span);
+                self.line(&format!(
+                    "    {RT}access_{operation}({object}, {what}, {location});"
+                ));
+            }
+            StmtKind::EndAccess { place, mutable } => {
+                self.emit_line_directive(stmt.span);
+                let operation = if *mutable { "end_write" } else { "end_read" };
+                let object = self.access_object(place, body);
+                let what = c_string_literal(&body.symbol);
+                let location = self.location(stmt.span);
+                self.line(&format!(
+                    "    {RT}access_{operation}({object}, {what}, {location});"
+                ));
+            }
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => {
                 // `bool ember_ck_add_i32(a, b, &dest)` returns whether the
                 // operation overflowed and writes the wrapped result either
@@ -990,6 +1010,17 @@ impl Emitter<'_> {
             // elaboration consume them before this point.
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
         }
+    }
+
+    /// Render the object pointer represented by a class access place. The
+    /// current producer is the dereferenced `ref mut Class` receiver, but the
+    /// place renderer remains the single source of truth for projections.
+    fn access_object(&self, place: &Place, body: &Body) -> String {
+        format!(
+            "(({}*){})",
+            ember_branding::runtime("obj_header"),
+            self.place_in(place, body)
+        )
     }
 
     /// Emit the strong-reference increments required by an Ember `Copy`
@@ -2341,6 +2372,9 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                     if let Some(flag) = flag {
                         read[flag.0 as usize] = true;
                     }
+                }
+                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                    read_place(place, &mut read);
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }

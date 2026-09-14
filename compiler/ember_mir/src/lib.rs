@@ -893,6 +893,21 @@ pub enum StmtKind {
         place: Place,
         rvalue: Rvalue,
     },
+    /// `[CLS-7]`/`[EXC-1]` — a class `mut self` method owns a dynamically
+    /// checked write access for the duration of the method.  The place is the
+    /// dereferenced receiver handle, so the backend can pass its object header
+    /// to the runtime without inventing a source-level value or ABI field.
+    BeginAccess {
+        place: Place,
+        mutable: bool,
+    },
+    /// End the access opened by [`StmtKind::BeginAccess`].  These are explicit
+    /// MIR operations rather than backend-only instrumentation so borrow,
+    /// verifier, inspection, and code-generation phases see the same interval.
+    EndAccess {
+        place: Place,
+        mutable: bool,
+    },
     /// Arithmetic that reports whether it overflowed.
     ///
     /// Rust MIR models this as an rvalue producing a `(T, bool)` tuple. Here
@@ -937,6 +952,8 @@ impl StmtKind {
     pub fn describe(&self) -> &'static str {
         match self {
             StmtKind::Assign { .. } => "an assignment",
+            StmtKind::BeginAccess { .. } => "a begin-access operation",
+            StmtKind::EndAccess { .. } => "an end-access operation",
             StmtKind::CheckedBinaryOp { .. } => "a checked arithmetic statement",
             StmtKind::StorageLive(_) => "a storage-live marker",
             StmtKind::StorageDead(_) => "a storage-dead marker",
@@ -1149,6 +1166,14 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
             format!("{} = {}", dump_place(place), dump_rvalue(rvalue, types))
+        }
+        StmtKind::BeginAccess { place, mutable } => {
+            let mode = if *mutable { "write" } else { "read" };
+            format!("begin_access_{mode}({})", dump_place(place))
+        }
+        StmtKind::EndAccess { place, mutable } => {
+            let mode = if *mutable { "write" } else { "read" };
+            format!("end_access_{mode}({})", dump_place(place))
         }
         StmtKind::CheckedBinaryOp {
             dest,
