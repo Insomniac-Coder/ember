@@ -1576,9 +1576,11 @@ fn check_refcell_call(
     let mut live: Vec<&Loan> = in_scope(loans, regions, point)
         .into_iter()
         .filter(|loan| {
-            loan.capability
-                .source_place()
-                .is_some_and(|place| is_guard_loan(body, types, place))
+            // `collect_loans` is the producer for this canonical fact. Do not
+            // re-derive the loan's guard identity from its source-place shape
+            // after the fact; that would leave the consumer coupled to one
+            // lowering representation instead of the verified capability.
+            loan.capability.reference_kind == ReferenceKind::RuntimeGuard
         })
         .collect();
     live.sort_by_key(|loan| (loan.created_at.block, loan.created_at.index));
@@ -2014,7 +2016,8 @@ fn check_point(
             // `mut` argument taking the cell for a call) must still conflict,
             // since moving the cell while a guard is live dangles it. Reads
             // and writes still conflict (see below). See `is_guard_loan`.
-            if is_guard_loan(body, types, loan_place) {
+            let guard_loan = loan.capability.reference_kind == ReferenceKind::RuntimeGuard;
+            if guard_loan {
                 if let Access::Borrow { .. } = access {
                     if is_guard_loan(body, types, place) {
                         continue;
@@ -2037,7 +2040,7 @@ fn check_point(
             // mutable, so shared borrows and reads of the same place pass.
             let reserved = loan.capability.is_mut() && loan.reserved_at.contains(&point);
             let loan_mutable = loan.capability.is_mut() && !reserved;
-            let refcell = is_guard_loan(body, types, loan_place);
+            let refcell = guard_loan;
             let conflict = match access {
                 // While a mutable borrow is live the owner may not read. A
                 // shared `RefCell` guard keeps the existing conservative
