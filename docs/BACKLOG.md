@@ -102,9 +102,11 @@ escape checking through canonical `StorageIdentity::ArenaAllocation` ownership,
 `EscapeConstraint::MustNotOutliveStorage` constraint, and `90ddefb` routes the
 borrow scope, iterator-retention, and diagnostic keeper consumers through the
 canonical `ValidityInterval`. The source-type fallback for ordinary Arena
-place borrows remains. These preserve behavior and are implementation-
-architecture migrations under `[IMP-7]`; no new semantic fact or placeholder
-consumer was introduced.
+place borrows remains. `498938b` also routes parameter-versus-local escape
+diagnostic classification through canonical `ProvenanceRoot`, while retaining
+the MIR local only for presentation and type lookup. These preserve behavior
+and are implementation-architecture migrations under `[IMP-7]`; no new
+semantic fact or placeholder consumer was introduced.
 
 ---
 

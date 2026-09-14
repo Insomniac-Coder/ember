@@ -3811,6 +3811,23 @@ and the complete 15-test milestone/conformance run passed. The repository-wide
 `cargo fmt --all -- --check` still reports pre-existing formatting drift in
 unrelated files; no formatter rewrite was included in this checkpoint.
 
+### 0.78 ARCH-096-1 — canonical provenance-root escape consumer — 2026-09-14
+
+`498938b` continues the same producer/consumer migration. `check_escapes`
+now determines whether a borrow originates from a parameter or a local using
+the canonical `BorrowCapability.provenance_root` rather than re-deriving that
+fact from `Body.local(...).kind`. The MIR local remains the source for type,
+name, and source-span presentation, and the existing Arena storage-owner
+fallback is unchanged.
+
+This is an `[IMP-7]` implementation-architecture correction only. It
+preserves E3060/E3061 selection, diagnostic wording, accepted/rejected
+programs, and generated output. The focused analysis, UI, and complete
+milestone/conformance tests passed. The current remaining architecture gaps
+are still the unimplemented fact producers/consumers for ownership graphs,
+effects, later FFI/threading/class mechanisms, and the genuine separate-
+compilation boundary; no placeholder consumer should be added for those.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
