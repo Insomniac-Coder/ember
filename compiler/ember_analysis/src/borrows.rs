@@ -1994,7 +1994,7 @@ fn method_autoref_target(
 fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
     loans
         .iter()
-        .filter(|loan| regions.contains(loan.capability.region, point))
+        .filter(|loan| regions.contains(loan.capability.validity_interval.0, point))
         .collect()
 }
 
@@ -2278,7 +2278,7 @@ fn check_point(
 /// the owner's loan through both view constructors before reaching `__it`.
 fn loan_held_by_for_iterator(body: &Body, regions: &Regions, loan: &Loan) -> bool {
     regions
-        .holders(loan.capability.region)
+        .holders(loan.capability.validity_interval.0)
         .iter()
         .any(|holder| body.for_iterators.contains(holder))
 }
@@ -2298,7 +2298,7 @@ fn keeper(
     conflict: Span,
 ) -> (Option<String>, Option<Span>) {
     let mut best: Option<(LocalId, Span)> = None;
-    for holder in regions.holders(loan.capability.region) {
+    for holder in regions.holders(loan.capability.validity_interval.0) {
         if body.local(*holder).name.is_none() {
             continue;
         }
