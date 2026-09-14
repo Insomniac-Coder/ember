@@ -5659,3 +5659,20 @@ fields as not definitely initialized; this prevents sequential-arm state
 leakage from masquerading as path coverage. This is implementation-only
 progress: Phase 2 is active, Phase 3 has not passed its exit gate, and phase
 accounting remains exactly **1 of 9 complete**.
+
+### 0.88 Phase 3 conservative while-loop constructor initialization — 2026-09-14
+
+The constructor checker now admits `while` bodies when the loop has no
+`else`. It checks the body using the ordinary class-field initialization
+lattice, then joins the body state with the state at loop entry because the
+loop may execute zero times. Consequently, a field initialized only inside a
+`while` remains non-definite and produces E2100, while field reads after a
+prior definite initialization are accepted.
+
+This is deliberately a conservative control-flow boundary. `for`, loop
+`else`, guarded or expression-bodied `match` arms, whole-`self` use,
+inheritance/base initialization, defaulted fields, and other unsupported
+constructor forms remain fail-closed with E1010. No specification or
+diagnostic semantics changed; the run-pass and compile-fail fixtures preserve
+the zero-iteration invariant. Phase 2 is active, Phase 3 has not passed its
+exit gate, and phase accounting remains exactly **1 of 9 complete**.
