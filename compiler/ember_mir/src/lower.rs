@@ -446,7 +446,18 @@ impl<'a> Builder<'a> {
     }
 
     fn class_access_for_mut_argument(&mut self, expr: &'a hir::Expr) -> Option<Place> {
-        let hir::ExprKind::Ref { place, mutable: true } = &expr.kind else { return None };
+        // An inherited `mut self` method receives a compiler-internal
+        // borrow-preserving class upcast around the ordinary `ref mut` of its
+        // receiver.  The access still belongs to the original place (and, for
+        // a class-valued field, to its containing object), so look through
+        // that adjustment before classifying the access boundary.  User
+        // ownership is not changed and the cast remains in the call argument.
+        let receiver = match &expr.kind {
+            hir::ExprKind::Cast { expr, .. }
+                if matches!(expr.kind, hir::ExprKind::Ref { mutable: true, .. }) => expr.as_ref(),
+            _ => expr,
+        };
+        let hir::ExprKind::Ref { place, mutable: true } = &receiver.kind else { return None };
         self.class_access_base(place).map(|base| self.lower_place(base))
     }
 

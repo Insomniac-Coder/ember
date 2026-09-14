@@ -168,6 +168,15 @@ class handles, virtual/interface dispatch, indexed access sharing for dynamic
 exclusivity, static elision, generic classes, and the complete Phase 3 matrix
 remain open; this fix does not claim those broader cases.
 
+`OBJ-RT-1` continuation: inherited `mut self` calls through a class-valued
+field now preserve both access boundaries. The generated derived-to-base borrow
+cast is unwrapped only for locating the containing class place, so the caller
+opens its long-term access while the inherited base method opens the callee
+object access. `class_field_inherited_mut_method.em` covers the two generated
+access pairs in all profiles. Virtual/interface dispatch, indexed access
+sharing, static elision, generic classes, aggregate class-handle ownership,
+and the complete Phase 3 matrix remain open.
+
 ---
 
 ## Build order

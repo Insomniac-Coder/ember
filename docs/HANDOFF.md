@@ -5976,3 +5976,28 @@ contain class handles, full indexed dynamic-exclusivity/access sharing,
 virtual or interface dispatch, generic classes, static access elision, or
 Phase 3 completion. Phase accounting remains exactly **1 of 9 complete**;
 Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.102 Phase 3 inherited mutable calls through class fields — 2026-09-14
+
+The inherited mutable-method boundary had a second-order access bug. For
+`holder.child.bump(5)`, where `bump` is declared on the base class, type
+checking correctly inserts a borrow-preserving derived-to-base cast. The
+lowering-side class access classifier then failed to see through that cast, so
+the generated call retained the base method's own `BeginAccess`/`EndAccess`
+pair but omitted the containing `Holder` object's caller-side pair. This was
+an implementation defect against the existing `[CLS-7]`/`[EXC-1]` boundary,
+not a semantic ambiguity.
+
+`class_access_for_mut_argument` now unwraps only a cast whose operand is a
+mutable receiver borrow before finding the containing class place. The cast
+still reaches code generation as a non-owning pointer adjustment; only access
+classification looks through it. The renamed regression
+`tests/run-pass/class_field_inherited_mut_method.em` requires two generated
+write-access pairs, runs the inherited mutation, and prints `7`. It was red
+before the change and passes in debug, release, and shipping. No specification,
+ADR, adopted source, or diagnostic semantics changed.
+
+This does not claim virtual/interface dispatch, indexed dynamic-access sharing,
+static access elision, generic classes, recursive aggregate retain handling, or
+Phase 3 completion. Phase accounting remains exactly **1 of 9 complete**;
+Phase 2 remains active and Phase 3 has not passed its exit gate.

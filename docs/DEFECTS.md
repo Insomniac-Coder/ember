@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — inherited mutable calls through class fields lost the outer access
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-131 | **The compiler-generated derived-to-base borrow cast hid a class-field receiver's containing-object access.** A call such as `holder.child.bump(5)` where `bump` is inherited and declares `mut self` reached the base method's own dynamic access interval, but the caller no longer opened the long-term access on `holder` because the MIR classifier only recognized a direct `ref mut` receiver and did not look through the borrow-preserving cast. The resulting generated C had one access pair instead of the two required by the established class-field boundary. | `[CLS-4]`, `[CLS-7]`, `[EXC-1]` | **fixed** | `class_access_for_mut_argument` now unwraps only the compiler-generated cast around a mutable receiver borrow before finding the containing class place. The cast remains a non-owning pointer adjustment. `tests/run-pass/class_field_inherited_mut_method.em` asserts two caller/callee access pairs, inherited mutation, and output `7`; it was red before the fix and green after it in all profiles. No specification or owner decision changed. |
+
+---
+
 ## 2026-09-14 — growable Arrays did not retain copied class handles
 
 | # | Defect | Rule | Status | Fixed in |
