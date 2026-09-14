@@ -5906,3 +5906,24 @@ the class receiver path cannot bypass read-only visibility. This is
 implementation-only progress: no specification, ADR, adopted source, or
 diagnostic semantics changed; Phase 2 is active, Phase 3 has not passed its
 exit gate, and phase accounting remains exactly **1 of 9 complete**.
+
+### 0.99 CI fixture correction for inherited destructor coverage — 2026-09-14
+
+The CI failure reported by the milestone test was a test-fixture defect, not a
+compiler or specification defect. `tests/run-pass/class_inherited_drop.em`
+created one `Derived` object, so `[CLS-6]` correctly produces one `derived`
+line followed by one `base` line. The fixture had accidentally asserted
+`derived` twice. Its order assertion also used the broad needles
+`em_Derived_drop(&` and `em_Base_drop(&`; the latter matched the standalone
+base adapter before the derived adapter and therefore did not test the
+derived-adapter call sequence.
+
+Commit `6415303` corrected the expected output and anchors the order check to
+`em_Derived_drop(&handle)` before `em_Base_drop(&base_handle_0)`. The focused
+`run_pass_programs_pass` test and the full `cargo test --workspace --locked`
+suite pass after the correction. No compiler code, specification text, ADR,
+or semantic rule changed. This preserves the testing lesson: an assertion
+must identify the intended generated operation, not merely a name that also
+appears in declarations or sibling adapters. Phase accounting remains exactly
+**1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed its
+exit gate.

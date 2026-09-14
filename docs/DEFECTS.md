@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — inherited-destructor run-pass fixture asserted the wrong result
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-129 | **The `class_inherited_drop.em` run-pass fixture expected the derived destructor output twice for one object.** Its broad `assert-c-order` needles also matched the standalone base adapter before the derived adapter, so the fixture rejected the correct derived-then-base lowering. The rule and compiler behavior were already correct: one release runs the derived source destructor once, then the base source destructor once. | `[CLS-6]`, `[TST-1]`, `[TST-4]` | **fixed** | `6415303` changes the expected output to `derived` then `base` and anchors the order assertion to the calls inside the derived adapter. **Verified:** `run_pass_programs_pass` and `cargo test --workspace --locked` pass; no compiler, specification, or owner decision changed. This was a test-fixture defect. |
+
+---
+
 ## 2026-09-14 — source `@borrows` accepted empty or malformed arguments
 
 | # | Defect | Rule | Status | Fixed in |
