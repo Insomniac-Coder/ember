@@ -5862,3 +5862,26 @@ accounting remains exactly **1 of 9 complete**. The regression fixtures are
 `class_inherited_construct.em`, `class_inherited_missing_super.em`,
 `class_inherited_super_twice.em`, and
 `class_inherited_field_before_super.em`.
+
+### 0.97 Phase 3 inherited class destruction chaining — 2026-09-14
+
+Class release metadata now preserves `[CLS-6]` for single-inheritance chains.
+When a concrete class is released, its generated adapter invokes the most
+derived source `drop` first, then each base source `drop` in order. A derived
+class receives an adapter even when it declares no own destructor if an
+ancestor has one, so a base destructor cannot be skipped by the concrete
+runtime type. The existing combined field-drop callback still walks derived
+fields before base fields, with each declaration list in reverse order, after
+the user-destructor chain.
+
+The base calls use typed non-owning pointer adjustments into the same object;
+they do not create additional reference-counted handles. This is runtime
+destruction glue, not inherited virtual dispatch: virtual/override dispatch,
+foreign bases, defaulted derived construction, and the broader class drop
+matrix remain open. The run-pass fixtures
+`class_inherited_drop.em` and `class_inherited_base_drop.em` cover both a
+derived-plus-base destructor chain and a derived class inheriting only the
+base destructor, including generated-C ordering and all three profiles. This
+is implementation-only progress: no specification, ADR, adopted source, or
+diagnostic semantics changed; Phase 2 is active, Phase 3 has not passed its
+exit gate, and phase accounting remains exactly **1 of 9 complete**.

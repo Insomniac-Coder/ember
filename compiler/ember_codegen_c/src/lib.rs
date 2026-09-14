@@ -224,7 +224,7 @@ impl Emitter<'_> {
         let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
         for id in classes {
             let def = self.types.class_def(id);
-            if !def.has_drop {
+            if !self.class_has_user_drop(id) {
                 continue;
             }
             let owner = def.name.to_string();
@@ -234,13 +234,50 @@ impl Emitter<'_> {
             self.line(&format!(
                 "    {object}* handle = ({object}*)raw;",
             ));
-            self.line(&format!(
-                "    {}(&handle);",
-                drop_symbol(&owner)
-            ));
+            if def.has_drop {
+                self.line(&format!("    {}(&handle);", drop_symbol(&owner)));
+            }
+            // `[CLS-6]` — a derived destructor runs before each base
+            // destructor. All handles point at the same allocation, and the
+            // base fields occupy its prefix, so a typed pointer adjustment is
+            // sufficient for the base method's ordinary `mut self` ABI.
+            let mut base = def.base;
+            let mut depth = 0;
+            while let Some(base_id) = base {
+                let base_def = self.types.class_def(base_id);
+                if base_def.has_drop {
+                    let base_object = ember_branding::object_struct(&base_def.name.to_string());
+                    let base_handle = format!("base_handle_{depth}");
+                    self.line(&format!(
+                        "    {base_object}* {base_handle} = ({base_object}*)raw;"
+                    ));
+                    self.line(&format!(
+                        "    {}(&{base_handle});",
+                        drop_symbol(&base_def.name.to_string())
+                    ));
+                }
+                base = base_def.base;
+                depth += 1;
+            }
             self.line("}");
             self.line("");
         }
+    }
+
+    /// Whether releasing this concrete class must invoke at least one source
+    /// destructor. Derived classes inherit the obligation even when they do
+    /// not declare their own `drop`, because `[CLS-6]` still requires the base
+    /// destructor to run.
+    fn class_has_user_drop(&self, id: ClassId) -> bool {
+        let mut current = Some(id);
+        while let Some(class) = current {
+            let def = self.types.class_def(class);
+            if def.has_drop {
+                return true;
+            }
+            current = def.base;
+        }
+        false
     }
 
     /// Generate the field half of `[CLS-6]`'s destruction contract. Class
@@ -346,7 +383,7 @@ impl Emitter<'_> {
             // respective compiler mechanisms can produce verified
             // functions/tables. Field-drop glue is installed below when the
             // object has fields that need destruction.
-            if def.has_drop {
+            if self.class_has_user_drop(id) {
                 self.line(&format!(
                     "    &{},",
                     class_drop_adapter_symbol(&def.name.to_string())

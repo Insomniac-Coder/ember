@@ -105,6 +105,14 @@ and defaulted derived construction remain outstanding and are intentionally
 fail-closed. Explicit derived constructors now preserve inherited initialization
 through the direct-base `super.init(...)` slice described above.
 
+`OBJ-RT-1` continuation: inherited source-destructor chaining is now emitted
+for concrete single-inheritance classes. Release invokes the most-derived
+destructor followed by each base destructor, including when the derived class
+declares no destructor of its own. Generated field-drop glue remains after
+that chain and keeps derived-before-base field order. Defaulted derived
+construction, dynamic exclusivity, dispatch, generic classes, and the complete
+Phase 3 conformance matrix remain outstanding.
+
 The constructor dataflow also covers `while`/`for` `else` blocks. The `else`
 path is checked from the join of loop entry and body state, preserving the
 zero-iteration case; a body-only initialization fact cannot make a field
