@@ -640,10 +640,10 @@ semantic/API decision is currently open.**
   deterministic generator check. The generated outputs are validated as
   outputs, while hand-authored compiler/runtime sources remain covered by the
   branding scan. Strict C11 compilation and the full workspace regression pass.
-* **Four open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D2
-  (`[CLO-6]`'s `owned f`, the live residual of the closure work), D3
-  (`extern class` parses and is refused), D4 (`E9012` registered and never
-  emitted). D5 and D6 are closed.
+* **Three open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D3
+  (`extern class` parses and is refused), and D4 (`E9012` registered and never
+  emitted). D2 (`[CLO-6]`'s `owned f`) is closed by the current compiler
+  checkpoint; D5 and D6 are historical closed/withdrawn entries.
 
 ## 8. Traps paid for
 
