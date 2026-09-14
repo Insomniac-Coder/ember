@@ -174,6 +174,7 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    checker.validate_class_methods(modules);
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
     // and can run before a later module's extension has been collected.
@@ -1702,6 +1703,85 @@ impl<'a> Checker<'a> {
                         decl.name.name
                     ),
                 );
+            }
+        }
+    }
+
+    fn qualified_in_module(&self, module: usize, name: Symbol) -> Symbol {
+        let prefix = &self.prefixes[module];
+        if prefix.is_empty() {
+            name
+        } else {
+            Symbol::intern(&format!("{prefix}.{name}"))
+        }
+    }
+
+    fn declared_class_method_dispatch(
+        &self,
+        modules: &[LoadedModule],
+        id: ClassId,
+        name: Symbol,
+    ) -> Option<ast::Dispatch> {
+        for (module, loaded) in modules.iter().enumerate() {
+            for item in &loaded.module.items {
+                let ast::ItemKind::Class(decl) = &item.kind else { continue };
+                if self.class_ids.get(&self.qualified_in_module(module, decl.name.name)) != Some(&id) {
+                    continue;
+                }
+                for member in &decl.members {
+                    if let ast::MemberKind::Fn(method) = &member.kind
+                        && method.name.name == name
+                    {
+                        return Some(method.dispatch);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn inherited_class_method_dispatch(
+        &self,
+        modules: &[LoadedModule],
+        id: ClassId,
+        name: Symbol,
+    ) -> Option<ast::Dispatch> {
+        let mut current = self.types.class_def(id).base;
+        for _ in 0..=self.types.classes().count() {
+            let Some(base) = current else { return None };
+            if let Some(dispatch) = self.declared_class_method_dispatch(modules, base, name) {
+                return Some(dispatch);
+            }
+            current = self.types.class_def(base).base;
+        }
+        None
+    }
+
+    /// CLS-4: override is meaningful only when it replaces a virtual method
+    /// in the inherited class chain. This runs after all class declarations
+    /// are collected, so a base in another module follows the same rule.
+    fn validate_class_methods(&mut self, modules: &[LoadedModule]) {
+        for (module, loaded) in modules.iter().enumerate() {
+            for item in &loaded.module.items {
+                let ast::ItemKind::Class(decl) = &item.kind else { continue };
+                let Some(&id) = self.class_ids.get(&self.qualified_in_module(module, decl.name.name)) else {
+                    continue;
+                };
+                for member in &decl.members {
+                    let ast::MemberKind::Fn(method) = &member.kind else { continue };
+                    if method.dispatch != ast::Dispatch::Override {
+                        continue;
+                    }
+                    if self.inherited_class_method_dispatch(modules, id, method.name.name)
+                        != Some(ast::Dispatch::Virtual)
+                    {
+                        self.error(
+                            codes::E2110,
+                            method.name.span,
+                            "override of a method that is not virtual",
+                        );
+                    }
+                }
             }
         }
     }
