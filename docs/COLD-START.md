@@ -25,7 +25,8 @@ callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
 borrowing, and `d077563` for the H6 Span implementation. `1c6b285` is a local
-checkpoint on top of `origin/main`; verify push state before handing it off.
+checkpoint in the latebound arity matrix; `5aa804d` is the current local
+checkpoint on top of it. Verify push state before handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
