@@ -1468,6 +1468,10 @@ fn check_escapes(
             .source_place()
             .expect("a loan has source storage");
         let root = body.local(place.local);
+        let is_parameter = matches!(
+            loan.capability.provenance_root,
+            ProvenanceRoot::Param(_)
+        );
         // `[IMP-7]` — allocation-return loans carry a canonical concrete
         // storage owner. Keep the source-type fallback for ordinary explicit
         // borrows of an Arena value, whose storage identity is still a place
@@ -1477,7 +1481,7 @@ fn check_escapes(
             .storage_identity
             .arena_owner()
             .or_else(|| is_arena_ty(types, root.ty).then_some(place.local));
-        if root.kind == LocalKind::Arg
+        if is_parameter
             && (types.is_view(root.ty)
                 || arena_owner.is_some_and(|owner| {
                     is_named_arena_origin(body, owner, types)
@@ -1488,17 +1492,16 @@ fn check_escapes(
         let name = place_name(body, types, place);
         // The label is about the *owner*, which for `self.n` is `self`.
         let owner = place_name(body, types, &Place::local(place.local));
-        let storage = match root.kind {
-            LocalKind::Arg => {
-                format!("`{owner}` is passed by value, so the copy's storage ends with the frame")
-            }
-            _ => format!("`{owner}` is a local, so its storage ends with the frame"),
+        let storage = if is_parameter {
+            format!("`{owner}` is passed by value, so the copy's storage ends with the frame")
+        } else {
+            format!("`{owner}` is a local, so its storage ends with the frame")
         };
         let is_arena = arena_owner.is_some();
         if is_arena {
             let owner_local = arena_owner.expect("arena diagnostic has an owner");
             let owner_name = place_name(body, types, &Place::local(owner_local));
-            let (origin_label, help, note) = if root.kind == LocalKind::Arg {
+            let (origin_label, help, note) = if is_parameter {
                 (
                     format!(
                         "`{owner_name}` is a parameter, but the signature does not tie the return to it"
