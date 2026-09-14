@@ -197,7 +197,16 @@ pub enum ExprKind {
     /// monomorphized callable parameter is statically dispatched to a known
     /// closure body; it preserves the expected callable boundary for region
     /// analysis even though the runtime call is direct.
-    Call { callee: DefId, args: Vec<Expr>, latebound: bool },
+    Call {
+        callee: DefId,
+        /// Operands are stored in declaration order for the callee ABI. When
+        /// named arguments were written out of order, this records the
+        /// parameter slots in source evaluation order so MIR can lower those
+        /// expressions without changing `[EXP-1]`.
+        arg_eval_order: Option<Vec<usize>>,
+        args: Vec<Expr>,
+        latebound: bool,
+    },
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
@@ -947,7 +956,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Field { base, index } => {
             format!("{}.{index}", dump_expr(base, function, types))
         }
-        ExprKind::Call { callee, args, latebound } => {
+        ExprKind::Call { callee, args, latebound, .. } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             let boundary = if *latebound { "@latebound " } else { "" };
             format!("{boundary}call#{}({})", callee.0, inner.join(", "))

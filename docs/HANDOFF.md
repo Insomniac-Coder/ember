@@ -6058,3 +6058,37 @@ ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
 has not passed its exit gate. Virtual/interface dispatch, indexed
 dynamic-access sharing, static access elision, generic classes, and the full
 Phase 3 conformance matrix remain open.
+
+### 0.105 Direct named-argument binding — 2026-09-14
+
+The adopted specification already requires named arguments to match declared
+parameter names, positional arguments to precede named ones, and argument
+expressions to be evaluated in source order (`[TYP-25]`, `[EXP-1]`). The
+compiler's direct-call paths nevertheless zipped arguments to parameters by
+position, so `encode(right=2, left=1)` silently passed the values to the wrong
+parameters. The same defect existed in generic functions and generic methods.
+
+The type checker now has one binding pass for source-backed direct calls. It
+validates parameter names, rejects unknown names and positional arguments after
+the named portion, rejects duplicate parameter bindings, checks each expression
+in source order, and returns the checked operands in declaration order for HIR,
+MIR, and the callee ABI. The path is shared by ordinary, qualified, associated,
+inherited-bound, generic, and generic-method calls. Function-value and closure
+calls intentionally remain positional: callable types do not carry source-level
+parameter names, and their existing contract rejects named arguments.
+
+`tests/run-pass/named_function_arguments.em` covers ordinary and explicit-generic
+function calls; `tests/run-pass/named_method_arguments.em` covers ordinary and
+generic source methods; and `tests/compile-fail/named_function_argument_errors.em`
+covers unknown, duplicate, and positional-after-named arguments in all three
+profiles. The new run-pass cases were red before the fix (`21` instead of `12`
+and `2` instead of `1`) and are green after it. This is a compiler defect
+against existing specification semantics, recorded as D-134; no specification,
+ADR, or owner decision changed. User-defined class-`init` named construction
+remains a separate fail-closed gap and is not inferred from this general call
+boundary.
+
+The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed
+dynamic-access sharing, static access elision, generic classes, and the full
+Phase 3 conformance matrix remain open.

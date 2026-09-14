@@ -195,6 +195,19 @@ fail-closed because parameter binding there is a separate implementation slice;
 virtual/interface dispatch, indexed access sharing, static elision, generic
 classes, and the complete Phase 3 matrix remain open.
 
+The direct-call argument boundary is now also implemented under `[TYP-25]`:
+ordinary, qualified, associated, inherited-bound, generic, and generic-method
+calls bind named arguments to parameter names, evaluate expressions in source
+order, and lower operands in declaration order. Unknown names and
+positional-after-named arguments remain diagnostics, and duplicate parameters
+are rejected. Function-value calls intentionally remain positional because
+callable types do not carry source parameter names. `named_function_arguments.em`,
+`named_method_arguments.em`, and the compile-fail rejection fixture provide
+adversarial coverage. User-defined class-`init` named construction is still a
+separate fail-closed gap; virtual/interface dispatch, indexed access sharing,
+static access elision, generic classes, and the complete Phase 3 conformance
+matrix remain open.
+
 ---
 
 ## Build order

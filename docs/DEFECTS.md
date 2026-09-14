@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — direct calls ignored named parameter binding
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-134 | **Direct function and source-method calls zipped arguments by position even when `[TYP-25]` named arguments were present.** A call such as `encode(right=2, left=1)` therefore passed the values to the opposite parameters; generic functions and generic methods had the same gap. The compiler also did not consistently reject unknown, duplicate, or positional-after-named arguments at this boundary. Function-value calls were intentionally not included because their callable types have no source-level parameter names and remain positional. | `[TYP-25]`, `[EXP-1]`, `[TYP-16]`, `[TYP-24]` | **fixed** | The type checker now validates named/positional binding once, checks argument expressions in source order, and emits HIR operands in declaration order. The path is shared by direct, qualified, associated, inherited-bound, generic, and generic-method calls; unknown names and positional-after-named use `E2020`, duplicate parameters use `E1030`. `tests/run-pass/named_function_arguments.em` covers ordinary and generic functions, `tests/run-pass/named_method_arguments.em` covers ordinary and generic methods, and `tests/compile-fail/named_function_argument_errors.em` covers the three rejection boundaries in debug, release, and shipping. The tests were red before the fix and green after it. No specification or owner decision changed; user-defined class-`init` named construction remains a separate fail-closed gap. |
+
+---
+
 ## 2026-09-14 — memberwise class construction rejected named fields
 
 | # | Defect | Rule | Status | Fixed in |

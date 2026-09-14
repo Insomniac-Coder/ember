@@ -1593,7 +1593,7 @@ impl<'a> Builder<'a> {
     fn lower_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
-            hir::ExprKind::Call { callee, args, latebound } => {
+            hir::ExprKind::Call { callee, arg_eval_order, args, latebound } => {
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
                 // `[FN-1]` — the mode decides. `owned` consumes, so the
@@ -1604,22 +1604,25 @@ impl<'a> Builder<'a> {
                 // parameter silently did not take ownership.
                 let modes: Vec<hir::Mode> = function.params.iter().map(|p| p.mode).collect();
                 let mut class_accesses = Vec::new();
-                let args: Vec<Operand> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, a)| {
-                        let operand = match modes.get(index) {
-                            Some(hir::Mode::Owned) => self.lower_operand(a),
-                            _ => self.lower_operand_borrowed(a),
-                        };
-                        if matches!(modes.get(index), Some(hir::Mode::Mut)) {
-                            if let Some(place) = self.class_access_for_mut_argument(a) {
-                                class_accesses.push(place);
-                            }
+                let eval_order = arg_eval_order
+                    .clone()
+                    .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
+                let mut lowered_args: Vec<Option<Operand>> =
+                    (0..args.len()).map(|_| None).collect();
+                for index in eval_order {
+                    let Some(a) = args.get(index) else { continue };
+                    let operand = match modes.get(index) {
+                        Some(hir::Mode::Owned) => self.lower_operand(a),
+                        _ => self.lower_operand_borrowed(a),
+                    };
+                    if matches!(modes.get(index), Some(hir::Mode::Mut)) {
+                        if let Some(place) = self.class_access_for_mut_argument(a) {
+                            class_accesses.push(place);
                         }
-                        operand
-                    })
-                    .collect();
+                    }
+                    lowered_args[index] = Some(operand);
+                }
+                let args: Vec<Operand> = lowered_args.into_iter().flatten().collect();
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }

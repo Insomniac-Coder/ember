@@ -7535,6 +7535,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     ty: item_option,
                     kind: ExprKind::Call {
                         callee: def,
+                        arg_eval_order: None,
                         args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
                         latebound: false,
                     },
@@ -9228,14 +9229,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("`{name}` takes {} arguments, found {}", signature.len(), args.len()),
             );
         }
-        let checked = args
-            .iter()
-            .zip(signature.iter())
-            .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
-            .collect();
+        let params = self.signatures[def.0 as usize].params.clone();
+        let slots = self.call_argument_slots(name, args, &params);
+        let checked = self.check_bound_call_arguments(args, &params, &slots);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -9385,8 +9389,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
     ) -> Expr {
         let generics = self.signatures[def.0 as usize].generics.clone();
-        let declared: Vec<(Ty, Mode)> =
-            self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
+        let declared = self.signatures[def.0 as usize].params.clone();
         let ret = self.signatures[def.0 as usize].ret;
 
         if explicit.len() > generics.len() {
@@ -9410,6 +9413,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        let slots = self.call_argument_slots(name, args, &declared);
+        let declared_modes = declared
+            .iter()
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect::<Vec<_>>();
 
         // Explicit arguments come first; the rest are inferred by unifying
         // each declared parameter type with what the argument actually is.
@@ -9424,9 +9432,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // so this does not change source order; it lets a later ordinary
         // argument determine `T` before an earlier `fn(T) -> T` lambda needs
         // its parameter expectation.
-        for (index, (arg, &(param_ty, _))) in
-            args.iter().zip(declared.iter()).enumerate()
-        {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let Some(index) = slots[arg_index] else { continue };
+            let param_ty = declared[index].1;
             if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
@@ -9449,9 +9457,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             checked_args[index] = Some(value);
         }
-        for (index, (arg, &(param_ty, _))) in
-            args.iter().zip(declared.iter()).enumerate()
-        {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let Some(index) = slots[arg_index] else { continue };
+            let param_ty = declared[index].1;
             if !matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
@@ -9521,16 +9529,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         self.reject_once_closures_for_callable_bounds(
             args,
-            &declared,
+            &declared_modes,
             &generics,
             &checked_args,
+            &slots,
         );
 
         // Preserve a known capture-free function value through static
         // dispatch. Its body may carry a more precise late-bound result
         // provenance contract than the callable type alone can express.
         let mut callable_values = vec![None; generics.len()];
-        for ((param_ty, _), value) in declared.iter().zip(&checked_args) {
+        for ((_, param_ty, _, _), value) in declared.iter().zip(&checked_args) {
             let TyKind::Param { index, .. } = *self.types.kind(*param_ty) else { continue };
             if generics
                 .get(index as usize)
@@ -9549,13 +9558,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let instance = self.instantiate(def, &substitution, callable_values, name, span);
         let concrete: Vec<(Ty, Mode)> = declared
             .iter()
-            .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
+            .map(|&(_, ty, mode, _)| (self.substitute_ty(ty, &substitution), mode))
             .collect();
         // `hir::Expr` is not `Clone` — a checked argument is moved out of here
         // rather than copied.
         let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
         let mut checked = Vec::new();
-        for (index, (arg, &(param_ty, mode))) in args.iter().zip(concrete.iter()).enumerate() {
+        let mut arg_for_param = vec![None; concrete.len()];
+        for (arg_index, slot) in slots.iter().copied().enumerate() {
+            if let Some(slot) = slot {
+                arg_for_param[slot] = Some(arg_index);
+            }
+        }
+        for (index, &(param_ty, mode)) in concrete.iter().enumerate() {
+            let Some(arg_index) = arg_for_param[index] else { continue };
+            let arg = &args[arg_index];
             // A lambda is **not** re-checked. Checking it again would build a
             // second closure — a second environment struct, a second body, a
             // second `DefId` — and the instance was already created against the
@@ -9572,7 +9589,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ret = self.substitute_ty(ret, &substitution);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: instance, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: instance,
+                arg_eval_order: Self::call_eval_order(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -9592,11 +9614,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         instantiate: bool,
     ) -> Expr {
         let generics = self.signatures[def.0 as usize].generics.clone();
-        let declared: Vec<(Ty, Mode)> = self.signatures[def.0 as usize]
+        let declared: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
             .iter()
             .skip(usize::from(signature_has_receiver))
-            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .copied()
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
 
@@ -9620,15 +9642,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        let slots = self.call_argument_slots(name, args, &declared);
+        let declared_modes = declared
+            .iter()
+            .map(|(_, ty, mode, _)| (*ty, *mode))
+            .collect::<Vec<_>>();
 
         let mut solved: Vec<Option<Ty>> = vec![None; generics.len()];
         for (slot, ty) in explicit.iter().enumerate() {
             solved[slot] = Some(*ty);
         }
         let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
-        for (index, (arg, &(param_ty, _))) in
-            args.iter().zip(declared.iter()).enumerate()
-        {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let Some(index) = slots[arg_index] else { continue };
+            let param_ty = declared[index].1;
             if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
@@ -9651,9 +9678,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             checked_args[index] = Some(value);
         }
-        for (index, (arg, &(param_ty, _))) in
-            args.iter().zip(declared.iter()).enumerate()
-        {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let Some(index) = slots[arg_index] else { continue };
+            let param_ty = declared[index].1;
             if !matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
@@ -9717,11 +9744,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         self.reject_once_closures_for_callable_bounds(
             args,
-            &declared,
+            &declared_modes,
             &generics,
             &checked_args,
+            &slots,
         );
 
+        let arg_eval_order = if receiver.is_some() {
+            Self::call_eval_order_with_receiver(&slots)
+        } else {
+            Self::call_eval_order(&slots)
+        };
         let instance = if instantiate {
             self.instantiate_method(def, &substitution, name, span)
         } else {
@@ -9732,16 +9765,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let concrete = declared
             .iter()
-            .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
+            .map(|&(_, ty, mode, _)| (self.substitute_ty(ty, &substitution), mode))
             .collect::<Vec<_>>();
         let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
         let mut checked = Vec::new();
         if let Some((receiver, receiver_mode, receiver_span)) = receiver {
             checked.push(self.pass_receiver(receiver, receiver_mode, receiver_span));
         }
-        for (index, (arg, &(param_ty, mode))) in
-            args.iter().zip(concrete.iter()).enumerate()
-        {
+        let mut arg_for_param = vec![None; concrete.len()];
+        for (arg_index, slot) in slots.iter().copied().enumerate() {
+            if let Some(slot) = slot {
+                arg_for_param[slot] = Some(arg_index);
+            }
+        }
+        for (index, &(param_ty, mode)) in concrete.iter().enumerate() {
+            let Some(arg_index) = arg_for_param[index] else { continue };
+            let arg = &args[arg_index];
             let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => checked.push(value),
@@ -9751,7 +9790,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ret = self.substitute_ty(ret, &substitution);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: instance, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: instance,
+                arg_eval_order,
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -9768,12 +9812,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         declared: &[(Ty, Mode)],
         generics: &[GenericParam],
         checked_args: &[Expr],
+        slots: &[Option<usize>],
     ) {
-        for ((arg, &(param_ty, _)), value) in args
-            .iter()
-            .zip(declared.iter())
-            .zip(checked_args.iter())
-        {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let Some(param_index) = slots[arg_index] else { continue };
+            let Some(&(param_ty, _)) = declared.get(param_index) else { continue };
+            let Some(value) = checked_args.get(param_index) else { continue };
             let TyKind::Param { index, .. } = *self.types.kind(param_ty) else {
                 continue;
             };
@@ -9840,7 +9884,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: call_args, latebound },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: None,
+                args: call_args,
+                latebound,
+            },
             span,
         }
     }
@@ -10234,14 +10283,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("`{qualified}` takes {} arguments, found {}", signature.len(), args.len()),
             );
         }
-        let checked = args
-            .iter()
-            .zip(signature.iter())
-            .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
-            .collect();
+        let params = self.signatures[def.0 as usize].params.clone();
+        let slots = self.call_argument_slots(qualified, args, &params);
+        let checked = self.check_bound_call_arguments(args, &params, &slots);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -10404,14 +10456,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ),
             );
         }
-        let checked = args
-            .iter()
-            .zip(signature)
-            .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
-            .collect();
+        let params = self.signatures[def.0 as usize].params.clone();
+        let params = params
+            .into_iter()
+            .map(|(param, ty, mode, param_span)| {
+                (param, self.types.substitute_self(ty, owner), mode, param_span)
+            })
+            .collect::<Vec<_>>();
+        let slots = self.call_argument_slots(name.name, args, &params);
+        let checked = self.check_bound_call_arguments(args, &params, &slots);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -10511,14 +10572,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("`{}.{}` takes {} arguments, found {}", param, name.name, signature.len(), args.len()),
             );
         }
-        let checked = args
-            .iter()
-            .zip(signature)
-            .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
-            .collect();
+        let params = self.signatures[def.0 as usize].params.clone();
+        let params = params
+            .into_iter()
+            .map(|(param, ty, mode, param_span)| {
+                (param, self.types.substitute_self(ty, owner), mode, param_span)
+            })
+            .collect::<Vec<_>>();
+        let slots = self.call_argument_slots(name.name, args, &params);
+        let checked = self.check_bound_call_arguments(args, &params, &slots);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -11545,12 +11615,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             checked_receiver
         };
         let mut checked = vec![checked_receiver];
-        for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
-            checked.push(self.check_argument(&arg.value, param_ty, mode));
-        }
+        let params = self.signatures[def.0 as usize].params[1..].to_vec();
+        let slots = self.call_argument_slots(name.name, args, &params);
+        checked.extend(self.check_bound_call_arguments(args, &params, &slots));
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order_with_receiver(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -11665,12 +11740,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
         }
         let mut checked = vec![self.pass_receiver(receiver, receiver_mode, span)];
-        for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter()) {
-            checked.push(self.check_argument(&arg.value, param_ty, mode));
-        }
+        let params = self.signatures[def.0 as usize].params.clone();
+        let params = params
+            .into_iter()
+            .map(|(param, ty, mode, param_span)| {
+                (param, self.types.substitute_self(ty, concrete), mode, param_span)
+            })
+            .collect::<Vec<_>>();
+        let slots = self.call_argument_slots(name.name, args, &params);
+        checked.extend(self.check_bound_call_arguments(args, &params, &slots));
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: Self::call_eval_order_with_receiver(&slots),
+                args: checked,
+                latebound: false,
+            },
             span,
         }
     }
@@ -11759,7 +11845,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.check_argument(&arg.value, param_ty, mode)
             })
             .collect();
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked, latebound }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: None,
+                args: checked,
+                latebound,
+            },
+            span,
+        }
     }
 
     /// `[CLO-1]`, `[CLO-2]`, `[TYP-23]` rule 4 — a closure.
@@ -15205,6 +15300,105 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         );
     }
 
+    /// `[TYP-25]` — bind source call arguments to declared parameters.
+    ///
+    /// The AST preserves arguments in source order because `[EXP-1]` requires
+    /// named arguments to be evaluated in that order. HIR, however, must
+    /// present operands in the callee's parameter order. Keep those concerns
+    /// separate: this pass validates the name/position contract and returns a
+    /// source-indexed parameter slot for the later type-checking pass.
+    ///
+    /// Function values deliberately do not use this helper: they have no
+    /// source-level parameter names and remain positional at the callable
+    /// boundary (`synth_indirect_call` and friends).
+    fn call_argument_slots(
+        &mut self,
+        callee: Symbol,
+        args: &[ast::Arg],
+        params: &[(Symbol, Ty, Mode, Span)],
+    ) -> Vec<Option<usize>> {
+        let mut slots = vec![None; args.len()];
+        let mut assigned = vec![false; params.len()];
+        let mut next_positional = 0usize;
+        let mut named_seen = false;
+
+        for (arg_index, arg) in args.iter().enumerate() {
+            let slot = if let Some(name) = arg.name {
+                named_seen = true;
+                match params.iter().position(|(param, _, _, _)| *param == name.name) {
+                    Some(slot) => Some(slot),
+                    None => {
+                        self.error(
+                            codes::E2020,
+                            name.span,
+                            format!("`{callee}` has no parameter `{}`", name.name),
+                        );
+                        None
+                    }
+                }
+            } else {
+                if named_seen {
+                    self.error(
+                        codes::E2020,
+                        arg.span,
+                        "positional arguments must come before named ones",
+                    );
+                }
+                while next_positional < assigned.len() && assigned[next_positional] {
+                    next_positional += 1;
+                }
+                let slot = (next_positional < params.len()).then_some(next_positional);
+                next_positional = next_positional.saturating_add(1);
+                slot
+            };
+
+            let Some(slot) = slot else { continue };
+            if assigned[slot] {
+                self.error(
+                    codes::E1030,
+                    arg.value.span,
+                    format!("parameter `{}` is given twice", params[slot].0),
+                );
+                continue;
+            }
+            assigned[slot] = true;
+            slots[arg_index] = Some(slot);
+        }
+        slots
+    }
+
+    /// Return the parameter slots in source evaluation order. Positional
+    /// calls need no metadata; keeping the common case as `None` avoids
+    /// changing their HIR shape and lowering path.
+    fn call_eval_order(slots: &[Option<usize>]) -> Option<Vec<usize>> {
+        let order = slots.iter().copied().flatten().collect::<Vec<_>>();
+        let identity = order.iter().enumerate().all(|(index, slot)| index == *slot);
+        (!identity).then_some(order)
+    }
+
+    /// As above, for a method call whose receiver is the first ABI operand.
+    fn call_eval_order_with_receiver(slots: &[Option<usize>]) -> Option<Vec<usize>> {
+        let order = Self::call_eval_order(slots)?;
+        Some(std::iter::once(0).chain(order.into_iter().map(|slot| slot + 1)).collect())
+    }
+
+    /// Check direct-call arguments in source order, then return them in the
+    /// declaration's parameter order for ABI/MIR lowering.
+    fn check_bound_call_arguments(
+        &mut self,
+        args: &[ast::Arg],
+        params: &[(Symbol, Ty, Mode, Span)],
+        slots: &[Option<usize>],
+    ) -> Vec<Expr> {
+        let mut checked: Vec<Option<Expr>> = (0..params.len()).map(|_| None).collect();
+        for (arg, slot) in args.iter().zip(slots.iter().copied()) {
+            let Some(slot) = slot else { continue };
+            let (_, param_ty, mode, _) = params[slot];
+            checked[slot] = Some(self.check_argument(&arg.value, param_ty, mode));
+        }
+        checked.into_iter().flatten().collect()
+    }
+
     /// One argument, in its parameter's mode. A `mut` parameter takes the
     /// address of a place, so the callee writes through to the caller's
     /// variable; everything else is passed by value.
@@ -15558,7 +15752,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let receiver = self.pass_receiver(lhs, receiver_mode, span);
         Expr {
             ty: ret,
-            kind: ExprKind::Call { callee: def, args: vec![receiver, rhs], latebound: false },
+            kind: ExprKind::Call {
+                callee: def,
+                arg_eval_order: None,
+                args: vec![receiver, rhs],
+                latebound: false,
+            },
             span,
         }
     }
