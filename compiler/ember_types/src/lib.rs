@@ -776,6 +776,26 @@ impl TypeTable {
         &mut self.classes[id.0 as usize]
     }
 
+    /// Whether `derived` is the same class as `base` or inherits from it.
+    ///
+    /// Class inheritance is single-parent in v1, so this is the complete
+    /// nominal upcast relation. The bounded walk also keeps malformed cyclic
+    /// declarations from making type checking loop forever; cycle diagnostics
+    /// remain a separate class-collection concern.
+    pub fn class_is_subclass_of(&self, derived: ClassId, base: ClassId) -> bool {
+        let mut current = derived;
+        for _ in 0..=self.classes.len() {
+            if current == base {
+                return true;
+            }
+            let Some(parent) = self.class_def(current).base else {
+                return false;
+            };
+            current = parent;
+        }
+        false
+    }
+
     pub fn classes(&self) -> impl Iterator<Item = (ClassId, &ClassDef)> {
         self.classes.iter().enumerate().map(|(i, d)| (ClassId(i as u32), d))
     }
@@ -1663,6 +1683,8 @@ mod tests {
         assert_eq!(table.class_field_count(derived), 2);
         assert_eq!(table.class_field_at(derived, 0).unwrap().name, Symbol::intern("id"));
         assert_eq!(table.class_field_at(derived, 1).unwrap().name, Symbol::intern("health"));
+        assert!(table.class_is_subclass_of(derived, base));
+        assert!(!table.class_is_subclass_of(base, derived));
     }
 
     #[test]

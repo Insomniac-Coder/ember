@@ -1733,7 +1733,9 @@ impl Emitter<'_> {
                 match kind {
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.
-                    CastKind::Widen | CastKind::Numeric => format!("(({ty}){value})"),
+                    CastKind::Widen | CastKind::Numeric | CastKind::ClassUpcast => {
+                        format!("(({ty}){value})")
+                    }
                 }
             }
             Rvalue::Aggregate { kind, operands } => {

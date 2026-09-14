@@ -4258,7 +4258,15 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Cast { expr: inner, to } => {
                 let operand = self.lower_operand(inner);
-                Rvalue::Cast { kind: CastKind::Numeric, operand, to: *to }
+                let kind = match (self.types.kind(inner.ty), self.types.kind(*to)) {
+                    (TyKind::Class(derived), TyKind::Class(base))
+                        if self.types.class_is_subclass_of(*derived, *base) =>
+                    {
+                        CastKind::ClassUpcast
+                    }
+                    _ => CastKind::Numeric,
+                };
+                Rvalue::Cast { kind, operand, to: *to }
             }
             // `[FN-6]` — a named function as a value: its symbol.
             hir::ExprKind::FnValue(def) => {

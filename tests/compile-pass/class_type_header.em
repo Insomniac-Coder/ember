@@ -25,5 +25,8 @@ fn read_via_method(entity: Entity) -> i32:
 fn read_inherited_id(player: Player) -> i32:
     return player.id
 
+fn read_inherited_method(player: Player) -> i32:
+    return player.get_id()
+
 fn main():
     println(1)

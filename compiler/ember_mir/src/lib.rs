@@ -865,6 +865,11 @@ pub enum CastKind {
     Numeric,
     /// A lossless widening inserted implicitly (`[TYP-5]`).
     Widen,
+    /// `[CLS-4]` — a derived class handle coerced to an inherited base
+    /// handle. The representation is pointer-compatible because base fields
+    /// occupy the prefix of the single-inheritance object layout; this is
+    /// distinct from numeric casts so later verification can audit it.
+    ClassUpcast,
 }
 
 pub use ember_hir::{BinOp, Builtin, UnOp};

@@ -343,6 +343,7 @@ struct Instance {
 }
 
 /// One method that can be found by `recv.name(...)`.
+#[derive(Clone, Copy)]
 struct MethodEntry {
     def: DefId,
     /// `[TYP-24]` — an inherent method always beats an interface method of the
@@ -7073,6 +7074,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
+        // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
+        // open/abstract base without changing the pointed-to object. Keep
+        // this as a distinct compiler-inserted cast so C receives a pointer
+        // of the base type and later ownership/dispatch passes can audit it.
+        if let (TyKind::Class(derived), TyKind::Class(base)) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && self.types.class_is_subclass_of(*derived, *base)
+        {
+            let span = expr.span;
+            return Expr {
+                ty: expected,
+                kind: ExprKind::Cast { expr: Box::new(expr), to: expected },
+                span,
+            };
+        }
         // `[FN-6b]` — the boundary owns the late-bound fact. An ordinary
         // function value may therefore be supplied to an expected
         // `@latebound fn(...)` type without changing the function value's
@@ -10286,6 +10302,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: index, fields }, span }
     }
 
+    fn class_ty(&self, id: ClassId) -> Option<Ty> {
+        self.types.all().find_map(|(ty, kind)| {
+            matches!(kind, TyKind::Class(candidate) if *candidate == id).then_some(ty)
+        })
+    }
+
+    /// Find an inherent/interface method on a class or one of its bases.
+    /// Dispatch remains a later Phase 3 consumer; this lookup only preserves
+    /// the source-level fact that a derived handle sees inherited methods.
+    fn lookup_method(&self, ty: Ty, name: Symbol) -> Option<MethodEntry> {
+        if let Some(entry) = self.methods.get(&(ty, name)) {
+            return Some(*entry);
+        }
+        let TyKind::Class(id) = *self.types.kind(ty) else { return None };
+        let base = self.types.class_def(id).base?;
+        let base_ty = self.class_ty(base)?;
+        self.lookup_method(base_ty, name)
+    }
+
     /// Part IV.11 — `recv.m(args)`. The receiver's type decides which method
     /// runs; `[TYP-24]` prefers an inherent method over an interface one, and
     /// two interfaces offering the name is `E2070`.
@@ -10504,7 +10539,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `struct R: v: Array[i32]` that is a double free of the buffer, and
         // the second run reads it after freeing, with no `unsafe` anywhere in
         // the program.
-        if name.name.is("drop") && self.methods.contains_key(&(receiver.ty, name.name)) {
+        if name.name.is("drop") && self.lookup_method(receiver.ty, name.name).is_some() {
             let shown = self.types.display(receiver.ty);
             self.sink.emit(
                 Diagnostic::error(
@@ -10521,7 +10556,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.void, kind: ExprKind::Error, span };
         }
-        let Some(entry) = self.methods.get(&(receiver.ty, name.name)) else {
+        let Some(entry) = self.lookup_method(receiver.ty, name.name) else {
             let shown = self.types.display(receiver.ty);
             self.error(
                 codes::E1010,
@@ -10532,6 +10567,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let def = entry.def;
         let receiver_mode = entry.receiver;
+
+        // A `mut self` method currently borrows the caller's handle slot.
+        // Upcasting that slot from `Derived*` to `Base*` would allow an
+        // inherited method to replace a derived handle with a base handle.
+        // Keep this boundary rejected until dynamic class exclusivity and
+        // ownership lowering can represent the operation safely.
+        let inherited = !self.methods.contains_key(&(receiver.ty, name.name));
+        if inherited && receiver_mode == Mode::Mut {
+            self.error(
+                codes::E2020,
+                name.span,
+                "mutable inherited class methods are not implemented yet in this phase",
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if receiver_mode != Mode::Mut {
+            if let Some((_, receiver_ty, _, _)) = self.signatures[def.0 as usize].params.first() {
+                // The base receiver is the first parameter of the inherited
+                // method. `coerce` inserts the nominal class upcast only when
+                // the two class identities differ.
+                receiver = self.coerce(receiver, *receiver_ty);
+            }
+        }
 
         if !self.signatures[def.0 as usize].generics.is_empty() {
             return self.synth_generic_method_call(
