@@ -57,8 +57,9 @@ implementation/conformance work, not owner questions. The current worktree
 has verified the first `@latebound` slice, including nested scalar composition,
 nested view-escape rejection, owned-capture publication rejection, and a
 statically independent capture-free callback result through `Box[str]`;
-sequential-invocation freshness and local callback-value escape are now directly
-covered; FFI and separate-compilation evidence remain implementation work.
+sequential-invocation freshness, local callback-value escape, and all shared/
+mutable helper arities are now directly covered; FFI and separate-compilation
+evidence remain implementation work.
 Other gaps are likewise implementation/conformance work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes

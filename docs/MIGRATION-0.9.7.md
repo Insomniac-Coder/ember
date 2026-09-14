@@ -439,6 +439,10 @@ borrows do not leak into later source reuse, and a local explicitly typed
 `@latebound` function-value escape reaches `E3062`. FFI and separate-compilation
 precision cases remain implementation work.
 
+The helper matrix now also has direct shared and all-mutable positive coverage
+for arities two, three, and four, including generated-C erasure and sequential
+source reuse. No callable-region metadata is introduced into runtime output.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

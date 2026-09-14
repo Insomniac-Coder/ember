@@ -289,13 +289,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, and `24ae0af`'s separate-invocation/local-callback regressions. H1 remains a frozen development target, not the adopted repository-normative source |
-| Recent commits | `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
-| Working tree | Clean after the verified `24ae0af` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, and `1c6b285`'s complete shared/mutable helper-arity matrix. H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Working tree | Clean after the verified `1c6b285` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 133 top-level rule directories, 472 `.em` files including support modules; the focused and full conformance runner is green after static-independent callback-result and separate-invocation coverage was added (2026-09-14) |
+| Conformance | 133 top-level rule directories, 474 `.em` files including support modules; the focused and full conformance runner is green after all shared/mutable late-bound helper-arity coverage was added (2026-09-14) |
 | Ledgers | 95 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
@@ -3587,6 +3587,23 @@ precision remain future work; unknown indirect paths remain conservative and
 safe. The next H1 work must continue to use minimal adversarial programs and
 must not infer semantics from an uninstantiated or otherwise unreachable test
 body.
+
+### 0.66 Complete late-bound helper arity matrix — 2026-09-14
+
+`b25e317` and `1c6b285` complete direct conformance coverage for the canonical
+shared and all-mutable helper families at arities two, three, and four. The
+shared case checks scalar callback results for `with_views3` and `with_views4`
+and asserts that callable-region metadata is absent from generated C. The
+mutable case checks explicit `mut MutSpan` callback parameters for
+`with_views3_mut` and `with_views4_mut`, mutation of every input, and reuse of
+all sources across successive invocations.
+
+These are conformance additions only; no specification text or semantic rule
+changed. The full runner remains green across 133 rule directories and 474
+Ember sources. The remaining H1 implementation work is limited to evidence or
+precision beyond this matrix—especially FFI publication analysis and actual
+separate-compilation consumers—while unknown callable facts remain
+conservative.
 
 ## The task list — where to begin
 

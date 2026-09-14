@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 210 Rust tests pass;
-- the conformance runner passes across 133 rule directories and 472 Ember
+- the conformance runner passes across 133 rule directories and 474 Ember
   source files;
 - all six adopted-specification gates pass;
 - 95 recorded compiler defects are closed;
@@ -128,7 +128,8 @@ working. A known capture-free callback result that is statically independent
 of its invocation views is now preserved through the reusable latebound
 generic instance, including safe storage in `Box[str]`. Nested view escape and
 owned-closure publication are covered by negative conformance cases. Full
-sequential-invocation and local callback-value escape cases are now covered;
+sequential-invocation, local callback-value escape, and all shared/mutable
+helper arities are now covered;
 FFI and separate-compilation precision evidence remains future work, and the
 target is not yet adopted.
 

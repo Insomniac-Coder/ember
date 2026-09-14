@@ -18,13 +18,13 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `24ae0af` on `main`, following
+**Last committed implementation baseline:** `1c6b285` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
-borrowing, and `d077563` for the H6 Span implementation. `24ae0af` is a local
+borrowing, and `d077563` for the H6 Span implementation. `1c6b285` is a local
 checkpoint on top of `origin/main`; verify push state before handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
@@ -41,7 +41,7 @@ live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 133 top-level conformance rule directories, 472 `.em` files including support
+ 133 top-level conformance rule directories, 474 `.em` files including support
  modules. 95 defects recorded, **none open**.
  **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -254,7 +254,8 @@ unrelated Phase 2 matrices. Preserve the ordinary-library status of
 through the remaining freshness, FFI, and separate-compilation cases. Static-
 independent capture-free callback results now have direct positive coverage,
 and owned-capture publication has direct negative coverage. Separate sequential
-invocation reuse and local callback-value escape are now also covered. Use existing escape
+invocation reuse, local callback-value escape, and all shared/mutable helper
+arities are now also covered. Use existing escape
 diagnostics. Do not invent named lifetimes,
 runtime/ABI metadata, global callback inference, or a name-specific compiler
 special case.
