@@ -18,15 +18,16 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `5aa804d` on `main`, following
+**Last committed implementation baseline:** `41d65ed` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
 borrowing, and `d077563` for the H6 Span implementation. `1c6b285` is a local
-checkpoint in the latebound arity matrix; `5aa804d` is the current local
-checkpoint on top of it. Verify push state before handing it off.
+checkpoint in the latebound arity matrix; `41d65ed` is the current local
+checkpoint on top of the imported-consumer coverage. Verify push state before
+handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -42,7 +43,7 @@ live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 133 top-level conformance rule directories, 475 `.em` files including support
+ 133 top-level conformance rule directories, 476 `.em` files including support
  modules. 95 defects recorded, **none open**.
  **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -268,6 +269,10 @@ the validated EMIF round trip. This proves the cross-module artifact path but
 not independent package compilation; the current driver still checks the
 loaded module graph together. FFI publication remains phase-limited because
 foreign declarations and `extern fn` value types are not yet usable consumers.
+
+The latebound matrix also accepts a callback result sourced from a named
+static and stores it in `Box[str]` (`41d65ed`), preserving static provenance
+without treating all callback results as invocation-local.
 
 **The direct callable-summary slice is complete at `90059c8`.** Building on
 `c913fbd`, analysis infers exact result-field provenance and parameter-field

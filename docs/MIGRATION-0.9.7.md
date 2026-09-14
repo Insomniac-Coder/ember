@@ -451,6 +451,11 @@ This is cross-module artifact evidence, not independent package compilation.
 Foreign declarations and `extern fn` value types remain phase-limited, so FFI
 publication is still an explicit future implementation boundary.
 
+The matrix also covers a callback returning a `str` from named static storage
+and storing it in `Box[str]`. This positive case confirms that latebound
+analysis preserves genuinely static provenance instead of conservatively
+tainting every view result with the callback-local region.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
