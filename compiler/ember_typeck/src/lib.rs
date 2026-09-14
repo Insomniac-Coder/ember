@@ -160,6 +160,12 @@ pub fn check(
         checker.current_module = index;
         checker.collect(&loaded.module);
     }
+    // `[CLS-4]` depends on the completed openness of every nominal base, so
+    // validate inheritance only after all modules have been collected.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.validate_class_bases(&loaded.module);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect_interfaces(&loaded.module);
@@ -1672,6 +1678,33 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn validate_class_bases(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            let ast::ItemKind::Class(decl) = &item.kind else { continue };
+            let Some(&id) = self.class_ids.get(&self.qualified(decl.name.name)) else {
+                // Generic classes are outside the current collection path.
+                continue;
+            };
+            let Some(base) = self.types.class_def(id).base else { continue };
+            let base_def = self.types.class_def(base);
+            if base_def.openness == ClassOpenness::Final {
+                // There is no dedicated final-base diagnostic in the current
+                // catalogue.  Keep the rejection on the existing type
+                // diagnostic family rather than inventing an unregistered
+                // error identity; the message names the precise CLS-4 rule.
+                let base_name = base_def.name;
+                self.error(
+                    codes::E2020,
+                    decl.base.as_ref().map_or(decl.name.span, |base| base.span),
+                    format!(
+                        "class `{}` cannot inherit from final class `{base_name}`",
+                        decl.name.name
+                    ),
+                );
+            }
+        }
+    }
+
     /// `[TYP-16]` — collect generic struct recipes after nominal headers are
     /// globally visible and before any ordinary function signature is read.
     fn collect_generic_structs(&mut self, module: &ast::Module) {
@@ -2012,6 +2045,7 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+
     }
 
     /// `[TYP-12]` — the integer type the tag lives in. `@repr(u8)` names it;
