@@ -54,6 +54,20 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ## 2026-09-14 — direct calls ignored named parameter binding
 
+## 2026-09-14 — B8 UI snapshot lagged the class-field call span
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-137 | **The committed B8 UI snapshot retained the old narrow receiver caret after the class-field method-call checker began reporting the complete conflicting call span.** The diagnostic code, message, required help, and rule classification were unchanged; only the exact primary span in the snapshot lagged the already-intended class call boundary. | `[DIA-1]`, `[DIA-7a]`, `[BRW-4]` | **fixed** | The snapshot now matches the compiler's full-call primary span, and the UI test passes. This is a stale test fixture exposed by the full regression run, not a language or compiler semantic change. |
+
+---
+
+## 2026-09-14 — indexed class-field mutable arguments were fail-closed
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-136 | **A mutable argument rooted in an indexed class handle was rejected even when the place was valid.** `increment(items[next_index(state)].value)` failed with `E1010` because the class-field access checker deliberately rejected an indexed class root; the compiler had not yet shared the bounds-checked place between the mutable reference and the dynamic exclusivity interval. | `[EXC-1]`, `[EXP-1]`, `[FN-2a]`, `[CLS-1]` | **fixed** | The type checker now admits indexed class-field mutable places. MIR lowers the place once, preserves its bounds check and source evaluation order, forms the mutable reference from that place, and derives the class access object from the same MIR projection prefix. Existing class-valued receiver behavior keeps its containing-object boundary, so `holder.child.bump()` does not open the child twice. `tests/run-pass/class_indexed_mut_argument_access.em` uses a side-effecting index to prove single evaluation, checks runtime access instrumentation, and passes in all profiles. No specification, ADR, or owner decision changed. |
+
 | # | Defect | Rule | Status | Fixed in |
 |---|---|---|---|---|
 | D-134 | **Direct function and source-method calls zipped arguments by position even when `[TYP-25]` named arguments were present.** A call such as `encode(right=2, left=1)` therefore passed the values to the opposite parameters; generic functions and generic methods had the same gap. The compiler also did not consistently reject unknown, duplicate, or positional-after-named arguments at this boundary. Function-value calls were intentionally not included because their callable types have no source-level parameter names and remain positional. | `[TYP-25]`, `[EXP-1]`, `[TYP-16]`, `[TYP-24]` | **fixed** | Commit `a2f4454` adds one binding pass in the type checker, checks argument expressions in source order, emits HIR operands in declaration order, and carries explicit source-evaluation-order metadata into MIR. The path is shared by direct, qualified, associated, inherited-bound, generic, and generic-method calls; unknown names and positional-after-named use `E2020`, duplicate parameters use `E1030`. `tests/run-pass/named_function_arguments.em` covers ordinary and generic functions, `tests/run-pass/named_method_arguments.em` covers ordinary and generic methods, and `tests/compile-fail/named_function_argument_errors.em` covers the three rejection boundaries in debug, release, and shipping. The tests were red before the fix and green after it. No specification or owner decision changed; user-defined class-`init` named construction remains a separate fail-closed gap. |

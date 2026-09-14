@@ -1,6 +1,9 @@
-#$ test: compile-fail
+#$ test: run-pass
 #$ rules: CLS-1, EXC-1, FN-2a
-#$ error[E1010]: mutable class-field access requires a `mut self` class method
+#$ profiles: debug, release, shipping
+#$ assert-c: contains(ember_access_begin_write)
+#$ assert-c: contains(ember_access_end_write)
+#$ stdout: 1
 
 class Inner:
     value: i32
@@ -16,3 +19,4 @@ fn main():
     items.push(Inner(0))
     holder = Holder(items)
     increment(holder.items[0].value)
+    println(holder.items[0].value)

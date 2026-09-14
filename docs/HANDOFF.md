@@ -6125,3 +6125,33 @@ The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active and
 Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed access
 sharing, static access elision, generic classes, and the full Phase 3 conformance
 matrix remain open.
+
+### 0.107 Phase 3 indexed class-field mutable arguments — 2026-09-14
+
+The type checker had one deliberate fail-closed hole in the class/exclusivity
+boundary: a valid mutable argument such as
+`increment(items[next_index(state)].value)` was rejected with `E1010` because
+the class root was reached through an index. This was an implementation defect
+against `[EXC-1]`, `[EXP-1]`, and `[FN-2a]`, not a specification ambiguity.
+
+The compiler now admits indexed class-field places for mutable call arguments.
+MIR lowers the place once, including the ordinary bounds check and index
+expression, forms the `ref mut` argument from that place, and derives the
+runtime class access object from the same MIR projection prefix. This preserves
+source evaluation order and prevents a side-effecting index from being
+evaluated twice. Class-valued method receivers retain their existing
+containing-object boundary, so `holder.child.bump()` does not open the child
+object twice while the callee opens it.
+
+`tests/run-pass/class_indexed_mut_argument_access.em` is the adversarial
+regression: its index mutates state, the generated MIR/C shows one index
+evaluation for the mutable access, and the runtime output remains `2` in all
+profiles. The former negative fixture for `holder.items[0].value` was moved
+from `tests/compile-fail/` to `tests/run-pass/` because it encoded the closed
+limitation rather than a language rejection. The implementation is in commit
+`299c82c`; D-136 records the defect and its verification, and the backlog's
+`OBJ-RT-1` continuation records the remaining virtual/override dispatch,
+static elision, generic-class, and full Phase 3 matrix work. No specification,
+ADR, or owner decision changed. The
+phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active and
+Phase 3 has not passed its exit gate.
