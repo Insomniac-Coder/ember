@@ -14536,9 +14536,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
     ) -> Expr {
         let ty = self.class_ty(id).unwrap_or(self.common.error);
-        let (openness, fields, has_base, has_drop) = {
+        let (openness, fields, has_base) = {
             let def = self.types.class_def(id);
-            (def.openness, def.fields.clone(), def.base.is_some(), def.has_drop)
+            (def.openness, def.fields.clone(), def.base.is_some())
         };
         let has_init = self
             .methods
@@ -14572,7 +14572,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if has_base || has_init || has_drop {
+        if has_base || has_init {
             self.error(
                 codes::E1010,
                 span,

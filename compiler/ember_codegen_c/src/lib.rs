@@ -53,6 +53,14 @@ fn class_drop_fields_symbol(owner: &str) -> String {
     ember_branding::mangled(&format!("{}_drop_fields", owner.trim_matches('_')))
 }
 
+fn class_drop_adapter_symbol(owner: &str) -> String {
+    let owner: String = owner
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    ember_branding::mangled(&format!("{}_drop_adapter", owner.trim_matches('_')))
+}
+
 pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
@@ -146,6 +154,9 @@ impl Emitter<'_> {
 
         self.emit_type_declarations();
         self.emit_prototypes(bodies);
+        self.emit_class_drop_adapters();
+        self.emit_class_field_drop_glue();
+        self.emit_class_type_infos();
 
         for body in bodies {
             self.emit_body(body);
@@ -202,9 +213,34 @@ impl Emitter<'_> {
                 }
             }
         }
-        self.emit_class_field_drop_glue();
-        self.emit_class_type_infos();
         self.line("");
+    }
+
+    /// Adapt a source class's `drop(mut self)` method to the runtime's
+    /// `void(*)(void*)` metadata slot. The ordinary function prototype is
+    /// emitted first, so this wrapper remains valid C11 without relying on an
+    /// implicit declaration or an incompatible function-pointer conversion.
+    fn emit_class_drop_adapters(&mut self) {
+        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        for id in classes {
+            let def = self.types.class_def(id);
+            if !def.has_drop {
+                continue;
+            }
+            let owner = def.name.to_string();
+            let object = ember_branding::object_struct(&owner);
+            let adapter = class_drop_adapter_symbol(&owner);
+            self.line(&format!("static void {adapter}(void* raw) {{"));
+            self.line(&format!(
+                "    {object}* handle = ({object}*)raw;",
+            ));
+            self.line(&format!(
+                "    {}(&handle);",
+                drop_symbol(&owner)
+            ));
+            self.line("}");
+            self.line("");
+        }
     }
 
     /// Generate the field half of `[CLS-6]`'s destruction contract. Class
@@ -261,9 +297,10 @@ impl Emitter<'_> {
     }
 
     /// Emit the compiler-owned metadata consumed by the Phase 3 object
-    /// runtime. Constructors, method tables, and user drop glue remain later
-    /// consumers, but field drop glue is available for the memberwise classes
-    /// whose values are now source-reachable.
+    /// runtime. Constructors, method tables, and virtual dispatch remain later
+    /// consumers. The narrow memberwise construction slice installs the
+    /// generated user-drop adapter and field-drop glue when those values are
+    /// source-reachable.
     ///
     /// The declarations are external-linkage `const` objects rather than
     /// `static` objects.  That avoids a compiler-warning for an as-yet-unused
@@ -309,7 +346,14 @@ impl Emitter<'_> {
             // respective compiler mechanisms can produce verified
             // functions/tables. Field-drop glue is installed below when the
             // object has fields that need destruction.
-            self.line("    NULL,");
+            if def.has_drop {
+                self.line(&format!(
+                    "    &{},",
+                    class_drop_adapter_symbol(&def.name.to_string())
+                ));
+            } else {
+                self.line("    NULL,");
+            }
             if self.class_has_dropping_fields(id) {
                 self.line(&format!(
                     "    &{},",

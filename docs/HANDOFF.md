@@ -5512,22 +5512,54 @@ guessing defaults or emitting null drop/constructor glue for reachable objects.
 
 ### 0.83 Phase 3 memberwise class field initialization — 2026-09-14
 
-Memberwise construction now emits initialized object fields for the narrow
-safe subset where the class has no base, no user `init`, no `drop`, and every
-field type is already known not to need destruction. The checker validates the
-arity and types of positional arguments, and rejects named construction until
+At that earlier checkpoint, memberwise construction emitted initialized object
+fields for the narrow safe subset where the class had no base, no user `init`,
+no `drop`, and every field type was already known not to need destruction. The
+checker validated the arity and types of positional arguments, and rejected named construction until
 the class constructor surface can implement the same defaults/visibility
 rules as `[STR-1]`. MIR allocates the class through `ClassNew` first, then
 lowers each supplied value into the corresponding object-layout field. This
 keeps initialization visible to ownership and definite-initialization analyses
 instead of hiding it in a backend-only compound expression.
 
-The run-pass regression constructs `Point(19, 23)`, reads both fields through a
-method, and verifies the result `42`; compile-fail coverage proves that an
-owned `Array` field is not accepted while class drop metadata is still null.
-This is an implementation-only extension of the current Phase 3 foundation,
+The run-pass regression constructed `Point(19, 23)`, read both fields through a
+method, and verified the result `42`; compile-fail coverage proved that an
+owned `Array` field was not accepted while class drop metadata was still null.
+This was an implementation-only extension of the Phase 3 foundation,
 not a specification revision and not Phase 3 completion. Phase accounting is
 still exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
 passed its exit gate. The next safe boundary is field ownership/destruction or
 the constructor/`init` protocol, but those must be implemented together rather
 than by making partially initialized or silently non-dropping objects reachable.
+
+### 0.84 Phase 3 class destruction callbacks — 2026-09-14
+
+The narrow memberwise class-construction slice now supports classes with
+owned fields and a source `fn drop(mut self)` when the class has no base and no
+user `init`. The checker no longer rejects that subset merely because it has a
+custom destructor. C lowering installs two distinct compiler-generated pieces
+of runtime metadata: field-drop glue walks the class's droppable fields in the
+required order, and a user-drop adapter invokes the generated destructor
+through a temporary addressable class-handle slot. The slot is necessary
+because the existing `mut self` ABI is a mutable reference to the caller's
+handle, while the runtime callback receives the object address; the adapter
+does not expose or persist replacement of that temporary slot.
+
+The runtime therefore runs the user destructor before the generated field
+destruction, and the class-construction run-pass regression proves an owned
+`Array` field is still readable by `drop` and is freed afterward. The matching
+compile-fail fixture now reserves the not-yet-implemented boundary for a class
+with a user `init`, rather than incorrectly claiming that all owned-field/drop
+classes are rejected. The generated adapter and glue compile under strict
+Clang C11 without warnings; the full workspace suite and all adopted-source
+gates remain green.
+
+This is still an implementation-only extension of the Phase 3 foundation, not
+a specification revision and not Phase 3 completion. Inherited construction,
+inherited drop chaining, custom-`init` construction, defaulted fields, dynamic
+class exclusivity, dispatch, generic classes, and the complete Phase 3
+conformance matrix remain open. Phase accounting is exactly **1 of 9
+complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
+The next safe boundary is the constructor/`init` protocol, which must be
+implemented with verified definite initialization and failure/drop handling
+rather than by making partially initialized objects reachable.

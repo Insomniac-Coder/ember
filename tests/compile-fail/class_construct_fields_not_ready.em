@@ -1,13 +1,11 @@
 #$ test: compile-fail
 #$ rules: CLS-1, CLS-2
-#$ error[E1010]: class construction for `OwnedField` is not implemented yet in this phase
+#$ error[E1010]: class construction for `WithInit` is not implemented yet in this phase
 
-class OwnedField:
-    values: Array[i32]
-
-    fn drop(mut self):
+class WithInit:
+    fn init(mut self):
         pass
 
 fn main():
-    value = OwnedField(Array[i32]())
+    value = WithInit()
     println(1)
