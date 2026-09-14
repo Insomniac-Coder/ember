@@ -8,3 +8,6 @@ pub fn bundle(left: Span[i32], right: Span[i32]) -> Pair:
 
 pub fn right_value(pair: Pair) -> i32:
     return pair.right[0]
+
+pub fn latebound_value(f: @latebound fn(Span[i32]) -> i32, view: Span[i32]) -> i32:
+    return f(view)
