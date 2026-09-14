@@ -34,14 +34,15 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 209 Rust tests pass;
-- the conformance runner passes across 131 rule directories and 459 Ember
+- all 210 Rust tests pass;
+- the conformance runner passes across 133 rule directories and 468 Ember
   source files;
 - all six adopted-specification gates pass;
-- 94 recorded compiler defects are closed;
+- 95 recorded compiler defects are closed;
 - three known deviations remain open (D1, D3, and D4); D2 is closed;
 - ODR-015 is closed by the owner-approved `@latebound` callable-type boundary;
-  its H1 implementation and conformance evidence remain outstanding.
+  the H1 implementation now has a verified first slice, while the remaining
+  precision matrix is still incomplete and H1 is not adopted.
 
 `ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
@@ -109,7 +110,7 @@ lowering, layouts, effects, inline eligibility, item-granular reuse,
 non-direct dispatch, and the complete escape/storage matrix remain incomplete;
 unknown calls stay conservative.
 
-The current uncommitted H6-target slice makes callable parameter modes real
+The preceding H6-target slice makes callable parameter modes real
 compile-time type identity: `fn(T) -> R`, `fn(mut T) -> R`, and
 `fn(owned T) -> R` retain their complete mode vector through parsing, generic
 Callable/CallableOnce bounds, inference, lambda expectations, indirect calls,
@@ -117,6 +118,16 @@ monomorphisation, generated C signatures, and the declaration-first interface
 artifact. EMIF schema 6 invalidates older mode-erasing records. This advances
 the frozen target only; it does not adopt H6 over the current v0.8.5 normative
 source.
+
+The current worktree also implements the first `@latebound` callable-boundary
+slice from 0.9.7_Hardened_1. The modifier survives callable identity,
+substitution, callable bounds, HIR/MIR calls, EMIF schema 7, and cache
+invalidation; region analysis rejects callback-view return and storage escape
+with the existing diagnostics while keeping scalar and nested scalar callbacks
+working. Nested view escape and owned-closure publication are covered by
+negative conformance cases. Full freshness, static-independent-result, FFI,
+and separate-compilation precision evidence remains future work, and the target
+is not yet adopted.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the

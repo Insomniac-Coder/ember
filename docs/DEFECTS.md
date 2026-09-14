@@ -60,6 +60,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — latebound storage case did not reach an instantiated body
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-125 | **The first `@latebound` storage conformance case placed the violating `Box(f(view))` only in an uninstantiated implicit generic callable body.** The compiler intentionally emits MIR for a generic body only after a concrete call reaches it, so the case had no body-level region analysis and falsely passed. A rule-named directory and a syntactically violating function were not enough to prove coverage. | `[LT-7]`, `[LT-10]`, `[TST-20]`, `[TST-21]` | **fixed** | The conformance case now calls the wrapper from `main` with a concrete callback and a live view, forcing monomorphisation and the normal MIR/region pipeline. The same source then rejects the Box publication with `E3063`. This is a **test defect**, not a compiler defect or a specification issue; the target semantics remain unchanged. |
+
 ## 2026-09-14 — a borrowing closure crossed an owned callable boundary
 
 | # | Defect | Rule | Status | Fixed in |

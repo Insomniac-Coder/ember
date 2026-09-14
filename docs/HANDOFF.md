@@ -289,14 +289,14 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree: D-117/D-118/D-119/D-120/D-121/D-122/D-123 multi-region closure, enum-provenance, owned-capture, indirect-`CallableOnce`, body-level `CallableOnce`, mutable-capture, and owned-callable escape-boundary fixes; plus the H6-target `[FN-6]/[FN-6a]` callable-mode slice, pending a checkpoint commit. H1 specifies but does not yet implement `@latebound`. It follows `30a05d1` (`Document EMIF member declaration boundary`), `6e37063` (visible member declaration cache), `af7c525` (verified MIR summaries/field replacement), `90059c8` (direct summaries), `c913fbd` (field-sensitive region vectors), and `e0ba765` (canonical Array-loop borrowing/E3020) |
-| Recent commits | `6e37063` schema-5 declaration-first contracts for current lowered member forms · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `8c2c6c3` direct-summary checkpoint records · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` CTL-1/CTL-2 and E3020/B2 · `d077563` complete Span API · `7958259` H6/ODR-014 contract · `77a21f4` Box completion record/ODR-014 stop · `0fdd9b6` Box region storage · `de641fb` concrete Box ownership · `16093b1` H5 simplicity adoption · `dea6aa7` tuple/struct destructuring assignment · `24d8fbc` explicit `MutSpan.reborrow` · `1aaa98f` checked Span splitting · `17ee5d1` `mem.forget`/`align_of` · `8f16a7f` FN-2a/B10 diagnostic · `a02c0a5` UnsafeCell · `66d0d43` verified initialization facts/backend MIR boundary · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` `Cell[T]` · `8459a1f` D-035 |
-| Working tree | Deliberately dirty for D-117 through D-123 code, the H6 callable-mode implementation slice, conformance, and the H1 documentation cut. Always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, and the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation. HEAD remains the clean predecessor `8433479` (`Implement callable modes and cut 0.9.7 H1 target`); the implementation is intentionally uncommitted until the final regression/documentation review. H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Working tree | Deliberately dirty for the uncommitted `@latebound` implementation, its conformance cases, the corrected parser regression, and this handoff/status update. Always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
-| `cargo test --workspace` | **209 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
+| `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 131 top-level rule directories, 459 `.em` files including support modules; the full conformance runner is green (2026-09-14) |
-| Ledgers | 94 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. H1's `@latebound` implementation/conformance work is outstanding, not an owner question |
+| Conformance | 133 top-level rule directories, 468 `.em` files including support modules; the focused and full conformance runner is green after the latebound storage case was made reachable and nested-boundary cases were added (2026-09-14) |
+| Ledgers | 95 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
 **The two commits this hand-off is about:**
@@ -918,12 +918,11 @@ package may bypass `[BRW-1]`, and the new primitive was not used to retrofit
 them. Threading-trait enforcement remains an intentional `CELL-SYNC-1`
 dependency gap until `Send`/`Sync` and threads exist.
 
-### 0.14 The next task
+### 0.14 The next task — historical, superseded by §0.64
 
-**Implement the owner-approved `@latebound` callable-boundary fact first.
-`0.9.7_Hardened_1` and `MIGRATION-0.9.7.md` define its exact scope. Do not
-begin unrelated non-direct matrices, safe reuse, layouts/effects/inline
-sections, or class-member lowering as part of that slice.**
+The owner-approved `@latebound` callable-boundary fact was the next task at
+the preceding checkpoint. It is now implemented and recorded in §0.64. Do
+not treat the historical instructions below as an outstanding task.
 
 `ARN-COLL-1` is complete at `825eac5`; §0.33 is its verified implementation
 record. The first `ARCH-096-1` boundary is complete at `66d0d43`; §0.34 is its
@@ -3471,7 +3470,7 @@ runtime field, ABI change, or specification edit was needed.
 
 ### 0.63 Callable type parameter modes through the semantic pipeline — 2026-09-14
 
-**The current uncommitted target implementation closes the previous compiler
+**The preceding target implementation closes the previous compiler
 mode-erasure gap for frozen H6 `[FN-6]`/`[FN-6a]` and closes D-124; it does not
 adopt H6 or edit the repository's normative 0.8.5 source.** `fn(T) -> R`, `fn(mut T) -> R`, and
 `fn(owned T) -> R` are now distinct compiler types, rather than three source
@@ -3503,12 +3502,60 @@ TYP-18 cases cover named, capture-free lambda, and capturing-lambda results.
 `std.borrow` now supplies ordinary generic two/three/four-view shared and
 all-mutable forwarding wrappers. They are allocation-free by construction and
 the LT-8 matrix proves reborrow usability, callback mode preservation, and
-ordinary alias rejection. **They are not a complete `[LT-7]`/`[LT-10]`
-implementation:** 0.9.7_Hardened_1 now supplies the owner-approved general
-`@latebound` callable-type boundary, but the compiler has not implemented its
-canonical/EMIF fact, fresh invocation regions, or escape checking yet. This is
-an implementation and conformance milestone, not an open owner question. The
-compiler must not turn these library names into an ad-hoc special case.
+ordinary alias rejection. The follow-on `@latebound` implementation and its
+escape cases are recorded in §0.64; the compiler must not turn these library
+names into an ad-hoc special case.
+
+### 0.64 `@latebound` callable-boundary implementation — 2026-09-14
+
+The owner-approved 0.9.7 H1 callable-boundary slice is implemented in the
+current uncommitted worktree. This is compiler evidence against the frozen
+target, not adoption of H1 and not a change to the adopted `0.8.5_Hardened_1`
+source.
+
+The implementation is carried by the existing semantic pipeline:
+
+* the parser accepts `@latebound` only immediately before a callable type and
+  rejects its use on a non-callable type with `E0100`;
+* AST, HIR, `TyKind::Fn`, callable bounds, substitution, unification, expected
+  callable coercion, and canonical type spelling preserve the boundary fact;
+* HIR/MIR call references preserve it through indirect calls and through
+  monomorphised direct closure calls, while generated C receives no runtime
+  flag or ABI field;
+* EMIF schema 7 serializes the fact in implicit callable bounds, validates it,
+  and includes it in the interface/cache identity. The round-trip and toggle
+  regression prove that changing only the boundary invalidates an importer;
+* region analysis creates an invocation-specific compiler-only
+  `Origin::LateBound { call, argument }` for view results crossing the boundary.
+  Existing return and unbounded `Box` storage checks reject that origin with
+  the existing `E3062`/`E3063` region diagnostics. Unknown indirect results
+  remain conservative; no runtime region metadata is introduced.
+
+The conformance evidence includes ordinary scalar results, shared and mutable
+`with_views` callbacks, named callbacks, lambdas, nested late-bound
+boundaries, callback-result return escape, mutable callback-result escape,
+storage escape, and invalid marker placement. The storage case is deliberately
+instantiated from `main`: the
+first version placed the check only in an uninstantiated implicit generic
+callable body, so no MIR existed and the case falsely passed. That was a test
+defect, not permission to weaken the compiler; it is recorded as D-125. This
+preserves the standing lesson that a test named for a rule is not evidence of
+coverage until the violating path is actually reached.
+
+The implementation is intentionally conservative at this checkpoint. Fresh
+call identity is represented in analysis by MIR `Point` plus callback argument,
+and nested scalar/escape boundaries plus owned-closure publication have direct
+evidence, but a complete precision matrix for statically independent callback
+results, freshness separation, and FFI publication remains future
+conformance/implementation work. No `std.borrow` name is special-cased,
+no named lifetime syntax was added, and ordinary callbacks remain ordinary.
+
+Validation after the reachable-storage correction: parser tests pass; EMIF
+round-trip/cache tests pass; the focused compile-pass/compile-fail checks pass;
+the full conformance runner passes; `cargo build --workspace` is warning-free;
+and `cargo test --workspace` passes all 210 tests. The test build retains one
+pre-existing non-snake-case warning. `cargo fmt --all -- --check` remains
+unrelated broad repository formatting drift and is not an adoption gate.
 
 ## The task list — where to begin
 

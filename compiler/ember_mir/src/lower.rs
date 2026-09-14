@@ -957,6 +957,7 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
                 symbol: self.program.function(constructor).symbol.clone(),
+                latebound: false,
             },
             args: Vec::new(),
             dest: Place::local(replacement),
@@ -1074,7 +1075,7 @@ impl<'a> Builder<'a> {
         let result = self.temp_unowned(ret, cell.span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect(callee),
+            func: FuncRef::Indirect { operand: callee, latebound: false },
             args: vec![old],
             dest: Place::local(result),
             next,
@@ -1107,6 +1108,7 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
                 symbol: self.program.function(constructor).symbol.clone(),
+                latebound: false,
             },
             args: Vec::new(),
             dest: Place::local(replacement),
@@ -1144,6 +1146,7 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
                 symbol: self.program.function(constructor).symbol.clone(),
+                latebound: false,
             },
             args: Vec::new(),
             dest: Place::local(placeholder),
@@ -1166,7 +1169,7 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageLive(result));
         let after_callback = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect(callee),
+            func: FuncRef::Indirect { operand: callee, latebound: false },
             // `fn(T) -> T` uses `[FN-2]`'s default borrowed mode. The old
             // value stays owned by this lowering temporary until statement
             // end; the callback may inspect it but cannot consume it.
@@ -1506,7 +1509,7 @@ impl<'a> Builder<'a> {
     fn lower_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
-            hir::ExprKind::Call { callee, args } => {
+            hir::ExprKind::Call { callee, args, latebound } => {
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
                 // `[FN-1]` — the mode decides. `owned` consumes, so the
@@ -1526,7 +1529,7 @@ impl<'a> Builder<'a> {
                     .collect();
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
-                    func: FuncRef::Direct { symbol },
+                    func: FuncRef::Direct { symbol, latebound: *latebound },
                     args,
                     dest: place,
                     next,
@@ -1542,7 +1545,7 @@ impl<'a> Builder<'a> {
             // checked-without-panic form". One compare, a branch, and the two
             // `Option` variants.
             // `[CLO-3]` — a call through a value of function type.
-            hir::ExprKind::CallIndirect { callee, args, consumes_callee } => {
+            hir::ExprKind::CallIndirect { callee, args, consumes_callee, latebound } => {
                 // `[CLO-6]` — the mode on `f`, not the callable's argument
                 // modes, selects `Callable` versus `CallableOnce`. A once
                 // call consumes the callee place even though the erased call
@@ -1563,7 +1566,7 @@ impl<'a> Builder<'a> {
                     args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
-                    func: FuncRef::Indirect(callee_op),
+                    func: FuncRef::Indirect { operand: callee_op, latebound: *latebound },
                     args,
                     dest: place,
                     next,
@@ -2162,7 +2165,7 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageLive(value));
         let symbol = self.program.function(constructor).symbol.clone();
         self.terminate(Terminator::Call {
-            func: FuncRef::Direct { symbol },
+            func: FuncRef::Direct { symbol, latebound: false },
             args: Vec::new(),
             dest: Place::local(value),
             next: store,
@@ -3046,7 +3049,7 @@ impl<'a> Builder<'a> {
             let symbol = self.program.function(equals).symbol.clone();
             let after_call = self.new_block();
             self.terminate(Terminator::Call {
-                func: FuncRef::Direct { symbol },
+                func: FuncRef::Direct { symbol, latebound: false },
                 args: vec![Operand::Copy(existing), wanted],
                 dest: Place::local(equal),
                 next: after_call,

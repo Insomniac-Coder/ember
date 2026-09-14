@@ -1020,11 +1020,14 @@ impl AssertKind {
 
 #[derive(Clone, Debug)]
 pub enum FuncRef {
-    /// A direct call to a body in this compilation unit.
-    Direct { symbol: String },
-    /// `[CLO-3]` — a call through a value of function type. The operand holds
-    /// the callee, so the region machinery sees it as an ordinary read.
-    Indirect(Operand),
+    /// A direct call to a body in this compilation unit. `latebound` is a
+    /// compile-time callable-boundary fact retained for region analysis and
+    /// erased before code generation.
+    Direct { symbol: String, latebound: bool },
+    /// `[CLO-3]`, `[FN-6b]` — a call through a value of function type. The
+    /// operand holds the callee; `latebound` is the expected callable-boundary
+    /// fact and is erased before code generation.
+    Indirect { operand: Operand, latebound: bool },
     /// A call the compiler provides itself, lowered to an `ember_rt` entry.
     Builtin {
         which: ember_hir::Builtin,
@@ -1280,13 +1283,18 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
             next,
         } => {
             let inner: Vec<String> = args.iter().map(|a| dump_operand(a, types)).collect();
-            let name = match func {
-                FuncRef::Direct { symbol } => symbol.clone(),
-                FuncRef::Builtin { which, .. } => which.name().to_string(),
-                FuncRef::Indirect(operand) => dump_operand(operand, types),
+            let (boundary, name) = match func {
+                FuncRef::Direct { symbol, latebound } => {
+                    (if *latebound { "@latebound " } else { "" }, symbol.clone())
+                }
+                FuncRef::Builtin { which, .. } => ("", which.name().to_string()),
+                FuncRef::Indirect { operand, latebound } => (
+                    if *latebound { "@latebound " } else { "" },
+                    dump_operand(operand, types),
+                ),
             };
             format!(
-                "{} = {name}({}) -> bb{}",
+                "{} = {boundary}{name}({}) -> bb{}",
                 dump_place(dest),
                 inner.join(", "),
                 next.0

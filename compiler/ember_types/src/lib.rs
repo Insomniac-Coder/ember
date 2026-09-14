@@ -147,7 +147,9 @@ pub enum TyKind {
     /// a compiler-known type until Phase 2's generics let the standard library
     /// write it in Ember. `String` is this with `u8` elements.
     Vec { elem: Ty },
-    Fn { params: Vec<FnParam>, ret: Ty },
+    /// A mode-bearing callable type. `latebound` is a compile-time callable
+    /// boundary fact; it is not runtime metadata or an ABI field.
+    Fn { latebound: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-16]` — a generic parameter, opaque while the body that declares
     /// it is checked. `[TYP-17]` allows only what its bounds provide, so the
     /// bound list travels with the declaration rather than with the type.
@@ -482,7 +484,7 @@ impl TypeTable {
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.is_generic(*inner),
             TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic(*elem),
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic(t)),
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { params, ret, .. } => {
                 params.iter().any(|param| self.is_generic(param.ty)) || self.is_generic(*ret)
             }
             _ => false,
@@ -523,7 +525,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -532,7 +534,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { params, ret })
+                self.intern(TyKind::Fn { latebound, params, ret })
             }
             _ => ty,
         }
@@ -567,7 +569,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -576,7 +578,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { params, ret })
+                self.intern(TyKind::Fn { latebound, params, ret })
             }
             _ => ty,
         }
@@ -648,8 +650,11 @@ impl TypeTable {
             // `[FN-6a]` — callable parameter modes are part of the function
             // type's identity.  Inference may solve the nested types, but it
             // must never erase `borrow`/`mut`/`owned` on its way there.
-            (TyKind::Fn { params: a, ret: a_ret }, TyKind::Fn { params: b, ret: b_ret })
-                if a.len() == b.len()
+            (
+                TyKind::Fn { latebound: a_latebound, params: a, ret: a_ret },
+                TyKind::Fn { latebound: b_latebound, params: b, ret: b_ret },
+            ) if a.len() == b.len()
+                    && a_latebound == b_latebound
                     && a.iter().zip(&b).all(|(left, right)| left.mode == right.mode) =>
             {
                 a.iter()
@@ -1131,7 +1136,7 @@ impl TypeTable {
                 format!("{kw}{}", self.display(*inner))
             }
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.display(*elem)),
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { latebound, params, ret } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -1143,7 +1148,12 @@ impl TypeTable {
                         format!("{mode}{}", self.display(param.ty))
                     })
                     .collect();
-                format!("fn({}) -> {}", inner.join(", "), self.display(*ret))
+                format!(
+                    "{}fn({}) -> {}",
+                    if *latebound { "@latebound " } else { "" },
+                    inner.join(", "),
+                    self.display(*ret)
+                )
             }
             TyKind::Infer(_) => "_".into(),
             // A diagnostic should never name these; if one does, say something
@@ -1227,8 +1237,12 @@ impl TypeTable {
                 format!("[{};{len}]", self.canonical_name(*elem)?)
             }
             TyKind::Vec { elem } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { params, ret } => {
-                let mut out = String::from("fn(");
+            TyKind::Fn { latebound, params, ret } => {
+                let mut out = if *latebound {
+                    String::from("@latebound fn(")
+                } else {
+                    String::from("fn(")
+                };
                 for (index, param) in params.iter().enumerate() {
                     if index != 0 {
                         out.push(',');

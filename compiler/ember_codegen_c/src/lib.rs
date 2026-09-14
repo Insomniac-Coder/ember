@@ -276,7 +276,7 @@ impl Emitter<'_> {
             // simple `T name` is wanted, so each one gets a typedef and every
             // use names it.
             TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
-                let TyKind::Fn { params, ret } = self.types.kind(ty) else { unreachable!() };
+                let TyKind::Fn { params, ret, .. } = self.types.kind(ty) else { unreachable!() };
                 let rendered: Vec<String> = params
                     .iter()
                     .map(|param| self.callable_param_c_type(*param))
@@ -1024,10 +1024,10 @@ impl Emitter<'_> {
     fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
-            FuncRef::Direct { symbol } => format!("{symbol}({})", rendered.join(", ")),
+            FuncRef::Direct { symbol, .. } => format!("{symbol}({})", rendered.join(", ")),
             // `[CLO-3]` — a call through a value. In C a function value is
             // its address, so the callee expression is called directly.
-            FuncRef::Indirect(callee) => {
+            FuncRef::Indirect { operand: callee, .. } => {
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
             }
             FuncRef::Builtin { which, arg_ty } => {
@@ -1889,7 +1889,7 @@ impl Planner<'_> {
                     TyKind::Array { elem, .. } => vec![*elem],
                     // A function pointer's parameter and return types are
                     // written out in its typedef, so they must be complete.
-                    TyKind::Fn { params, ret } => {
+                    TyKind::Fn { params, ret, .. } => {
                         let mut all = params.iter().map(|param| param.ty).collect::<Vec<_>>();
                         all.push(*ret);
                         all

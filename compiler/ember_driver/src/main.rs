@@ -136,10 +136,10 @@ fn collect_body_function_symbols(
             }
             ember_mir::Terminator::Call { func, args, .. } => {
                 match func {
-                    ember_mir::FuncRef::Direct { symbol } => {
+                    ember_mir::FuncRef::Direct { symbol, .. } => {
                         out.insert(symbol.clone());
                     }
-                    ember_mir::FuncRef::Indirect(operand) => {
+                    ember_mir::FuncRef::Indirect { operand, .. } => {
                         collect_operand_function_symbols(operand, out);
                     }
                     ember_mir::FuncRef::Builtin { .. } => {}
@@ -985,6 +985,7 @@ fn declaration_signature(
                         parameters,
                         result,
                         once: bound.once,
+                        latebound: bound.latebound,
                     })
                 })
                 .transpose()?;

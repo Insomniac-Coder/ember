@@ -51,7 +51,13 @@ source regions. H6 remains immutable. The required implementation evidence is
 parser support, canonical callable/EMIF identity, generic substitution and
 incremental invalidation, higher-ranked invocation-region enforcement, and
 ordinary region/escape diagnostics for return, storage, owned-capture, and FFI
-publication paths. This target is **SPECIFIED**, not implemented or adopted.
+publication paths. The current worktree now has a partial **IMPLEMENTED and
+VERIFIED** slice: parser/type identity, callable-bound propagation, EMIF schema
+7/cache invalidation, invocation-local region markers, return rejection, and
+unbounded-Box storage rejection. H1 remains frozen and **not adopted**. The
+precision matrix for statically independent results, freshness separation, and
+FFI publication remains incomplete; nested scalar, view-escape, and
+owned-capture publication boundaries now have direct evidence.
 
 ADR-034 preserves the separately approved post-H4 simplicity RFC. It directs
 implementation and process toward fewer public concepts, reused authoritative
@@ -68,11 +74,11 @@ the ruling's C/Rust-style `*const T` to Ember's existing shared raw-pointer
 spelling `*T` without changing its selected authority boundary.
 
 Any correction discovered after this freeze becomes
-`0.9.6_Hardened_7`; do not amend H6 in place or silently change its identity.
+`0.9.7_Hardened_2`; do not amend H1 in place or silently change its identity.
 
 ## 2. Change classification
 
-0.9.6 is an owner-selected architecture-line revision. Apart from accepting
+The inherited 0.9.6 architecture line is an owner-selected revision. Apart from accepting
 the additive `#! language "0.9.6"` selector, it preserves 0.9.5/H10's ordinary
 source accepted/rejected sets and observable semantics. It changes the required
 reference-compiler and conformance architecture, not the meaning of existing
@@ -148,7 +154,7 @@ return type or parallel iterator, ownership, lifetime, or unsafe model is added.
 
 ## 3. What is implemented now
 
-H6 is a specification target, not an implementation claim. The inherited
+H1 is a specification target, not an adoption claim. The inherited
 repository baseline currently has executable evidence for:
 
 - the existing 0.8.5 parser/type/ownership/borrow/drop subset;
@@ -181,8 +187,8 @@ repository baseline currently has executable evidence for:
 - `[OWN-6]` `std.mem.take`, `replace`, and `swap` through ordinary generic,
   mutable-place, borrow, move, and `Default` checking, plus an executable O2
   diagnostic repair; and
-- exact `0.9`, `0.9.5`, and `0.9.6` source-selector recognition, while unknown
-  patch contracts remain E0006.
+- exact `0.9`, `0.9.5`, `0.9.6`, and `0.9.7` source-selector recognition,
+  while unknown patch contracts remain E0006.
 
 The H4 Arena-collection implementation checkpoint is `825eac5`. It has 183
 Rust tests green and a green conformance runner over 95 top-level rule
@@ -406,10 +412,25 @@ The same checkpoint adds the ordinary `std.borrow.with_views2/3/4` and
 `with_views2_mut/3_mut/4_mut` forwarding families. Their fixed callback modes,
 reborrow behavior, generic result inference, and ordinary mutable-alias
 rejection have executable LT-8 evidence. `0.9.7_Hardened_1` resolves the
-previous declaration gap with `@latebound`; `[LT-7]`/`[LT-10]` implementation
-remains outstanding. Preserve the general callable-boundary fact through
-parser/type/EMIF/region analysis rather than replacing it with compiler
-recognition of `std.borrow` names.
+previous declaration gap with `@latebound`; its first implementation slice is
+now present in the worktree. The parser accepts the marker only on callable
+types; callable identity, generic bounds/substitution, expected-callable
+coercion, HIR/MIR call edges, canonical spelling, EMIF schema 7, and cache
+invalidation preserve it. Region analysis attaches a compiler-only
+invocation-specific origin to view results crossing the boundary, and the
+existing return and Box-storage checks reject escaped results with E3062 or
+E3063. Unknown indirect results remain conservative and no runtime/ABI fact is
+introduced. Preserve this general callable-boundary fact through the existing
+pipeline rather than replacing it with compiler recognition of `std.borrow`
+names.
+
+The storage conformance case is intentionally reachable from `main`: an early
+version put the violating operation only in an uninstantiated implicit generic
+body, which produced no MIR and falsely passed. D-125 records that test defect.
+This is the standing coverage rule in executable form: a directory named after
+a rule does not prove that the rule is exercised. Nested scalar composition and
+nested view escape are also covered directly; the remaining freshness and
+precision cases remain implementation work.
 
 ## 4. Known implementation gaps
 
@@ -650,16 +671,19 @@ proved.
    carries the required mutable callable place through monomorphization.
    D-123 closes the owned-callable escape boundary: a normal reference-capturing
    closure cannot cross `owned f` merely because the currently visible callee
-   happens to invoke rather than store it. Dynamic dispatch and remaining
-   closure escape/storage work remain separate, explicit work. Next cover audited-declared,
-   separate-compilation, dynamic, hot-reload, escape/storage, and remaining
-   verifier cases while preserving runtime erasure. Class-member lowering and
-   H6's nested callable mode-preserving type identity is now implemented;
-   class-member lowering and the remaining separate prerequisites remain;
-   do not publish placeholders.
-10. **Add the version selector and run adoption validation.** `VER-096-1` may
-   land earlier for testing, but H6 becomes normative only after every gate
-   below passes and the owner explicitly adopts it.
+   happens to invoke rather than store it. The current worktree additionally
+   implements the first `@latebound` callable-boundary slice: parser/type
+   identity, callable-bound propagation, EMIF schema 7/cache invalidation,
+   compiler-only invocation origins, and return/Box publication rejection.
+   D-125 records and fixes the first storage-test reachability defect. Complete
+   the remaining precision and adversarial matrix—freshness, nested boundaries,
+   static-independent results, FFI publication, and
+   separate-compilation consumers—while preserving runtime erasure. Dynamic
+   dispatch, class-member lowering, layouts/effects/inline sections, and safe
+   reuse remain separate prerequisites; do not publish placeholders.
+10. **Run adoption validation.** `VER-096-1` may land earlier for testing, but
+   H1 becomes normative only after every gate below passes and the owner
+   explicitly adopts it.
 
 At each step, use minimal adversarial programs, mutate each new test red once,
 inspect generated C where order/erasure is not safely source-observable, and
@@ -667,14 +691,14 @@ record findings under the five-way classification before changing behavior.
 
 ## 7. Adoption gates
 
-H6 must not replace `ember-spec.md` until all of these are true:
+H1 must not replace `ember-spec.md` until all of these are true:
 
-1. **Custody:** H10, H1, H2, H3, H4, H5, and all as-received owner sources match
-   this record; H6 has exactly one version identity and H5 as its predecessor.
+1. **Custody:** H10, H1, H2, H3, H4, H5, H6, and all as-received owner sources
+   match this record; H1 has exactly one version identity and H6 as its predecessor.
 2. **Specification integrity:** alternate-source rule/index, grammar/fence,
    diagnostic, cross-reference, and version-lineage audits show no unintended
    regression.
-3. **Implementation matrix:** every H6 requirement is marked `SPECIFIED`,
+3. **Implementation matrix:** every H1 requirement is marked `SPECIFIED`,
    `IMPLEMENTED`, `VERIFIED`, or `CONFORMANT` from repository evidence; no
    version label is treated as proof.
 4. **Compiler/runtime:** all required H10, H1, H2, H3, H4, H5, and H6 mechanisms exist, including
@@ -719,14 +743,15 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Implement `@latebound` as the smallest general callable-boundary fact: parse
-the modifier only on callable types; preserve it through canonical callable
-identity, generic bounds/substitution, expected-callable checking, EMIF and
-incremental invalidation; create fresh internal regions for every borrowed/view
-callback parameter at each invocation; and reject only results or publication
-paths that retain those regions through the existing region/escape machinery.
-Begin with the minimal `with_views2(..., first)` escape reproducer, then add
-freshness, nested-boundary, mutable, storage, owned-capture, and FFI cases.
+Continue the `@latebound` implementation as the smallest general
+callable-boundary fact. The first slice is complete and verified for parser/type
+identity, callable-bound propagation, EMIF/cache invalidation, invocation-local
+origin tracking, return escape, mutable return escape, and unbounded-Box
+storage escape. Next add and verify freshness, nested-boundary separation,
+static-independent owned results, owned-capture publication, FFI publication,
+and separate-compilation consumer cases using the existing region/escape
+machinery. Begin each missing case with a minimal adversarial program and keep
+unknown indirect results conservative.
 Do not special-case `std.borrow` names, expose named lifetimes, add runtime/ABI
 metadata, or turn ordinary callbacks into late-bound callbacks by inference.
 Preserve conservative all-slot behavior for unknown calls and ordinary E3021

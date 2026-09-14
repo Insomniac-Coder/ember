@@ -60,7 +60,7 @@ pub fn check(body: &Body, sink: &mut Sink) {
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => mark_operand(discr, &mut read),
             Terminator::Call { func, args, dest, .. } => {
-                if let ember_mir::FuncRef::Indirect(callee) = func {
+                if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
                     mark_operand(callee, &mut read);
                 }
                 for arg in args {

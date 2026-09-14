@@ -11,14 +11,14 @@ context for the 0.9.5 intake and original phase order.
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
-| `docs/DECISIONS.md` | ADR-001..035 |
+| `docs/DECISIONS.md` | ADR-001..036 |
 | `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..015 are closed; ODR-003 is deferred editorial. `@latebound` implementation is now an H1 milestone, not an owner question |
 
 ---
 
 ## 1. State
 
-**Last committed implementation baseline:** `7bcca7f` on `main`, following
+**Last committed implementation baseline:** `8433479` on `main`, following
 `9ade1d0` for validated callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
@@ -27,7 +27,7 @@ at this checkpoint. Always run `git status` and `git log -1` instead of
 treating this sentence as live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
 
-    200 tests green      cargo test --workspace
+    210 tests green      cargo test --workspace
     0 warnings           cargo build          <- keep it there
     6 gates green:
       python tools/hardening_check.py      no undeclared change to the specification
@@ -38,9 +38,9 @@ treating this sentence as live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 123 top-level conformance rule directories, 412 `.em` files including support
- modules. 86 defects recorded, **none open**.
- **4 open deviations** (D1–D4; D5 and D6 closed 2026-09-10).
+ 133 top-level conformance rule directories, 468 `.em` files including support
+ modules. 95 defects recorded, **none open**.
+ **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
 compiler/runtime/conformance work is now complete. **ERR-051 / ODR-010 is
@@ -156,9 +156,9 @@ target is **v0.9.7_Hardened_1**. Two numbers move independently:
   file has outrun its header and the decision has not been made.
 
 `LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` currently accepts
-the exact `"0.9"`, `"0.9.5"`, and `"0.9.6"` selectors plus the supported 0.8
-contracts. H1 specifies `"0.9.7"`, but recognition is implementation work and
-not evidence of adoption by itself.
+the exact `"0.9"`, `"0.9.5"`, `"0.9.6"`, and `"0.9.7"` selectors plus the
+supported 0.8 contracts. Selector recognition is implementation evidence, not
+adoption by itself.
 `docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the frozen adopted snapshot.
 The current development lineage first diffed H1 against immutable H10, H2
 against immutable H1, H3 against immutable H2, H4 against immutable H3, and
@@ -242,13 +242,15 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. The H1 callable-boundary implementation is next
+## 5. The H1 callable-boundary precision matrix is next
 
-**Exact next task: implement `@latebound` according to
-`MIGRATION-0.9.7.md`, before starting unrelated Phase 2 matrices.** Preserve
-the ordinary-library status of `std.borrow.with_views*`; carry one compiler-only
-callable-boundary fact through parsing, canonical typing, EMIF, and region
-analysis; and use existing escape diagnostics. Do not invent named lifetimes,
+**The first `@latebound` slice is implemented and verified in the current
+worktree.** Continue according to `MIGRATION-0.9.7.md`, before starting
+unrelated Phase 2 matrices. Preserve the ordinary-library status of
+`std.borrow.with_views*`; extend the compiler-only callable-boundary fact
+through the remaining freshness, static-independent-result, FFI, and
+separate-compilation cases; owned-capture publication now has direct negative
+coverage. Use existing escape diagnostics. Do not invent named lifetimes,
 runtime/ABI metadata, global callback inference, or a name-specific compiler
 special case.
 

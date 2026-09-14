@@ -418,7 +418,15 @@ pub enum TypeKind {
     /// `*T` / `*mut T`.
     Ptr { mutable: bool, inner: Box<TypeExpr> },
     Tuple(Vec<TypeExpr>),
-    Fn { abi: Option<String>, params: Vec<CallableTypeParam>, ret: Option<Box<TypeExpr>> },
+    /// A callable type, optionally at a late-bound callback boundary. The
+    /// modifier belongs to this type, never to the function declaration that
+    /// supplies a value for it (`[FN-6b]`).
+    Fn {
+        abi: Option<String>,
+        latebound: bool,
+        params: Vec<CallableTypeParam>,
+        ret: Option<Box<TypeExpr>>,
+    },
     Dyn(Vec<TypeExpr>),
     /// `[T; N]`.
     Array { elem: Box<TypeExpr>, len: Box<Expr> },

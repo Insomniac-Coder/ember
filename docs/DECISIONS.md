@@ -1258,7 +1258,18 @@ the compiler must not recognize those names specially.
 
 **Version and evidence treatment.** This changes accepted/rejected callback
 programs, so H6 remains immutable and `0.9.7_Hardened_1` is the owner-selected
-language-revision successor. The target is specified, not implemented or
-adopted. Required evidence begins with the `with_views2(..., first)` escape
-reproducer and continues through freshness, nested-boundary, mutable, storage,
-owned-capture, FFI-publication, EMIF, and generated-code-erasure cases.
+language-revision successor. The target is not adopted. The current compiler
+checkpoint implements and verifies the first slice: the minimal
+`with_views2(..., first)` escape reproducer, mutable and lambda result escape,
+nested scalar composition and view-escape rejection, EMIF
+identity/invalidation, and generated-code erasure. Freshness, statically
+independent results, and FFI-publication cases remain required evidence before
+adoption; owned-capture publication now has a direct negative conformance case.
+
+**Implementation status note — 2026-09-14 (non-normative).** The callable
+modifier now survives parsing, canonical type identity, callable bounds,
+substitution, expected-callable coercion, HIR/MIR calls, and EMIF schema 7.
+Region analysis records compiler-only invocation-specific late-bound origins
+and the existing E3062/E3063 checks reject return and unbounded-Box escapes.
+This note records repository evidence only; it does not amend the owner ruling
+or install H1 as the adopted specification.

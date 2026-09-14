@@ -52,8 +52,13 @@ Arena-backed collection contract; and H3 records the public hashing contract.
 H8/H9/H10/H1/H2/H3/H4 implementation remains incomplete as a whole, but its
 Arena core, wrapper provenance, initialization, `[TST-23]`, generic-method,
 Arena-collection, hashing, and UnsafeCell slices now have executable evidence.
-H1's `@latebound` implementation and conformance matrix are implementation/conformance work, not
-owner questions. Other gaps are likewise implementation/conformance work.
+H1's `@latebound` implementation and remaining conformance matrix are
+implementation/conformance work, not owner questions. The current worktree
+has verified the first `@latebound` slice, including nested scalar composition,
+nested view-escape rejection, and owned-capture publication rejection;
+static-independent-result, freshness, FFI, and separate-compilation evidence
+remain implementation work. Other gaps are likewise implementation/conformance
+work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
@@ -96,9 +101,10 @@ editorial cleanup that can safely wait.
     Blocks normative specification adoption: implementation evidence still required
     Requires owner semantic decision: NO
 
-**Minimal reproduction.** The ordinary generic `std.borrow.with_views2`
-wrapper can forward views and preserve callable modes, but this program is
-currently accepted even though `[LT-10]` requires rejection:
+**Historical minimal reproduction.** The ordinary generic
+`std.borrow.with_views2` wrapper can forward views and preserve callable modes.
+Before the current implementation it accepted the following program even
+though `[LT-10]` requires rejection:
 
 ```ember
 from std.borrow import with_views2
@@ -114,10 +120,9 @@ fn main():
     escaped: Span[i32] = with_views2(a.as_span(), b.as_span(), first)
 ```
 
-The result remains memory-safe under today's source-region propagation, but it
-violates the target's intentionally stricter invocation-local contract. This
-is an implementation/adoption gap, not evidence that `[LT-10]` should be
-weakened.
+The current compiler rejects this case with `E3062`, and the executable
+conformance case remains as regression evidence. The earlier acceptance was an
+implementation/adoption gap, not evidence that `[LT-10]` should be weakened.
 
 **Historical alternatives rejected by the owner.**
 

@@ -163,7 +163,7 @@ pub fn check_all_with_installed_callable_regions(
     let invalid_result_bodies =
         infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts);
     let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
+        FuncRef::Direct { symbol, .. } => methods.contains(symbol.as_str()),
         _ => false,
     };
     for body in &*bodies {
@@ -220,6 +220,7 @@ fn contracts_from_metadata(
                 CallRegionContract {
                     access: metadata.access.clone(),
                     result,
+                    latebound: false,
                 },
             )
         })
@@ -331,7 +332,7 @@ fn capture_temporary_uses(
                 if dest.local == local {
                     uses.push(CaptureTemporaryUse::Other);
                 }
-                if let FuncRef::Indirect(operand) = func {
+                if let FuncRef::Indirect { operand, .. } = func {
                     capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses);
                 }
                 for operand in args {
@@ -544,7 +545,7 @@ fn verify_closure_environments(
 /// field-to-source summary.
 fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elision {
     match func {
-        FuncRef::Direct { symbol } => signatures
+        FuncRef::Direct { symbol, .. } => signatures
             .get(symbol.as_str())
             .cloned()
             .unwrap_or(Elision::Everything),
@@ -591,14 +592,15 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // reasoning applies to regions too: nothing is known about the
         // callee, so the permissive reading of `[LT-1]` rule 3 is taken
         // and the result is treated as borrowing every view argument.
-        FuncRef::Indirect(_) => Elision::Everything,
+        FuncRef::Indirect { .. } => Elision::Everything,
     }
 }
 
-fn conservative_contract(elision: Elision) -> CallRegionContract {
+fn conservative_contract(elision: Elision, latebound: bool) -> CallRegionContract {
     CallRegionContract {
         access: CallAccessContract::All,
         result: CallResultContract::Legacy(elision),
+        latebound,
     }
 }
 
@@ -607,15 +609,19 @@ fn contract_for(
     summaries: &HashMap<String, CallRegionContract>,
     signatures: &HashMap<String, Elision>,
 ) -> CallRegionContract {
-    if let FuncRef::Direct { symbol } = func
+    if let FuncRef::Direct { symbol, .. } = func
         && let Some(summary) = summaries.get(symbol.as_str())
     {
-        return summary.clone();
+        let mut summary = summary.clone();
+        summary.latebound = matches!(func, FuncRef::Direct { latebound: true, .. });
+        return summary;
     }
     if let Some(contract) = builtin_contract(func) {
         return contract;
     }
-    conservative_contract(legacy_elision(func, signatures))
+    let latebound = matches!(func, FuncRef::Indirect { latebound: true, .. })
+        || matches!(func, FuncRef::Direct { latebound: true, .. });
+    conservative_contract(legacy_elision(func, signatures), latebound)
 }
 
 /// Compiler-known calls whose multi-field result provenance is part of their
@@ -641,6 +647,7 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
         result: CallResultContract::Fields(ResultProvenanceSummary {
             fields: vec![field(0), field(1)],
         }),
+        latebound: false,
     })
 }
 
@@ -711,6 +718,7 @@ fn inferred_callable_summary(
             Some(summary) => CallResultContract::Fields(summary),
             None => CallResultContract::Legacy(elision_of(body, types)),
         },
+        latebound: false,
     }
 }
 
@@ -792,7 +800,7 @@ fn infer_invalid_result_bodies(
         if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
             !matches!(
                 func,
-                FuncRef::Direct { symbol } if known.contains(symbol.as_str())
+                FuncRef::Direct { symbol, .. } if known.contains(symbol.as_str())
             )
         }) {
             invalid.insert(body.symbol.clone());
@@ -809,7 +817,7 @@ fn infer_invalid_result_bodies(
             if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
                 matches!(
                     func,
-                    FuncRef::Direct { symbol } if invalid.contains(symbol.as_str())
+                FuncRef::Direct { symbol, .. } if invalid.contains(symbol.as_str())
                 )
             }) {
                 invalid.insert(body.symbol.clone());
@@ -905,6 +913,23 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
     if return_regions.is_empty() {
         return;
     }
+    if return_regions.iter().any(|slot| {
+        regions
+            .origins(slot.region)
+            .iter()
+            .any(|origin| matches!(origin, Origin::LateBound { .. }))
+    }) {
+        sink.emit_classified(
+            Diagnostic::error(
+                codes::E3062,
+                body.span,
+                "a `@latebound` callback result contains an invocation-local view region",
+            )
+            .primary_label("the callback-local view would escape here")
+            .help("return an owned value, or keep callback-local views inside the callback invocation")
+            .note("a `@latebound` callable receives fresh invocation-local regions that cannot escape its boundary (FN-6b, LT-7, LT-10)"),
+        );
+    }
     let allowed = allowed_origins(body, types);
     let Some(span) = body
         .blocks
@@ -993,7 +1018,7 @@ fn check_multi_result_summary(
             || matches!(call_contract(func).result, CallResultContract::Fields(_))
             || matches!(
                 func,
-                FuncRef::Direct { symbol } if invalid_result_bodies.contains(symbol.as_str())
+                FuncRef::Direct { symbol, .. } if invalid_result_bodies.contains(symbol.as_str())
             )
         {
             continue;
@@ -1088,7 +1113,7 @@ fn check_owned_closure_argument_regions(
     sink: &mut Sink,
 ) {
     for (block_index, block) in body.blocks.iter().enumerate() {
-        let Terminator::Call { func: FuncRef::Direct { symbol }, args, .. } = &block.terminator
+        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } = &block.terminator
         else {
             continue;
         };
@@ -1195,7 +1220,7 @@ fn check_owned_closure_capture_regions(
 
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol } => {
+        FuncRef::Direct { symbol, .. } => {
             symbol.as_str() == body.symbol.as_str() && is_method_body(body)
         }
         _ => false,
@@ -1203,7 +1228,7 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     check_body(
         body,
         types,
-        &|_| conservative_contract(Elision::Everything),
+        &|_| conservative_contract(Elision::Everything, false),
         &HashMap::new(),
         &HashSet::new(),
         &HashSet::new(),
@@ -2661,6 +2686,7 @@ mod callable_region_metadata_tests {
                 terminator: Terminator::Call {
                     func: FuncRef::Direct {
                         symbol: "empty".to_string(),
+                        latebound: false,
                     },
                     args: Vec::new(),
                     dest: Place::local(ember_mir::RETURN_LOCAL),

@@ -83,6 +83,9 @@ pub struct CallableDeclarationCallableBound {
     pub parameters: Vec<FnParam>,
     pub result: Ty,
     pub once: bool,
+    /// `[FN-6b]` — whether this hidden callable boundary creates fresh
+    /// invocation-local callback regions.
+    pub latebound: bool,
 }
 
 /// The checker result separates executable HIR from the source declaration
@@ -230,6 +233,9 @@ struct CallableBound {
     /// bounded by `Callable`." Calling a `CallableOnce` consumes it, so a
     /// second call is `E3040` under `[OWN-3]` with no analysis of its own.
     once: bool,
+    /// `[FN-6b]` — the callable-type boundary fact, distinct from the outer
+    /// parameter mode that selects `Callable` versus `CallableOnce`.
+    latebound: bool,
 }
 
 /// The callable capability a concrete closure environment provides. The
@@ -522,6 +528,10 @@ struct Checker<'a> {
     /// Callable parameters retain their source spelling for diagnostics after
     /// monomorphisation replaces a `fn(...)` bound with a private closure type.
     callable_parameter_locals: HashSet<LocalId>,
+    /// The expected callable boundary may be late-bound even after a generic
+    /// parameter has been monomorphized to a concrete function or closure
+    /// type. Keep that source-level fact alongside the local identity.
+    latebound_callable_parameter_locals: HashSet<LocalId>,
     /// While checking the second and later alternatives of an `|` pattern:
     /// the locals the first alternative bound, which they must reuse.
     or_bindings: Option<HashMap<Symbol, LocalId>>,
@@ -597,6 +607,7 @@ impl<'a> Checker<'a> {
             borrowed_params: HashSet::new(),
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
+            latebound_callable_parameter_locals: HashSet::new(),
             or_bindings: None,
             loop_labels: Vec::new(),
             in_defer: false,
@@ -1149,12 +1160,13 @@ impl<'a> Checker<'a> {
         index_base: usize,
     ) -> Ty {
         let resolved = self.resolve_type(ty);
-        let TyKind::Fn { params, ret } = self.types.kind(resolved) else { return resolved };
+        let TyKind::Fn { latebound, params, ret } = self.types.kind(resolved) else { return resolved };
         let bound = CallableBound {
             params: params.clone(),
             ret: *ret,
             // `[CLO-6]` — the mode already selects the bound.
             once: mode == ast::Mode::Owned,
+            latebound: *latebound,
         };
         let index = (index_base + generics.len()) as u32;
         let name = Symbol::intern(&format!("Callable{index}"));
@@ -1303,6 +1315,7 @@ impl<'a> Checker<'a> {
                             parameters: bound.params.clone(),
                             result: bound.ret,
                             once: bound.once,
+                            latebound: bound.latebound,
                         }
                     }),
                 })
@@ -2739,7 +2752,7 @@ impl<'a> Checker<'a> {
             // type; they coerce to `fn(A) -> R`". The written type is the
             // coercion target, which every named function fits and which
             // `[CLO-3]`'s closure parameter is a generic over.
-            ast::TypeKind::Fn { abi, params, ret } => {
+            ast::TypeKind::Fn { abi, latebound, params, ret } => {
                 if abi.is_some() {
                     // `extern "C" fn(…)` is `[FFI-9]`'s raw function pointer,
                     // which arrives with the rest of the boundary in Phase 5.
@@ -2761,7 +2774,7 @@ impl<'a> Checker<'a> {
                     .as_ref()
                     .map(|t| self.resolve_type(t))
                     .unwrap_or(self.common.void);
-                self.types.intern(TyKind::Fn { params, ret })
+                self.types.intern(TyKind::Fn { latebound: *latebound, params, ret })
             }
             ast::TypeKind::Array { elem, len } => {
                 let elem = self.resolve_type(elem);
@@ -3500,7 +3513,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -3509,7 +3522,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 let ret = self.substitute_ty(ret, args);
-                self.types.intern(TyKind::Fn { params, ret })
+                self.types.intern(TyKind::Fn { latebound, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
@@ -3585,6 +3598,7 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
+            latebound: bound.latebound,
         });
         GenericParam { name: param.name, bounds: param.bounds.clone(), callable }
     }
@@ -4071,7 +4085,7 @@ impl<'a> Checker<'a> {
                 | TyKind::Vec { elem: inner }
                 | TyKind::Span { elem: inner, .. } => visit(this, *inner, seen),
                 TyKind::Tuple(items) => items.iter().any(|&item| visit(this, item, seen)),
-                TyKind::Fn { params, ret } => {
+                TyKind::Fn { params, ret, .. } => {
                     params.iter().any(|param| visit(this, param.ty, seen))
                         || visit(this, *ret, seen)
                 }
@@ -4509,6 +4523,9 @@ impl<'a> Checker<'a> {
                     self.locals = Vec::new();
                     self.scopes = vec![HashMap::new()];
                     self.borrowed_params.clear();
+                    self.callable_once_locals.clear();
+                    self.callable_parameter_locals.clear();
+                    self.latebound_callable_parameter_locals.clear();
                     self.ret_ty = self.signatures[def.0 as usize].ret;
                     let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
                         [def.0 as usize]
@@ -4516,7 +4533,9 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|(n, t, m, s)| (*n, *t, *m, *s))
                         .collect();
-                    for (name, ty, mode, param_span) in signature_params.iter().copied() {
+                    for (index, (name, ty, mode, param_span)) in
+                        signature_params.iter().copied().enumerate()
+                    {
                         let local_ty = match mode {
                             Mode::Mut => self.mut_param_ty(ty),
                             _ => ty,
@@ -4524,6 +4543,15 @@ impl<'a> Checker<'a> {
                         let local = self.declare(Some(name), local_ty, param_span);
                         if mode == Mode::Borrow {
                             self.borrowed_params.insert(local);
+                        }
+                        if decl.params.get(index).is_some_and(is_owned_callable_param) {
+                            self.callable_once_locals.insert(local);
+                        }
+                        if decl.params.get(index).is_some_and(is_callable_param) {
+                            self.callable_parameter_locals.insert(local);
+                        }
+                        if decl.params.get(index).is_some_and(is_latebound_callable_param) {
+                            self.latebound_callable_parameter_locals.insert(local);
                         }
                     }
                     if self.in_static_safe
@@ -4907,6 +4935,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.borrowed_params.clear();
         self.callable_once_locals.clear();
         self.callable_parameter_locals.clear();
+        self.latebound_callable_parameter_locals.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -4933,6 +4962,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if decl.params.get(index).is_some_and(is_callable_param) {
                 self.callable_parameter_locals.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_latebound_callable_param) {
+                self.latebound_callable_parameter_locals.insert(local);
             }
             params.push(Param { local, mode });
         }
@@ -5128,6 +5160,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.borrowed_params.clear();
         self.callable_once_locals.clear();
         self.callable_parameter_locals.clear();
+        self.latebound_callable_parameter_locals.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -5154,6 +5187,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if decl.params.get(index).is_some_and(is_callable_param) {
                 self.callable_parameter_locals.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_latebound_callable_param) {
+                self.latebound_callable_parameter_locals.insert(local);
             }
             params.push(Param { local, mode });
         }
@@ -6579,6 +6615,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     kind: ExprKind::Call {
                         callee: def,
                         args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
+                        latebound: false,
                     },
                     span: iter.span,
                 },
@@ -6825,6 +6862,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn coerce(&mut self, expr: Expr, expected: Ty) -> Expr {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
+        }
+        // `[FN-6b]` — the boundary owns the late-bound fact. An ordinary
+        // function value may therefore be supplied to an expected
+        // `@latebound fn(...)` type without changing the function value's
+        // ordinary identity or declaration semantics. The resulting HIR type
+        // is the expected boundary so calls through a local retain it.
+        if let (
+            TyKind::Fn { latebound: false, params: found_params, ret: found_ret },
+            TyKind::Fn { latebound: true, params: expected_params, ret: expected_ret },
+        ) = (self.types.kind(expr.ty), self.types.kind(expected))
+            && found_params.len() == expected_params.len()
+            && found_params
+                .iter()
+                .zip(expected_params)
+                .all(|(found, wanted)| found.mode == wanted.mode && found.ty == wanted.ty)
+            && found_ret == expected_ret
+        {
+            return Expr { ty: expected, ..expr };
         }
         // `!` coerces to every type (`[TYP-4]` table).
         if expr.ty == self.common.never {
@@ -7817,7 +7872,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let value = self.read_local_expecting(local, callee.span, None);
                     if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
                         let consumes_callee = self.callable_once_locals.contains(&local);
-                        return self.synth_indirect_call(value, args, span, consumes_callee);
+                        let latebound =
+                            self.latebound_callable_parameter_locals.contains(&local);
+                        return self.synth_indirect_call(
+                            value,
+                            args,
+                            span,
+                            consumes_callee,
+                            latebound,
+                        );
                     }
                     // `[CLO-3]` — inside a generic body a `fn(A) -> R`
                     // parameter is opaque, and what makes it callable is its
@@ -7826,7 +7889,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     // permitted, and calling it is what `Callable` provides.
                     if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
                         let callee = Expr { ty: fn_ty, ..value };
-                        return self.synth_indirect_call(callee, args, span, consumes_callee);
+                        return self.synth_indirect_call(callee, args, span, consumes_callee, false);
                     }
                     // `[CLO-1]` — a capturing closure is an anonymous struct,
                     // and calling one is a **direct** call to its body with the
@@ -7838,7 +7901,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     // what lets `[COST-3]` report a direct call.
                     if let TyKind::Struct(id) = *self.types.kind(value.ty) {
                         if self.closure_calls.contains_key(&id) {
-                            return self.synth_closure_call(value, id, args, span);
+                            let latebound =
+                                self.latebound_callable_parameter_locals.contains(&local);
+                            return self.synth_closure_call(value, id, args, span, latebound);
                         }
                     }
                 }
@@ -8168,7 +8233,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .zip(signature.iter())
             .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
             .collect();
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// `f[i32]` writes its type argument in expression position, so the
@@ -8484,7 +8553,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         let ret = self.substitute_ty(ret, &substitution);
-        Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: instance, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// `[TYP-18]` for a source-defined method. Inference, bound checks and
@@ -8659,7 +8732,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         let ret = self.substitute_ty(ret, &substitution);
-        Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: instance, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// `[CLO-6]` — `fn(A) -> R` is an implicit `Callable` bound, while
@@ -8720,6 +8797,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         id: StructId,
         args: &[ast::Arg],
         span: Span,
+        latebound: bool,
     ) -> Expr {
         let closure = self.closure_calls[&id];
         let def = closure.def;
@@ -8743,7 +8821,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
             call_args.push(self.check_argument(&arg.value, param_ty, mode));
         }
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: call_args }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: call_args, latebound },
+            span,
+        }
     }
 
     /// The signature an opaque generic parameter may be called with, read from
@@ -8752,7 +8834,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn callable_bound_of(&mut self, ty: Ty) -> Option<(Ty, bool)> {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
-        let signature = self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret });
+        let signature = self.types.intern(TyKind::Fn {
+            latebound: bound.latebound,
+            params: bound.params,
+            ret: bound.ret,
+        });
         Some((signature, bound.once))
     }
 
@@ -8785,7 +8871,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return true;
         };
         let actual_signature = match self.types.kind(actual).clone() {
-            TyKind::Fn { params, ret } => Some((params, ret)),
+            TyKind::Fn { params, ret, .. } => Some((params, ret)),
             // A concrete capturing closure's value is its environment, not a
             // `fn` pointer. Its generated call body nevertheless has the
             // same canonical callable signature after the environment
@@ -8866,7 +8952,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect();
         let ret = self.substitute_ty(bound.ret, &substitution);
-        Some(self.types.intern(TyKind::Fn { params, ret }))
+        Some(self.types.intern(TyKind::Fn {
+            latebound: bound.latebound,
+            params,
+            ret,
+        }))
     }
 
     /// Synthesise an expression that may want to know what is expected of it.
@@ -9131,7 +9221,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .zip(signature.iter())
             .map(|(arg, &(param_ty, mode))| self.check_argument(&arg.value, param_ty, mode))
             .collect();
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// The enum an expression names, if it is a bare path naming one. A local
@@ -9297,7 +9391,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .zip(signature)
             .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
             .collect();
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// Resolve `T.make(...)` inside a generic body from `T`'s declared
@@ -9400,7 +9498,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .zip(signature)
             .map(|(arg, (ty, mode))| self.check_argument(&arg.value, ty, mode))
             .collect();
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// `[MOD-2]` — **the one place a field's visibility is checked.**
@@ -10190,7 +10292,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
             checked.push(self.check_argument(&arg.value, param_ty, mode));
         }
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// `[TYP-17]` — a method call on a generic parameter. Only the interfaces
@@ -10306,7 +10412,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter()) {
             checked.push(self.check_argument(&arg.value, param_ty, mode));
         }
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: checked, latebound: false },
+            span,
+        }
     }
 
     /// The compiler-known methods on `Array[T]` and `String`.
@@ -10317,10 +10427,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
         consumes_callee: bool,
+        latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { params, ret } = self.types.kind(callee.ty).clone() else {
+        let TyKind::Fn { latebound, params, ret } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
+        let latebound = latebound || latebound_override;
         if args.len() != params.len() {
             let shown = self.types.display(callee.ty);
             self.error(
@@ -10349,6 +10461,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 callee: Box::new(callee),
                 args: checked,
                 consumes_callee,
+                latebound,
             },
             span,
         }
@@ -10369,7 +10482,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `E2061`".
     fn synth_lambda(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
         let wanted = expected.and_then(|ty| match self.types.kind(ty) {
-            TyKind::Fn { params, ret } => Some((params.clone(), *ret)),
+            TyKind::Fn { params, ret, .. } => Some((params.clone(), *ret)),
             _ => None,
         });
 
@@ -10484,6 +10597,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let ret = ret.unwrap_or(body_ty);
             let def = self.push_closure(&params, ret, locals, body, None, span);
             let ty = self.types.intern(TyKind::Fn {
+                latebound: false,
                 params: params
                     .iter()
                     .map(|(_, t, mode, _)| FnParam {
@@ -10690,6 +10804,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let outer_callable_once_locals = std::mem::take(&mut self.callable_once_locals);
         let outer_callable_parameter_locals =
             std::mem::take(&mut self.callable_parameter_locals);
+        let outer_latebound_callable_parameter_locals =
+            std::mem::take(&mut self.latebound_callable_parameter_locals);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
@@ -10745,6 +10861,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.borrowed_params = outer_borrowed_params;
         self.callable_once_locals = outer_callable_once_locals;
         self.callable_parameter_locals = outer_callable_parameter_locals;
+        self.latebound_callable_parameter_locals = outer_latebound_callable_parameter_locals;
         self.ret_ty = outer_ret;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
@@ -11076,7 +11193,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         match &expr.kind {
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 let Some(signature) = self.signatures.get(callee.0 as usize) else {
                     return args
                         .iter()
@@ -11090,7 +11207,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.closure_expr_moves_capture(argument, environment, consuming)
                 })
             }
-            ExprKind::CallIndirect { callee, args, consumes_callee } => {
+            ExprKind::CallIndirect { callee, args, consumes_callee, .. } => {
                 self.closure_expr_moves_capture(callee, environment, *consumes_callee)
                     || args
                         .iter()
@@ -11253,7 +11370,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect();
         let ret = signature.ret;
-        let ty = self.types.intern(TyKind::Fn { params, ret });
+        let ty = self.types.intern(TyKind::Fn { latebound: false, params, ret });
         Some(Expr { ty, kind: ExprKind::FnValue(def), span })
     }
 
@@ -11703,6 +11820,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return error;
                 }
                 let fn_ty = self.types.intern(TyKind::Fn {
+                    latebound: false,
                     params: vec![FnParam { ty: inner, mode: FnParamMode::Borrow }],
                     ret: inner,
                 });
@@ -13943,7 +14061,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let rhs = self.coerce(rhs, signature[1].0);
         let receiver = self.pass_receiver(lhs, receiver_mode, span);
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: vec![receiver, rhs] }, span }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, args: vec![receiver, rhs], latebound: false },
+            span,
+        }
     }
 
     /// `[RNG-5]`/`[RNG-5a1]` — what an operator does when a range type is one
@@ -14571,6 +14693,23 @@ fn is_callable_param(param: &ast::Param) -> bool {
     matches!(
         param.kind,
         ast::ParamKind::Named { ty: ast::TypeExpr { kind: ast::TypeKind::Fn { .. }, .. }, .. }
+    )
+}
+
+/// `[FN-6b]` — identify a callable parameter whose expected type explicitly
+/// owns a late-bound callback boundary. This source fact must survive generic
+/// monomorphization, where the parameter's resolved type is no longer a
+/// `TyKind::Param` carrying the original bound.
+fn is_latebound_callable_param(param: &ast::Param) -> bool {
+    matches!(
+        param.kind,
+        ast::ParamKind::Named {
+            ty: ast::TypeExpr {
+                kind: ast::TypeKind::Fn { latebound: true, .. },
+                ..
+            },
+            ..
+        }
     )
 }
 

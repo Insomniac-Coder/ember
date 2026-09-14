@@ -513,7 +513,7 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
         let span = block.terminator_span;
         match &block.terminator {
             Terminator::Call { func, args, .. } => {
-                if let ember_mir::FuncRef::Indirect(operand) = func {
+                if let ember_mir::FuncRef::Indirect { operand, .. } = func {
                     check_operand(operand, span, &mut report);
                 }
                 for arg in args {
@@ -724,7 +724,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         let span = block.terminator_span;
         match &block.terminator {
             Terminator::Call { func, args, .. } => {
-                if let ember_mir::FuncRef::Indirect(operand) = func {
+                if let ember_mir::FuncRef::Indirect { operand, .. } = func {
                     check_operand(operand, span, &mut report);
                 }
                 for arg in args {
@@ -835,7 +835,7 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
         // `owned f: fn(...)` form, so it participates alongside arguments.
         if let Terminator::Call { func, args, .. } = &block.terminator {
             let mut moved = Vec::new();
-            if let ember_mir::FuncRef::Indirect(callee) = func {
+            if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
                 moved_by_operand(callee, &mut moved);
             }
             for arg in args {
@@ -940,7 +940,7 @@ fn step_terminator(
 
     let mut read = Vec::new();
     let mut push = |place: &Place| read.push(place.clone());
-    if let ember_mir::FuncRef::Indirect(callee) = func {
+    if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
         read_by_operand(callee, &mut push);
     }
     for arg in args {
@@ -955,7 +955,7 @@ fn step_terminator(
         }
     }
     let mut moved = Vec::new();
-    if let ember_mir::FuncRef::Indirect(callee) = func {
+    if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
         moved_by_operand(callee, &mut moved);
     }
     for arg in args {

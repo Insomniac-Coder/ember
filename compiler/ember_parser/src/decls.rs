@@ -926,6 +926,29 @@ impl Parser<'_> {
         let start = self.span();
         let id = self.next_id();
 
+        // `[FN-6b]` — `@latebound` is a modifier on the following callable
+        // type, not an item attribute. Keep it in this parser so ordinary
+        // declaration attributes cannot accidentally acquire its meaning.
+        let latebound = if self.at_punct(Punct::At)
+            && matches!(self.peek_at(1), TokenKind::Ident(name) if name.is("latebound"))
+        {
+            self.bump();
+            self.bump();
+            if !matches!(self.peek(), TokenKind::Keyword(Kw::Fn | Kw::Extern)) {
+                self.report(
+                    Diagnostic::error(
+                        codes::E0100,
+                        self.span(),
+                        "`@latebound` must modify a callable type",
+                    )
+                    .primary_label("expected `fn` or `extern` `fn` after `@latebound`"),
+                );
+            }
+            true
+        } else {
+            false
+        };
+
         let kind = match self.peek() {
             TokenKind::Keyword(Kw::Ref) => {
                 self.bump();
@@ -1014,7 +1037,7 @@ impl Parser<'_> {
                 }
                 self.expect_punct(Punct::RParen);
                 let ret = self.eat_punct(Punct::Arrow).then(|| Box::new(self.parse_type()));
-                TypeKind::Fn { abi, params, ret }
+                TypeKind::Fn { abi, latebound, params, ret }
             }
             _ => {
                 let segments = self.parse_dotted_path();

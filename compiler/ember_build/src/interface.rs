@@ -24,7 +24,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 6 records parameter modes in implicit generic Callable bounds.
 // Earlier records erased `fn(mut T)` and `fn(owned T)` at the import boundary,
 // so they cannot safely participate in `[FN-6a]` checking.
-const SCHEMA_VERSION: u32 = 6;
+// Schema 7 records the `[FN-6b]` late-bound callable-boundary fact. A schema 6
+// record cannot safely be reused for a callback whose invocation-local region
+// behavior is part of its canonical type identity.
+const SCHEMA_VERSION: u32 = 7;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -80,6 +83,7 @@ pub struct CallableGenericCallableBound {
     pub parameters: Vec<CallableParameter>,
     pub result: String,
     pub once: bool,
+    pub latebound: bool,
 }
 
 /// The resolved, monomorphic callable facts currently available at the EMIF
@@ -678,6 +682,7 @@ fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
                 }
                 push_string(out, &callable.result);
                 out.push(u8::from(callable.once));
+                out.push(u8::from(callable.latebound));
             }
             None => out.push(0),
         }
@@ -763,10 +768,16 @@ fn read_callable_signature(
                     1 => true,
                     _ => return Err(InterfaceArtifactError::NonCanonical),
                 };
+                let latebound = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(InterfaceArtifactError::NonCanonical),
+                };
                 Some(CallableGenericCallableBound {
                     parameters,
                     result,
                     once,
+                    latebound,
                 })
             }
             _ => return Err(InterfaceArtifactError::NonCanonical),
@@ -1038,7 +1049,18 @@ mod tests {
                 ty: parameter_ty.to_string(),
             }],
             result: "Span[i32]".to_string(),
-            generics: Vec::new(),
+            generics: vec![CallableGenericParameter {
+                bounds: Vec::new(),
+                callable: Some(CallableGenericCallableBound {
+                    parameters: vec![CallableParameter {
+                        mode: CallableParameterMode::Borrow,
+                        ty: "Span[i32]".to_string(),
+                    }],
+                    result: "i32".to_string(),
+                    once: false,
+                    latebound: true,
+                }),
+            }],
             borrows: Some(vec![0]),
             is_unsafe: false,
             abi: None,
@@ -1054,7 +1076,7 @@ mod tests {
         ModuleInterfaceInput {
             module: module.to_string(),
             source: source.to_string(),
-            language_version: "0.9.6".to_string(),
+            language_version: "0.9.7".to_string(),
             package_config: "profile=debug".to_string(),
             direct_dependencies: dependencies
                 .iter()
@@ -1075,6 +1097,8 @@ mod tests {
         let artifacts = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
         let decoded = round_trip_artifacts(&artifacts).unwrap();
         assert_eq!(decoded, artifacts);
+        let callable = decoded[0].callables.values().next().unwrap();
+        assert!(callable.signature.generics[0].callable.as_ref().unwrap().latebound);
     }
 
     #[test]
@@ -1119,6 +1143,41 @@ mod tests {
         let mut changed_dependency = input("dep", "dep", &[], 0);
         changed_dependency.callables[0].contract.signature.parameters[0].mode =
             CallableParameterMode::Owned;
+        let after = build_artifacts(
+            &[input("root", "root", &["dep"], 0), changed_dependency],
+            "test",
+        )
+        .unwrap();
+        let before_root = before
+            .iter()
+            .find(|artifact| artifact.module == "root")
+            .unwrap();
+        let after_root = after
+            .iter()
+            .find(|artifact| artifact.module == "root")
+            .unwrap();
+        assert_ne!(before_root.cache_key, after_root.cache_key);
+    }
+
+    #[test]
+    fn changing_a_callable_boundary_invalidates_the_callers_cache_key() {
+        let before = build_artifacts(
+            &[
+                input("root", "root", &["dep"], 0),
+                input("dep", "dep", &[], 0),
+            ],
+            "test",
+        )
+        .unwrap();
+        let mut changed_dependency = input("dep", "dep", &[], 0);
+        changed_dependency.callables[0]
+            .contract
+            .signature
+            .generics[0]
+            .callable
+            .as_mut()
+            .unwrap()
+            .latebound = false;
         let after = build_artifacts(
             &[input("root", "root", &["dep"], 0), changed_dependency],
             "test",

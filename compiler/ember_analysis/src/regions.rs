@@ -73,6 +73,11 @@ pub enum Origin {
     /// A borrow of something the frame owns. `[LT-3]`'s `static` region is not
     /// this: a literal borrows nothing and has no origin at all.
     Local(LocalId),
+    /// A value produced across an `@latebound` callable boundary. The call
+    /// point and callback argument identify the fresh invocation-local region
+    /// that must not escape the invocation. This is compiler-only provenance;
+    /// it is never a runtime region or ABI fact.
+    LateBound { call: Point, argument: usize },
 }
 
 /// `[LT-14]`–`[LT-20]` — one compile-time region slot carried by a view
@@ -111,6 +116,10 @@ pub enum CallResultContract {
 pub struct CallRegionContract {
     pub access: CallAccessContract,
     pub result: CallResultContract,
+    /// Whether this call crosses an expected `@latebound` callable boundary.
+    /// The modifier belongs to the callable type at the call site and is not
+    /// part of runtime metadata.
+    pub latebound: bool,
 }
 
 impl CallRegionContract {
@@ -422,6 +431,7 @@ impl Regions {
                 body,
                 types,
                 state,
+                point,
                 func,
                 args,
                 dest,
@@ -611,12 +621,21 @@ impl Regions {
         body: &Body,
         types: &TypeTable,
         state: &mut [ValueFact],
-        _point: Point,
+        point: Point,
         terminator: &Terminator,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) {
         if let Terminator::Call { func, args, dest, .. } = terminator {
-            let assignments = self.call_result_facts(body, types, state, func, args, dest, call_contract);
+            let assignments = self.call_result_facts(
+                body,
+                types,
+                state,
+                point,
+                func,
+                args,
+                dest,
+                call_contract,
+            );
             self.install_facts(state, &self.assigned_place_regions(dest), assignments);
         }
     }
@@ -720,6 +739,7 @@ impl Regions {
         body: &Body,
         types: &TypeTable,
         state: &[ValueFact],
+        point: Point,
         func: &FuncRef,
         args: &[Operand],
         destination: &Place,
@@ -727,7 +747,8 @@ impl Regions {
     ) -> HashMap<RegionVid, ValueFact> {
         let destinations = self.assigned_place_regions(destination);
         let mut result = HashMap::new();
-        match call_contract(func).result {
+        let contract = call_contract(func);
+        match contract.result {
             CallResultContract::Fields(summary) => {
                 for field in summary.fields {
                     let mut result_place = destination.clone();
@@ -786,6 +807,22 @@ impl Regions {
                 for destination in destinations {
                     result.insert(destination, fact.clone());
                 }
+            }
+        }
+        if contract.latebound && !result.is_empty() {
+            // Every borrowed/view callback argument gets its own invocation
+            // region. A result slot carrying any such fact is consequently
+            // invalid once the callback boundary returns. Keep one origin
+            // per argument so future field-sensitive checking can preserve
+            // the distinction rather than collapsing all callback inputs.
+            let callback_regions = args
+                .iter()
+                .enumerate()
+                .filter(|(_, argument)| !self.operand_regions(argument).is_empty())
+                .map(|(argument, _)| Origin::LateBound { call: point, argument })
+                .collect::<Vec<_>>();
+            for fact in result.values_mut() {
+                fact.origins.extend(callback_regions.iter().copied());
             }
         }
         result

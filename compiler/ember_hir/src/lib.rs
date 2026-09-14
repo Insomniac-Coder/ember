@@ -189,8 +189,11 @@ pub enum ExprKind {
     Local(LocalId),
     /// Field access by resolved index, not by name.
     Field { base: Box<Expr>, index: usize },
-    /// A direct call to a known function.
-    Call { callee: DefId, args: Vec<Expr> },
+    /// A direct call to a known function. `latebound` is set when a
+    /// monomorphized callable parameter is statically dispatched to a known
+    /// closure body; it preserves the expected callable boundary for region
+    /// analysis even though the runtime call is direct.
+    Call { callee: DefId, args: Vec<Expr>, latebound: bool },
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
@@ -198,7 +201,15 @@ pub enum ExprKind {
     /// `owned f: fn(...) -> R` parameter is `CallableOnce`, so this records
     /// that the callee itself must be consumed; its argument modes remain the
     /// callable type's own modes.
-    CallIndirect { callee: Box<Expr>, args: Vec<Expr>, consumes_callee: bool },
+    CallIndirect {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        consumes_callee: bool,
+        /// `[FN-6b]` — this call crosses an explicitly late-bound callable
+        /// boundary and therefore gets fresh invocation-local regions in
+        /// region analysis. It is compile-time metadata only.
+        latebound: bool,
+    },
     /// `Vec3(1, 2, 3)` — the memberwise constructor (`[STR-1]`). Arguments are
     /// in declaration order with defaults already filled in.
     StructLit { struct_id: StructId, fields: Vec<Expr> },
@@ -920,15 +931,17 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Field { base, index } => {
             format!("{}.{index}", dump_expr(base, function, types))
         }
-        ExprKind::Call { callee, args } => {
+        ExprKind::Call { callee, args, latebound } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
-            format!("call#{}({})", callee.0, inner.join(", "))
+            let boundary = if *latebound { "@latebound " } else { "" };
+            format!("{boundary}call#{}({})", callee.0, inner.join(", "))
         }
         ExprKind::FnValue(def) => format!("fn#{}", def.0),
-        ExprKind::CallIndirect { callee, args, consumes_callee } => {
+        ExprKind::CallIndirect { callee, args, consumes_callee, latebound } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             let mode = if *consumes_callee { "owned " } else { "" };
-            format!("{mode}({})({})", dump_expr(callee, function, types), inner.join(", "))
+            let boundary = if *latebound { "@latebound " } else { "" };
+            format!("{boundary}{mode}({})({})", dump_expr(callee, function, types), inner.join(", "))
         }
         ExprKind::StructLit { struct_id, fields } => {
             let inner: Vec<String> = fields.iter().map(|f| dump_expr(f, function, types)).collect();
