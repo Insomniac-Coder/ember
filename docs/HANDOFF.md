@@ -5653,6 +5653,9 @@ the current constructor-shape boundary. Loops, whole-`self` use, inheritance,
 defaulted fields, and other unsupported forms remain fail-closed with E1010;
 the implementation does not infer or weaken `[CLS-2]` semantics. The new
 run-pass fixture covers both exhaustive enum arms and observes the initialized
-field after construction. This is implementation-only progress: Phase 2 is
-active, Phase 3 has not passed its exit gate, and phase accounting remains
-exactly **1 of 9 complete**.
+field after construction. An adversarial compile-fail fixture assigns different
+fields in different arms and confirms that the post-match join reports both
+fields as not definitely initialized; this prevents sequential-arm state
+leakage from masquerading as path coverage. This is implementation-only
+progress: Phase 2 is active, Phase 3 has not passed its exit gate, and phase
+accounting remains exactly **1 of 9 complete**.
