@@ -5885,3 +5885,24 @@ base destructor, including generated-C ordering and all three profiles. This
 is implementation-only progress: no specification, ADR, adopted source, or
 diagnostic semantics changed; Phase 2 is active, Phase 3 has not passed its
 exit gate, and phase accounting remains exactly **1 of 9 complete**.
+
+### 0.98 Phase 3 class-valued field method receivers and class visibility — 2026-09-14
+
+Calls such as `holder.child.bump()` are now admitted when the receiver is a
+class-valued field and the method declares `mut self`. The receiver is passed
+through the ordinary mutable-place pipeline; the containing class field gets
+the caller-side long-term access interval, while the callee's own class
+receiver gets its method-duration interval. No new aliasing or ownership model
+was introduced, and unrelated non-place or indexed class-object cases remain
+fail-closed.
+
+During this slice, review also fixed a real `[MOD-7]` implementation defect:
+the class-field branch in the shared write checker made its own class
+`pub(read)` visibility check unreachable. Class fields now receive the same
+E1050 enforcement as struct fields for assignment, `ref mut`, mutable
+arguments, and mutable method receivers from outside the declaring module.
+The new MOD-7 companion fixture is intentionally cross-module and proves that
+the class receiver path cannot bypass read-only visibility. This is
+implementation-only progress: no specification, ADR, adopted source, or
+diagnostic semantics changed; Phase 2 is active, Phase 3 has not passed its
+exit gate, and phase accounting remains exactly **1 of 9 complete**.

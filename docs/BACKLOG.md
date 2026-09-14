@@ -113,6 +113,15 @@ that chain and keeps derived-before-base field order. Defaulted derived
 construction, dynamic exclusivity, dispatch, generic classes, and the complete
 Phase 3 conformance matrix remain outstanding.
 
+`OBJ-RT-1` continuation: class-valued field receivers can now invoke a
+`mut self` method through the ordinary mutable-place call pipeline, with the
+containing object and callee receiver protected by their respective access
+boundaries. The shared write checker also now enforces class `pub(read)`
+visibility from outside the declaring module; the previous class branch had
+made that check unreachable. These are implementation-only continuations;
+static elision, indexed access sharing, dispatch, generic classes, and the
+complete Phase 3 matrix remain open.
+
 The constructor dataflow also covers `while`/`for` `else` blocks. The `else`
 path is checked from the join of loop entry and body state, preserving the
 zero-iteration case; a body-only initialization fact cannot make a field

@@ -10841,7 +10841,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         loop {
             match &current.kind {
                 ExprKind::Field { base, index } => {
-                    if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
+                    if let TyKind::Class(id) = *self.types.kind(base.ty) {
                         if self.class_init_field_index(place).is_none()
                             && self.class_method_field_index(current).is_none()
                             && !(allow_class_mut_argument && self.class_mut_argument_supported(place))
@@ -10853,6 +10853,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 span,
                                 "mutable class-field access requires a `mut self` class method in this phase",
                             );
+                        }
+                        if let Some((owner_id, field)) = self.types.class_field_at_info(id, *index) {
+                            if field.read_only_outside
+                                && self.types.class_def(owner_id).declaring_module
+                                    != self.current_module
+                            {
+                                let owner = self.types.class_def(owner_id).name.to_string();
+                                let field = field.name.to_string();
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E1050,
+                                        span,
+                                        format!("`{owner}.{field}` is read-only outside its module"),
+                                    )
+                                    .primary_label("written here".to_string())
+                                    .help(format!(
+                                        "`{owner}` declares `{field}` as `pub(read)`: anyone may read it, and only `{owner}`'s own module may write it"
+                                    ))
+                                    .note(
+                                        "a method on the declaring type is the way to change it from outside [MOD-7]",
+                                    ),
+                                );
+                            }
                         }
                     } else if let TyKind::Struct(id) = *self.types.kind(base.ty) {
                         let def = self.types.struct_def(id);
@@ -10876,30 +10899,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     .note(
                                         "a method on the declaring type is the way to change it \
                                          from outside [MOD-7]",
-                                    ),
-                                );
-                            }
-                        }
-                    } else if let TyKind::Class(id) = *self.types.kind(base.ty) {
-                        if let Some((owner_id, field)) = self.types.class_field_at_info(id, *index) {
-                            if field.read_only_outside
-                                && self.types.class_def(owner_id).declaring_module
-                                    != self.current_module
-                            {
-                                let owner = self.types.class_def(owner_id).name.to_string();
-                                let field = field.name.to_string();
-                                self.sink.emit(
-                                    Diagnostic::error(
-                                        codes::E1050,
-                                        span,
-                                        format!("`{owner}.{field}` is read-only outside its module"),
-                                    )
-                                    .primary_label("written here".to_string())
-                                    .help(format!(
-                                        "`{owner}` declares `{field}` as `pub(read)`: anyone may read it, and only `{owner}`'s own module may write it"
-                                    ))
-                                    .note(
-                                        "a method on the declaring type is the way to change it from outside [MOD-7]",
                                     ),
                                 );
                             }
@@ -15146,7 +15145,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if mode != Mode::Mut {
             return receiver;
         }
-        self.reject_readonly_write(&receiver, span);
+        // `[EXC-1]` — a class-valued field receiver is a long-term mutable
+        // access at the call boundary, just like passing a scalar class field
+        // to a `mut` parameter. The direct method body still opens the access
+        // interval for the actual receiver object; the caller-side argument
+        // machinery protects the containing class field while its handle is
+        // borrowed.
+        self.reject_readonly_write_in_mut_argument(&receiver, span);
         let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
         if !through_shared_ref {
             self.reject_borrowed_parameter_write(&receiver, span, false);
