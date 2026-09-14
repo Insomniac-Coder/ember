@@ -434,7 +434,9 @@ body, which produced no MIR and falsely passed. D-125 records that test defect.
 This is the standing coverage rule in executable form: a directory named after
 a rule does not prove that the rule is exercised. Nested scalar composition,
 nested view escape, and a statically independent callback result are also
-covered directly; the remaining freshness, FFI, and separate-compilation
+covered directly. Separate sequential invocations now prove that callback-local
+borrows do not leak into later source reuse, and a local explicitly typed
+`@latebound` function-value escape reaches `E3062`. FFI and separate-compilation
 precision cases remain implementation work.
 
 ## 4. Known implementation gaps

@@ -289,13 +289,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, and the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, extended by `6ccb873` (`Preserve static results across latebound callbacks`). H1 remains a frozen development target, not the adopted repository-normative source |
-| Recent commits | `6ccb873` preserved statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
-| Working tree | Clean after the verified `6ccb873` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, and `24ae0af`'s separate-invocation/local-callback regressions. H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Working tree | Clean after the verified `24ae0af` checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 133 top-level rule directories, 470 `.em` files including support modules; the focused and full conformance runner is green after static-independent callback-result coverage was added (2026-09-14) |
+| Conformance | 133 top-level rule directories, 472 `.em` files including support modules; the focused and full conformance runner is green after static-independent callback-result and separate-invocation coverage was added (2026-09-14) |
 | Ledgers | 95 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
@@ -3560,6 +3560,33 @@ the full conformance runner passes; `cargo build --workspace` is warning-free;
 and `cargo test --workspace` passes all 210 tests. The test build retains one
 pre-existing non-snake-case warning. `cargo fmt --all -- --check` remains
 unrelated broad repository formatting drift and is not an adoption gate.
+
+### 0.65 Late-bound invocation regression matrix — 2026-09-14
+
+`24ae0af` adds two executable boundary cases without changing the frozen
+specification. `accept_latebound_separate_invocations.em` invokes the same
+all-mutable `@latebound` helper twice, with the first invocation's owned scalar
+result live while the second invocation reborrows and mutates both source
+arrays. It prints `7`, `10`, `5`, `5`, proving that callback-local borrows do
+not leak into a later invocation or prevent ordinary reuse of the sources.
+
+`reject_latebound_local_callback_view_escape.em` assigns a capture-free
+function to a local explicitly typed `@latebound fn` and then attempts to
+publish its returned `Span`; it reaches the required `E3062`. This pins the
+fail-closed indirect/local-function-value path, where the compiler does not
+have a specialized body summary at the call site. The earlier invalid probe
+that attempted to return a mixed `@view struct` through `with_views2` was
+discarded: `[LT-10]` requires the entire result of a late-bound invocation to
+be free of invocation-local view regions, even if a caller would later select
+an independent field. No compiler or specification defect was found in that
+probe.
+
+The full conformance runner passes across 133 rule directories and 472 Ember
+sources after this checkpoint. FFI publication and true separate-compilation
+precision remain future work; unknown indirect paths remain conservative and
+safe. The next H1 work must continue to use minimal adversarial programs and
+must not infer semantics from an uninstantiated or otherwise unreachable test
+body.
 
 ## The task list — where to begin
 
