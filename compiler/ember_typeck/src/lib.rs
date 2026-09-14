@@ -11440,20 +11440,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let def = entry.def;
         let receiver_mode = entry.receiver;
 
-        // A `mut self` method currently borrows the caller's handle slot.
-        // Upcasting that slot from `Derived*` to `Base*` would allow an
-        // inherited method to replace a derived handle with a base handle.
-        // Keep this boundary rejected until dynamic class exclusivity and
-        // ownership lowering can represent the operation safely.
         let inherited = !self.methods.contains_key(&(receiver.ty, name.name));
-        if inherited && receiver_mode == Mode::Mut {
-            self.error(
-                codes::E2020,
-                name.span,
-                "mutable inherited class methods are not implemented yet in this phase",
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
         if receiver_mode != Mode::Mut {
             if let Some((_, receiver_ty, _, _)) = self.signatures[def.0 as usize].params.first() {
                 // The base receiver is the first parameter of the inherited
@@ -11527,7 +11514,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
         let ret = self.resolve_assoc(ret, receiver.ty);
-        let mut checked = vec![self.pass_receiver(receiver, receiver_mode, recv.span)];
+        let checked_receiver = self.pass_receiver(receiver, receiver_mode, recv.span);
+        let checked_receiver = if inherited && receiver_mode == Mode::Mut {
+            // `[CLS-4]` — an inherited mutable method operates on the same
+            // object through the base receiver type.  The receiver is already
+            // a mutable borrow of the derived place; adapt that borrow, not
+            // the owning class handle, so no retain or ownership transfer is
+            // introduced by the upcast.
+            if let Some((_, receiver_ty, _, _)) = self.signatures[def.0 as usize].params.first() {
+                let expected = self.types.intern(TyKind::Ref {
+                    mutable: true,
+                    inner: *receiver_ty,
+                });
+                if checked_receiver.ty != expected {
+                    Expr {
+                        ty: expected,
+                        kind: ExprKind::Cast {
+                            expr: Box::new(checked_receiver),
+                            to: expected,
+                        },
+                        span: recv.span,
+                    }
+                } else {
+                    checked_receiver
+                }
+            } else {
+                checked_receiver
+            }
+        } else {
+            checked_receiver
+        };
+        let mut checked = vec![checked_receiver];
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
             checked.push(self.check_argument(&arg.value, param_ty, mode));
         }

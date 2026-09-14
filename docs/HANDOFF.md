@@ -5927,3 +5927,25 @@ must identify the intended generated operation, not merely a name that also
 appears in declarations or sibling adapters. Phase accounting remains exactly
 **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed its
 exit gate.
+
+### 0.100 Phase 3 inherited mutable method calls — 2026-09-14
+
+Derived class handles may now call an inherited `mut self` method through the
+ordinary static method-resolution path. The type checker forms the mutable
+borrow from the derived receiver place and adds a compiler-internal,
+borrow-preserving class upcast to the direct base receiver type. MIR lowers
+that adjustment as `ClassUpcastBorrowed`; code generation emits only the
+pointer-type cast, with no retain, because the operation borrows the existing
+object rather than copying an owning handle. This is static inherited method
+selection, not virtual/interface dispatch.
+
+The MIR view verifier explicitly recognizes this one provenance-preserving
+cast shape, while ordinary casts remain rejected as view manufacturers. The
+run-pass fixture `class_inherited_mut_method.em` exercises construction,
+inherited mutation, the base method call, all three profiles, and generated-C
+absence of a hidden retain. This slice preserves the existing dynamic access
+boundary and does not claim virtual/override dispatch, indexed class-object
+access, generic classes, static access elision, or the complete Phase 3
+exclusivity matrix. It is implementation-only progress: no specification,
+ADR, adopted source, or diagnostic semantics changed; phase accounting remains
+exactly **1 of 9 complete**.

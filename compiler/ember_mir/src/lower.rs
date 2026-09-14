@@ -4386,6 +4386,16 @@ impl<'a> Builder<'a> {
                     {
                         CastKind::ClassUpcast
                     }
+                    (TyKind::Ref { mutable: true, inner: derived }, TyKind::Ref { mutable: true, inner: base }) => {
+                        if let (TyKind::Class(derived), TyKind::Class(base)) =
+                            (self.types.kind(*derived), self.types.kind(*base))
+                            && self.types.class_is_subclass_of(*derived, *base)
+                        {
+                            CastKind::ClassUpcastBorrowed
+                        } else {
+                            CastKind::Numeric
+                        }
+                    }
                     _ => CastKind::Numeric,
                 };
                 Rvalue::Cast { kind, operand, to: *to }

@@ -571,6 +571,12 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 continue;
             }
             let manufactured = match rvalue {
+                // `[CLS-4]` — this is a borrow-preserving pointer adjustment
+                // from a derived class receiver to the base receiver of an
+                // inherited `mut self` method. Unlike numeric and owning
+                // class casts, it does not manufacture a view without a
+                // source loan.
+                Rvalue::Cast { kind: crate::CastKind::ClassUpcastBorrowed, .. } => None,
                 Rvalue::Cast { .. } => Some("a cast"),
                 Rvalue::BinaryOp { .. } => Some("an arithmetic operation"),
                 Rvalue::UnaryOp { .. } => Some("a unary operation"),
