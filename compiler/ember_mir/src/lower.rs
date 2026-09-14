@@ -428,8 +428,8 @@ impl<'a> Builder<'a> {
     }
 
     /// Find the nearest class-typed base of a mutable argument place. The
-    /// type checker admits only the same shape, so lowering never has to
-    /// evaluate an indexed class handle twice just to name its object header.
+    /// fallback path is used for access places with no side-effecting
+    /// projection; indexed roots use the single-evaluation helper below.
     fn class_access_base<'b>(&self, expr: &'b hir::Expr) -> Option<&'b hir::Expr> {
         match &expr.kind {
             hir::ExprKind::Field { base, .. }
@@ -459,6 +459,68 @@ impl<'a> Builder<'a> {
         };
         let hir::ExprKind::Ref { place, mutable: true } = &receiver.kind else { return None };
         self.class_access_base(place).map(|base| self.lower_place(base))
+    }
+
+    /// Return the number of HIR place projections between `expr` and its
+    /// nearest class-typed root. The corresponding MIR prefix identifies the
+    /// object whose dynamic exclusivity interval surrounds a mutable call
+    /// argument. Keeping this depth next to the already-lowered place is
+    /// important for `[EXP-1]`: an indexed handle must be bounds-checked and
+    /// evaluated exactly once, not once for the reference and again for the
+    /// runtime access object.
+    fn class_access_projection_depth(&self, expr: &'a hir::Expr) -> Option<usize> {
+        if matches!(self.types.kind(expr.ty), TyKind::Class(_)) {
+            return Some(0);
+        }
+        match &expr.kind {
+            hir::ExprKind::Field { base, .. }
+            | hir::ExprKind::Index { base, .. }
+            | hir::ExprKind::Deref(base) => {
+                self.class_access_projection_depth(base).map(|depth| depth + 1)
+            }
+            _ => None,
+        }
+    }
+
+    /// Lower a mutable call argument and, when it is rooted in a class
+    /// handle, derive the runtime access place from the exact MIR place used
+    /// to form the reference. This is the indexed-class counterpart to the
+    /// older side-effect-free access lookup.
+    fn lower_mut_argument_with_access(
+        &mut self,
+        expr: &'a hir::Expr,
+    ) -> (Operand, Option<Place>) {
+        let hir::ExprKind::Ref { place, mutable: true } = &expr.kind else {
+            let operand = self.lower_operand_borrowed(expr);
+            let access = self.class_access_for_mut_argument(expr);
+            return (operand, access);
+        };
+
+        let lowered_place = self.lower_place(place);
+        let temp = self.temp(expr.ty, expr.span);
+        self.push(StmtKind::StorageLive(temp));
+        self.push(StmtKind::Assign {
+            place: Place::local(temp),
+            rvalue: Rvalue::Ref { place: lowered_place.clone(), mutable: true },
+        });
+
+        let access = match self.class_access_projection_depth(place) {
+            // A class-valued field used as a method receiver retains the
+            // existing containing-object boundary: the callee opens the
+            // receiver object itself. In particular, this keeps
+            // `holder.child.bump()` from opening the same child twice.
+            Some(0) => self.class_access_for_mut_argument(expr),
+            Some(depth) => lowered_place
+                .projection
+                .len()
+                .checked_sub(depth)
+                .map(|prefix_len| Place {
+                    local: lowered_place.local,
+                    projection: lowered_place.projection[..prefix_len].to_vec(),
+                }),
+            None => None,
+        };
+        (Operand::Copy(Place::local(temp)), access)
     }
 
     fn lower_block(&mut self, block: &'a hir::Block) {
@@ -1611,15 +1673,18 @@ impl<'a> Builder<'a> {
                     (0..args.len()).map(|_| None).collect();
                 for index in eval_order {
                     let Some(a) = args.get(index) else { continue };
-                    let operand = match modes.get(index) {
-                        Some(hir::Mode::Owned) => self.lower_operand(a),
-                        _ => self.lower_operand_borrowed(a),
-                    };
-                    if matches!(modes.get(index), Some(hir::Mode::Mut)) {
-                        if let Some(place) = self.class_access_for_mut_argument(a) {
+                    let operand = if matches!(modes.get(index), Some(hir::Mode::Mut)) {
+                        let (operand, access) = self.lower_mut_argument_with_access(a);
+                        if let Some(place) = access {
                             class_accesses.push(place);
                         }
-                    }
+                        operand
+                    } else {
+                        match modes.get(index) {
+                            Some(hir::Mode::Owned) => self.lower_operand(a),
+                            _ => self.lower_operand_borrowed(a),
+                        }
+                    };
                     lowered_args[index] = Some(operand);
                 }
                 let args: Vec<Operand> = lowered_args.into_iter().flatten().collect();
@@ -1673,13 +1738,15 @@ impl<'a> Builder<'a> {
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        let operand = self.lower_operand_borrowed(a);
                         if matches!(callable_modes.as_ref().and_then(|modes| modes.get(index)), Some(ember_types::FnParamMode::Mut)) {
-                            if let Some(place) = self.class_access_for_mut_argument(a) {
+                            let (operand, access) = self.lower_mut_argument_with_access(a);
+                            if let Some(place) = access {
                                 class_accesses.push(place);
                             }
+                            operand
+                        } else {
+                            self.lower_operand_borrowed(a)
                         }
-                        operand
                     })
                     .collect();
                 for place in &class_accesses {

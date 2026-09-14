@@ -5931,13 +5931,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Return whether a mutable call argument has a class object whose access
     /// place the current MIR slice can identify without re-evaluating an
     /// indexed class handle. Array/collection projections rooted in a class
-    /// field are fine; an indexed class object remains fail-closed until its
-    /// bounds-checking evaluation can be shared with the access interval.
+    /// field are admitted when MIR can preserve the evaluated place for the
+    /// whole access interval.
     fn class_mut_argument_supported(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => {
                 if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
-                    !matches!(base.kind, ExprKind::Index { .. })
+                    true
                 } else {
                     self.class_mut_argument_supported(base)
                 }
