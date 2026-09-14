@@ -1767,6 +1767,14 @@ impl Emitter<'_> {
                 if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") }
             }
             TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
+            // Class handles are pointers to the compiler-generated object
+            // struct. The class object definition/constructor lowering is a
+            // later Phase 3 consumer; keeping the handle spelling here makes
+            // the type mapping explicit without pretending that class code
+            // can already be emitted end-to-end.
+            TyKind::Class(id) => {
+                format!("struct {RT}obj_{}*", c_name(&self.types.class_def(*id).name.to_string()))
+            }
             TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
             // `[COST-3]` — a range type is "not observable": erased to the
             // representation, with the construction site carrying the check.

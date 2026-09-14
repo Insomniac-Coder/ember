@@ -49,6 +49,10 @@ impl std::error::Error for CanonicalTypeError {}
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct StructId(pub u32);
 
+/// Index of a user-declared class in the type table.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ClassId(pub u32);
+
 /// Index of a user-declared enum in the type table.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EnumId(pub u32);
@@ -131,6 +135,12 @@ pub enum TyKind {
     /// reborrowable.
     Span { elem: Ty, mutable: bool },
     Struct(StructId),
+    /// A class value is a non-null counted handle. Its source-level type is
+    /// pointer-sized, but its allocation begins with an `ember_obj_header`
+    /// and is described by the corresponding `ClassDef`/`TypeInfo` record.
+    /// The distinction from `Ptr` is semantic: copying a class handle retains
+    /// and dropping one releases; it is not a raw-pointer operation.
+    Class(ClassId),
     Enum(EnumId),
     /// `[RNG-1]` — a **nominal** numeric type over a representation,
     /// restricted to a range. `[RNG-2]` makes two of them distinct types even
@@ -243,6 +253,38 @@ pub struct StructDef {
 }
 
 impl StructDef {
+    pub fn field(&self, name: Symbol) -> Option<(usize, &FieldDef)> {
+        self.fields.iter().enumerate().find(|(_, f)| f.name == name)
+    }
+}
+
+/// Whether a class may be extended or instantiated. This mirrors the AST
+/// openness without making `ember_types` depend on the parser crate.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ClassOpenness {
+    Final,
+    Open,
+    Abstract,
+}
+
+/// The compiler-side identity of a class declaration. The value type for a
+/// class is its counted handle; the fields here describe the heap object that
+/// handle addresses. Generic class instantiation remains a later consumer,
+/// but `origin` makes the identity model ready for the same nominal recipe
+/// used by generic structs.
+#[derive(Clone, Debug)]
+pub struct ClassDef {
+    pub name: Symbol,
+    pub fields: Vec<FieldDef>,
+    pub span: Span,
+    pub openness: ClassOpenness,
+    pub base: Option<ClassId>,
+    pub has_drop: bool,
+    pub origin: Option<(Symbol, Vec<Ty>)>,
+    pub declaring_module: usize,
+}
+
+impl ClassDef {
     pub fn field(&self, name: Symbol) -> Option<(usize, &FieldDef)> {
         self.fields.iter().enumerate().find(|(_, f)| f.name == name)
     }
@@ -372,6 +414,7 @@ pub struct TypeTable {
     kinds: Vec<TyKind>,
     lookup: HashMap<TyKind, Ty>,
     structs: Vec<StructDef>,
+    classes: Vec<ClassDef>,
     enums: Vec<EnumDef>,
     ranges: Vec<RangeDef>,
     next_infer: u32,
@@ -425,6 +468,7 @@ impl TypeTable {
             kinds: Vec::new(),
             lookup: HashMap::new(),
             structs: Vec::new(),
+            classes: Vec::new(),
             enums: Vec::new(),
             ranges: Vec::new(),
             next_infer: 0,
@@ -483,10 +527,21 @@ impl TypeTable {
             TyKind::Param { .. } => true,
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.is_generic(*inner),
             TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic(*elem),
+            TyKind::Span { elem, .. } => self.is_generic(*elem),
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic(t)),
             TyKind::Fn { params, ret, .. } => {
                 params.iter().any(|param| self.is_generic(param.ty)) || self.is_generic(*ret)
             }
+            TyKind::Struct(id) => self
+                .struct_def(*id)
+                .fields
+                .iter()
+                .any(|field| self.is_generic(field.ty)),
+            TyKind::Class(id) => self
+                .class_def(*id)
+                .fields
+                .iter()
+                .any(|field| self.is_generic(field.ty)),
             _ => false,
         }
     }
@@ -642,6 +697,19 @@ impl TypeTable {
                     _ => true,
                 }
             }
+            // A class handle is nominal just like a struct. Generic class
+            // recipes are not instantiated yet, but preserving this shape
+            // prevents class identity from collapsing into pointer identity.
+            (TyKind::Class(a), TyKind::Class(b)) => {
+                match (&self.class_def(a).origin, &self.class_def(b).origin) {
+                    (Some((na, aa)), Some((nb, ab))) if na == nb && aa.len() == ab.len() => {
+                        aa.iter()
+                            .zip(ab.iter())
+                            .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
+                    }
+                    _ => a == b,
+                }
+            }
             (TyKind::Tuple(a), TyKind::Tuple(b)) if a.len() == b.len() => {
                 a.iter()
                     .zip(b.iter())
@@ -692,6 +760,24 @@ impl TypeTable {
 
     pub fn structs(&self) -> impl Iterator<Item = (StructId, &StructDef)> {
         self.structs.iter().enumerate().map(|(i, d)| (StructId(i as u32), d))
+    }
+
+    pub fn add_class(&mut self, def: ClassDef) -> ClassId {
+        let id = ClassId(self.classes.len() as u32);
+        self.classes.push(def);
+        id
+    }
+
+    pub fn class_def(&self, id: ClassId) -> &ClassDef {
+        &self.classes[id.0 as usize]
+    }
+
+    pub fn class_def_mut(&mut self, id: ClassId) -> &mut ClassDef {
+        &mut self.classes[id.0 as usize]
+    }
+
+    pub fn classes(&self) -> impl Iterator<Item = (ClassId, &ClassDef)> {
+        self.classes.iter().enumerate().map(|(i, d)| (ClassId(i as u32), d))
     }
 
     /// `[RNG-2]` — every declaration gets its own id, so two range types
@@ -801,6 +887,10 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
+            // A class expression is a non-null handle. The heap object's
+            // header and fields are described by `ClassDef`, not by the
+            // source-level handle layout.
+            TyKind::Class(_) => Layout::scalar(self.pointer_size),
             TyKind::Enum(id) => self.enum_layout(*id),
             // `[RNG-8]` — a range type erases to its representation, so
             // it is laid out as one and crosses an FFI boundary as one.
@@ -887,6 +977,10 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.is_copy(f.ty))
             }
+            // `[OWN-7]` explicitly makes class handles Copy, with retain and
+            // release emitted by the ownership/codegen stages rather than a
+            // raw bitwise copy.
+            TyKind::Class(_) => true,
             // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
             // is only its discriminant. `[ENM-4]` — a payload enum needs
             // `@derive(Copy)`, like a struct.
@@ -939,6 +1033,9 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 !def.drops_fields && def.name.as_str().starts_with("MaybeUninit_")
             }
+            // A class handle is non-null; zero bytes cannot manufacture a
+            // valid live object handle.
+            TyKind::Class(_) => false,
             TyKind::Range(id) => {
                 let def = self.range_def(*id);
                 match (def.lo, def.hi) {
@@ -976,6 +1073,8 @@ impl TypeTable {
                 def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
+            // Dropping a class handle releases its strong reference.
+            TyKind::Class(_) => true,
             TyKind::Enum(id) => {
                 let def = self.enum_def(*id);
                 def.has_drop
@@ -1004,6 +1103,9 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().any(|f| self.is_view(f.ty))
             }
+            // The handle itself is not a view; a projected field may be a
+            // view and is classified when that field's type is inspected.
+            TyKind::Class(_) => false,
             TyKind::Enum(id) => self
                 .enum_def(*id)
                 .variants
@@ -1029,6 +1131,9 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().all(|f| self.is_ffi_safe(f.ty))
             }
+            // Class handles are owning runtime values, not `@layout(c)`
+            // value types. Opaque foreign handles have a separate boundary.
+            TyKind::Class(_) => false,
             _ => false,
         }
     }
@@ -1114,6 +1219,7 @@ impl TypeTable {
                 format!("{name}[{}]", self.display(*elem))
             }
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
+            TyKind::Class(id) => self.class_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Param { name, .. } => name.to_string(),
@@ -1207,6 +1313,7 @@ impl TypeTable {
                 self.canonical_name(*elem)?
             ),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
+            TyKind::Class(id) => self.class_def(*id).name.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Tuple(items) => {
@@ -1458,6 +1565,48 @@ mod tests {
         assert_eq!(layout.size, 12);
         assert_eq!(layout.align, 4);
         assert_eq!(layout.field_offsets, vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn class_identity_is_a_pointer_sized_counted_handle() {
+        // `[OBJ-1]`, `[OBJ-2]`, `[OWN-7]`, and `[DRP-6]`: the source-level
+        // class value is a handle, while the heap object's fields are not
+        // folded into the handle layout or mistaken for a raw pointer.
+        let (mut table, c) = TypeTable::new();
+        let base = table.add_class(ClassDef {
+            name: Symbol::intern("Entity"),
+            fields: vec![field("id", c.u64)],
+            span: Span::DUMMY,
+            openness: ClassOpenness::Open,
+            base: None,
+            has_drop: false,
+            origin: None,
+            declaring_module: 0,
+        });
+        let derived = table.add_class(ClassDef {
+            name: Symbol::intern("Player"),
+            fields: vec![field("health", c.f32)],
+            span: Span::DUMMY,
+            openness: ClassOpenness::Final,
+            base: Some(base),
+            has_drop: true,
+            origin: None,
+            declaring_module: 0,
+        });
+        let entity = table.intern(TyKind::Class(base));
+        let player = table.intern(TyKind::Class(derived));
+
+        assert_eq!(table.layout(player), Layout::scalar(8));
+        assert_eq!(table.display(player), "Player");
+        assert_eq!(table.canonical_name(player).unwrap(), "Player");
+        assert!(table.is_copy(entity));
+        assert!(table.is_copy(player));
+        assert!(table.needs_drop(entity));
+        assert!(table.needs_drop(player));
+        assert!(!table.is_view(player));
+        assert!(!table.is_ffi_safe(player));
+        assert!(!table.is_builtin_zeroable(player));
+        assert_ne!(entity, player, "distinct classes must not collapse to pointer identity");
     }
 
     #[test]
