@@ -128,6 +128,12 @@ counter, and non-mutating or distinct-object writes remain fail-closed. This
 does not claim static exclusivity/elision, inheritance/dispatch, or complete
 Phase 3 object semantics; those remain open work under the same backlog item.
 
+The call-boundary slice also admits a direct class-field place supplied to a
+`mut` parameter and emits a checked begin/end interval around the call. It is
+covered in all profiles. Indexed class-object roots, mutating methods invoked
+through class fields, instantaneous direct field writes, access elision, and
+the complete Phase 3 exclusivity matrix remain fail-closed or outstanding.
+
 ---
 
 ## Build order

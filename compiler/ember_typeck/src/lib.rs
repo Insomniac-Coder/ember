@@ -5894,6 +5894,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == owner).then_some(*index)
     }
 
+    /// Return whether a mutable call argument has a class object whose access
+    /// place the current MIR slice can identify without re-evaluating an
+    /// indexed class handle. Array/collection projections rooted in a class
+    /// field are fine; an indexed class object remains fail-closed until its
+    /// bounds-checking evaluation can be shared with the access interval.
+    fn class_mut_argument_supported(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => {
+                if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
+                    !matches!(base.kind, ExprKind::Index { .. })
+                } else {
+                    self.class_mut_argument_supported(base)
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
         let Some(state) = self.class_init.as_ref() else { return };
         if matches!(state.initialized.get(index), Some(ClassFieldInit::Init)) {
@@ -10701,6 +10719,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
+        self.reject_readonly_write_inner(place, span, false);
+    }
+
+    /// `[EXC-1]` — a class field passed to a `mut` parameter is a permitted
+    /// long-term access at the call boundary. It is not an ordinary direct
+    /// assignment, so the caller's MIR lowering will surround the call with
+    /// the runtime access interval.
+    fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
+        self.reject_readonly_write_inner(place, span, true);
+    }
+
+    fn reject_readonly_write_inner(
+        &mut self,
+        place: &Expr,
+        span: Span,
+        allow_class_mut_argument: bool,
+    ) {
         let mut current = place;
         loop {
             match &current.kind {
@@ -10708,6 +10743,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
                         if self.class_init_field_index(place).is_none()
                             && self.class_method_field_index(current).is_none()
+                            && !(allow_class_mut_argument && self.class_mut_argument_supported(place))
                         {
                             self.error(
                                 codes::E1010,
@@ -14980,7 +15016,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let place = self.check_expr(arg, param_ty);
         // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`
         // method" is a write.
-        self.reject_readonly_write(&place, arg.span);
+        self.reject_readonly_write_in_mut_argument(&place, arg.span);
         let through_shared_ref = self.reject_write_through_shared_ref(&place, arg.span);
         if !through_shared_ref {
             self.reject_borrowed_parameter_write(&place, arg.span, false);

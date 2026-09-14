@@ -5787,3 +5787,25 @@ has not passed its exit gate, and phase accounting remains exactly
 **1 of 9 complete**. Static access elision, complete shared/weak access
 semantics, dispatch, inheritance, and the remaining Phase 3 conformance
 matrix are still outstanding.
+
+### 0.94 Phase 3 class-field `mut` call access — 2026-09-14
+
+The call boundary for a `mut` parameter now admits a class-field place, such
+as `increment(slot.value)`, and lowers the call with an explicit dynamic write
+access on the nearest class object. The access begins after argument-place
+evaluation and ends immediately after the call, with multiple access places
+closed in reverse order. Direct class-field assignments remain a separate
+instantaneous/ownership boundary; indexed class objects are still fail-closed
+until their bounds-check evaluation can be shared with the access interval.
+
+Direct and indirect calls use the callable/function parameter modes already
+present in HIR and MIR; no second callable ownership model was introduced.
+Analysis and code generation continue to treat the access statements as
+runtime checks rather than static loans. The all-profile run-pass fixture
+observes the mutation and asserts both generated access calls. This is
+implementation-only progress: no specification, ADR, adopted source, or
+diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed its
+exit gate, and phase accounting remains exactly **1 of 9 complete**. Accesses
+through mutating class methods on class fields, instantaneous direct class
+field writes, static access elision, and the remaining object/concurrency
+semantics are still open.

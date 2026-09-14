@@ -418,6 +418,29 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Find the nearest class-typed base of a mutable argument place. The
+    /// type checker admits only the same shape, so lowering never has to
+    /// evaluate an indexed class handle twice just to name its object header.
+    fn class_access_base<'b>(&self, expr: &'b hir::Expr) -> Option<&'b hir::Expr> {
+        match &expr.kind {
+            hir::ExprKind::Field { base, .. }
+            | hir::ExprKind::Index { base, .. }
+            | hir::ExprKind::Deref(base) => {
+                if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
+                    (!matches!(base.kind, hir::ExprKind::Index { .. })).then_some(base.as_ref())
+                } else {
+                    self.class_access_base(base)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn class_access_for_mut_argument(&mut self, expr: &'a hir::Expr) -> Option<Place> {
+        let hir::ExprKind::Ref { place, mutable: true } = &expr.kind else { return None };
+        self.class_access_base(place).map(|base| self.lower_place(base))
+    }
+
     fn lower_block(&mut self, block: &'a hir::Block) {
         let mark = self.defers.len();
         let owned_mark = self.owned.len();
@@ -1560,14 +1583,26 @@ impl<'a> Builder<'a> {
                 // from block A: every argument was borrowed, so an `owned`
                 // parameter silently did not take ownership.
                 let modes: Vec<hir::Mode> = function.params.iter().map(|p| p.mode).collect();
+                let mut class_accesses = Vec::new();
                 let args: Vec<Operand> = args
                     .iter()
                     .enumerate()
-                    .map(|(index, a)| match modes.get(index) {
-                        Some(hir::Mode::Owned) => self.lower_operand(a),
-                        _ => self.lower_operand_borrowed(a),
+                    .map(|(index, a)| {
+                        let operand = match modes.get(index) {
+                            Some(hir::Mode::Owned) => self.lower_operand(a),
+                            _ => self.lower_operand_borrowed(a),
+                        };
+                        if matches!(modes.get(index), Some(hir::Mode::Mut)) {
+                            if let Some(place) = self.class_access_for_mut_argument(a) {
+                                class_accesses.push(place);
+                            }
+                        }
+                        operand
                     })
                     .collect();
+                for place in &class_accesses {
+                    self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
+                }
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Direct { symbol, latebound: *latebound },
@@ -1576,6 +1611,9 @@ impl<'a> Builder<'a> {
                     next,
                 });
                 self.current = next;
+                for place in class_accesses.into_iter().rev() {
+                    self.push(StmtKind::EndAccess { place, mutable: true });
+                }
             }
             // `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two
             // compares and a branch, building `Ok(v)` or `Err(OutOfRange)`.
@@ -1603,8 +1641,27 @@ impl<'a> Builder<'a> {
                 } else {
                     self.lower_operand_borrowed(callee)
                 };
-                let args: Vec<Operand> =
-                    args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
+                let callable_modes = match self.types.kind(callee.ty) {
+                    TyKind::Fn { params, .. } => Some(params.iter().map(|param| param.mode).collect::<Vec<_>>()),
+                    _ => None,
+                };
+                let mut class_accesses = Vec::new();
+                let args: Vec<Operand> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, a)| {
+                        let operand = self.lower_operand_borrowed(a);
+                        if matches!(callable_modes.as_ref().and_then(|modes| modes.get(index)), Some(ember_types::FnParamMode::Mut)) {
+                            if let Some(place) = self.class_access_for_mut_argument(a) {
+                                class_accesses.push(place);
+                            }
+                        }
+                        operand
+                    })
+                    .collect();
+                for place in &class_accesses {
+                    self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
+                }
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Indirect { operand: callee_op, latebound: *latebound },
@@ -1613,6 +1670,9 @@ impl<'a> Builder<'a> {
                     next,
                 });
                 self.current = next;
+                for place in class_accesses.into_iter().rev() {
+                    self.push(StmtKind::EndAccess { place, mutable: true });
+                }
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::ClassNew { class_id, init },
