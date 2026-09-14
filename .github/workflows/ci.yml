@@ -83,6 +83,10 @@ jobs:
       # name and extensions are spelled in `ember_branding` and nowhere else.
       - name: no hard-coded project names
         run: python tools/check_branding.py
+      - name: generated runtime matches its branding source
+        run: python tools/generate_runtime.py --check
+      - name: runtime generator regression
+        run: python tools/test_runtime_generation.py
 
       # `[TST-7]` — every fenced `ember` block in Parts I-XVII and Appendix A
       # passes `ember check --syntax-only`, against a recorded baseline of the
