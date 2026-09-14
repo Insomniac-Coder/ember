@@ -3724,8 +3724,8 @@ language change or a new closure mechanism. It raises the executable catalogue
 from 17 to 18 of the 25 code-keyed ownership shapes. The seven remaining
 shapes are still intentionally deferred until their real closure, class,
 disjointness, effect, or concurrency producers exist; no test-only diagnostic
-was fabricated. The focused UI test passed, and the next full regression must
-retain the exact snapshot and compiling repair.
+was fabricated. The focused UI test, full workspace regression, and all six
+repository gates pass with the exact snapshot and compiling repair retained.
 
 ## The task list — where to begin
 
