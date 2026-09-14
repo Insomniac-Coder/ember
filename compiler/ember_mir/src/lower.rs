@@ -1697,11 +1697,22 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
             }
+            hir::ExprKind::ClassNew { class_id, init, arg_eval_order, args } => {
+                self.lower_class_new(
+                    place,
+                    *class_id,
+                    Some(*init),
+                    args,
+                    arg_eval_order.as_deref(),
+                    expr.ty,
+                    expr.span,
+                );
+            }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::ClassNew { class_id, init },
                 args,
             } => {
-                self.lower_class_new(place, *class_id, *init, args, expr.ty, expr.span);
+                self.lower_class_new(place, *class_id, *init, args, None, expr.ty, expr.span);
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::ClassSuperInit { base_id, base_ty, init },
@@ -4591,6 +4602,7 @@ impl<'a> Builder<'a> {
         class_id: ember_types::ClassId,
         init: Option<hir::DefId>,
         args: &'a [hir::Expr],
+        arg_eval_order: Option<&[usize]>,
         ty: Ty,
         span: ember_span::Span,
     ) {
@@ -4619,14 +4631,22 @@ impl<'a> Builder<'a> {
                 place: Place::local(receiver),
                 rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
             });
-            let mut call_args = vec![Operand::Copy(Place::local(receiver))];
-            for (arg, param) in args.iter().zip(function.params.iter().skip(1)) {
+            let eval_order = arg_eval_order
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
+            let mut lowered_args: Vec<Option<Operand>> =
+                (0..args.len()).map(|_| None).collect();
+            for index in eval_order {
+                let Some(arg) = args.get(index) else { continue };
+                let Some(param) = function.params.get(index + 1) else { continue };
                 let operand = match param.mode {
                     hir::Mode::Owned => self.lower_operand(arg),
                     _ => self.lower_operand_borrowed(arg),
                 };
-                call_args.push(operand);
+                lowered_args[index] = Some(operand);
             }
+            let mut call_args = vec![Operand::Copy(Place::local(receiver))];
+            call_args.extend(lowered_args.into_iter().flatten());
             let next = self.new_block();
             let sink = self.temp(self.void_ty, span);
             self.terminate(Terminator::Call {

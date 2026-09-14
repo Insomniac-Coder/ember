@@ -190,10 +190,13 @@ elision, generic classes, and the complete Phase 3 matrix remain open.
 `OBJ-RT-1` continuation: memberwise classes now accept named field arguments in
 the same way as memberwise structs, including out-of-order field selection and
 duplicate-field diagnostics. `class_named_memberwise_construct.em` covers the
-new path in all profiles. Named arguments for user-defined class `init` remain
-fail-closed because parameter binding there is a separate implementation slice;
-virtual/interface dispatch, indexed access sharing, static elision, generic
-classes, and the complete Phase 3 matrix remain open.
+new path in all profiles. User-defined class `init` now reuses the same
+named-parameter binder, including source-order evaluation metadata for
+out-of-order arguments; `class_named_init_construct.em` and its compile-fail
+companion cover the positive, evaluation-order, unknown-name, duplicate, and
+positional-after-named boundaries. Virtual/interface dispatch, indexed access
+sharing, static elision, generic classes, and the complete Phase 3 matrix
+remain open.
 
 The direct-call argument boundary is now also implemented under `[TYP-25]`:
 ordinary, qualified, associated, inherited-bound, generic, and generic-method
@@ -203,10 +206,10 @@ positional-after-named arguments remain diagnostics, and duplicate parameters
 are rejected. Function-value calls intentionally remain positional because
 callable types do not carry source parameter names. `named_function_arguments.em`,
 `named_method_arguments.em`, and the compile-fail rejection fixture provide
-adversarial coverage. User-defined class-`init` named construction is still a
-separate fail-closed gap; virtual/interface dispatch, indexed access sharing,
-static access elision, generic classes, and the complete Phase 3 conformance
-matrix remain open.
+adversarial coverage. User-defined class-`init` construction is covered by the
+class-specific positive and negative fixtures above; virtual/interface
+dispatch, indexed access sharing, static access elision, generic classes, and
+the complete Phase 3 conformance matrix remain open.
 
 ---
 

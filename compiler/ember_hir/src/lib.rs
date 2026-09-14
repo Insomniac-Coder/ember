@@ -268,6 +268,16 @@ pub enum ExprKind {
     EraseRange(Box<Expr>),
     /// A call the compiler knows about directly, before `std` exists.
     Builtin { which: Builtin, args: Vec<Expr> },
+    /// `[CLS-1]` — allocate a class object and invoke its checked constructor.
+    /// The arguments are stored in constructor-parameter order; when source
+    /// named arguments were out of order, `arg_eval_order` tells MIR how to
+    /// materialize them without changing `[EXP-1]` source evaluation order.
+    ClassNew {
+        class_id: ClassId,
+        init: DefId,
+        arg_eval_order: Option<Vec<usize>>,
+        args: Vec<Expr>,
+    },
     /// A subexpression that failed to check. Absorbs errors.
     Error,
 }
@@ -993,6 +1003,10 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Builtin { which, args } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             format!("{}({})", which.name(), inner.join(", "))
+        }
+        ExprKind::ClassNew { class_id, args, .. } => {
+            let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
+            format!("class#{}({})", class_id.0, inner.join(", "))
         }
         ExprKind::TupleLit(items) => {
             let inner: Vec<String> = items.iter().map(|e| dump_expr(e, function, types)).collect();

@@ -12451,6 +12451,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.collect_mutated_capture_fields_expr(arg, environment, fields);
                 }
             }
+            ExprKind::ClassNew { args, .. } => {
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
             ExprKind::CallIndirect { callee, args, .. } => {
                 self.collect_mutated_capture_fields_expr(callee, environment, fields);
                 for arg in args {
@@ -12639,6 +12644,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     Self::builtin_consumes_argument(*which, index),
                 )
             }),
+            ExprKind::ClassNew { init, args, .. } => {
+                let Some(signature) = self.signatures.get(init.0 as usize) else {
+                    return args
+                        .iter()
+                        .any(|argument| self.closure_expr_moves_capture(argument, environment, false));
+                };
+                args.iter().enumerate().any(|(index, argument)| {
+                    let consuming = signature
+                        .params
+                        .get(index + 1)
+                        .is_some_and(|(_, _, mode, _)| *mode == Mode::Owned);
+                    self.closure_expr_moves_capture(argument, environment, consuming)
+                })
+            }
             ExprKind::Field { base, .. }
             | ExprKind::Deref(base)
             | ExprKind::Cast { expr: base, .. }
@@ -15564,14 +15583,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
-            if args.iter().any(|arg| arg.name.is_some()) {
-                self.error(
-                    codes::E1010,
-                    span,
-                    format!("named construction for `{name}` with a user-defined `init` is not implemented yet in this phase"),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
             let init = self
                 .methods
                 .get(&(ty, Symbol::intern("init")))
@@ -15607,14 +15618,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let values = args
-                .iter()
-                .zip(params.iter())
-                .map(|(arg, (_, param_ty, mode, _))| self.check_argument(&arg.value, *param_ty, *mode))
-                .collect();
+            let slots = self.call_argument_slots(name, args, params);
+            let values = self.check_bound_call_arguments(args, params, &slots);
             return Expr {
                 ty,
-                kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: Some(init) }, args: values },
+                kind: ExprKind::ClassNew {
+                    class_id: id,
+                    init,
+                    arg_eval_order: Self::call_eval_order(&slots),
+                    args: values,
+                },
                 span,
             };
         }

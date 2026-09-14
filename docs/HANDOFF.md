@@ -6082,6 +6082,7 @@ parameter names, and their existing contract rejects named arguments.
 `tests/run-pass/named_function_arguments.em` covers ordinary and explicit-generic
 function calls; `tests/run-pass/named_method_arguments.em` covers ordinary and
 generic source methods; and `tests/compile-fail/named_function_argument_errors.em`
+covers unknown, duplicate, and positional-after-named arguments in all three
 profiles. Commit `a2f4454` contains the implementation and fixtures. The new
 run-pass cases were red before the fix (`21` instead of `12`
 and `2` instead of `1`) and are green after it. This is a compiler defect
@@ -6094,3 +6095,33 @@ The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active
 and Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed
 dynamic-access sharing, static access elision, generic classes, and the full
 Phase 3 conformance matrix remain open.
+
+### 0.106 Named user-defined class constructors — 2026-09-14
+
+The remaining class-constructor gap from D-133's checkpoint is now closed as
+D-135. The compiler previously rejected `Point(y=23, x=19)` whenever `Point`
+had a user-defined `init`, even though `[TYP-25]` requires named arguments to
+bind to declared parameter names. Its constructor lowering also zipped the
+values by declaration order without preserving `[EXP-1]` source evaluation
+order.
+
+User-defined class construction now reuses the direct-call binding pass for the
+parameters after `mut self`. Unknown names, duplicate bindings, and positional
+arguments after the named portion use the same diagnostics as ordinary direct
+calls. Checked values are stored in constructor-parameter order, while HIR
+carries an explicit source-evaluation-order permutation so MIR materializes
+nested arguments in source order before invoking `init`. Allocation still occurs
+first, and the checked constructor runs against the freshly allocated receiver.
+
+`tests/run-pass/class_named_init_construct.em` covers out-of-order named
+construction and uses two mutating argument expressions to prove source order;
+`tests/compile-fail/class_named_init_argument_errors.em` covers unknown,
+duplicate, and positional-after-named arguments in all three profiles. This is
+an implementation defect against existing specification semantics; no
+specification, ADR, or owner decision changed. The implementation is in commit
+`TODO` until this slice is committed.
+
+The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active and
+Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed access
+sharing, static access elision, generic classes, and the full Phase 3 conformance
+matrix remain open.
