@@ -289,9 +289,9 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-125 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, and positive static-view provenance coverage. H1 remains a frozen development target, not the adopted repository-normative source |
-| Recent commits | `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
-| Working tree | Clean after the verified `41d65ed` implementation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-126 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, and fail-closed EMIF cache-key validation. H1 remains a frozen development target, not the adopted repository-normative source |
+| Recent commits | `5332572` rejects self-inconsistent EMIF cache keys at the decode boundary · `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
+| Working tree | Clean after the verified `5332572` implementation checkpoint plus the synchronized documentation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
@@ -3639,6 +3639,22 @@ specification text changed.
 The full runner now covers 133 rule directories and 476 Ember sources. The
 remaining H1 boundaries are still a genuine separately compiled consumer and a
 real FFI publication path once the earlier FFI mechanisms are available.
+
+### 0.69 EMIF cache-key integrity — 2026-09-14
+
+The interface artifact boundary had one integrity hole: `from_bytes` validated
+the callable interface hash but did not recompute the serialized cache key from
+the artifact's source hash, compiler identity, language version, package
+configuration, and transitive dependency hashes. A corrupt or stale key could
+therefore be accepted by a direct artifact consumer even though the prepared
+on-disk cache path would later compare it with a fresh record.
+
+`5332572` closes this as D-126. `ModuleInterfaceArtifact::validate` now
+recomputes the canonical key and returns `StaleCacheKey` on mismatch; a focused
+regression flips only the encoded cache-key bytes and proves decoding fails
+closed. This is a compiler integrity correction under `[BLD-2]`/`[LT-40]`, not
+a language or specification change. The artifact remains compile-time metadata
+and never becomes runtime, ABI, or reload state.
 
 ## The task list — where to begin
 

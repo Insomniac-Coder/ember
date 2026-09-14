@@ -456,6 +456,13 @@ and storing it in `Box[str]`. This positive case confirms that latebound
 analysis preserves genuinely static provenance instead of conservatively
 tainting every view result with the callback-local region.
 
+`5332572` also closes D-126 at the EMIF boundary. Artifact decoding now
+recomputes the cache key from the serialized source/compiler/language/configuration
+and dependency inputs, rejecting a self-inconsistent key before any interface
+contract is consumed. This is an implementation-integrity fix under `[BLD-2]`
+and `[LT-40]`; it does not change the language specification or claim that
+independent package compilation is complete.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

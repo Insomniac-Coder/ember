@@ -18,16 +18,17 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `41d65ed` on `main`, following
+**Last committed implementation baseline:** `5332572` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
 borrowing, and `d077563` for the H6 Span implementation. `1c6b285` is a local
-checkpoint in the latebound arity matrix; `41d65ed` is the current local
-checkpoint on top of the imported-consumer coverage. Verify push state before
-handing it off.
+checkpoint in the latebound arity matrix; `41d65ed` is the static-view
+provenance checkpoint; `5332572` is the current committed checkpoint and
+closes D-126 by validating the serialized EMIF cache key at decode time.
+Verify push state before handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
 `https://github.com/Insomniac-Coder/ember.git`
@@ -45,7 +46,9 @@ live Git state.
 
  133 top-level conformance rule directories, 476 `.em` files including support
  modules. 95 defects recorded, **none open**.
- **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
+**3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
+**D-126 is fixed:** EMIF decoding recomputes the cache key from the artifact's
+identity inputs and rejects self-inconsistent metadata before consumption.
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
 compiler/runtime/conformance work is now complete. **ERR-051 / ODR-010 is

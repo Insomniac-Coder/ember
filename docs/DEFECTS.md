@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — EMIF decoding did not verify the cache-key inputs
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-126 | **A module-interface artifact verified its callable interface hash but accepted a serialized cache key that did not match its own source, compiler, language, package-config, and dependency inputs.** A standalone artifact consumer could therefore accept self-inconsistent cache identity metadata. The on-disk prepared-cache path happened to compare the key with a fresh artifact, but `ModuleInterfaceArtifact::from_bytes` is the public decode boundary and must fail closed on corrupted identity data. | `[BLD-2]`, `[LT-40]`, `[IMP-7]` | **fixed** | `5332572` recomputes the canonical cache key during artifact validation and rejects a mismatch with `StaleCacheKey` before the artifact can be consumed. `compiler/ember_build/src/interface.rs` adds a regression that mutates only the serialized cache key and proves decoding rejects it. This is a compiler integrity defect against the existing artifact contract; no specification or owner ruling changed. |
+
+---
+
 ## 2026-09-14 — callback results did not infer independent generic types
 
 | # | Defect | Rule | Status | Fixed in |

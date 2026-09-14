@@ -198,7 +198,7 @@ pub struct ModuleInterfaceInput {
     pub callables: Vec<CallableInterfaceRecord>,
 }
 
-/// The schema-v5 module artifact. Its interface hash contains resolved
+/// The schema-v7 module artifact. Its interface hash contains resolved
 /// import-visible callable signatures and callable-region contracts;
 /// source/cache identity already has the shape required to absorb layouts,
 /// effects, and inline bodies as those compiler facts obtain real producers.
