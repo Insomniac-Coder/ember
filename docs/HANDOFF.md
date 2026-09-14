@@ -6118,8 +6118,8 @@ construction and uses two mutating argument expressions to prove source order;
 `tests/compile-fail/class_named_init_argument_errors.em` covers unknown,
 duplicate, and positional-after-named arguments in all three profiles. This is
 an implementation defect against existing specification semantics; no
-specification, ADR, or owner decision changed. The implementation is in commit
-`TODO` until this slice is committed.
+specification, ADR, or owner decision changed. Commit `9b21634` contains the
+implementation and fixtures.
 
 The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active and
 Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed access
