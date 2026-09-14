@@ -469,6 +469,13 @@ validation now rejects an empty vector before it can be serialized or consumed.
 This is another fail-closed compiler-integrity correction; it does not alter
 the language contract.
 
+`523c030` closes D-128 at the source boundary. The type checker now rejects
+`@borrows()` and every malformed/non-name argument form with the existing
+`E2031` contract diagnostic instead of silently ignoring the argument or
+falling through to a downstream provenance error. Three LT-1a conformance cases
+cover empty, numeric, and named forms. The artifact-level D-127 validation
+remains defense in depth; no specification or owner ruling changed.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active

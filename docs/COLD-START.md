@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `c4fccdc` on `main`, following
+**Last committed implementation baseline:** `523c030` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
@@ -28,7 +28,8 @@ borrowing, and `d077563` for the H6 Span implementation. `1c6b285` is a local
 checkpoint in the latebound arity matrix; `41d65ed` is the static-view
 provenance checkpoint; `5332572` closes D-126 by validating the serialized
 EMIF cache key at decode time; `c4fccdc` closes D-127 by rejecting an empty
-explicit `@borrows` contract at the artifact boundary. Verify push state
+explicit `@borrows` contract at the artifact boundary; `523c030` closes D-128
+by rejecting empty and malformed source `@borrows` arguments. Verify push state
 before handing it off.
 Always run `git status` and `git log -1` instead of treating this sentence as
 live Git state.
@@ -45,12 +46,13 @@ live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 133 top-level conformance rule directories, 476 `.em` files including support
- modules. 97 defects recorded, **none open**.
+ 133 top-level conformance rule directories, 479 `.em` files including support
+ modules. 98 defects recorded, **none open**.
 **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
-**D-126 and D-127 are fixed:** EMIF decoding recomputes the cache key from the
-artifact's identity inputs and rejects self-inconsistent metadata, including
-an empty explicit `@borrows` contract, before consumption.
+**D-126 through D-128 are fixed:** EMIF decoding recomputes the cache key from
+the artifact's identity inputs and rejects self-inconsistent metadata,
+including an empty explicit `@borrows` contract, before consumption; source
+checking rejects empty and malformed `@borrows` arguments with `E2031`.
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
 `MaybeUninit`, and Arena bulk initialization. Their core
 compiler/runtime/conformance work is now complete. **ERR-051 / ODR-010 is

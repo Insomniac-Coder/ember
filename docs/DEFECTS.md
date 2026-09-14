@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — source `@borrows` accepted empty or malformed arguments
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-128 | **The source checker did not validate the shape of every `@borrows` argument.** `@borrows()` produced no contract diagnostic and fell through to a downstream provenance error, while non-name forms such as `@borrows(0)` or a named argument were ignored instead of being rejected as invalid parameter references. The artifact boundary already rejected an empty position vector, but source programs needed the same fail-closed contract check. | `[LT-1a]`, `[DIA-7]`, `[BLD-2]` | **fixed** | `523c030` rejects empty, non-name, and named `@borrows` arguments with the existing `E2031` contract diagnostic, then uses ordinary elision rather than manufacturing an empty contract. Three LT-1a conformance cases cover the source boundary. This is a compiler/diagnostic defect against an existing specification invariant; no specification or owner ruling changed. |
+
+---
+
 ## 2026-09-14 — EMIF accepted an empty explicit borrow contract
 
 | # | Defect | Rule | Status | Fixed in |
