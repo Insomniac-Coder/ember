@@ -483,6 +483,27 @@ remains defense in depth; no specification or owner ruling changed.
 
 ## 4. Known implementation gaps
 
+### Phase 3 foundation checkpoint — 2026-09-14
+
+Commit `14d55fe` adds the first executable runtime boundary for the object
+world without changing the frozen target or the adopted specification. The
+generated C11 runtime now carries the `[OBJ-1]` 24-byte object header and the
+`[RT-3]` `ember_type_info` layout, allocates a zeroed header with the initial
+strong/implicit-weak counts, selects plain or atomic counter operations from
+type-info flags, supports strong/weak retain and release, weak upgrade, the
+two `[OBJ-5]` resurrection checks, base-chain downcast, and the !Sync
+exclusivity access word. The header/source templates remain the source of
+truth and the generated outputs are checked in through `generate_runtime.py`.
+
+Strict Clang C11 compilation with `-pedantic -Wall -Wextra -Werror` passed,
+as did the runtime generator regression, the full workspace/conformance run,
+and all six adopted-source gates. This is an implementation foundation only:
+the compiler still has no class type identity, constructor/field lowering,
+generated `TypeInfo` records, class drop glue, virtual/interface dispatch, or
+the Phase 3 class conformance matrix. Phase accounting therefore remains
+exactly **1 of 9 phases complete**; Phase 2 is still active and Phases 3–9
+have not passed their exit gates.
+
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
 and substantial but has not passed every exit criterion; Phases 3–9 have not
 passed their exit gates. Historical material that separately numbered a

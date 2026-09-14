@@ -139,6 +139,14 @@ helper arities are now covered;
 FFI and separate-compilation precision evidence remains future work, and the
 target is not yet adopted.
 
+The first Phase 3 runtime foundation is checkpointed at `14d55fe`: the
+generated C11 runtime exposes the specified class-object header and type-info
+layout, plain/atomic strong and weak reference-count operations, weak upgrade,
+destruction/resurrection checks, base-chain downcast, and the !Sync
+exclusivity word. This does not claim that Ember classes are implemented:
+class type identity, constructors, field/drop glue, dispatch, compiler
+lowering, and Phase 3 conformance remain outstanding.
+
 An imported `@latebound` helper is also covered through the LT-40 interface
 artifact path: the root module calls a support-module function whose callback
 parameter retains the latebound boundary. This exercises the cross-module

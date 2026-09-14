@@ -3828,6 +3828,38 @@ are still the unimplemented fact producers/consumers for ownership graphs,
 effects, later FFI/threading/class mechanisms, and the genuine separate-
 compilation boundary; no placeholder consumer should be added for those.
 
+### 0.79 Phase 3 object runtime boundary — 2026-09-14
+
+Commit `14d55fe` adds the first concrete Phase 3 runtime foundation. The
+generated C11 runtime now exposes the ABI-shaped `ember_obj_header` from
+`[OBJ-1]` (four `u32` words followed by the type-info pointer, 24 bytes on
+64-bit targets) and the exact `[RT-3]` `ember_type_info` field sequence. It
+provides object allocation with the initial strong count and implicit weak
+count, plain `!Sync` and atomic `Sync` strong/weak counter paths, strong and
+weak retain/release, weak upgrade, base-chain downcast, and the runtime
+deinitialisation sequence. Deinitialisation sets the flag before user drop,
+checks for resurrection after the user drop and again after field drop glue,
+then releases the implicit weak reference as required by `[OBJ-3]`, `[OBJ-5]`,
+`[RC-1]`, `[RC-4]`, `[WK-2]`, and `[WK-3]`.
+
+The same boundary exposes the !Sync `access_state` read/write helpers and a
+runtime exclusivity diagnostic. A Sync object is rejected by these plain
+access helpers so they cannot be mistaken for the later synchronization
+contract. The implementation is deliberately runtime-only: no class type
+identity, constructor lowering, generated `TypeInfo` records, field/drop-glue
+generation, handle lowering, or virtual/interface dispatch has been added.
+`TypeTable`, type checking, MIR, and C code generation still have no class
+representation, so no Ember class program is claimed to compile.
+
+The runtime templates remain authoritative and the checked-in C files were
+regenerated. Verification passed with strict Clang C11
+`-pedantic -Wall -Wextra -Werror`, the runtime-generator regression, the full
+workspace/conformance run (210 Rust tests), and all six adopted-source gates.
+No specification, ADR, adopted source, or phase status changed. The runtime
+object boundary is an implementation foundation tracked as `OBJ-RT-1`; it is
+not Phase 3 completion. Phase accounting remains exactly 1 of 9 complete,
+with Phase 2 active.
+
 ## The task list — where to begin
 
 The historical list below records how `RefCell[T]` was reached. It is no longer
