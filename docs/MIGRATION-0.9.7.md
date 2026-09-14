@@ -396,7 +396,7 @@ change affects the helper interface and an unchanged importer, while a private
 member-body change remains local. Class-member lowering is not currently
 implemented; layouts/effects/inline sections and safe reuse remain open.
 
-The current uncommitted H6-target implementation advances `EMIF` to schema 6
+The preceding H6-target implementation advances `EMIF` to schema 6
 and closes the compiler's nested callable-mode erasure: each function-type
 parameter now has canonical `{ type, borrowed|mut|owned }` identity through
 parsing, substitution, generic `Callable`/`CallableOnce` bounds, expected
