@@ -4450,12 +4450,13 @@ impl<'a> Builder<'a> {
     /// initialization analyses.
     ///
     /// The memberwise path is still limited to a non-inheriting class without
-    /// custom `init`/`drop` and with fields that do not need drop glue. The
-    /// supported custom-init path is likewise non-inheriting and has no
-    /// defaulted fields; type checking admits direct field assignment, `pass`,
-    /// and nested `if` paths. The first write to each field is initialization,
-    /// not an `[OWN-5]` overwrite, so lowering must not drop the uninitialized
-    /// storage returned by the allocator.
+    /// custom `init` and supports the literal-default subset type checking
+    /// can materialize at the call site. The supported custom-init path is
+    /// likewise non-inheriting and has no defaulted fields; type checking
+    /// admits direct field assignment, `pass`, and branch/loop paths. The
+    /// first write to each field is initialization, not an `[OWN-5]` overwrite,
+    /// so lowering must not drop the uninitialized storage returned by the
+    /// allocator.
     fn lower_class_new(
         &mut self,
         place: Place,

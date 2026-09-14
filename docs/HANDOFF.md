@@ -5711,3 +5711,28 @@ cover method use after initialization and before initialization. This is
 implementation-only progress: no specification, ADR, or diagnostic semantics
 changed; Phase 2 is active, Phase 3 has not passed its exit gate, and phase
 accounting remains exactly **1 of 9 complete**.
+
+### 0.91 Phase 3 literal-default memberwise class construction — 2026-09-14
+
+The synthesized memberwise constructor now permits a non-inheriting class to
+omit trailing field arguments when those fields have literal defaults. The
+checker reuses the existing literal synthesis and coercion rules, so an
+omitted `i32` or `bool` literal is materialized as the corresponding
+constructor value and lowered through the same first-write initialization
+stores as explicit arguments. A class call may still provide an explicit
+prefix of field arguments; required fields without values report E2020.
+
+This is intentionally a narrow implementation boundary. Named class
+construction, inherited classes, custom `init` bodies with defaulted fields,
+and non-literal defaults remain fail-closed with E1010 until the full default
+expression evaluator and the related ownership/inheritance mechanisms are
+available. The compiler does not guess or fabricate values for defaults that
+it cannot evaluate. The run-pass regression covers omitted literal defaults
+and an explicit prefix argument, including both scalar types.
+
+This is implementation-only progress: no specification, ADR, adopted source,
+or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
+its exit gate, and phase accounting remains exactly **1 of 9 complete**.
+The next constructor boundaries are full default-expression evaluation,
+inherited/base initialization, and the ownership/drop protocol for those
+paths; none is claimed by this checkpoint.

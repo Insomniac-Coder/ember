@@ -529,6 +529,10 @@ struct Checker<'a> {
     /// `[CLS-2]` — field initialization facts while a narrow class
     /// constructor body is checked.
     class_init: Option<ClassInitState>,
+    /// Literal defaults retained for the narrow synthesized class constructor
+    /// path. The full `[STR-2]` default-expression evaluator is still a later
+    /// dependency; non-literal class defaults remain fail-closed.
+    class_default_literals: HashMap<ClassId, Vec<Option<ast::Literal>>>,
     /// A field expression is a place, not a read, while the assignment target
     /// is being synthesized. This prevents constructor writes from tripping
     /// the read-before-initialization check on their own left-hand side.
@@ -657,6 +661,7 @@ impl<'a> Checker<'a> {
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
             class_init: None,
+            class_default_literals: HashMap::new(),
             in_assignment_target: false,
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
@@ -2013,6 +2018,19 @@ impl<'a> Checker<'a> {
                     let has_drop = decl.members.iter().any(|member| {
                         matches!(&member.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
                     });
+                    let default_literals = decl
+                        .members
+                        .iter()
+                        .filter_map(|member| match &member.kind {
+                            ast::MemberKind::Field(field) => Some(
+                                field.default.as_ref().and_then(|expr| match &expr.kind {
+                                    ast::ExprKind::Lit(literal) => Some(literal.clone()),
+                                    _ => None,
+                                }),
+                            ),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
                     let base = decl.base.as_ref().and_then(|base| {
                         let resolved = self.resolve_type(base);
                         match self.types.kind(resolved) {
@@ -2032,6 +2050,7 @@ impl<'a> Checker<'a> {
                     def.fields = fields;
                     def.base = base;
                     def.has_drop = has_drop;
+                    self.class_default_literals.insert(id, default_literals);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
@@ -15017,11 +15036,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, span, format!("cannot instantiate abstract class `{name}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if !has_init && args.len() != fields.len() {
+        if !has_init && args.len() > fields.len() {
             self.error(
                 codes::E2020,
                 span,
-                format!("`{name}()` takes {} arguments, found {}", fields.len(), args.len()),
+                format!("`{name}()` has {} fields, found {} arguments", fields.len(), args.len()),
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
@@ -15090,11 +15109,41 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
 
-        let values = args
-            .iter()
-            .zip(fields.iter())
-            .map(|(arg, field)| self.check_expr(&arg.value, field.ty))
-            .collect();
+        let defaults = self.class_default_literals.get(&id).cloned();
+        let mut values = Vec::with_capacity(fields.len());
+        let mut invalid = false;
+        for (index, field) in fields.iter().enumerate() {
+            if let Some(arg) = args.get(index) {
+                values.push(self.check_expr(&arg.value, field.ty));
+                continue;
+            }
+            if !field.has_default {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("field `{}` of `{name}` has no value", field.name),
+                );
+                invalid = true;
+                continue;
+            }
+            let Some(Some(literal)) = defaults.as_ref().and_then(|defaults| defaults.get(index)) else {
+                self.error(
+                    codes::E1010,
+                    field.span,
+                    format!(
+                        "default expression for class field `{}` is not implemented yet in this phase",
+                        field.name
+                    ),
+                );
+                invalid = true;
+                continue;
+            };
+            let default = self.synth_literal(literal, field.span);
+            values.push(self.coerce(default, field.ty));
+        }
+        if invalid {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         Expr {
             ty,
