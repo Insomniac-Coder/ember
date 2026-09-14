@@ -612,8 +612,21 @@ fn contract_for(
     if let FuncRef::Direct { symbol, .. } = func
         && let Some(summary) = summaries.get(symbol.as_str())
     {
+        let latebound = matches!(func, FuncRef::Direct { latebound: true, .. });
+        // Ordinary one-region calls retain `[LT-1]`'s conservative elision:
+        // every view-typed parameter may be the returned view. A one-field
+        // summary is consumed precisely only at an explicit `@latebound`
+        // boundary, where it distinguishes a static-independent callback
+        // result from a result derived from one of the invocation views.
+        if !latebound
+            && matches!(&summary.result, CallResultContract::Fields(result)
+                if result.fields.len() == 1
+                    && result.fields.iter().any(|field| !field.sources.is_empty()))
+        {
+            return conservative_contract(legacy_elision(func, signatures), false);
+        }
         let mut summary = summary.clone();
-        summary.latebound = matches!(func, FuncRef::Direct { latebound: true, .. });
+        summary.latebound = latebound;
         return summary;
     }
     if let Some(contract) = builtin_contract(func) {
@@ -728,7 +741,7 @@ fn inferred_result_summary(
     regions: &Regions,
 ) -> Option<ResultProvenanceSummary> {
     let result_slots = regions.local_regions(ember_mir::RETURN_LOCAL);
-    if result_slots.len() < 2
+    if result_slots.is_empty()
         || result_slots
             .iter()
             .any(|slot| regions.has_imprecise_provenance(slot.region))

@@ -328,6 +328,11 @@ struct MethodSource {
 struct Instance {
     def: DefId,
     args: Vec<Ty>,
+    /// Capture-free function values supplied to implicit callable generic
+    /// parameters. Static dispatch is by callable identity as well as type:
+    /// two functions with the same signature may have different result
+    /// provenance contracts at an `@latebound` boundary.
+    callable_values: Vec<Option<DefId>>,
 }
 
 /// One method that can be found by `recv.name(...)`.
@@ -532,6 +537,12 @@ struct Checker<'a> {
     /// parameter has been monomorphized to a concrete function or closure
     /// type. Keep that source-level fact alongside the local identity.
     latebound_callable_parameter_locals: HashSet<LocalId>,
+    /// Known capture-free callable arguments for the current concrete generic
+    /// body, keyed by source parameter position. This is compile-time-only
+    /// static-dispatch information; it never reaches HIR/MIR layout or ABI.
+    callable_value_params: HashMap<usize, DefId>,
+    /// The same bindings after source parameters have become concrete locals.
+    callable_value_bindings: HashMap<LocalId, DefId>,
     /// While checking the second and later alternatives of an `|` pattern:
     /// the locals the first alternative bound, which they must reuse.
     or_bindings: Option<HashMap<Symbol, LocalId>>,
@@ -608,6 +619,8 @@ impl<'a> Checker<'a> {
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
             latebound_callable_parameter_locals: HashSet::new(),
+            callable_value_params: HashMap::new(),
+            callable_value_bindings: HashMap::new(),
             or_bindings: None,
             loop_labels: Vec::new(),
             in_defer: false,
@@ -4526,6 +4539,7 @@ impl<'a> Checker<'a> {
                     self.callable_once_locals.clear();
                     self.callable_parameter_locals.clear();
                     self.latebound_callable_parameter_locals.clear();
+                    self.callable_value_bindings.clear();
                     self.ret_ty = self.signatures[def.0 as usize].ret;
                     let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
                         [def.0 as usize]
@@ -4705,6 +4719,19 @@ impl<'a> Checker<'a> {
                 for (param, &ty) in generics.iter().zip(key.args.iter()) {
                     self.type_params.insert(param.name, ty);
                 }
+                let source_params = self.signatures[key.def.0 as usize].params.clone();
+                self.callable_value_params = source_params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(parameter, (_, ty, _, _))| {
+                        let TyKind::Param { index, .. } = *self.types.kind(*ty) else {
+                            return None;
+                        };
+                        key.callable_values
+                            .get(index as usize)
+                            .and_then(|value| value.map(|def| (parameter, def)))
+                    })
+                    .collect();
 
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
@@ -4713,6 +4740,7 @@ impl<'a> Checker<'a> {
                 let concrete = quiet.diagnostics()[quiet_before..].to_vec();
                 self.emit_concrete_instantiation_diagnostics(concrete);
                 self.type_params.clear();
+                self.callable_value_params.clear();
                 out.push(function);
             }
 
@@ -4936,6 +4964,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.callable_once_locals.clear();
         self.callable_parameter_locals.clear();
         self.latebound_callable_parameter_locals.clear();
+        self.callable_value_bindings.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -4965,6 +4994,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if decl.params.get(index).is_some_and(is_latebound_callable_param) {
                 self.latebound_callable_parameter_locals.insert(local);
+            }
+            if let Some(&def) = self.callable_value_params.get(&index) {
+                self.callable_value_bindings.insert(local, def);
             }
             params.push(Param { local, mode });
         }
@@ -7871,6 +7903,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if let Some(local) = self.lookup(segments[0].name) {
                     let value = self.read_local_expecting(local, callee.span, None);
                     if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                        if let Some(&def) = self.callable_value_bindings.get(&local) {
+                            let latebound =
+                                self.latebound_callable_parameter_locals.contains(&local);
+                            return self.synth_known_function_call(def, args, span, latebound);
+                        }
                         let consumes_callee = self.callable_once_locals.contains(&local);
                         let latebound =
                             self.latebound_callable_parameter_locals.contains(&local);
@@ -8526,10 +8563,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             &checked_args,
         );
 
+        // Preserve a known capture-free function value through static
+        // dispatch. Its body may carry a more precise late-bound result
+        // provenance contract than the callable type alone can express.
+        let mut callable_values = vec![None; generics.len()];
+        for ((param_ty, _), value) in declared.iter().zip(&checked_args) {
+            let TyKind::Param { index, .. } = *self.types.kind(*param_ty) else { continue };
+            if generics
+                .get(index as usize)
+                .and_then(|param| param.callable.as_ref())
+                .is_none_or(|bound| bound.once || !bound.latebound)
+            {
+                continue;
+            }
+            if let ExprKind::FnValue(def) = value.kind {
+                callable_values[index as usize] = Some(def);
+            }
+        }
         // Re-check the arguments against the substituted parameter types, so
         // an untyped literal adopts the right one and a mismatch is reported
         // where it happens.
-        let instance = self.instantiate(def, &substitution, name, span);
+        let instance = self.instantiate(def, &substitution, callable_values, name, span);
         let concrete: Vec<(Ty, Mode)> = declared
             .iter()
             .map(|&(ty, mode)| (self.substitute_ty(ty, &substitution), mode))
@@ -9085,10 +9139,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         &mut self,
         def: DefId,
         args: &[Ty],
+        callable_values: Vec<Option<DefId>>,
         name: Symbol,
         span: Span,
     ) -> DefId {
-        let key = Instance { def, args: args.to_vec() };
+        let key = Instance { def, args: args.to_vec(), callable_values };
         if let Some(&existing) = self.instances.get(&key) {
             return existing;
         }
@@ -9129,7 +9184,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name: Symbol,
         span: Span,
     ) -> DefId {
-        let key = Instance { def, args: args.to_vec() };
+        let key = Instance { def, args: args.to_vec(), callable_values: Vec::new() };
         if let Some(&existing) = self.instances.get(&key) {
             return existing;
         }
@@ -10467,6 +10522,45 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// Lower a statically known capture-free function value as a direct call
+    /// inside a concrete generic instance. This preserves the function body's
+    /// verified callable-region summary while retaining the expected
+    /// `@latebound` boundary at the call site.
+    fn synth_known_function_call(
+        &mut self,
+        def: DefId,
+        args: &[ast::Arg],
+        span: Span,
+        latebound: bool,
+    ) -> Expr {
+        let signature: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
+        let ret = self.signatures[def.0 as usize].ret;
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("this function takes {} arguments, found {}", signature.len(), args.len()),
+            );
+            return Expr { ty: ret, kind: ExprKind::Error, span };
+        }
+        let checked = args
+            .iter()
+            .zip(signature.iter())
+            .map(|(arg, &(param_ty, mode))| {
+                if let Some(name) = arg.name {
+                    self.error(
+                        codes::E2020,
+                        name.span,
+                        "a call through a function value takes positional arguments",
+                    );
+                }
+                self.check_argument(&arg.value, param_ty, mode)
+            })
+            .collect();
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, args: checked, latebound }, span }
+    }
+
     /// `[CLO-1]`, `[CLO-2]`, `[TYP-23]` rule 4 — a closure.
     ///
     /// A capture-free closure is "a plain value type" (`[CLO-1]`), and Part IV
@@ -10806,6 +10900,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             std::mem::take(&mut self.callable_parameter_locals);
         let outer_latebound_callable_parameter_locals =
             std::mem::take(&mut self.latebound_callable_parameter_locals);
+        let outer_callable_value_bindings =
+            std::mem::take(&mut self.callable_value_bindings);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
@@ -10862,6 +10958,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.callable_once_locals = outer_callable_once_locals;
         self.callable_parameter_locals = outer_callable_parameter_locals;
         self.latebound_callable_parameter_locals = outer_latebound_callable_parameter_locals;
+        self.callable_value_bindings = outer_callable_value_bindings;
         self.ret_ty = outer_ret;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");

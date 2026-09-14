@@ -748,6 +748,31 @@ impl Regions {
         let destinations = self.assigned_place_regions(destination);
         let mut result = HashMap::new();
         let contract = call_contract(func);
+        // A late-bound callback introduces an invocation-local region only
+        // for a borrowed argument that the callee's result actually derives
+        // from. Do not taint an independent result merely because the call
+        // also received view arguments; the verified result summary is the
+        // authority for this relationship.
+        let latebound_arguments: HashSet<usize> = if contract.latebound {
+            match &contract.result {
+                CallResultContract::Legacy(tied) => args
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(argument, _)| tied.ties(argument).then_some(argument))
+                    .collect(),
+                CallResultContract::Fields(summary) => summary
+                    .fields
+                    .iter()
+                    .flat_map(|field| field.sources.iter())
+                    .filter_map(|source| match source {
+                        ResultRegionSource::View { argument, .. } => Some(*argument),
+                        ResultRegionSource::Arena { .. } => None,
+                    })
+                    .collect(),
+            }
+        } else {
+            HashSet::new()
+        };
         match contract.result {
             CallResultContract::Fields(summary) => {
                 for field in summary.fields {
@@ -818,7 +843,10 @@ impl Regions {
             let callback_regions = args
                 .iter()
                 .enumerate()
-                .filter(|(_, argument)| !self.operand_regions(argument).is_empty())
+                .filter(|(argument, operand)| {
+                    latebound_arguments.contains(argument)
+                        && !self.operand_regions(operand).is_empty()
+                })
                 .map(|(argument, _)| Origin::LateBound { call: point, argument })
                 .collect::<Vec<_>>();
             for fact in result.values_mut() {
