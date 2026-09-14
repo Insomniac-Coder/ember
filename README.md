@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 210 Rust tests pass;
-- the conformance runner passes across 133 rule directories and 474 Ember
+- the conformance runner passes across 133 rule directories and 475 Ember
   source files;
 - all six adopted-specification gates pass;
 - 95 recorded compiler defects are closed;
@@ -132,6 +132,13 @@ sequential-invocation, local callback-value escape, and all shared/mutable
 helper arities are now covered;
 FFI and separate-compilation precision evidence remains future work, and the
 target is not yet adopted.
+
+An imported `@latebound` helper is also covered through the LT-40 interface
+artifact path: the root module calls a support-module function whose callback
+parameter retains the latebound boundary. This exercises the cross-module
+declaration, metadata round trip, region summary, and caller path; it does not
+claim independent package compilation or FFI publication, which remain
+phase-limited.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the

@@ -18,7 +18,7 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `1c6b285` on `main`, following
+**Last committed implementation baseline:** `5aa804d` on `main`, following
 `2087600` for the verified `@latebound` callable-boundary implementation,
 `8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
 callable interface artifacts, `af7c525` for verified
@@ -41,7 +41,7 @@ live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 133 top-level conformance rule directories, 474 `.em` files including support
+ 133 top-level conformance rule directories, 475 `.em` files including support
  modules. 95 defects recorded, **none open**.
  **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
@@ -259,6 +259,14 @@ arities are now also covered. Use existing escape
 diagnostics. Do not invent named lifetimes,
 runtime/ABI metadata, global callback inference, or a name-specific compiler
 special case.
+
+The LT-40 matrix now also has a reachable imported `@latebound` callable
+consumer (`5aa804d`): a root module imports a support-module helper with an
+`@latebound fn(Span[i32]) -> i32` parameter, and the helper is exercised through
+the validated EMIF round trip. This proves the cross-module artifact path but
+not independent package compilation; the current driver still checks the
+loaded module graph together. FFI publication remains phase-limited because
+foreign declarations and `extern fn` value types are not yet usable consumers.
 
 **The direct callable-summary slice is complete at `90059c8`.** Building on
 `c913fbd`, analysis infers exact result-field provenance and parameter-field

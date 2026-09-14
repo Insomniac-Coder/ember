@@ -443,6 +443,14 @@ The helper matrix now also has direct shared and all-mutable positive coverage
 for arities two, three, and four, including generated-C erasure and sequential
 source reuse. No callable-region metadata is introduced into runtime output.
 
+The LT-40 matrix additionally contains a reachable imported latebound helper
+consumer. Its `@latebound` callable parameter is declared in the support
+module, serialized through the validated EMIF artifact path, and called from
+the root module; the run-pass case prints `33` and checks generated-C erasure.
+This is cross-module artifact evidence, not independent package compilation.
+Foreign declarations and `extern fn` value types remain phase-limited, so FFI
+publication is still an explicit future implementation boundary.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
