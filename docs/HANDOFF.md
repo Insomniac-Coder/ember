@@ -5693,3 +5693,21 @@ compile-fail regressions cover the accepted read and rejected loop-only
 initialization cases. This is implementation-only progress; no specification
 or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
 its exit gate, and phase accounting remains exactly **1 of 9 complete**.
+
+### 0.90 Phase 3 state-aware whole-self constructor use — 2026-09-14
+
+Whole-object use in a custom constructor is now checked against the current
+definite-initialization state instead of being rejected unconditionally. A
+direct field projection remains a field access and uses the per-field E2100
+check; passing, storing, calling a method on, or otherwise using `self` as a
+whole is accepted only when every required field is `Init` on that path. A
+whole-self use before completion reports E2100.
+
+The constructor-shape validator now leaves expression statements available to
+that state-aware check, while the existing fail-closed boundaries for
+unsupported control flow, defaulted fields, inheritance/base initialization,
+and dynamic mutable class access remain. Run-pass and compile-fail fixtures
+cover method use after initialization and before initialization. This is
+implementation-only progress: no specification, ADR, or diagnostic semantics
+changed; Phase 2 is active, Phase 3 has not passed its exit gate, and phase
+accounting remains exactly **1 of 9 complete**.

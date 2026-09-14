@@ -5603,9 +5603,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// admits direct field initialization, `pass`, nested `if` blocks,
     /// block-bodied exhaustive `match` arms, and `while`/`for` bodies without
     /// an `else`. Loop entry is always possible, so each loop merge remains
-    /// conservative. Loop-`else`, expression-bodied match arms, whole-`self`
-    /// uses, and other control-flow forms remain outside the slice until
-    /// their constructor dataflow is connected.
+    /// conservative. Loop-`else`, expression-bodied match arms, and other
+    /// control-flow forms remain outside the slice until their constructor
+    /// dataflow is connected. Whole-`self` use is checked against the current
+    /// field state below.
     fn validate_class_init_shape(&mut self, block: &ast::Block, span: Span) {
         if self.class_init.is_none() {
             return;
@@ -5615,7 +5616,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::StmtKind::Pass => {}
                 ast::StmtKind::Assign { targets, op: None, .. }
                     if targets.len() == 1 && Self::class_init_target_name(&targets[0]).is_some() => {}
-                ast::StmtKind::Expr(expr) if !Self::class_init_uses_whole_self(expr) => {}
+                ast::StmtKind::Expr(_) => {}
                 ast::StmtKind::If(if_stmt) => {
                     self.validate_class_init_shape(&if_stmt.then_block, span);
                     match if_stmt.else_block.as_deref() {
@@ -5668,10 +5669,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     /// A direct field projection is a field access, not a use of the whole
-    /// object. Every other occurrence of `self` remains outside this narrow
-    /// constructor slice: passing or storing the handle requires the complete
-    /// per-path and exclusivity machinery, even when the fields happen to be
-    /// initialized already.
+    /// object. Every other occurrence of `self` is classified as a whole-self
+    /// use so the constructor checker can require complete initialization
+    /// before passing, storing, or otherwise publishing the handle.
     fn class_init_uses_whole_self(expr: &ast::Expr) -> bool {
         match &expr.kind {
             ast::ExprKind::SelfExpr => true,
@@ -5721,8 +5721,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         args.iter().any(|arg| Self::class_init_uses_whole_self(&arg.value))
                     })
             }
-            // A lambda may capture `self`; until capture/lifetime checking is
-            // constructor-aware, reject the entire expression conservatively.
+            // A lambda may capture `self`; classify it as whole-self until the
+            // ordinary capture/lifetime checks establish the safe boundary.
             ast::ExprKind::Lambda(_) => true,
             ast::ExprKind::Match { .. } => true,
             ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => {
@@ -5740,6 +5740,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::Jump::Break { .. } | ast::Jump::Continue { .. } => false,
             },
             ast::ExprKind::Yield(value) => value.as_deref().is_some_and(Self::class_init_uses_whole_self),
+        }
+    }
+
+    fn class_init_is_complete(&self) -> bool {
+        self.class_init.as_ref().is_some_and(|state| {
+            state
+                .initialized
+                .iter()
+                .all(|status| matches!(status, ClassFieldInit::Init))
+        })
+    }
+
+    /// `[CLS-2]` permits the receiver to be used as a whole only after every
+    /// required field is initialized on the current path. Keep this check at
+    /// expression boundaries rather than in `synth(SelfExpr)`: a direct
+    /// `self.field` projection is a field access and is checked separately.
+    fn check_class_init_whole_self_use(&mut self, expr: &ast::Expr) {
+        if self.class_init.is_some()
+            && !self.class_init_is_complete()
+            && Self::class_init_uses_whole_self(expr)
+        {
+            self.error(
+                codes::E2100,
+                expr.span,
+                "`self` is used before all class fields are initialized",
+            );
         }
     }
 
@@ -6067,6 +6093,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // expression statement, and is the one expression that lowers to
             // control flow rather than to a value.
             ast::StmtKind::Expr(expr) => {
+                self.check_class_init_whole_self_use(expr);
                 if let ast::ExprKind::Jump(jump) = &expr.kind {
                     self.lower_jump(jump, expr.span, out);
                     return;
@@ -6098,6 +6125,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 out.push(Stmt::Let { local, init });
             }
             ast::StmtKind::Assign { targets, op, value } => {
+                self.check_class_init_whole_self_use(value);
                 let parenthesised = targets.len() == 1
                     && matches!(&targets[0].kind, ast::ExprKind::Tuple(_));
                 if targets.len() != 1 || parenthesised {
@@ -6235,6 +6263,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             ast::StmtKind::While { label, cond, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
+                match cond {
+                    ast::Condition::Expr(expr) => self.check_class_init_whole_self_use(expr),
+                    ast::Condition::Pattern { value, .. } => {
+                        self.check_class_init_whole_self_use(value)
+                    }
+                }
                 let cond = self.check_condition(cond);
                 self.class_init = incoming_class_init.clone();
                 self.loop_labels.push(label.map(|l| l.name));
@@ -6256,6 +6290,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             ast::StmtKind::For { label, pattern, iter, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
+                self.check_class_init_whole_self_use(iter);
                 if let Some(stmt) = self.check_for(*label, pattern, iter, body, else_block, stmt.span)
                 {
                     let body_class_init = self.class_init.clone();
@@ -6592,6 +6627,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        self.check_class_init_whole_self_use(scrutinee);
         let scrutinee = self.synth_committed(scrutinee);
         let scrutinee_ty = scrutinee.ty;
 
@@ -7419,6 +7455,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt) -> Stmt {
+        match &if_stmt.cond {
+            ast::Condition::Expr(expr) => self.check_class_init_whole_self_use(expr),
+            ast::Condition::Pattern { value, .. } => self.check_class_init_whole_self_use(value),
+        }
         let cond = self.check_condition(&if_stmt.cond);
         let incoming_class_init = self.class_init.clone();
         let then_block = self.check_block(&if_stmt.then_block);
