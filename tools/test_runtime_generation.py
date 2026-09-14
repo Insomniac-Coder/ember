@@ -17,6 +17,19 @@ def main() -> int:
     assert '#include "aurora_rt.h"' in source
     assert "aurora_alloc" in header and "aurora_alloc" in source
     assert "ember_alloc" not in header and "ember_alloc" not in source
+    assert "typedef struct aurora_obj_header" in header
+    assert "uint32_t strong;" in header
+    assert "uint32_t weak;" in header
+    assert "uint32_t access;" in header
+    assert "uint32_t flags;" in header
+    assert "const aurora_type_info* ti;" in header
+    assert "struct aurora_type_info" in header
+    assert "#define AURORA_TI_SYNC UINT32_C(1)" in header
+    assert "aurora_rt_deinit(object)" in source
+    assert "ti->drop_fields(object)" in source
+    assert "aurora_weak_upgrade" in header and "aurora_weak_upgrade" in source
+    assert "object_panic_resurrection" in source
+    assert "aurora_panic_exclusivity" in header and "aurora_panic_exclusivity" in source
 
     with tempfile.TemporaryDirectory() as directory:
         out_dir = Path(directory) / "runtime"

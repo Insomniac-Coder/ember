@@ -268,6 +268,81 @@ void* ember_try_alloc(size_t size, size_t align);
  * running the payload destructor before ember_free. */
 void* ember_box_new_copy(size_t size, size_t align, const void* value);
 
+/* -- class objects and reference counting ------------------------------- */
+
+/* Part VIII / XIX.9. The object header is the first 24 bytes of every class
+ * allocation on a 64-bit target. The pointed-to metadata is compiler-owned;
+ * its layout is part of the runtime ABI so generated class code and foreign
+ * embedders agree on size, alignment, destruction and dispatch. */
+typedef struct ember_type_info ember_type_info;
+typedef struct ember_vtable ember_vtable;
+typedef struct ember_itable_entry ember_itable_entry;
+typedef struct ember_field_desc ember_field_desc;
+
+struct ember_type_info {
+    uint32_t size;
+    uint32_t align;
+    uint32_t flags;
+    const char* name;
+    const ember_type_info* base;
+    void (*drop)(void*);
+    void (*drop_fields)(void*);
+    const ember_vtable* vtable;
+    const ember_itable_entry* itables;
+    uint32_t itable_count;
+    const ember_field_desc* fields;
+    uint32_t field_count;
+};
+
+/* Type-info flags. The remaining bits are reserved for future ABI-compatible
+ * metadata; they must not be inferred by generated code. */
+#define EMBER_TI_SYNC UINT32_C(1)
+
+/* Object flags. `DEINITIALISING` is observable by weak upgrade and is set
+ * before user or field drop glue runs. */
+#define EMBER_OBJ_DEINITIALISING UINT32_C(1)
+#define EMBER_OBJ_PINNED UINT32_C(2)
+
+typedef struct ember_obj_header {
+    uint32_t strong;
+    uint32_t weak;
+    uint32_t access;
+    uint32_t flags;
+    const ember_type_info* ti;
+} ember_obj_header;
+
+/* Allocate a zeroed object header with one strong and one implicit weak
+ * reference. Class fields are initialized by generated constructor code. */
+ember_obj_header* ember_obj_new(const ember_type_info* ti);
+
+/* These helpers are the out-of-line implementation boundary used by the
+ * header-inline retain/release operations below. They preserve the exact
+ * object-header ABI while selecting plain or atomic counter operations from
+ * the type-info flags. */
+void ember_obj_retain(ember_obj_header* object);
+void ember_obj_release(ember_obj_header* object);
+void ember_weak_retain(ember_obj_header* object);
+void ember_weak_release(ember_obj_header* object);
+ember_obj_header* ember_weak_upgrade(ember_obj_header* object);
+void ember_rt_deinit(ember_obj_header* object);
+void* ember_downcast(ember_obj_header* object, const ember_type_info* target);
+
+static inline void ember_retain(ember_obj_header* object) {
+    ember_obj_retain(object);
+}
+
+static inline void ember_release(ember_obj_header* object) {
+    ember_obj_release(object);
+}
+
+/* Access-state helpers implement the !Sync class exclusivity word. A Sync
+ * class uses its separate synchronization contract; generated code must not
+ * treat this word as a substitute for that contract. */
+void ember_access_begin_read(ember_obj_header* object, const char* what, ember_loc loc);
+void ember_access_begin_write(ember_obj_header* object, const char* what, ember_loc loc);
+void ember_access_end_read(ember_obj_header* object, const char* what, ember_loc loc);
+void ember_access_end_write(ember_obj_header* object, const char* what, ember_loc loc);
+
 /* -- arenas ---------------------------------------------------------------
  *
  * [ARN-1]..[ARN-4]: the runtime state is deliberately opaque. The compiler's
@@ -355,6 +430,7 @@ EMBER_NORETURN void ember_panic(const char* msg, size_t len, ember_loc loc);
 EMBER_NORETURN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
 EMBER_NORETURN void ember_panic_overflow(const char* op, ember_loc loc);
 EMBER_NORETURN void ember_panic_div_zero(ember_loc loc);
+EMBER_NORETURN void ember_panic_exclusivity(const char* what, ember_loc loc);
 EMBER_NORETURN void ember_panic_unwrap(const char* what, ember_loc loc);
 /* `[CELL-5]` — `RefCell` contention panics with the conflicting borrow's
  * location, recorded in debug and release (`[CELL-9]`). `file`/`line` are the

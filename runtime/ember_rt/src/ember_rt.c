@@ -152,6 +152,323 @@ void ember_debug_alloc_stats(ember_alloc_stats* out) {
     }
 }
 
+/* -- class objects and reference counting ------------------------------- */
+
+/* The object header keeps its four counter/flag fields as uint32_t so its
+ * release layout stays exactly 24 bytes on 64-bit targets. The mainstream
+ * C11 backends provide atomic operations without changing that layout; the
+ * plain path is used only for !Sync objects. */
+#if defined(__GNUC__) || defined(__clang__)
+static uint32_t object_load_u32(const uint32_t* value) {
+    return __atomic_load_n(value, __ATOMIC_ACQUIRE);
+}
+
+static uint32_t object_fetch_add_u32(uint32_t* value, uint32_t amount) {
+    return __atomic_fetch_add(value, amount, __ATOMIC_RELAXED);
+}
+
+static uint32_t object_fetch_sub_u32(uint32_t* value, uint32_t amount) {
+    return __atomic_fetch_sub(value, amount, __ATOMIC_ACQ_REL);
+}
+
+static uint32_t object_fetch_or_u32(uint32_t* value, uint32_t bits) {
+    return __atomic_fetch_or(value, bits, __ATOMIC_ACQ_REL);
+}
+
+static bool object_compare_exchange_u32(uint32_t* value, uint32_t* expected, uint32_t desired) {
+    return __atomic_compare_exchange_n(
+        value, expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+#elif defined(_MSC_VER)
+#include <intrin.h>
+
+static uint32_t object_load_u32(const uint32_t* value) {
+    return (uint32_t)_InterlockedCompareExchange((volatile long*)value, 0, 0);
+}
+
+static uint32_t object_fetch_add_u32(uint32_t* value, uint32_t amount) {
+    return (uint32_t)_InterlockedExchangeAdd((volatile long*)value, (long)amount);
+}
+
+static uint32_t object_fetch_sub_u32(uint32_t* value, uint32_t amount) {
+    return (uint32_t)_InterlockedExchangeAdd((volatile long*)value, -(long)amount);
+}
+
+static uint32_t object_fetch_or_u32(uint32_t* value, uint32_t bits) {
+    return (uint32_t)_InterlockedOr((volatile long*)value, (long)bits);
+}
+
+static bool object_compare_exchange_u32(uint32_t* value, uint32_t* expected, uint32_t desired) {
+    long observed = _InterlockedCompareExchange(
+        (volatile long*)value, (long)desired, (long)*expected);
+    if ((uint32_t)observed == *expected) {
+        return true;
+    }
+    *expected = (uint32_t)observed;
+    return false;
+}
+#else
+#include <stdatomic.h>
+
+/* C11 fallback for a target without the compiler intrinsics above. The
+ * runtime's supported targets are expected to provide lock-free uint32_t
+ * atomics; a target that does not may still use the same ABI layout because
+ * the atomic operations are applied to the existing four-byte words. */
+static uint32_t object_load_u32(const uint32_t* value) {
+    return atomic_load_explicit((const volatile _Atomic(uint32_t)*)value, memory_order_acquire);
+}
+
+static uint32_t object_fetch_add_u32(uint32_t* value, uint32_t amount) {
+    return atomic_fetch_add_explicit((volatile _Atomic(uint32_t)*)value, amount, memory_order_relaxed);
+}
+
+static uint32_t object_fetch_sub_u32(uint32_t* value, uint32_t amount) {
+    return atomic_fetch_sub_explicit((volatile _Atomic(uint32_t)*)value, amount, memory_order_acq_rel);
+}
+
+static uint32_t object_fetch_or_u32(uint32_t* value, uint32_t bits) {
+    return atomic_fetch_or_explicit((volatile _Atomic(uint32_t)*)value, bits, memory_order_acq_rel);
+}
+
+static bool object_compare_exchange_u32(uint32_t* value, uint32_t* expected, uint32_t desired) {
+    return atomic_compare_exchange_weak_explicit(
+        (volatile _Atomic(uint32_t)*)value, expected, desired,
+        memory_order_acq_rel, memory_order_acquire);
+}
+#endif
+
+static bool object_is_sync(const ember_obj_header* object) {
+    return object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) != 0;
+}
+
+static uint32_t object_load_strong(const ember_obj_header* object) {
+    return object_is_sync(object) ? object_load_u32(&object->strong) : object->strong;
+}
+
+static uint32_t object_load_weak(const ember_obj_header* object) {
+    return object_is_sync(object) ? object_load_u32(&object->weak) : object->weak;
+}
+
+static uint32_t object_load_flags(const ember_obj_header* object) {
+    return object_is_sync(object) ? object_load_u32(&object->flags) : object->flags;
+}
+
+static void object_set_deinitialising(ember_obj_header* object) {
+    if (object_is_sync(object)) {
+        (void)object_fetch_or_u32(&object->flags, EMBER_OBJ_DEINITIALISING);
+    } else {
+        object->flags |= EMBER_OBJ_DEINITIALISING;
+    }
+}
+
+static EMBER_NORETURN void object_panic_text(const char* text) {
+    ember_loc loc = { "<object-runtime>", 0, 0 };
+    ember_panic(text, strlen(text), loc);
+}
+
+static EMBER_NORETURN void object_panic_resurrection(const ember_obj_header* object) {
+    char buffer[256];
+    const char* name = object->ti && object->ti->name ? object->ti->name : "<anonymous>";
+    int written = snprintf(buffer, sizeof buffer,
+                           "E-panic: object resurrected during drop: %s", name);
+    ember_loc loc = { "<object-runtime>", 0, 0 };
+    ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
+static bool object_try_strong_retain(ember_obj_header* object) {
+    bool sync = object_is_sync(object);
+    for (;;) {
+        if ((object_load_flags(object) & EMBER_OBJ_DEINITIALISING) != 0) {
+            return false;
+        }
+        uint32_t current = object_load_strong(object);
+        if (current == 0 || current == UINT32_MAX) {
+            return false;
+        }
+        if (!sync) {
+            object->strong = current + 1;
+            return true;
+        }
+        uint32_t expected = current;
+        if (object_compare_exchange_u32(&object->strong, &expected, current + 1)) {
+            return true;
+        }
+    }
+}
+
+ember_obj_header* ember_obj_new(const ember_type_info* ti) {
+    if (ti == NULL || ti->size < sizeof(ember_obj_header)
+        || ti->align < _Alignof(ember_obj_header)
+        || (ti->align & (ti->align - 1)) != 0) {
+        object_panic_text("invalid class type information");
+    }
+    ember_obj_header* object = (ember_obj_header*)ember_alloc(ti->size, ti->align);
+    memset(object, 0, sizeof *object);
+    object->strong = 1;
+    object->weak = 1;
+    object->ti = ti;
+    return object;
+}
+
+void ember_obj_retain(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    if (!object_try_strong_retain(object)) {
+        object_panic_text("retain of deinitialising or invalid object");
+    }
+}
+
+void ember_obj_release(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    bool sync = object_is_sync(object);
+    uint32_t current = object_load_strong(object);
+    if (current == 0) {
+        object_panic_text("release of object with no strong references");
+    }
+    uint32_t previous = sync
+        ? object_fetch_sub_u32(&object->strong, 1)
+        : current;
+    if (!sync) {
+        object->strong = current - 1;
+        previous = current;
+    }
+    if (previous == 1) {
+        ember_rt_deinit(object);
+    }
+}
+
+void ember_weak_retain(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    bool sync = object_is_sync(object);
+    uint32_t current = object_load_weak(object);
+    if (current == 0 || current == UINT32_MAX) {
+        object_panic_text("retain of invalid weak reference");
+    }
+    if (sync) {
+        (void)object_fetch_add_u32(&object->weak, 1);
+    } else {
+        object->weak = current + 1;
+    }
+}
+
+void ember_weak_release(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    bool sync = object_is_sync(object);
+    uint32_t current = object_load_weak(object);
+    if (current == 0) {
+        object_panic_text("release of object with no weak references");
+    }
+    uint32_t previous = sync
+        ? object_fetch_sub_u32(&object->weak, 1)
+        : current;
+    if (!sync) {
+        object->weak = current - 1;
+        previous = current;
+    }
+    if (previous == 1 && object_load_strong(object) == 0) {
+        const ember_type_info* ti = object->ti;
+        ember_free(object, ti->size, ti->align);
+    }
+}
+
+void ember_rt_deinit(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    if ((object_load_flags(object) & EMBER_OBJ_DEINITIALISING) != 0) {
+        object_panic_text("recursive object deinitialisation");
+    }
+    object_set_deinitialising(object);
+    const ember_type_info* ti = object->ti;
+    if (ti != NULL && ti->drop != NULL) {
+        ti->drop(object);
+    }
+    if (object_load_strong(object) != 0) {
+        object_panic_resurrection(object);
+    }
+    if (ti != NULL && ti->drop_fields != NULL) {
+        ti->drop_fields(object);
+    }
+    if (object_load_strong(object) != 0) {
+        object_panic_resurrection(object);
+    }
+    /* The implicit weak reference held by the strong side is released only
+     * after both destruction passes have completed. */
+    ember_weak_release(object);
+}
+
+ember_obj_header* ember_weak_upgrade(ember_obj_header* object) {
+    if (object == NULL) {
+        return NULL;
+    }
+    return object_try_strong_retain(object) ? object : NULL;
+}
+
+void* ember_downcast(ember_obj_header* object, const ember_type_info* target) {
+    if (object == NULL || target == NULL) {
+        return NULL;
+    }
+    for (const ember_type_info* ti = object->ti; ti != NULL; ti = ti->base) {
+        if (ti == target) {
+            return object;
+        }
+    }
+    return NULL;
+}
+
+static void object_require_plain_access(ember_obj_header* object) {
+    if (object == NULL || object->ti == NULL) {
+        object_panic_text("access on invalid object");
+    }
+    if (object_is_sync(object)) {
+        object_panic_text("plain exclusivity access on Sync object");
+    }
+}
+
+void ember_access_begin_read(ember_obj_header* object, const char* what, ember_loc loc) {
+    object_require_plain_access(object);
+    const uint32_t writer = UINT32_C(1) << 31;
+    const uint32_t readers = writer - 1;
+    if ((object->access & writer) != 0 || (object->access & readers) == readers) {
+        ember_panic_exclusivity(what, loc);
+    }
+    object->access += 1;
+}
+
+void ember_access_begin_write(ember_obj_header* object, const char* what, ember_loc loc) {
+    object_require_plain_access(object);
+    const uint32_t writer = UINT32_C(1) << 31;
+    if (object->access != 0) {
+        ember_panic_exclusivity(what, loc);
+    }
+    object->access = writer;
+}
+
+void ember_access_end_read(ember_obj_header* object, const char* what, ember_loc loc) {
+    object_require_plain_access(object);
+    const uint32_t writer = UINT32_C(1) << 31;
+    if ((object->access & writer) != 0 || (object->access & (writer - 1)) == 0) {
+        ember_panic_exclusivity(what, loc);
+    }
+    object->access -= 1;
+}
+
+void ember_access_end_write(ember_obj_header* object, const char* what, ember_loc loc) {
+    object_require_plain_access(object);
+    const uint32_t writer = UINT32_C(1) << 31;
+    if (object->access != writer) {
+        ember_panic_exclusivity(what, loc);
+    }
+    object->access = 0;
+}
+
 /* -- arenas -----------------------------------------------------------------
  *
  * Chunks never move: growing an arena appends a chunk rather than reallocating
@@ -496,6 +813,14 @@ void ember_panic_overflow(const char* op, ember_loc loc) {
 }
 
 void ember_panic_div_zero(ember_loc loc) { panic_with("division by zero", 16, loc); }
+
+void ember_panic_exclusivity(const char* what, ember_loc loc) {
+    char buffer[256];
+    const char* subject = what != NULL ? what : "class object";
+    int written = snprintf(buffer, sizeof buffer,
+                           "exclusivity violation: overlapping access to %s", subject);
+    panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
+}
 
 void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc) {
     char buffer[512];
