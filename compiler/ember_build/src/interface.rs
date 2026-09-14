@@ -549,6 +549,18 @@ impl ModuleInterfaceArtifact {
                 module: self.module.clone(),
             });
         }
+        let expected = cache_key(
+            self.source_hash,
+            &self.compiler_version,
+            &self.language_version,
+            &self.package_config,
+            &self.dependencies,
+        );
+        if expected != self.cache_key {
+            return Err(InterfaceArtifactError::StaleCacheKey {
+                module: self.module.clone(),
+            });
+        }
         Ok(())
     }
 }
@@ -945,6 +957,9 @@ pub enum InterfaceArtifactError {
     StaleInterfaceHash {
         module: String,
     },
+    StaleCacheKey {
+        module: String,
+    },
     StaleSummary {
         module: String,
     },
@@ -998,6 +1013,12 @@ impl std::fmt::Display for InterfaceArtifactError {
                 write!(
                     f,
                     "module-interface hash is stale or corrupt for `{module}`"
+                )
+            }
+            Self::StaleCacheKey { module } => {
+                write!(
+                    f,
+                    "module-interface cache key is stale or corrupt for `{module}`"
                 )
             }
             Self::StaleSummary { module } => write!(
@@ -1260,5 +1281,29 @@ mod tests {
         let rewritten = ModuleInterfaceArtifact::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(rewritten, fresh[0]);
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_stale_cache_key_is_rejected_at_the_artifact_boundary() {
+        let artifact = build_artifacts(&[input("root", "root", &[], 0)], "test")
+            .unwrap()
+            .pop()
+            .unwrap();
+        let mut bytes = artifact.to_bytes().unwrap();
+
+        // The cache key follows four length-prefixed strings and the two
+        // fixed-size source/interface hashes in the canonical encoding.
+        let mut offset = 8; // magic + schema
+        for _ in 0..4 {
+            let length = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
+            offset += 8 + length;
+        }
+        offset += 32 + 32;
+        bytes[offset] ^= 1;
+
+        assert!(matches!(
+            ModuleInterfaceArtifact::from_bytes(&bytes),
+            Err(InterfaceArtifactError::StaleCacheKey { module }) if module == "root"
+        ));
     }
 }
