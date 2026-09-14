@@ -371,11 +371,12 @@ struct DestructureLeaf<'a> {
 }
 
 /// The deliberately narrow first constructor slice for `[CLS-2]`. The
-/// checker permits direct `self.field = ...` writes, `pass`, and nested `if`
-/// blocks for a class `init` with no base and no defaulted fields. This is an
-/// implementation boundary, not a new language rule: it keeps the current
-/// lowering from publishing a partially initialized object until the
-/// remaining constructor control-flow forms are connected.
+/// checker permits direct `self.field = ...` writes, field-only expressions,
+/// `pass`, and nested `if` blocks for a class `init` with no base and no
+/// defaulted fields. This is an implementation boundary, not a new language
+/// rule: it keeps the current lowering from publishing a partially
+/// initialized object until the remaining constructor control-flow forms are
+/// connected.
 #[derive(Clone)]
 struct ClassInitState {
     owner: ClassId,
@@ -5599,9 +5600,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Validate the first source-reachable constructor slice. The runtime
     /// object is allocated before the body runs, so this conservative shape
-    /// admits direct field initialization, `pass`, and nested `if` blocks.
-    /// Loops, matches, whole-`self` uses, and other control-flow forms remain
-    /// outside the slice until their constructor dataflow is connected.
+    /// admits direct field initialization, `pass`, nested `if` blocks, and
+    /// block-bodied exhaustive `match` arms. Loops, expression-bodied match
+    /// arms, whole-`self` uses, and other control-flow forms remain outside
+    /// the slice until their constructor dataflow is connected.
     fn validate_class_init_shape(&mut self, block: &ast::Block, span: Span) {
         if self.class_init.is_none() {
             return;
@@ -5611,6 +5613,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::StmtKind::Pass => {}
                 ast::StmtKind::Assign { targets, op: None, .. }
                     if targets.len() == 1 && Self::class_init_target_name(&targets[0]).is_some() => {}
+                ast::StmtKind::Expr(expr) if !Self::class_init_uses_whole_self(expr) => {}
                 ast::StmtKind::If(if_stmt) => {
                     self.validate_class_init_shape(&if_stmt.then_block, span);
                     match if_stmt.else_block.as_deref() {
@@ -5623,11 +5626,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         None => {}
                     }
                 }
+                ast::StmtKind::Match { arms, .. }
+                    if arms.iter().all(|arm| {
+                        arm.guard.is_none()
+                            && matches!(&arm.body, ast::MatchArmBody::Block(_))
+                    }) =>
+                {
+                    for arm in arms {
+                        let ast::MatchArmBody::Block(block) = &arm.body else {
+                            unreachable!()
+                        };
+                        self.validate_class_init_shape(block, span);
+                    }
+                }
                 _ => {
                     self.error(
                         codes::E1010,
                         stmt.span,
-                        "class `init` currently supports direct field assignments, `pass`, and `if`",
+                        "class `init` currently supports direct field assignments, `pass`, `if`, and block-bodied `match` arms",
                     );
                 }
             }
@@ -5640,6 +5656,82 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             Some(ast::ElseBranch::Block(block)) => self.validate_class_init_shape(block, span),
             Some(ast::ElseBranch::If(nested)) => self.validate_class_init_if(nested, span),
             None => {}
+        }
+    }
+
+    /// A direct field projection is a field access, not a use of the whole
+    /// object. Every other occurrence of `self` remains outside this narrow
+    /// constructor slice: passing or storing the handle requires the complete
+    /// per-path and exclusivity machinery, even when the fields happen to be
+    /// initialized already.
+    fn class_init_uses_whole_self(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::SelfExpr => true,
+            ast::ExprKind::Lit(_) | ast::ExprKind::Path { .. } | ast::ExprKind::Error => false,
+            ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => {
+                !matches!(base.kind, ast::ExprKind::SelfExpr) && Self::class_init_uses_whole_self(base)
+            }
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                Self::class_init_uses_whole_self(base)
+                    || args.iter().any(|arg| match arg {
+                        ast::TypeOrExpr::Expr(expr) => Self::class_init_uses_whole_self(expr),
+                        _ => false,
+                    })
+            }
+            ast::ExprKind::Call { callee, args } => {
+                Self::class_init_uses_whole_self(callee)
+                    || args.iter().any(|arg| Self::class_init_uses_whole_self(&arg.value))
+            }
+            ast::ExprKind::MethodCall { recv, args, .. } => {
+                Self::class_init_uses_whole_self(recv)
+                    || args.iter().any(|arg| Self::class_init_uses_whole_self(&arg.value))
+            }
+            ast::ExprKind::Unary { operand, .. }
+            | ast::ExprKind::Try(operand)
+            | ast::ExprKind::RefOf { place: operand, .. }
+            | ast::ExprKind::Paren(operand)
+            | ast::ExprKind::Owned(operand) => Self::class_init_uses_whole_self(operand),
+            ast::ExprKind::Binary { lhs, rhs, .. }
+            | ast::ExprKind::Logical { lhs, rhs, .. } => {
+                Self::class_init_uses_whole_self(lhs) || Self::class_init_uses_whole_self(rhs)
+            }
+            ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
+                Self::class_init_uses_whole_self(then_expr)
+                    || Self::class_init_uses_whole_self(cond)
+                    || Self::class_init_uses_whole_self(else_expr)
+            }
+            ast::ExprKind::Range { lo, hi, .. } => {
+                lo.as_deref().is_some_and(Self::class_init_uses_whole_self)
+                    || hi.as_deref().is_some_and(Self::class_init_uses_whole_self)
+            }
+            ast::ExprKind::Cast { expr, .. } | ast::ExprKind::Downcast { expr, .. } => {
+                Self::class_init_uses_whole_self(expr)
+            }
+            ast::ExprKind::OptChain { base, args, .. } => {
+                Self::class_init_uses_whole_self(base)
+                    || args.as_ref().is_some_and(|args| {
+                        args.iter().any(|arg| Self::class_init_uses_whole_self(&arg.value))
+                    })
+            }
+            // A lambda may capture `self`; until capture/lifetime checking is
+            // constructor-aware, reject the entire expression conservatively.
+            ast::ExprKind::Lambda(_) => true,
+            ast::ExprKind::Match { .. } => true,
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => {
+                items.iter().any(Self::class_init_uses_whole_self)
+            }
+            ast::ExprKind::ArrayRepeat { value, count } => {
+                Self::class_init_uses_whole_self(value) || Self::class_init_uses_whole_self(count)
+            }
+            ast::ExprKind::FString(parts) => parts.iter().any(|part| match part {
+                ast::FStringPart::Text(_) => false,
+                ast::FStringPart::Expr { expr, .. } => Self::class_init_uses_whole_self(expr),
+            }),
+            ast::ExprKind::Jump(jump) => match jump {
+                ast::Jump::Return(value) => value.as_deref().is_some_and(Self::class_init_uses_whole_self),
+                ast::Jump::Break { .. } | ast::Jump::Continue { .. } => false,
+            },
+            ast::ExprKind::Yield(value) => value.as_deref().is_some_and(Self::class_init_uses_whole_self),
         }
     }
 
@@ -5677,6 +5769,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             (left, _) => left,
         }
+    }
+
+    fn merge_class_init_path_list(paths: Vec<ClassInitState>) -> Option<ClassInitState> {
+        let mut paths = paths.into_iter();
+        let mut merged = paths.next()?;
+        for path in paths {
+            merged = Self::merge_class_init_paths(Some(merged), Some(path))?;
+        }
+        Some(merged)
     }
 
     fn class_init_target_name(expr: &ast::Expr) -> Option<Symbol> {
@@ -6463,10 +6564,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let mut checked: Vec<hir::MatchArm> = Vec::new();
         let mut result_ty = expected;
+        // Constructor definite-initialization is path-sensitive. Checking
+        // match arms one after another must not let writes from an earlier
+        // arm leak into a later arm; only the joined post-match state is
+        // reachable. Guarded arms retain the incoming state as a possible
+        // fall-through path because a guard may fail at run time.
+        let incoming_class_init = self.class_init.clone();
+        let mut arm_class_init = Vec::new();
+        let mut has_guard = false;
         for arm in arms {
+            if let Some(incoming) = incoming_class_init.as_ref() {
+                self.class_init = Some(incoming.clone());
+            }
             self.scopes.push(HashMap::new());
             let pattern = self.check_pattern(&arm.pattern, scrutinee_ty);
             let guard = arm.guard.as_ref().map(|g| {
+                has_guard = true;
                 let bool_ty = self.common.bool_;
                 self.check_expr(g, bool_ty)
             });
@@ -6497,10 +6610,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             };
             self.scopes.pop();
+            if incoming_class_init.is_some() {
+                arm_class_init.push(self.class_init.clone());
+            }
             checked.push(hir::MatchArm { pattern, guard, body, span: arm.span });
         }
 
         self.report_match_coverage(&checked, scrutinee_ty, span);
+
+        if let Some(incoming) = incoming_class_init {
+            let mut paths = if has_guard { vec![incoming] } else { Vec::new() };
+            paths.extend(arm_class_init.into_iter().flatten());
+            self.class_init = Self::merge_class_init_path_list(paths);
+        }
 
         let ty = result_ty.unwrap_or(self.common.void);
         Expr {

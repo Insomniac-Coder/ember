@@ -5611,11 +5611,12 @@ control-flow mechanisms rather than publishing partially initialized objects.
 
 The supported custom-constructor slice now handles branch-shaped
 initialization. Within a non-inheriting class with no defaulted fields, an
-`init` body may contain nested `if` blocks, `pass`, and direct
-`self.field = value` assignments. The checker carries a three-state field
-lattice (`Uninit`, `Init`, `Maybe`) across the branches and joins paths
-conservatively. A field is readable only in the `Init` state, and construction
-is accepted only when every field is `Init` after all reachable paths.
+`init` body may contain nested `if` blocks, `pass`, field-only expressions
+such as `println(self.field)`, and direct `self.field = value` assignments.
+The checker carries a three-state field lattice (`Uninit`, `Init`, `Maybe`)
+across the branches and joins paths conservatively. A field is readable only
+in the `Init` state, and construction is accepted only when every field is
+`Init` after all reachable paths.
 
 The checker rejects a write after a field is `Maybe`; otherwise that write
 could be an overwrite on only the paths that initialized the field, while the
@@ -5636,3 +5637,22 @@ Phase 2 is active and Phase 3 has not passed its exit gate. The next
 constructor work is still full per-path dataflow over the remaining supported
 control-flow forms and then verified inheritance/base chaining, not a change
 to `[CLS-2]` semantics.
+
+### 0.87 Phase 3 match-aware constructor initialization — 2026-09-14
+
+The supported custom-constructor slice now also handles an exhaustive,
+unguarded `match` whose arms all have blocks. Each arm is checked from the
+same pre-match `ClassInitState`; writes from one pattern arm cannot leak into
+another, and the joined state is used after the match. This permits a class
+constructor to initialize a field by enum/pattern case while preserving the
+same `Uninit`/`Init`/`Maybe` definite-initialization lattice used by `if`.
+
+Guarded arms retain a possible fall-through path and expression-bodied arms
+need unreachable-path and result-flow handling, so both remain rejected by
+the current constructor-shape boundary. Loops, whole-`self` use, inheritance,
+defaulted fields, and other unsupported forms remain fail-closed with E1010;
+the implementation does not infer or weaken `[CLS-2]` semantics. The new
+run-pass fixture covers both exhaustive enum arms and observes the initialized
+field after construction. This is implementation-only progress: Phase 2 is
+active, Phase 3 has not passed its exit gate, and phase accounting remains
+exactly **1 of 9 complete**.
