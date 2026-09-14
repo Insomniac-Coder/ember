@@ -6001,3 +6001,34 @@ This does not claim virtual/interface dispatch, indexed dynamic-access sharing,
 static access elision, generic classes, recursive aggregate retain handling, or
 Phase 3 completion. Phase accounting remains exactly **1 of 9 complete**;
 Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.103 Phase 3 aggregate class-handle copy retention — 2026-09-14
+
+The direct `Array[Class].push` fix exposed a wider `[RC-1]`/`[OWN-7]`
+boundary: a `Copy` aggregate is also a byte-level C copy, so class handles
+nested inside it must receive their own strong-reference increments. The
+minimal adversarial case `Wrapped { thing: Thing }`, passed through a helper
+and then pushed into `Array[Wrapped]`, showed the failure. Aggregate
+construction copied the temporary pointer and released the temporary's only
+strong reference; the subsequent Array copy then attempted to retain an
+already-deinitialising object. The same ownership hole applied to ordinary
+aggregate assignments such as `q = p`.
+
+The C backend now has one recursive retain walk for copied values. It descends
+through source structs, tuples, fixed arrays, and active enum payloads, and is
+used by `Copy` assignments, aggregate-construction operands, and `Array.push`
+when the pushed operand is a `Copy`. Moves retain nothing because they transfer
+the existing ownership. Compiler-known `MaybeUninit` wrappers are explicitly
+excluded: their field is layout storage and does not own an initialized `T`.
+This keeps `[ARN-8]`'s non-dropping semantics separate from ordinary aggregate
+ownership.
+
+`tests/run-pass/array_copy_struct_class_handle.em` asserts the generated
+retains and the live value after the source helper returns. It was red before
+the fix and passes in debug, release, and shipping. Commit `7f83b14` contains
+the compiler and regression test. No specification, ADR, adopted source, or
+diagnostic semantics changed; this is a compiler defect recorded as D-132.
+The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate. Virtual/interface dispatch, indexed
+dynamic-access sharing, static access elision, generic classes, and the full
+Phase 3 conformance matrix remain open.

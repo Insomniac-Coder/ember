@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — copied aggregates duplicated class handles without retaining
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-132 | **The C backend treated aggregate `Copy` operations as raw byte copies even when an aggregate contained class handles.** A minimal `Wrapped { thing: Thing }` copied into `Array[Wrapped]` first released the temporary class handle after aggregate construction, then copied the now-deinitialising pointer into the Array without retaining it. The later Array access therefore attempted to use invalid ownership, and destruction could release a handle with no strong references. The same missing retain boundary existed for `q = p` and other copied nested aggregates. | `[RC-1]`, `[RC-2]`, `[OWN-7]`, `[STR-3]`, `[ARN-8]` | **fixed** | `7f83b14` adds one recursive C-backend retain walk for direct class handles nested in structs, tuples, fixed arrays, and active enum payloads. It runs for `Copy` assignments, aggregate construction operands, and `Array.push` copies; moves do not retain. Compiler-known `MaybeUninit` storage is explicitly excluded because its field is not an initialized owner. `tests/run-pass/array_copy_struct_class_handle.em` was red before the fix (first missing the expected retain, then reproducing `retain of deinitialising or invalid object` after the partial boundary) and is green in debug, release, and shipping. No specification, ADR, or owner decision changed. |
+
+---
+
 ## 2026-09-14 — inherited mutable calls through class fields lost the outer access
 
 | # | Defect | Rule | Status | Fixed in |

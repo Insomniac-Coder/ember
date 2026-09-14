@@ -177,6 +177,16 @@ access pairs in all profiles. Virtual/interface dispatch, indexed access
 sharing, static elision, generic classes, aggregate class-handle ownership,
 and the complete Phase 3 matrix remain open.
 
+`OBJ-RT-1` continuation: copied aggregates now retain nested class handles at
+every C copy boundary covered by the backend. The recursive walk handles
+structs, tuples, fixed arrays, and active enum payloads for ordinary `Copy`
+assignments, aggregate construction operands, and `Array.push`; moves keep
+ownership transfer semantics. `MaybeUninit` is excluded because its storage is
+not an initialized owner. `array_copy_struct_class_handle.em` proves that a
+class handle nested in a copied struct survives the source scope and remains
+valid in the Array. Virtual/interface dispatch, indexed access sharing, static
+elision, generic classes, and the complete Phase 3 matrix remain open.
+
 ---
 
 ## Build order
