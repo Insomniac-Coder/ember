@@ -80,6 +80,10 @@ pub struct Function {
     /// field writes initialize freshly allocated storage. This is compiler
     /// metadata, not a source-level constructor trait or ABI flag.
     pub class_init: bool,
+    /// `[CLS-2]` — field indices whose literal defaults are materialized
+    /// before this class `init` body. Writes to these fields are ordinary
+    /// overwrites and therefore retain `[OWN-5]` drop-before-store ordering.
+    pub class_init_default_fields: Vec<usize>,
     /// The mangled symbol this function gets in the emitted C (`[MNG-1]`), or
     /// the name given by `@export` (`[MNG-2]`).
     pub symbol: String,
@@ -272,10 +276,13 @@ pub enum ExprKind {
     /// The arguments are stored in constructor-parameter order; when source
     /// named arguments were out of order, `arg_eval_order` tells MIR how to
     /// materialize them without changing `[EXP-1]` source evaluation order.
+    /// `default_fields` contains the literal field defaults that are
+    /// initialized before a user-defined constructor body runs.
     ClassNew {
         class_id: ClassId,
         init: DefId,
         arg_eval_order: Option<Vec<usize>>,
+        default_fields: Vec<Option<Expr>>,
         args: Vec<Expr>,
     },
     /// A subexpression that failed to check. Absorbs errors.

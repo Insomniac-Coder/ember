@@ -394,6 +394,10 @@ struct ClassInitState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ClassFieldInit {
     Uninit,
+    /// A field's literal default is already present before the constructor
+    /// body. A direct assignment may replace it, unlike a repeated explicit
+    /// initialization.
+    Default,
     Init,
     Maybe,
 }
@@ -402,7 +406,13 @@ impl ClassFieldInit {
     fn join(self, other: Self) -> Self {
         match (self, other) {
             (Self::Uninit, Self::Uninit) => Self::Uninit,
+            (Self::Default, Self::Default) => Self::Default,
             (Self::Init, Self::Init) => Self::Init,
+            // Both paths contain a live value, but one may have replaced its
+            // default. Keep the conservative initialized state so whole-self
+            // use remains valid while a later conditional overwrite stays
+            // fail-closed until constructor drop flags are available.
+            (Self::Default, Self::Init) | (Self::Init, Self::Default) => Self::Init,
             _ => Self::Maybe,
         }
     }
@@ -4982,6 +4992,7 @@ impl<'a> Checker<'a> {
                 def,
                 name,
                 class_init: false,
+                class_init_default_fields: Vec::new(),
                 symbol,
                 is_unsafe: decl.is_unsafe,
                 abi: decl.abi.clone(),
@@ -5347,6 +5358,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name,
             class_init: false,
+            class_init_default_fields: Vec::new(),
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
@@ -5591,9 +5603,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let supports_state = {
                     let mut current = Some(*id);
                     let mut supported = true;
+                    let has_base = self.types.class_def(*id).base.is_some();
                     while let Some(class_id) = current {
                         let def = self.types.class_def(class_id);
-                        if def.fields.iter().any(|field| field.has_default) {
+                        let literal_defaults = self.class_default_literals.get(&class_id);
+                        let has_unsupported_default = def.fields.iter().enumerate().any(|(index, field)| {
+                            field.has_default
+                                && literal_defaults
+                                    .and_then(|defaults| defaults.get(index))
+                                    .and_then(Option::as_ref)
+                                    .is_none()
+                        });
+                        // Defaults are materialized by the construction call
+                        // in this phase. A `super.init` call invokes the base
+                        // body directly, so an inherited default cannot yet
+                        // be materialized at the correct object-layout offset.
+                        // Keep the inherited-default case fail-closed until
+                        // that constructor path carries the same metadata.
+                        if has_unsupported_default || (has_base && def.fields.iter().any(|field| field.has_default)) {
                             supported = false;
                             break;
                         }
@@ -5609,13 +5636,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         .first()
                         .map(|param| param.local)
                         .expect("a class init with mut self has a receiver local");
+                    let base_count = def
+                        .base
+                        .map_or(0, |base| self.types.class_field_count(base));
+                    let mut initialized = vec![ClassFieldInit::Uninit; self.types.class_field_count(*id)];
+                    for index in base_count..initialized.len() {
+                        if self
+                            .types
+                            .class_field_at(*id, index)
+                            .is_some_and(|field| field.has_default)
+                        {
+                            initialized[index] = ClassFieldInit::Default;
+                        }
+                    }
                     Some(ClassInitState {
                         owner: *id,
                         receiver,
-                        initialized: vec![
-                            ClassFieldInit::Uninit;
-                            self.types.class_field_count(*id)
-                        ],
+                        initialized,
                         base_initialized: def.base.is_none(),
                     })
                 }
@@ -5627,6 +5664,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.class_init.is_some() {
             self.validate_class_init_shape(block, span);
         }
+        let class_init_default_fields = self
+            .class_init
+            .as_ref()
+            .map(|state| {
+                state
+                    .initialized
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, status)| {
+                        matches!(status, ClassFieldInit::Default).then_some(index)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let body = self.check_block(block);
         if self.class_init.is_some() {
             self.report_missing_class_init_fields(span);
@@ -5642,6 +5693,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name,
             class_init: is_class_init,
+            class_init_default_fields,
             symbol: method_symbol(&self.types.display(owner), name),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
@@ -5808,7 +5860,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 && state
                     .initialized
                     .iter()
-                    .all(|status| matches!(status, ClassFieldInit::Init))
+                    .all(|status| matches!(status, ClassFieldInit::Default | ClassFieldInit::Init))
         })
     }
 
@@ -5848,7 +5900,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .iter()
             .enumerate()
             .filter_map(|(index, status)| {
-                (index >= base_count && !matches!(status, ClassFieldInit::Init))
+                (index >= base_count
+                    && !matches!(status, ClassFieldInit::Default | ClassFieldInit::Init))
                     .then(|| self.types.class_field_at(state.owner, index).map(|f| f.name))
                     .flatten()
             })
@@ -5961,7 +6014,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return;
         }
-        if matches!(state.initialized.get(index), Some(ClassFieldInit::Init)) {
+        if matches!(
+            state.initialized.get(index),
+            Some(ClassFieldInit::Default | ClassFieldInit::Init)
+        ) {
             return;
         }
         let Some(field) = self.types.class_field_at(state.owner, index) else { return };
@@ -6009,6 +6065,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         place.span,
                         format!("class `init` assigns field `{field}` more than once in this phase"),
                     );
+                }
+            }
+            Some(ClassFieldInit::Default) => {
+                if let Some(state) = self.class_init.as_mut() {
+                    if let Some(initialized) = state.initialized.get_mut(index) {
+                        *initialized = ClassFieldInit::Init;
+                    }
                 }
             }
             Some(ClassFieldInit::Maybe) => {
@@ -12300,6 +12363,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             def,
             name: Symbol::intern(&symbol),
             class_init: false,
+            class_init_default_fields: Vec::new(),
             symbol,
             is_unsafe: false,
             abi: None,
@@ -15583,6 +15647,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
+            let inherited_default = if has_base {
+                let mut current = Some(id);
+                let mut found = false;
+                while let Some(class_id) = current {
+                    let class_def = self.types.class_def(class_id);
+                    found |= class_def.fields.iter().any(|field| field.has_default);
+                    current = class_def.base;
+                }
+                found
+            } else {
+                false
+            };
+            if inherited_default {
+                self.error(
+                    codes::E1010,
+                    span,
+                    format!(
+                        "class construction with inherited defaulted fields is not implemented yet in this phase"
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let init = self
                 .methods
                 .get(&(ty, Symbol::intern("init")))
@@ -15601,14 +15687,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            if fields.iter().any(|field| field.has_default) {
-                self.error(
-                    codes::E1010,
-                    span,
-                    format!("class construction for `{name}` with defaulted fields is not implemented yet in this phase"),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
             let params = &signature_params[1..];
             if args.len() != params.len() {
                 self.error(
@@ -15620,12 +15698,40 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             let slots = self.call_argument_slots(name, args, params);
             let values = self.check_bound_call_arguments(args, params, &slots);
+            let defaults = self.class_default_literals.get(&id).cloned();
+            let mut default_fields = Vec::with_capacity(fields.len());
+            let mut invalid_default = false;
+            for (index, field) in fields.iter().enumerate() {
+                if !field.has_default {
+                    default_fields.push(None);
+                    continue;
+                }
+                let Some(Some(literal)) = defaults.as_ref().and_then(|items| items.get(index)) else {
+                    self.error(
+                        codes::E1010,
+                        field.span,
+                        format!(
+                            "default expression for class field `{}` is not implemented yet in this phase",
+                            field.name
+                        ),
+                    );
+                    invalid_default = true;
+                    default_fields.push(None);
+                    continue;
+                };
+                let default = self.synth_literal(literal, field.span);
+                default_fields.push(Some(self.coerce(default, field.ty)));
+            }
+            if invalid_default {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             return Expr {
                 ty,
                 kind: ExprKind::ClassNew {
                     class_id: id,
                     init,
                     arg_eval_order: Self::call_eval_order(&slots),
+                    default_fields,
                     args: values,
                 },
                 span,

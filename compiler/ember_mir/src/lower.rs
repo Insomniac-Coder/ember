@@ -179,6 +179,10 @@ struct Builder<'a> {
     /// `[CLS-2]` — a constructor's direct field writes initialize storage
     /// allocated by `ClassNew`, so they must not drop an old value.
     class_init: bool,
+    /// Field indices whose defaults have already been stored before a class
+    /// `init` body runs. Assignments to these fields use ordinary overwrite
+    /// lowering rather than the fresh-slot initialization path.
+    class_init_default_fields: Vec<usize>,
     /// `[CLS-7]`/`[EXC-1]` — the dereferenced class receiver for a `mut self`
     /// method.  Keeping this as a MIR place lets all exits close the same
     /// interval and keeps runtime instrumentation out of type checking.
@@ -290,6 +294,7 @@ impl<'a> Builder<'a> {
             void_ty: common.void,
             current_span: function.span,
             class_init,
+            class_init_default_fields: function.class_init_default_fields.clone(),
             class_access,
         }
     }
@@ -1764,13 +1769,20 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
             }
-            hir::ExprKind::ClassNew { class_id, init, arg_eval_order, args } => {
+            hir::ExprKind::ClassNew {
+                class_id,
+                init,
+                arg_eval_order,
+                default_fields,
+                args,
+            } => {
                 self.lower_class_new(
                     place,
                     *class_id,
                     Some(*init),
                     args,
                     arg_eval_order.as_deref(),
+                    default_fields,
                     expr.ty,
                     expr.span,
                 );
@@ -1779,7 +1791,7 @@ impl<'a> Builder<'a> {
                 which: hir::Builtin::ClassNew { class_id, init },
                 args,
             } => {
-                self.lower_class_new(place, *class_id, *init, args, None, expr.ty, expr.span);
+                self.lower_class_new(place, *class_id, *init, args, None, &[], expr.ty, expr.span);
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::ClassSuperInit { base_id, base_ty, init },
@@ -4670,6 +4682,7 @@ impl<'a> Builder<'a> {
         init: Option<hir::DefId>,
         args: &'a [hir::Expr],
         arg_eval_order: Option<&[usize]>,
+        default_fields: &'a [Option<hir::Expr>],
         ty: Ty,
         span: ember_span::Span,
     ) {
@@ -4687,6 +4700,16 @@ impl<'a> Builder<'a> {
         self.current = allocated;
 
         if let Some(init) = init {
+            // `[CLS-2]` — literal field defaults are materialized immediately
+            // after allocation and before the user constructor body runs.
+            // `lower_into` is the fresh-slot path, so these stores do not drop
+            // uninitialized bytes.  The constructor's own explicit writes are
+            // ordinary overwrites for the fields recorded on its HIR function.
+            for (index, default) in default_fields.iter().enumerate() {
+                if let Some(default) = default {
+                    self.lower_into(place.clone().field(index), default);
+                }
+            }
             let function = self.program.function(init);
             let receiver_ty = function
                 .params
@@ -4800,7 +4823,11 @@ impl<'a> Builder<'a> {
     fn is_class_init_field(&self, place: &Place) -> bool {
         self.class_init
             && place.local == LocalId(1)
-            && matches!(place.projection.as_slice(), [Projection::Deref, Projection::Field(_)])
+            && matches!(
+                place.projection.as_slice(),
+                [Projection::Deref, Projection::Field(index)]
+                    if !self.class_init_default_fields.contains(index)
+            )
     }
 
     /// An argument read in `[FN-1]`'s default **borrow** mode: the callee sees
