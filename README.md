@@ -56,6 +56,12 @@ move-only representation, ordinary destruction, `@static_safe` exclusion, and
 diagnostic restraint are executable. The remaining architecture migration
 continues incrementally around real feature work.
 
+The current architecture continuation is `30836ee`, building on `d35e94f`:
+Arena allocation-return escape checking consumes canonical storage identity and
+the canonical storage-survival constraint, while ordinary Arena place borrows
+retain their existing fallback. This is an internal fact-producer/consumer
+migration with no language-semantic change.
+
 The concrete, sized, default-allocator `Box[T]` slice is complete at `de641fb`,
 with region-complete stored-view checking at `0fdd9b6`. It allocates through
 the runtime allocator, is emitted as the specified `T*`, auto-dereferences,
