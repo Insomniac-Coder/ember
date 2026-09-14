@@ -949,6 +949,83 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// `[FN-6a]` / `[BLD-2]` — modes inside an implicit `Callable` bound are
+/// source-level type identity.  An import cannot be reused after `fn(mut T)`
+/// becomes `fn(T)`, even though both source spellings contain the same `T`.
+#[test]
+fn generic_callable_parameter_modes_cross_the_interface_boundary() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-callable-mode-interface-{}",
+        std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create callable-mode package");
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn apply(f: fn(mut i32) -> i32, mut value: i32) -> i32:\n    return f(value)\n",
+    )
+    .expect("write initial callable-mode helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import apply\n\nfn increment(mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value = 4\n    println(apply(increment, value))\n",
+    )
+    .expect("write callable-mode importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for callable-mode interfaces");
+        assert!(
+            output.status.success(),
+            "{label} callable-mode interface check failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    check("initial");
+    let before_helper = cached_interface(&out_dir, "helper");
+    let before_root = cached_interface(&out_dir, "root");
+    let apply = &before_helper.callables[&ember_branding::mangled("helper.apply")];
+    let bound = apply.signature.generics[0]
+        .callable
+        .as_ref()
+        .expect("fn parameter has an implicit Callable bound");
+    assert_eq!(bound.parameters.len(), 1);
+    assert_eq!(bound.parameters[0].mode, CallableParameterMode::Mut);
+    assert_eq!(bound.parameters[0].ty, "i32");
+
+    std::fs::write(
+        test_root.join(&helper),
+        "pub fn apply(f: fn(i32) -> i32, mut value: i32) -> i32:\n    return f(value)\n",
+    )
+    .expect("change callable-mode helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import apply\n\nfn identity(value: i32) -> i32:\n    return value\n\nfn main():\n    value = 4\n    println(apply(identity, value))\n",
+    )
+    .expect("adapt importer to the changed callable contract");
+    check("after callable mode change");
+    let after_helper = cached_interface(&out_dir, "helper");
+    let after_root = cached_interface(&out_dir, "root");
+    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(before_root.cache_key, after_root.cache_key);
+    let bound = after_helper.callables[&ember_branding::mangled("helper.apply")]
+        .signature
+        .generics[0]
+        .callable
+        .as_ref()
+        .expect("changed fn parameter remains an implicit Callable bound");
+    assert_eq!(bound.parameters[0].mode, CallableParameterMode::Borrow);
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 /// `[TYP-16]` / `[TYP-17]` / `[IFC-1]` / `[MOD-2]` / `[BLD-2]` — members are
 /// source declarations too. In particular, a generic owner's receiver has no
 /// concrete runtime type until an instantiation exists, so an emitted

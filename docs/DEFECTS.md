@@ -52,6 +52,66 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — callback results did not infer independent generic types
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-124 | **Generic inference solved the hidden `Callable` binder but did not traverse its canonical callback signature.** In `fn apply[T, R](value: T, f: fn(T) -> R) -> R`, `T` could be inferred from `value`, but a named function or closure was recorded only as the opaque callable generic, leaving `R` unbound and producing E2060. This blocked the ordinary generic `std.borrow.with_views*` wrappers where the callback is the only source of `R`. | `[TYP-18]`, `[TYP-23]`, `[CLO-3]`, `[FN-6a]` | **fixed** | Generic argument inference now unifies a concrete function value's full mode-bearing signature with the implicit Callable/CallableOnce bound after it records the opaque binder. A concrete capturing closure contributes the generated call signature after its environment receiver, so its result is equally visible. Unresolved generic callback returns are inferred from the closure body rather than prematurely forced. **Verified:** TYP-18 covers named-function, capture-free-lambda, and capturing-lambda inference of an independent result type; LT-8 uses the same path for `with_views2/3/4` and their mutable forms. Mode mismatch still reports E2020 without a spurious E2060. This was a compiler defect against existing generic/callable semantics; no specification or owner ruling changed. |
+
+---
+
+## 2026-09-14 — a borrowing closure crossed an owned callable boundary
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-123 | **A normal closure that captured a local by reference could be passed to `owned f: fn(...)`, even though that parameter transfers a callable the callee may retain.** The compiler rejected an actual `Box` store in the callee, but accepted the ownership boundary itself, leaving `[CLO-4]` dependent on whether a particular currently visible callee body happened to store the closure. | `[CLO-1]`, `[CLO-2]`, `[CLO-3]`, `[CLO-4]`, `[TYP-15]` | **fixed** | Borrow analysis now consumes two explicit MIR facts at a direct call: the callee's declared parameter modes and the nominal identity of compiler-generated reference-capturing closure environments. An `owned` parameter rejects only such a non-static closure environment with E3063; arbitrary owned values, borrowed/mutable callable parameters, capture-free closures, and `owned fn` environments remain outside this rule. The check uses inferred provenance rather than generated names or C representation, so a static-only environment remains admissible. **Verified:** CLO-4 rejects a reference-capturing closure passed through `owned f`, while existing CLO-4 borrowed invocation and CLO-6 `owned fn`/`CallableOnce` paths remain accepted. This is a compiler defect against existing semantics; no specification or owner decision changed. |
+
+---
+
+## 2026-09-14 — closure mutation shadowed its capture
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-122 | **A bare assignment in a lambda silently declared a new closure-local instead of mutating the matching outer capture.** `counter = counter + 1` inside `fn() -> i32: ...` therefore compiled but returned `1, 1`, even though `[CLO-2]` requires a mutable borrow of the captured outer place. The same missing capability meant that an `owned fn` could not mutate a directly owned capture unless it moved that capture out. | `[CLO-1]`, `[CLO-2]`, `[CLO-3]`, `[FN-1]`, `[BRW-1]`, `[OWN-3]` | **fixed** | Capture discovery now takes precedence over `[GRM-4]`'s fresh-local rule for a matching outer name. Type checking builds a private, non-emitted typed probe environment—`ref mut` fields for normal closures and direct fields for `owned fn`—then derives per-field mutable capture and the independent one-shot move fact. The final environment uses `ref`/`ref mut` exactly where the checked body requires it; its generated call takes `mut`, `owned`, or borrowed `env` according to those facts. Existing outer parameter modes carry that behavior through monomorphized calls: `mut f: fn(...)` accepts a mutable closure, while plain borrowed `f` is E3023. **Verified:** CLO-2 covers normal mutation (1 then 2), `mut f`, borrowed-`f` rejection, the live-loan conflict, and reusable owned mutation; CLO-6 covers mutation followed by a capture move as one-shot with one Array destruction. No new callable interface, language rule, ABI field, or parallel ownership model was introduced. |
+
+---
+
+## 2026-09-14 — owned closure body moves did not select `CallableOnce`
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-121 | **An `owned fn` captured its environment by move, but a body that moved a non-`Copy` capture out of that environment was still callable repeatedly.** The compiler had represented source capture mode, yet it did not carry the independently required `[CLO-2]` fact that consuming a capture makes that particular closure `CallableOnce`, not `Callable`. A plain `f: fn(...)` generic boundary could therefore accept a one-shot closure, and direct calls borrowed its environment rather than moving it. | `[CLO-2]`, `[CLO-3]`, `[CLO-6]`, `[OWN-3]` | **fixed** | Type checking now derives a concrete closure's capability from its checked HIR body: an owned environment is passed by `owned` mode only if a non-`Copy` captured field occurs in a consuming value context. The same precise fact rejects that closure at a plain `Callable` boundary with E3030 and permits it at `owned f`/`CallableOnce`; ordinary move analysis then makes a second direct call E3040. A read-only `owned fn` capture remains reusable, while D-122 separately covers body mutation and the combined mutate-then-move case. **Verified:** the CLO-6 matrix covers direct one-shot execution and one destruction, passing the same closure through `owned f`, E3030 at a plain `Callable` parameter, E3040 on a second direct call, an owned closure that mutates then moves its capture, and the existing LT-42 reusable owned-capture contrast. This is a compiler defect against existing rules; no specification or owner ruling changed. |
+
+---
+
+## 2026-09-14 — an indirect `CallableOnce` callee was not transferred
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-120 | **The move/drop transfer examined an indirect call's arguments but not its callee.** Type checking and MIR lowering correctly represented a `[CLO-6]` `owned f: fn(A) -> R` invocation as `Move(f)`, yet `drops::step_terminator` neither read nor moved that operand. The binding consequently remained live after its first `CallableOnce` call, allowing a second call when the concrete function representation was `Copy`. | `[CLO-6]`, `[OWN-3]` | **fixed** | The ordinary call-terminator transfer and drop-flag update now process an indirect callee exactly as they process a call argument: it is read for use-after-move reporting and an `Operand::Move` consumes its move path. This is an ownership-pipeline correction, not a callable-specific ownership model. **Verified:** `tests/conformance/CLO-6/accept_owned_callable_parameter_is_consumed_once.em` runs once, while `reject_owned_callable_parameter_cannot_be_called_twice.em` is E3040 at the second call. The existing ordinary `Callable` closure-twice case remains the contrasting non-consuming path. The specification already required this behavior and did not change. |
+
+---
+
+## 2026-09-14 — closure capture field provenance
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-117 | **A non-`owned` closure captured a multi-region aggregate as one whole `ref` even when its body accessed only one field.** The direct closure body already had an exact `[LT-35]` access summary, but closure construction lowered `fn() => pair.left[0]` as a synthetic `&pair`. That whole-place borrow carried both `pair.left` and `pair.right` provenance slots, so `right.push(9)` before `read_left()` incorrectly reported E3021. | `[LT-24]`, `[LT-35]`, `[LT-36]`, `[LT-42]`, `[MIR-REG-1]` | **fixed** | Current checkpoint: a closure body now carries an explicit compiler-internal environment identity. Only a synthetic borrow whose temporary flows directly and uniquely into that generated environment may consume the body’s installed, rederived direct-call summary. Region liveness, provenance facts, access attribution, and loan conflict checking then use exactly the selected paths; ordinary references, opaque function values, missing/unknown summaries, whole-aggregate capture, and multiple selected fields remain conservative. **Verified:** `accept_closure_capture_uses_only_selected_field.em` mutates `right` and prints 7 in debug, release, and shipping; whole-aggregate and two-selected-field captures still report E3021; an indirect function-value call retains all slots under `[LT-41]`. The `[LT-28]` split/overlap matrix separately confirms that independent regions are never an aliasing proof, and `[LT-25]` confirms that ordinary E3021 prevents a view from borrowing an owner moved into its own field. `[LT-31a]` additionally proves two source-distinct `Pair` values share one nominal callable ABI: generated C contains only the `em_left_value` declaration and definition and no region-slot ABI data. `cargo test --workspace` exits 0 (208 tests), the 129-directory/432-source conformance walk is green, and debug/release builds are warning-free. The frozen target was already explicit, so no specification, ADR, or owner ruling changed. |
+
+## 2026-09-14 — enum discriminants must not read payload provenance
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-118 | **An enum discriminant read was treated as a read of every borrowed payload field.** In `match maybe: Some(Pair(selected, _))`, the tag check for `Option[Pair]` unnecessarily kept the discarded `right` span live, so mutating `right` before the match incorrectly reported E3021 even though the selected branch moves and reads only `left`. | `[LT-20]`, `[LT-24]`, `[LT-36]`, `[LT-38]`, `[MIR-REG-1]` | **fixed** | Current checkpoint: `Rvalue::Discriminant` is now control-flow metadata in region liveness, callable access summaries, and ordinary borrow-access collection; it neither reads nor borrows an enum payload. `Some(Pair(selected, _))` therefore permits the independent `right` mutation and prints 7 in every profile. The boundary remains strict: `Some(pair)` moves the whole `Pair`, so `[LT-36]` still requires every carried region and the corresponding case reports E3021. This is a compiler defect, not a relaxation of whole-value move semantics. The frozen target was already explicit, so no specification, ADR, or owner ruling changed. |
+
+## 2026-09-14 — `owned fn` capture mode was discarded
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-119 | **The parser recorded `owned fn`, but type checking discarded that flag and lowered every capturing closure as a shared-reference environment.** An Array capture therefore remained a borrow instead of moving into the closure, contradicting the source capture mode and preventing an escaping owned closure from having its required ownership boundary. | `[CLO-1]`, `[CLO-2]`, `[CLO-4]`, `[LT-42]`, `[TYP-15]` | **fixed** | Current checkpoint: a generated closure environment now carries a verified compiler-internal move-capture marker. An `owned fn` stores each capture directly and ordinary move/drop analysis consumes the source; a normal closure remains a `ref` environment. Borrow analysis recognizes only verified owned environments and requires every captured view operand to carry exclusively static provenance, yielding E3063 otherwise. The marker is rejected if it lacks a generated environment, and neither it nor provenance slots enters the C ABI. **Verified:** owned Array capture runs twice and emits one `ember_vec_free`; post-capture source use is E3040; static view capture is accepted; local view capture is E3063. D-121 separately records the distinct body-level `CallableOnce` capability decision. Mutable captures, dynamic dispatch, and escaping/storage matrices remain explicitly incomplete rather than inferred. No specification, ADR, or owner ruling changed. |
+
+---
+
 ## 2026-09-13 — callable-region metadata and field replacement
 
 | # | Defect | Rule | Status | Fixed in |

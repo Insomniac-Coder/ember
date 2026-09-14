@@ -1,5 +1,10 @@
 # Migration intake — Ember 0.9.6_Hardened_6
 
+> **Historical intake.** `docs/MIGRATION-0.9.7.md` governs the current
+> `0.9.7_Hardened_1` development target. This file preserves the H6 adoption
+> and implementation record; do not reinterpret its former “current” wording
+> as superseding the H1 intake.
+
 **State as of 2026-09-13.** This file is the implementation and adoption map
 for the current frozen development target:
 
@@ -378,6 +383,27 @@ change affects the helper interface and an unchanged importer, while a private
 member-body change remains local. Class-member lowering is not currently
 implemented; layouts/effects/inline sections and safe reuse remain open.
 
+The current uncommitted H6-target implementation advances `EMIF` to schema 6
+and closes the compiler's nested callable-mode erasure: each function-type
+parameter now has canonical `{ type, borrowed|mut|owned }` identity through
+parsing, substitution, generic `Callable`/`CallableOnce` bounds, expected
+lambda checking, indirect calls, monomorphisation, generated C, and interface
+serialization. Schema-5 records do not contain the complete bound contract and
+are invalidated before use. A cross-module regression changes an implicit
+generic bound from `fn(mut i32) -> i32` to `fn(i32) -> i32` and proves the
+helper interface hash and importer cache key both change. This implements an
+owner-approved frozen-target contract; it does not install H6 as the adopted
+specification, create runtime mode metadata, or complete `with_views`.
+
+The same checkpoint adds the ordinary `std.borrow.with_views2/3/4` and
+`with_views2_mut/3_mut/4_mut` forwarding families. Their fixed callback modes,
+reborrow behavior, generic result inference, and ordinary mutable-alias
+rejection have executable LT-8 evidence. `[LT-7]`/`[LT-10]` remains blocked:
+the target requires invocation-local callback regions and escape rejection but
+does not state a general source/interface declaration mechanism for a library
+to expose that boundary. ODR-015 records that owner decision; do not replace it
+with compiler recognition of `std.borrow` names.
+
 ## 4. Known implementation gaps
 
 **Phase accounting:** exactly **1 of 9 phases is complete**. Phase 2 is active
@@ -439,9 +465,12 @@ preparatory "Phase 0" is not part of this current nine-phase count.
   `c913fbd`, `90059c8`, and `af7c525`: direct aggregate slots, field projection,
   field-sensitive NLL, point-sensitive replacement, direct callable
   field/provenance summaries, canonical verified MIR metadata, and E3065/B14
-  are executable. Interface serialization/invalidation, non-direct dispatch,
-  and the full conformance matrix remain; H1's architecture text is not itself
-  implementation evidence.
+  are executable. D-117 additionally makes a directly invoked non-`owned`
+  closure preserve only the multi-region capture paths its verified body
+  accesses; its environment identity and capture paths remain compiler-internal
+  and absent from generated C. Interface serialization/invalidation,
+  non-direct dispatch, and the full conformance matrix remain; H1's
+  architecture text is not itself implementation evidence.
 - **`UnsafeCell` is complete at `a02c0a5`.** It remains distinct from
   compiler-known `Cell`/`RefCell` and from Arena. Its `!Sync` and conditional
   `Send` behavior remains blocked only on the later threading-trait machinery,
@@ -584,11 +613,43 @@ proved.
    artifact and `[LT-40]` identity invalidation. `7bcca7f` makes its callable
    section import-precise, `6ad9834` adds declaration-first top-level
    signatures and generic bounds, and `6e37063` completes source declaration
-   contracts for every method form currently lowered. Next cover
-   audited-declared, unknown, separate-compilation, dynamic, hot-reload,
-   escape/storage, and remaining verifier cases while preserving runtime
-   erasure. Class-member lowering and nested callable mode-preserving type
-   identity remain separate prerequisites; do not publish placeholders.
+   contracts for every method form currently lowered. D-117 closes the narrow
+   direct capturing-closure field-provenance case using that same verified
+   summary boundary. The current checkpoint also gives `[LT-28]` direct
+   conformance evidence: structural split proofs permit independently mutable
+   fields, while two overlapping `as_mut_span` borrows remain E3022; region
+   identity is not a disjointness proof. `LT-41` owns the complementary opaque
+   function-value all-slot rejection. `[LT-25]` now pins the ordinary E3021
+   move/borrow rejection that prevents a constructed view from borrowing an
+   owner moved into its own field. D-118 makes enum discriminants control-flow
+   metadata rather than payload reads: an explicit nested payload destructure
+   retains only selected fields, while a whole payload binding remains
+   all-slot under `[LT-36]`. The current matrix also proves `[TYP-15]`'s
+   all-slots static storage boundary and `[LT-29]`'s non-owning generated-C
+   destruction path. `[LT-31a]` now proves source-distinct region provenance
+   does not alter a nominal direct callable's C ABI: one callable declaration
+   and definition, with no region-slot ABI data. D-119 now makes `owned fn`
+   capture by move/copy rather than silently lowering it as a shared borrow;
+   its owned environment carries only a compiler-internal marker, requires
+   static provenance for captured views, and is verifier-bound. D2's distinct
+   `owned f: fn(...)` parameter boundary is now complete: a `CallableOnce`
+   call explicitly moves its indirect callee and a second call is E3040 even
+   for a concrete `Copy` function representation. D-121 also completes the
+   separate body-level fact: an owned closure is one-shot only when its checked
+   body consumes a non-`Copy` capture; plain `Callable` rejects that closure
+   with E3030 while `owned f` accepts it. D-122 completes per-capture mutation:
+   normal closures store only mutated captures as `ref mut`, owned closures
+   mutate their moved fields through the existing `mut` mode, and `mut f`
+   carries the required mutable callable place through monomorphization.
+   D-123 closes the owned-callable escape boundary: a normal reference-capturing
+   closure cannot cross `owned f` merely because the currently visible callee
+   happens to invoke rather than store it. Dynamic dispatch and remaining
+   closure escape/storage work remain separate, explicit work. Next cover audited-declared,
+   separate-compilation, dynamic, hot-reload, escape/storage, and remaining
+   verifier cases while preserving runtime erasure. Class-member lowering and
+   H6's nested callable mode-preserving type identity is now implemented;
+   class-member lowering and the remaining separate prerequisites remain;
+   do not publish placeholders.
 10. **Add the version selector and run adoption validation.** `VER-096-1` may
    land earlier for testing, but H6 becomes normative only after every gate
    below passes and the owner explicitly adopts it.
@@ -651,11 +712,18 @@ make an implementation or current test easier.
 
 ## 9. Exact next task
 
-Continue the non-direct, escape/storage/enum, FFI/coroutine, and hot-reload
-matrices after `6e37063`'s completed source declaration boundary. Preserve
-conservative all-slot behavior for unknown calls and ordinary E3021 for precise
-matching-field conflicts; E3064 remains a reserved historical identity rather
-than target behavior. Treat class-member lowering and nested callable
-mode-preserving type identity as distinct later prerequisites. Do not start
-cache reuse, layouts/effects/inline sections, or a big-bang rewrite as part of
-this slice, and do not leak proof metadata into runtime layout.
+Continue the audited-declared, unknown, separate-compilation, dynamic,
+escape/storage/enum, FFI/coroutine, and hot-reload matrices after `6e37063`'s
+completed source declaration boundary, D-117's narrow direct capture, D-119's
+direct `owned fn` move-capture boundary, D2's parameter-level `CallableOnce`
+consumption, D-121's explicit body/capture move fact, D-122's per-capture
+mutable-borrow fact, and D-123's owned-callable escape boundary. Next take dynamic call, remaining escape/storage, and
+separate-compilation closure matrices only when their representation and
+provenance facts can be carried explicitly; do not infer capability from an
+owned marker or leak proof metadata into runtime layout.
+Preserve conservative all-slot behavior for unknown calls and ordinary E3021
+for precise matching-field conflicts; E3064 remains a reserved historical
+identity rather than target behavior. Treat class-member lowering and nested
+callable mode-preserving type identity as distinct later prerequisites. Do not
+start cache reuse, layouts/effects/inline sections, or a big-bang rewrite as
+part of this slice, and do not leak proof metadata into runtime layout.

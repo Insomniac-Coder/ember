@@ -562,7 +562,18 @@ pub fn type_str(ty: &TypeExpr) -> String {
         TypeKind::Fn { abi, params, ret } => {
             let abi = abi.as_ref().map(|a| format!("extern {a:?} ")).unwrap_or_default();
             let ret = ret.as_ref().map(|r| format!(" -> {}", type_str(r))).unwrap_or_default();
-            format!("{abi}fn({}){ret}", params.iter().map(type_str).collect::<Vec<_>>().join(", "))
+            let params = params
+                .iter()
+                .map(|param| {
+                    let mode = match param.mode {
+                        Mode::Borrow => "",
+                        Mode::Mut => "mut ",
+                        Mode::Owned => "owned ",
+                    };
+                    format!("{mode}{}", type_str(&param.ty))
+                })
+                .collect::<Vec<_>>();
+            format!("{abi}fn({}){ret}", params.join(", "))
         }
         TypeKind::Dyn(bounds) => {
             format!("dyn {}", bounds.iter().map(type_str).collect::<Vec<_>>().join(" + "))

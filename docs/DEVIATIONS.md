@@ -41,26 +41,31 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | ADR-016 |
 | **Target** | with operator interfaces (Phase 3, block D) |
 
-## D2 — `[CLO-6]`'s `owned f: fn(A) -> R` is refused, not implemented
+## D2 — `[CLO-6]`'s `owned f: fn(A) -> R` — **CLOSED 2026-09-14**
 
-> **`[CLO-3]` is closed; `[CLO-6]` is this entry, and is open.** They are
-> different rules and only one of them is done. `fn(A) -> R` as a monomorphised
-> generic over `Callable` works, capturing lambdas and all (ADR-018, closed
-> below). `owned f`, which `[CLO-6]` bounds by `CallableOnce`, does not.
+> **Closed: `[CLO-3]` and this parameter-level part of `[CLO-6]` are both
+> implemented.** `fn(A) -> R` is a monomorphised generic over `Callable`;
+> `owned f: fn(A) -> R` is the corresponding generic over `CallableOnce`.
+> The latter lowers its callee as an explicit semantic move, and ordinary
+> move/drop analysis now reads and consumes an indirect callee before control
+> reaches the continuation. A second call is therefore E3040 even when the
+> concrete callee representation is `Copy`. This closes the originally refused
+> program without making all closures move-only. It does **not** claim the
+> separate, still-unimplemented work of an `owned fn` *body* moving individual
+> captured values.
 
 
 | | |
 |---|---|
 | **Rule** | `[CLO-6]` |
 | **Normative behaviour** | `owned f: fn(A) -> R` is a generic bounded by `CallableOnce`; calling it consumes it, and a second call is `E3040` under `[OWN-3]` |
-| **Current behaviour** | the declaration is rejected with "not supported yet in this phase", naming `[CLO-6]` |
-| **Soundness impact** | none — a refusal admits no program |
-| **Observable today** | **yes**, as a rejection: a program the rule permits does not compile |
-| **Reason** | the consumption is a property of the **bound**, not of the closure's type. The same closure is called repeatedly through a `Callable` parameter and once through a `CallableOnce` one, so it cannot be had by making the environment move-only — the call itself has to consume its callee, and calls do not do that yet |
-| **Why refused rather than approximated** | treating `CallableOnce` as `Callable` would compile every such program and silently permit the second call the rule exists to forbid. A refusal is visible; a wrong acceptance is not |
-| **Fix plan** | give a call the ability to move its callee, then the mode selects the bound as the rule says it already does |
+| **Current behaviour** | implemented. Type checking records the `CallableOnce` bound, MIR lowers the indirect callee as `Move`, and the existing ownership transfer reads and consumes that callee. The second call is E3040 |
+| **Soundness impact** | closed. The former refusal admitted no bad program, but the completed path now both accepts the valid one-call program and rejects reuse |
+| **Observable today** | **yes**: `tests/conformance/CLO-6/` proves a one-shot closure runs directly and through `owned f`, a plain `Callable` boundary is E3030, and both direct and indirect reuse are E3040 |
+| **Historical reason** | consumption is a property of the **bound**, not of the closure's type. The same closure is repeatedly callable through `Callable` and once-callable through `CallableOnce`, so the call itself had to consume its callee |
+| **Resolution** | `CallIndirect` carries the explicit consumption fact through HIR and MIR. `drops::step_terminator` processes an indirect callee operand as both a read and, when it is `Move`, a moved place; no callable-only second ownership system was introduced |
 | **Owner** | — |
-| **Target** | Phase 3 |
+| **Target** | **done** — current checkpoint, `tests/conformance/CLO-6/` |
 
 ## D3 — `extern class` parses and is refused
 
@@ -130,6 +135,7 @@ one might last.
 | | Rule | Closed by |
 |---|---|---|
 | **D5** | `[FN-1]` | **closed 2026-09-10 by owner ruling on ERR-041.** Part VII §7's worked example governs: a `mut` parameter at a view type takes the view value, and the place requirement applies to what the view was taken of. Amendment S4, `[FN-1a]`. No code moved — the compiler was right — and `tests/conformance/FN-1a/` now pins it. The full entry is above, kept because it was open for two revisions and nobody guessed |
+| **D2** | `[CLO-6]` | **closed 2026-09-14 by compiler implementation.** An `owned f: fn(A) -> R` parameter is a `CallableOnce` generic; its indirect call now moves the callee binding and the second call is E3040. The full entry above preserves why a temporary refusal was safer than an incorrect `Callable` approximation |
 | **ADR-018** | `[CLO-3]` | `fn(A) -> R` in parameter position is now an implicit generic bounded by `Callable`, monomorphised per argument type; a capturing lambda is an anonymous struct of its `[CLO-2]` captures. It had been a C function pointer, which erases the environment, so every capturing lambda was rejected |
 | **ADR-012** | `[LT-2]` | superseded. `E3064` was reachable all along and the programs it is for were being reported as shape B3; the classifier was wrong, not the narrowing |
 | **ERR-026** | `[GRM-23]` | the compiler emits `E0104` as the rule says, and `E0102` stays with ordinary chained comparison |

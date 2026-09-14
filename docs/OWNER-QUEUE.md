@@ -34,6 +34,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-012 | **CLOSED** — public hashing protocol and Map key boundary | Standard-library API / equality coherence | — | **No** — ruled 2026-09-13 |
 | ODR-013 | **CLOSED** — static generic `H: Hasher` parameter | Language / callable-interface ABI | — | **No** — ruled 2026-09-13 |
 | ODR-014 | **CLOSED** — exact Span iterator/chunk/raw-pointer contract | Standard-library API / views / unsafe boundary | — | **No** — ruled 2026-09-13 |
+| ODR-015 | **CLOSED** — `@latebound` callable-type boundary | Language / lifetime callback API | — | **No** — ruled 2026-09-14 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -41,9 +42,9 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-014 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **No owner semantic/API decision is
-currently open.** H8 records the complete helper-mode and callable-abstraction
+ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **There is no open owner semantic/API
+decision.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -51,11 +52,93 @@ Arena-backed collection contract; and H3 records the public hashing contract.
 H8/H9/H10/H1/H2/H3/H4 implementation remains incomplete as a whole, but its
 Arena core, wrapper provenance, initialization, `[TST-23]`, generic-method,
 Arena-collection, hashing, and UnsafeCell slices now have executable evidence.
-Other gaps are implementation/conformance work, not owner questions.
+H1's `@latebound` implementation and conformance matrix are implementation/conformance work, not
+owner questions. Other gaps are likewise implementation/conformance work.
 
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
 editorial cleanup that can safely wait.
+
+---
+
+## ODR-015 — `[LT-7]` late-bound callback-region declaration mechanism — **CLOSED**
+
+    ID:        ODR-015
+    Status:    CLOSED — owner-approved `@latebound` callable-type boundary
+    Category:  LANGUAGE / LIFETIME CALLBACK API
+    Priority:  —
+    Location:  Ember_v0.9.7_Hardened_1.md [FN-6b], [LT-7], [LT-8]–[LT-10], [TST-16], [TST-21]
+
+    Existing wording: "A callback-taking API MAY expose a callback boundary whose
+                      borrow region is chosen by the callee for each invocation."
+                      `with_views` is required to use that boundary and reject
+                      any callback-local view that escapes.
+
+    Historical conflict: H6 defined the required lifetime behavior but did
+              not define a source declaration, signature annotation, interface
+              artifact field, or other general marker by which a library API
+              says that one of its callback parameters is late-bound. Plain
+              `fn(...)` means an ordinary callable boundary today. Treating all
+              callbacks as late-bound would change unrelated APIs; recognizing
+              only `std.borrow.with_views*` by compiler name would leave [LT-7]
+              non-general and conflicts with the helpers being ordinary library
+              APIs rather than compiler-special ownership types.
+
+    Resolution:                       `@latebound fn(...) -> R` is the one general callable-type
+                                      modifier. It binds fresh invocation-local regions for each
+                                      borrowed/view parameter; results and publication paths must
+                                      be free of those regions.
+    Authority:                        Owner ruling, 2026-09-14; 0.9.7_Hardened_1; ADR-036.
+    Semantic impact:                  owner-approved language revision
+    Blocks implementation:            NO — implementation is now authorized
+    Blocks conformance:               NO — conformance work is now authorized
+    Blocks specification freeze:      NO — H1 is frozen
+    Blocks normative specification adoption: implementation evidence still required
+    Requires owner semantic decision: NO
+
+**Minimal reproduction.** The ordinary generic `std.borrow.with_views2`
+wrapper can forward views and preserve callable modes, but this program is
+currently accepted even though `[LT-10]` requires rejection:
+
+```ember
+from std.borrow import with_views2
+
+fn first(a: Span[i32], b: Span[i32]) -> Span[i32]:
+    return a
+
+fn main():
+    a: Array[i32] = Array[i32]()
+    b: Array[i32] = Array[i32]()
+    a.push(1)
+    b.push(2)
+    escaped: Span[i32] = with_views2(a.as_span(), b.as_span(), first)
+```
+
+The result remains memory-safe under today's source-region propagation, but it
+violates the target's intentionally stricter invocation-local contract. This
+is an implementation/adoption gap, not evidence that `[LT-10]` should be
+weakened.
+
+**Historical alternatives rejected by the owner.**
+
+1. The selected approach is the deliberately small general modifier
+   `@latebound` on a callable type. It is source-visible only as the boundary
+   marker; region identities remain compiler-internal, and the fact travels in
+   compile-time type/EMIF identity rather than runtime or ABI data.
+2. Give only the canonical `std.borrow.with_views*` names this meaning in the
+   compiler. This is narrow but risks making an ordinary library API
+   compiler-special and leaves general `[LT-7]` APIs unexpressible.
+3. Infer late-bound regions for every callback-taking API. This is not
+   recommended: it silently changes unrelated callback APIs and accepted
+   programs.
+4. Supply another explicit owner-selected mechanism consistent with `[LT-7]`.
+
+**Resolution evidence.** The owner explicitly rejected both name-specific
+compiler behavior and global inference. The decision adds one reusable
+callable-boundary modifier rather than named lifetime syntax. It is a language
+revision because it changes callback-return and escape acceptance; H6 remains
+immutable and H1 is the correct successor. The minimal reproducer below remains
+the first required negative conformance case, now against the H1 contract.
 
 ---
 

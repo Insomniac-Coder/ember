@@ -399,6 +399,16 @@ pub struct TypeExpr {
     pub span: Span,
 }
 
+/// One parameter in a written callable type such as `fn(mut T) -> R`.
+/// Callable parameter modes deliberately reuse `[FN-1]`'s three modes rather
+/// than introducing a parallel callable ownership vocabulary.
+#[derive(Debug)]
+pub struct CallableTypeParam {
+    pub mode: Mode,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
+
 #[derive(Debug)]
 pub enum TypeKind {
     /// `std.math.Vec3`, `Array[T]`, `Iterator[Item = i32]`.
@@ -408,7 +418,7 @@ pub enum TypeKind {
     /// `*T` / `*mut T`.
     Ptr { mutable: bool, inner: Box<TypeExpr> },
     Tuple(Vec<TypeExpr>),
-    Fn { abi: Option<String>, params: Vec<TypeExpr>, ret: Option<Box<TypeExpr>> },
+    Fn { abi: Option<String>, params: Vec<CallableTypeParam>, ret: Option<Box<TypeExpr>> },
     Dyn(Vec<TypeExpr>),
     /// `[T; N]`.
     Array { elem: Box<TypeExpr>, len: Box<Expr> },

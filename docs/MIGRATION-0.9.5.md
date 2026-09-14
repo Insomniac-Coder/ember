@@ -1,7 +1,7 @@
 # Migration intake — Ember 0.9.5_Hardened_10
 
-> **Historical intake.** `docs/MIGRATION-0.9.6.md` governs the current
-> `0.9.6_Hardened_1` development target. This file remains the immutable
+> **Historical intake.** `docs/MIGRATION-0.9.7.md` governs the current
+> `0.9.7_Hardened_1` development target. This file remains the immutable
 > reasoning and implementation record for the 0.9.5/H10 predecessor; do not
 > reinterpret its “current” wording as superseding the 0.9.6 intake.
 

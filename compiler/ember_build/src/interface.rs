@@ -21,7 +21,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 4 records are well-formed but omit source contracts now required by
 // `[BLD-2]`, so they must be invalidated rather than treated as stale current
 // metadata.
-const SCHEMA_VERSION: u32 = 5;
+// Schema 6 records parameter modes in implicit generic Callable bounds.
+// Earlier records erased `fn(mut T)` and `fn(owned T)` at the import boundary,
+// so they cannot safely participate in `[FN-6a]` checking.
+const SCHEMA_VERSION: u32 = 6;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -74,7 +77,7 @@ pub struct CallableGenericParameter {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CallableGenericCallableBound {
-    pub parameters: Vec<String>,
+    pub parameters: Vec<CallableParameter>,
     pub result: String,
     pub once: bool,
 }
@@ -120,7 +123,7 @@ impl CallableSignature {
             }
             if let Some(callable) = &generic.callable {
                 if callable.result.is_empty()
-                    || callable.parameters.iter().any(String::is_empty)
+                    || callable.parameters.iter().any(|parameter| parameter.ty.is_empty())
                 {
                     return Err("implicit callable bound has an empty type");
                 }
@@ -666,7 +669,12 @@ fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
                 out.push(1);
                 push_count(out, callable.parameters.len());
                 for parameter in &callable.parameters {
-                    push_string(out, parameter);
+                    out.push(match parameter.mode {
+                        CallableParameterMode::Borrow => 0,
+                        CallableParameterMode::Mut => 1,
+                        CallableParameterMode::Owned => 2,
+                    });
+                    push_string(out, &parameter.ty);
                 }
                 push_string(out, &callable.result);
                 out.push(u8::from(callable.once));
@@ -741,7 +749,13 @@ fn read_callable_signature(
                 let parameter_count = reader.count()?;
                 let mut parameters = Vec::with_capacity(parameter_count);
                 for _ in 0..parameter_count {
-                    parameters.push(reader.string()?);
+                    let mode = match reader.u8()? {
+                        0 => CallableParameterMode::Borrow,
+                        1 => CallableParameterMode::Mut,
+                        2 => CallableParameterMode::Owned,
+                        _ => return Err(InterfaceArtifactError::NonCanonical),
+                    };
+                    parameters.push(CallableParameter { mode, ty: reader.string()? });
                 }
                 let result = reader.string()?;
                 let once = match reader.u8()? {

@@ -26,7 +26,7 @@ use ember_hir::{
 use ember_span::{Span, Symbol};
 use ember_types::{
     Bound, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis, OverflowPolicy, RangeDef, StructDef,
-    StructId, Ty, TyKind, TypeTable, UintTy, VariantDef, int_max,
+    StructId, Ty, TyKind, TypeTable, UintTy, VariantDef, FnParam, FnParamMode, int_max,
 };
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
@@ -80,7 +80,7 @@ pub struct CallableDeclarationGeneric {
 
 #[derive(Clone, Debug)]
 pub struct CallableDeclarationCallableBound {
-    pub parameters: Vec<Ty>,
+    pub parameters: Vec<FnParam>,
     pub result: Ty,
     pub once: bool,
 }
@@ -223,12 +223,23 @@ struct GenericParam {
 /// with, and whether one call consumes it.
 #[derive(Clone, Debug)]
 struct CallableBound {
-    params: Vec<Ty>,
+    params: Vec<FnParam>,
     ret: Ty,
     /// `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
     /// bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are
     /// bounded by `Callable`." Calling a `CallableOnce` consumes it, so a
     /// second call is `E3040` under `[OWN-3]` with no analysis of its own.
+    once: bool,
+}
+
+/// The callable capability a concrete closure environment provides. The
+/// environment struct remains the source-level value; this is compiler-local
+/// dispatch metadata derived from its checked body.
+#[derive(Copy, Clone, Debug)]
+struct ClosureCall {
+    def: DefId,
+    /// A closure that moves a non-`Copy` capture out of its owned environment
+    /// implements `CallableOnce`, not `Callable` (`[CLO-2]`/`[CLO-6]`).
     once: bool,
 }
 
@@ -415,7 +426,7 @@ struct Checker<'a> {
     /// `[CLO-1]` — the function that runs each capturing closure, keyed by the
     /// anonymous struct that is its environment. A value of that struct type is
     /// callable, and this is what it calls.
-    closure_calls: HashMap<StructId, DefId>,
+    closure_calls: HashMap<StructId, ClosureCall>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -504,6 +515,13 @@ struct Checker<'a> {
     /// ABI, so no write rooted at one is permitted. Keeping the mode here lets
     /// the type checker reject the write before that ABI detail reaches MIR.
     borrowed_params: HashSet<LocalId>,
+    /// Locals declared by `owned f: fn(...) -> R`. The function type itself is
+    /// the callable signature, not the ownership mode on `f`; retaining this
+    /// fact lets an indirect call consume exactly a `CallableOnce` parameter.
+    callable_once_locals: HashSet<LocalId>,
+    /// Callable parameters retain their source spelling for diagnostics after
+    /// monomorphisation replaces a `fn(...)` bound with a private closure type.
+    callable_parameter_locals: HashSet<LocalId>,
     /// While checking the second and later alternatives of an `|` pattern:
     /// the locals the first alternative bound, which they must reuse.
     or_bindings: Option<HashMap<Symbol, LocalId>>,
@@ -577,6 +595,8 @@ impl<'a> Checker<'a> {
             locals: Vec::new(),
             scopes: Vec::new(),
             borrowed_params: HashSet::new(),
+            callable_once_locals: HashSet::new(),
+            callable_parameter_locals: HashSet::new(),
             or_bindings: None,
             loop_labels: Vec::new(),
             in_defer: false,
@@ -1136,31 +1156,6 @@ impl<'a> Checker<'a> {
             // `[CLO-6]` — the mode already selects the bound.
             once: mode == ast::Mode::Owned,
         };
-        // `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
-        // bounded by `CallableOnce`… Calling a value bounded by `CallableOnce`
-        // consumes it; a second call is `E3040` under `[OWN-3]`."
-        //
-        // That consumption is a property of the **bound**, not of the closure's
-        // type: the same closure is called repeatedly through a `Callable`
-        // parameter and once through a `CallableOnce` one, so it cannot be
-        // expressed by making the environment move-only. Until the call itself
-        // can consume its callee, `owned` is refused rather than treated as
-        // `Callable` — which would silently permit the second call the rule
-        // exists to forbid.
-        if bound.once {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E1010,
-                    ty.span,
-                    "an `owned` callable parameter is not supported yet in this phase",
-                )
-                .help("write `f: fn(…) -> …`, which is bounded by `Callable` and may be called more than once")
-                .note(concat!(
-                    "`owned f` is bounded by `CallableOnce`, and one call must consume it ",
-                    "[CLO-6]"
-                )),
-            );
-        }
         let index = (index_base + generics.len()) as u32;
         let name = Symbol::intern(&format!("Callable{index}"));
         let param_ty = self.types.intern(TyKind::Param { index, name });
@@ -2205,11 +2200,14 @@ impl<'a> Checker<'a> {
                 if expected.once != actual.once || expected.params.len() != actual.params.len() {
                     return false;
                 }
-                for (&expected, &actual) in expected.params.iter().zip(&actual.params) {
-                    let expected = self.types.substitute_self(expected, owner);
+                for (expected, actual) in expected.params.iter().zip(&actual.params) {
+                    if expected.mode != actual.mode {
+                        return false;
+                    }
+                    let expected = self.types.substitute_self(expected.ty, owner);
                     let expected = self.resolve_assoc(expected, owner);
                     let expected = self.substitute_ty(expected, &canonical);
-                    let actual = self.substitute_ty(actual, &canonical);
+                    let actual = self.substitute_ty(actual.ty, &canonical);
                     if expected != actual {
                         return false;
                     }
@@ -2752,7 +2750,13 @@ impl<'a> Checker<'a> {
                     );
                     return self.common.error;
                 }
-                let params: Vec<Ty> = params.iter().map(|t| self.resolve_type(t)).collect();
+                let params = params
+                    .iter()
+                    .map(|param| FnParam {
+                        ty: self.resolve_type(&param.ty),
+                        mode: fn_param_mode(param.mode),
+                    })
+                    .collect();
                 let ret = ret
                     .as_ref()
                     .map(|t| self.resolve_type(t))
@@ -3499,7 +3503,10 @@ impl<'a> Checker<'a> {
             TyKind::Fn { params, ret } => {
                 let params = params
                     .iter()
-                    .map(|&param| self.substitute_ty(param, args))
+                    .map(|param| FnParam {
+                        ty: self.substitute_ty(param.ty, args),
+                        mode: param.mode,
+                    })
                     .collect();
                 let ret = self.substitute_ty(ret, args);
                 self.types.intern(TyKind::Fn { params, ret })
@@ -3571,7 +3578,10 @@ impl<'a> Checker<'a> {
             params: bound
                 .params
                 .iter()
-                .map(|&ty| self.substitute_ty(ty, args))
+                .map(|param| FnParam {
+                    ty: self.substitute_ty(param.ty, args),
+                    mode: param.mode,
+                })
                 .collect(),
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
@@ -4062,7 +4072,7 @@ impl<'a> Checker<'a> {
                 | TyKind::Span { elem: inner, .. } => visit(this, *inner, seen),
                 TyKind::Tuple(items) => items.iter().any(|&item| visit(this, item, seen)),
                 TyKind::Fn { params, ret } => {
-                    params.iter().any(|&param| visit(this, param, seen))
+                    params.iter().any(|param| visit(this, param.ty, seen))
                         || visit(this, *ret, seen)
                 }
                 TyKind::Range(id) => visit(this, this.types.range_def(*id).repr, seen),
@@ -4610,6 +4620,8 @@ impl<'a> Checker<'a> {
                 span: item.span,
                 overflow,
                 borrows: self.signatures[def.0 as usize].borrows.clone(),
+                closure_environment: None,
+                closure_captures_by_move: false,
             });
         }
 
@@ -4893,6 +4905,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.locals = Vec::new();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
+        self.callable_once_locals.clear();
+        self.callable_parameter_locals.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -4905,7 +4919,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (name, ty, mode, param_span) in signature_params.iter().copied() {
+        for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
@@ -4913,6 +4927,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let local = self.declare(Some(name), local_ty, param_span);
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_owned_callable_param) {
+                self.callable_once_locals.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_callable_param) {
+                self.callable_parameter_locals.insert(local);
             }
             params.push(Param { local, mode });
         }
@@ -4942,6 +4962,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
+            closure_environment: None,
+            closure_captures_by_move: false,
         }
     }
 
@@ -5104,6 +5126,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.locals = Vec::new();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
+        self.callable_once_locals.clear();
+        self.callable_parameter_locals.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -5116,7 +5140,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (name, ty, mode, param_span) in signature_params.iter().copied() {
+        for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 _ => ty,
@@ -5124,6 +5148,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let local = self.declare(Some(name), local_ty, param_span);
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_owned_callable_param) {
+                self.callable_once_locals.insert(local);
+            }
+            if decl.params.get(index).is_some_and(is_callable_param) {
+                self.callable_parameter_locals.insert(local);
             }
             params.push(Param { local, mode });
         }
@@ -5154,6 +5184,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
+            closure_environment: None,
+            closure_captures_by_move: false,
         })
     }
 
@@ -5292,33 +5324,47 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ///
     /// On the discovery pass this records the capture and hands back a
     /// placeholder of the right type, so the rest of the body checks as if the
-    /// name were an ordinary local. On the real pass the environment exists and
-    /// the name reads through it: the field holds a shared borrow, so reading
-    /// it is a deref, and the borrow is what `[CLO-4]` checks when it asks
-    /// whether the closure outlives what it captured.
+    /// name were an ordinary local. On the real pass the environment exists:
+    /// a normal closure reads through its shared-borrow field, while an
+    /// `owned fn` reads its directly stored move/copy capture.
     fn resolve_capture(&mut self, name: Symbol, span: Span) -> Option<Expr> {
-        let watch = self.captures.as_mut()?;
-        let ty = *watch.outer.get(&name)?;
-        match watch.env {
-            None => {
-                if !watch.found.iter().any(|(n, _)| *n == name) {
-                    watch.found.push((name, ty));
+        let ((env_local, struct_id), captures_by_move) = {
+            let watch = self.captures.as_mut()?;
+            let ty = *watch.outer.get(&name)?;
+            match watch.env {
+                None => {
+                    if !watch.found.iter().any(|(n, _)| *n == name) {
+                        watch.found.push((name, ty));
+                    }
+                    return Some(Expr { ty, kind: ExprKind::Error, span });
                 }
-                Some(Expr { ty, kind: ExprKind::Error, span })
+                Some(env) => (env, watch.captures_by_move),
             }
-            Some((env_local, struct_id)) => {
-                let index = watch.found.iter().position(|(n, _)| *n == name)?;
-                let env_ty = self.types.intern(TyKind::Struct(struct_id));
-                let field_ty = self.types.struct_def(struct_id).fields[index].ty;
-                let base = Expr { ty: env_ty, kind: ExprKind::Local(env_local), span };
-                let field = Expr {
-                    ty: field_ty,
-                    kind: ExprKind::Field { base: Box::new(base), index },
-                    span,
-                };
-                Some(self.read_through(field))
-            }
-        }
+        };
+        let index = self
+            .captures
+            .as_ref()?
+            .found
+            .iter()
+            .position(|(n, _)| *n == name)?;
+        let env_ty = self.types.intern(TyKind::Struct(struct_id));
+        let field_ty = self.types.struct_def(struct_id).fields[index].ty;
+        let base = self.read_local_expecting(env_local, span, Some(env_ty));
+        let field = Expr {
+            ty: field_ty,
+            kind: ExprKind::Field { base: Box::new(base), index },
+            span,
+        };
+        Some(if captures_by_move { field } else { self.read_through(field) })
+    }
+
+    /// A lambda body has no outer locals in its lexical scope. Before treating
+    /// a bare assignment as a new local (`[GRM-4]`), preserve an outer name as
+    /// a capture candidate so `counter = …` can mean mutation of `counter`.
+    fn is_capture_candidate(&self, name: Symbol) -> bool {
+        self.captures
+            .as_ref()
+            .is_some_and(|watch| watch.outer.contains_key(&name))
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Block {
@@ -5389,7 +5435,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
                 // `[GRM-4]` — a bare name that is not in scope declares.
                 if let ast::ExprKind::Path { segments } = &target.kind {
-                    if segments.len() == 1 && self.lookup(segments[0].name).is_none() {
+                    if segments.len() == 1
+                        && self.lookup(segments[0].name).is_none()
+                        && !self.is_capture_candidate(segments[0].name)
+                    {
                         if op.is_some() {
                             self.error(
                                 codes::E1010,
@@ -7767,16 +7816,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if let Some(local) = self.lookup(segments[0].name) {
                     let value = self.read_local_expecting(local, callee.span, None);
                     if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
-                        return self.synth_indirect_call(value, args, span);
+                        let consumes_callee = self.callable_once_locals.contains(&local);
+                        return self.synth_indirect_call(value, args, span, consumes_callee);
                     }
                     // `[CLO-3]` — inside a generic body a `fn(A) -> R`
                     // parameter is opaque, and what makes it callable is its
                     // bound rather than its type. `[TYP-17]` is the same rule
                     // as for any other bound: only what the bound provides is
                     // permitted, and calling it is what `Callable` provides.
-                    if let Some(fn_ty) = self.callable_bound_of(value.ty) {
+                    if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
                         let callee = Expr { ty: fn_ty, ..value };
-                        return self.synth_indirect_call(callee, args, span);
+                        return self.synth_indirect_call(callee, args, span, consumes_callee);
                     }
                     // `[CLO-1]` — a capturing closure is an anonymous struct,
                     // and calling one is a **direct** call to its body with the
@@ -8312,9 +8362,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 continue;
             }
             let value = self.synth_committed(&arg.value);
-            if !self
-                .types
-                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            if !self.unify_generic_argument(
+                param_ty,
+                value.ty,
+                &generics,
+                &mut solved,
+                explicit.len(),
+            )
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
@@ -8344,9 +8398,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
                 None => self.synth_committed(&arg.value),
             };
-            if !self
-                .types
-                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            if !self.unify_generic_argument(
+                param_ty,
+                value.ty,
+                &generics,
+                &mut solved,
+                explicit.len(),
+            )
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
@@ -8392,6 +8450,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
         }
+        self.reject_once_closures_for_callable_bounds(
+            args,
+            &declared,
+            &generics,
+            &checked_args,
+        );
 
         // Re-check the arguments against the substituted parameter types, so
         // an untyped literal adopts the right one and a mismatch is reported
@@ -8479,9 +8543,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 continue;
             }
             let value = self.synth_committed(&arg.value);
-            if !self
-                .types
-                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            if !self.unify_generic_argument(
+                param_ty,
+                value.ty,
+                &generics,
+                &mut solved,
+                explicit.len(),
+            )
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
@@ -8504,9 +8572,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Some(fn_ty) => self.synth_with_hint(&arg.value, fn_ty),
                 None => self.synth_committed(&arg.value),
             };
-            if !self
-                .types
-                .unify_with_fixed(param_ty, value.ty, &mut solved, explicit.len())
+            if !self.unify_generic_argument(
+                param_ty,
+                value.ty,
+                &generics,
+                &mut solved,
+                explicit.len(),
+            )
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
@@ -8553,6 +8625,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
         }
+        self.reject_once_closures_for_callable_bounds(
+            args,
+            &declared,
+            &generics,
+            &checked_args,
+        );
 
         let instance = if instantiate {
             self.instantiate_method(def, &substitution, name, span)
@@ -8584,6 +8662,52 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty: ret, kind: ExprKind::Call { callee: instance, args: checked }, span }
     }
 
+    /// `[CLO-6]` — `fn(A) -> R` is an implicit `Callable` bound, while
+    /// `owned f: fn(A) -> R` is `CallableOnce`. A concrete closure whose
+    /// checked body moves a non-`Copy` capture satisfies only the latter. The
+    /// rejection belongs at the generic-call boundary, before the erased
+    /// `Param` is instantiated, because that is the sole point that still
+    /// carries the source parameter's callable capability.
+    fn reject_once_closures_for_callable_bounds(
+        &mut self,
+        args: &[ast::Arg],
+        declared: &[(Ty, Mode)],
+        generics: &[GenericParam],
+        checked_args: &[Expr],
+    ) {
+        for ((arg, &(param_ty, _)), value) in args
+            .iter()
+            .zip(declared.iter())
+            .zip(checked_args.iter())
+        {
+            let TyKind::Param { index, .. } = *self.types.kind(param_ty) else {
+                continue;
+            };
+            let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.as_ref()) else {
+                continue;
+            };
+            if bound.once {
+                continue;
+            }
+            let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
+            if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
+                continue;
+            }
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3030,
+                    arg.value.span,
+                    "closure would move a captured value out",
+                )
+                .primary_label("this closure is callable only once")
+                .help(
+                    "declare the parameter `owned f: fn(...) -> ...` so it accepts `CallableOnce`, or use `mem.take` when the capture implements `Default`; clone only as a last resort",
+                )
+                .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
+            );
+        }
+    }
+
     /// `[CLO-1]`, `[CLO-6]` — call a closure through its environment.
     ///
     /// The environment is the first argument, which is `call(self, args)` in
@@ -8597,7 +8721,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
-        let def = self.closure_calls[&id];
+        let closure = self.closure_calls[&id];
+        let def = closure.def;
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -8610,7 +8735,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
-        let mut call_args = vec![env];
+        let environment = match signature.first().map(|(_, mode)| *mode) {
+            Some(Mode::Mut) => self.pass_receiver(env, Mode::Mut, span),
+            _ => env,
+        };
+        let mut call_args = vec![environment];
         for (arg, &(param_ty, mode)) in args.iter().zip(signature.iter().skip(1)) {
             call_args.push(self.check_argument(&arg.value, param_ty, mode));
         }
@@ -8620,10 +8749,86 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// The signature an opaque generic parameter may be called with, read from
     /// the generics of the body being checked. `None` for a parameter that
     /// carries no `[CLO-3]` bound, which is then not callable at all.
-    fn callable_bound_of(&mut self, ty: Ty) -> Option<Ty> {
+    fn callable_bound_of(&mut self, ty: Ty) -> Option<(Ty, bool)> {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
-        Some(self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret }))
+        let signature = self.types.intern(TyKind::Fn { params: bound.params, ret: bound.ret });
+        Some((signature, bound.once))
+    }
+
+    /// Infer through an implicit `[CLO-3]` callable bound as well as through
+    /// the parameter that carries the callable value.  The latter is a fresh,
+    /// hidden generic parameter, so unifying only it learns the concrete
+    /// function value but misses facts in the bound's signature such as the
+    /// result `R` in `f: fn(A) -> R`.  `with_views` is the adversarial form:
+    /// every input can solve `A`/`B`, while `R` appears only in the callback.
+    ///
+    /// `[FN-6a]` makes the whole mode-bearing `Fn` signature canonical here;
+    /// `TypeTable::unify_with_fixed` rejects a mismatched mode vector rather
+    /// than treating `mut` or `owned` as annotation that inference may drop.
+    fn unify_generic_argument(
+        &mut self,
+        declared: Ty,
+        actual: Ty,
+        generics: &[GenericParam],
+        solved: &mut Vec<Option<Ty>>,
+        fixed: usize,
+    ) -> bool {
+        if !self.types.unify_with_fixed(declared, actual, solved, fixed) {
+            return false;
+        }
+        let TyKind::Param { index, .. } = *self.types.kind(declared) else {
+            return true;
+        };
+        let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone())
+        else {
+            return true;
+        };
+        let actual_signature = match self.types.kind(actual).clone() {
+            TyKind::Fn { params, ret } => Some((params, ret)),
+            // A concrete capturing closure's value is its environment, not a
+            // `fn` pointer. Its generated call body nevertheless has the
+            // same canonical callable signature after the environment
+            // receiver, and that is the fact generic inference needs.
+            TyKind::Struct(id) => self.closure_calls.get(&id).map(|closure| {
+                let signature = &self.signatures[closure.def.0 as usize];
+                let params = signature
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty, mode, _)| FnParam {
+                        ty: *ty,
+                        mode: fn_param_mode_from_hir(*mode),
+                    })
+                    .collect();
+                (params, signature.ret)
+            }),
+            _ => None,
+        };
+        let Some((actual_params, actual_ret)) = actual_signature else {
+            return true;
+        };
+        if bound.params.len() != actual_params.len() {
+            return false;
+        }
+        // Still propagate the type facts when the modes disagree. The caller
+        // emits the mode error, but withholding an otherwise evident callback
+        // result would add a misleading secondary "cannot tell what R is"
+        // diagnostic to the one source mistake.
+        let modes_match = bound
+            .params
+            .iter()
+            .zip(&actual_params)
+            .all(|(expected, actual)| expected.mode == actual.mode);
+        let types_match = bound
+            .params
+            .iter()
+            .zip(&actual_params)
+            .all(|(expected, actual)| {
+                self.types.unify_with_fixed(expected.ty, actual.ty, solved, fixed)
+            })
+            && self.types.unify_with_fixed(bound.ret, actual_ret, solved, fixed);
+        modes_match && types_match
     }
 
     /// The signature a `fn(A) -> R` parameter may be called with, when that
@@ -8655,7 +8860,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let params = bound
             .params
             .into_iter()
-            .map(|ty| self.substitute_ty(ty, &substitution))
+            .map(|param| FnParam {
+                ty: self.substitute_ty(param.ty, &substitution),
+                mode: param.mode,
+            })
             .collect();
         let ret = self.substitute_ty(bound.ret, &substitution);
         Some(self.types.intern(TyKind::Fn { params, ret }))
@@ -9411,6 +9619,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let declaration = decl.span;
         let ty = decl.ty;
         let shown = self.types.display(ty);
+        let structural_help = if self.callable_parameter_locals.contains(&local) {
+            format!(
+                "declare this callable parameter `mut {name}: fn(...) -> ...` so it receives a mutable closure place"
+            )
+        } else {
+            format!(
+                "restructure to a single owner and declare this parameter `mut {name}: {shown}`"
+            )
+        };
         let mut diagnostic = Diagnostic::error(
             codes::E3023,
             span,
@@ -9418,9 +9635,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         )
         .primary_label("this write needs mutable access")
         .secondary(declaration, format!("`{name}` is borrowed here"))
-        .help(format!(
-            "restructure to a single owner and declare this parameter `mut {name}: {shown}`"
-        ));
+        .help(structural_help);
 
         if offer_interior_mutability {
             diagnostic = if self.types.is_copy(ty) {
@@ -10096,7 +10311,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// The compiler-known methods on `Array[T]` and `String`.
     /// `[CLO-3]` — a call through a value of function type.
-    fn synth_indirect_call(&mut self, callee: Expr, args: &[ast::Arg], span: Span) -> Expr {
+    fn synth_indirect_call(
+        &mut self,
+        callee: Expr,
+        args: &[ast::Arg],
+        span: Span,
+        consumes_callee: bool,
+    ) -> Expr {
         let TyKind::Fn { params, ret } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
@@ -10120,11 +10341,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     "a call through a function value takes positional arguments",
                 );
             }
-            checked.push(self.check_expr(&arg.value, *param));
+            checked.push(self.check_argument(&arg.value, param.ty, hir_mode(param.mode)));
         }
         Expr {
             ty: ret,
-            kind: ExprKind::CallIndirect { callee: Box::new(callee), args: checked },
+            kind: ExprKind::CallIndirect {
+                callee: Box::new(callee),
+                args: checked,
+                consumes_callee,
+            },
             span,
         }
     }
@@ -10148,7 +10373,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             _ => None,
         });
 
-        let mut params: Vec<(Symbol, Ty, Span)> = Vec::new();
+        let mut params: Vec<(Symbol, Ty, Mode, Span)> = Vec::new();
         for (index, param) in lambda.params.iter().enumerate() {
             let ast::ParamKind::Named { name, ty } = &param.kind else {
                 self.error(codes::E2020, param.span, "a closure has no receiver");
@@ -10158,9 +10383,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::TypeKind::Infer => None,
                 _ => Some(self.resolve_type(ty)),
             };
-            let resolved = match (declared, wanted.as_ref().and_then(|(p, _)| p.get(index))) {
+            let expected = wanted.as_ref().and_then(|(params, _)| params.get(index));
+            let resolved = match (declared, expected) {
                 (Some(ty), _) => ty,
-                (None, Some(&ty)) => ty,
+                (None, Some(param)) => param.ty,
                 (None, None) => {
                     self.sink.emit(
                         Diagnostic::error(
@@ -10179,18 +10405,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.common.error
                 }
             };
-            if param.mode != ast::Mode::Borrow {
+            if let Some(expected) = expected
+                && fn_param_mode(param.mode) != expected.mode
+            {
+                let expected = fn_param_mode_name(expected.mode);
+                let found = ast_mode_name(param.mode);
                 self.error(
-                    codes::E1010,
+                    codes::E2020,
                     param.span,
-                    "a closure parameter mode is not supported yet in this phase",
+                    format!(
+                        "callable parameter mode mismatch: expected `{expected}`, found `{found}`"
+                    ),
                 );
             }
-            params.push((name.name, resolved, param.span));
+            params.push((name.name, resolved, hir_mode(fn_param_mode(param.mode)), param.span));
         }
 
         let declared_ret = lambda.ret.as_ref().map(|t| self.resolve_type(t));
-        let ret = declared_ret.or(wanted.as_ref().map(|(_, r)| *r));
+        // A callback may be the only argument that can solve its result type
+        // (`with_views[A, B, R](..., f: fn(...) -> R)`).  Its parameter types
+        // are still a useful bidirectional hint, but an unresolved generic
+        // result must not be forced on the body before the body can infer it.
+        // The post-synthesis callable-bound unification records that inferred
+        // result in the enclosing generic call.
+        let expected_ret = wanted
+            .as_ref()
+            .map(|(_, ret)| *ret)
+            .filter(|ret| !self.types.is_generic(*ret));
+        let ret = declared_ret.or(expected_ret);
 
         // `[CLO-1]`, `[CLO-2]` — two passes over the body.
         //
@@ -10200,13 +10442,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // diagnostics are discarded, because it is a question and not a
         // compilation — leaving them in would double every error in the body.
         //
-        // `[CLO-2]` decides what a capture is: "read-only use => shared
-        // borrow". So the environment's fields are `ref T` and the closure
-        // holds borrows of the enclosing locals rather than copies of them.
-        // That is also what makes `[CLO-4]` — "a closure outlives what it
-        // captures" — an ordinary borrow question rather than a special case:
-        // the environment is built by `Rvalue::Ref` like every other borrow,
-        // and the checker already knows what to do with one.
+        // `[CLO-2]` decides what a capture is: normal read-only use captures a
+        // shared borrow; `owned fn` captures by move/copy. The former remains
+        // an ordinary loan, while the latter becomes an owned environment
+        // field and therefore follows ordinary move/drop checking.
         let outer: HashMap<Symbol, Ty> = self
             .scopes
             .iter()
@@ -10215,7 +10454,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect();
 
         let saved = self.sink.take();
-        let probe = CaptureWatch { outer: outer.clone(), found: Vec::new(), env: None };
+        let probe = CaptureWatch {
+            outer: outer.clone(),
+            found: Vec::new(),
+            env: None,
+            captures_by_move: lambda.is_owned,
+        };
         let (_, _, _, probe) = self.check_lambda_body(lambda, &params, ret, probe, None);
         let _discarded = self.sink.take();
         for diagnostic in saved {
@@ -10229,26 +10473,112 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `extern "C" fn` parameter that `[CLO-3]` says accepts "only
         // capture-free closures and named functions".
         if captured.is_empty() {
-            let watch = CaptureWatch { outer, found: Vec::new(), env: None };
+            let watch = CaptureWatch {
+                outer,
+                found: Vec::new(),
+                env: None,
+                captures_by_move: lambda.is_owned,
+            };
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
             let ret = ret.unwrap_or(body_ty);
             let def = self.push_closure(&params, ret, locals, body, None, span);
             let ty = self.types.intern(TyKind::Fn {
-                params: params.iter().map(|(_, t, _)| *t).collect(),
+                params: params
+                    .iter()
+                    .map(|(_, t, mode, _)| FnParam {
+                        ty: *t,
+                        mode: fn_param_mode_from_hir(*mode),
+                    })
+                    .collect(),
                 ret,
             });
             return Expr { ty, kind: ExprKind::FnValue(def), span };
         }
 
+        // A capture starts with a private probe environment. A non-owned probe
+        // uses `ref mut` fields; an owned probe stores fields directly and
+        // receives its whole environment by `owned`. Ordinary type checking
+        // can then expose every actual write (assignment, a `mut` call, or a
+        // mutable builtin receiver) before the final environment chooses
+        // `ref` versus `ref mut` per non-owned field. The probe function is
+        // never emitted; it prevents a source heuristic from deciding borrow
+        // capability and keeps `[CLO-2]` attached to the typed HIR lowering
+        // will consume.
+        let (mutable_capture_fields, probe_once) = {
+            let probe_fields: Vec<FieldDef> = captured
+                .iter()
+                .map(|(name, ty)| FieldDef {
+                    name: *name,
+                    ty: if lambda.is_owned {
+                        *ty
+                    } else {
+                        self.types.intern(TyKind::Ref { mutable: true, inner: *ty })
+                    },
+                    span,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                })
+                .collect();
+            let probe_name = Symbol::intern(&format!(
+                "closure{}_capture_probe_env",
+                self.lambdas.len()
+            ));
+            let probe_id = self.types.add_struct(StructDef {
+                name: probe_name,
+                fields: probe_fields,
+                span,
+                derives_copy: false,
+                has_drop: false,
+                drops_fields: true,
+                origin: None,
+                declaring_module: self.current_module,
+            });
+            let probe_ty = self.types.intern(TyKind::Struct(probe_id));
+            let probe_watch = CaptureWatch {
+                outer: outer.clone(),
+                found: captured.clone(),
+                env: Some((LocalId(0), probe_id)),
+                captures_by_move: lambda.is_owned,
+            };
+            let (probe_body, _, _, _) = self.check_lambda_body(
+                lambda,
+                &params,
+                ret,
+                probe_watch,
+                Some((
+                    Symbol::intern("env"),
+                    probe_ty,
+                    if lambda.is_owned { Mode::Owned } else { Mode::Mut },
+                    span,
+                )),
+            );
+            (
+                self.closure_body_mutated_capture_fields(&probe_body, LocalId(0)),
+                lambda.is_owned && self.closure_body_moves_capture(&probe_body, LocalId(0)),
+            )
+        };
+        let requires_mut = !probe_once && !mutable_capture_fields.is_empty();
+
         // Otherwise it is "a unique anonymous struct implementing `Callable`"
         // (`[CLO-1]`), and this builds that struct: one field per capture, in
-        // the order the body first mentioned them.
+        // the order the body first mentioned them. An `owned fn` stores those
+        // fields by move/copy; an ordinary closure stores a shared or mutable
+        // borrow according to the typed probe above.
         let fields: Vec<FieldDef> = captured
             .iter()
-            .map(|(name, ty)| FieldDef {
+            .enumerate()
+            .map(|(index, (name, ty))| FieldDef {
                 name: *name,
-                ty: self.types.intern(TyKind::Ref { mutable: false, inner: *ty }),
+                ty: if lambda.is_owned {
+                    *ty
+                } else {
+                    self.types.intern(TyKind::Ref {
+                        mutable: mutable_capture_fields.contains(&index),
+                        inner: *ty,
+                    })
+                },
                 span,
                 has_default: false,
                 read_only_outside: false,
@@ -10260,7 +10590,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             name: env_name,
             fields,
             span,
-            derives_copy: true,
+            derives_copy: if lambda.is_owned {
+                captured.iter().all(|(_, ty)| self.types.is_copy(*ty))
+            } else {
+                !requires_mut
+            },
             has_drop: false,
             drops_fields: true,
             origin: None,
@@ -10272,37 +10606,68 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             outer,
             found: captured.clone(),
             env: Some((LocalId(0), struct_id)),
+            captures_by_move: lambda.is_owned,
+        };
+        let body_env_mode = if probe_once {
+            Mode::Owned
+        } else if requires_mut {
+            Mode::Mut
+        } else {
+            Mode::Borrow
         };
         let (body, body_ty, locals, _) = self.check_lambda_body(
             lambda,
             &params,
             ret,
             watch,
-            Some((Symbol::intern("env"), env_ty, span)),
+            Some((Symbol::intern("env"), env_ty, body_env_mode, span)),
         );
         let ret = ret.unwrap_or(body_ty);
+        // `[CLO-2]` — an `owned fn` stays reusable when it merely reads its
+        // directly owned captures. It becomes `CallableOnce` only when the
+        // typed body actually consumes a non-`Copy` capture.
+        let once = lambda.is_owned && self.closure_body_moves_capture(&body, LocalId(0));
+        debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
+        let call_mode = if once {
+            Mode::Owned
+        } else if requires_mut {
+            Mode::Mut
+        } else {
+            Mode::Borrow
+        };
         let def = self.push_closure(
             &params,
             ret,
             locals,
             body,
-            Some((Symbol::intern("env"), env_ty)),
+            Some((
+                Symbol::intern("env"),
+                env_ty,
+                call_mode,
+                lambda.is_owned,
+            )),
             span,
         );
-        self.closure_calls.insert(struct_id, def);
+        self.closure_calls.insert(struct_id, ClosureCall { def, once });
 
-        // The closure *value* is its environment: a shared borrow of each
-        // captured local, in field order.
+        // The closure *value* is its environment. Ordinary closures borrow
+        // each captured local; `owned fn` moves or copies each capture into
+        // the environment, so the source observes normal move semantics.
         let mut values = Vec::new();
-        for (name, ty) in &captured {
+        for (index, (name, ty)) in captured.iter().enumerate() {
             let Some(local) = self.lookup(*name) else { continue };
             let place = Expr { ty: *ty, kind: ExprKind::Local(local), span };
-            let reference = self.types.intern(TyKind::Ref { mutable: false, inner: *ty });
-            values.push(Expr {
-                ty: reference,
-                kind: ExprKind::Ref { place: Box::new(place), mutable: false },
-                span,
-            });
+            if lambda.is_owned {
+                values.push(place);
+            } else {
+                let mutable = mutable_capture_fields.contains(&index);
+                let reference = self.types.intern(TyKind::Ref { mutable, inner: *ty });
+                values.push(Expr {
+                    ty: reference,
+                    kind: ExprKind::Ref { place: Box::new(place), mutable },
+                    span,
+                });
+            }
         }
         Expr { ty: env_ty, kind: ExprKind::StructLit { struct_id, fields: values }, span }
     }
@@ -10314,27 +10679,42 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn check_lambda_body(
         &mut self,
         lambda: &ast::Lambda,
-        params: &[(Symbol, Ty, Span)],
+        params: &[(Symbol, Ty, Mode, Span)],
         ret: Option<Ty>,
         watch: CaptureWatch,
-        env: Option<(Symbol, Ty, Span)>,
+        env: Option<(Symbol, Ty, Mode, Span)>,
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
+        let outer_callable_once_locals = std::mem::take(&mut self.callable_once_locals);
+        let outer_callable_parameter_locals =
+            std::mem::take(&mut self.callable_parameter_locals);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
 
         // The environment is parameter zero, so the emitted function has
         // `[CLO-6]`'s `call(self, args)` shape.
-        if let Some((name, ty, env_span)) = env {
-            let local = self.declare(Some(name), ty, env_span);
-            self.borrowed_params.insert(local);
+        if let Some((name, ty, mode, env_span)) = env {
+            let local_ty = match mode {
+                Mode::Mut => self.mut_param_ty(ty),
+                Mode::Borrow | Mode::Owned => ty,
+            };
+            let local = self.declare(Some(name), local_ty, env_span);
+            if mode == Mode::Borrow {
+                self.borrowed_params.insert(local);
+            }
         }
-        for (name, ty, param_span) in params {
-            let local = self.declare(Some(*name), *ty, *param_span);
-            self.borrowed_params.insert(local);
+        for (name, ty, mode, param_span) in params {
+            let local_ty = match mode {
+                Mode::Mut => self.mut_param_ty(*ty),
+                Mode::Borrow | Mode::Owned => *ty,
+            };
+            let local = self.declare(Some(*name), local_ty, *param_span);
+            if *mode == Mode::Borrow {
+                self.borrowed_params.insert(local);
+            }
         }
 
         let (body, body_ty) = match &lambda.body {
@@ -10363,6 +10743,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let locals = std::mem::replace(&mut self.locals, outer_locals);
         self.scopes = outer_scopes;
         self.borrowed_params = outer_borrowed_params;
+        self.callable_once_locals = outer_callable_once_locals;
+        self.callable_parameter_locals = outer_callable_parameter_locals;
         self.ret_ty = outer_ret;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
@@ -10374,20 +10756,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// parameter.
     fn push_closure(
         &mut self,
-        params: &[(Symbol, Ty, Span)],
+        params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
         locals: Vec<LocalDecl>,
         body: Block,
-        env: Option<(Symbol, Ty)>,
+        env: Option<(Symbol, Ty, Mode, bool)>,
         span: Span,
     ) -> DefId {
         let def = DefId(self.signatures.len() as u32);
+        let closure_environment = env.as_ref().and_then(|(_, ty, _, _)| match self.types.kind(*ty) {
+            TyKind::Struct(id) => Some(*id),
+            _ => None,
+        });
+        let closure_captures_by_move = env.as_ref().is_some_and(|(_, _, _, owned)| *owned);
         let mut signature_params: Vec<(Symbol, Ty, Mode, Span)> = Vec::new();
-        if let Some((name, ty)) = env {
-            signature_params.push((name, ty, Mode::Borrow, span));
+        if let Some((name, ty, mode, _)) = env {
+            signature_params.push((name, ty, mode, span));
         }
-        signature_params.extend(params.iter().map(|(n, t, s)| (*n, *t, Mode::Borrow, *s)));
-        let arity = signature_params.len();
+        signature_params.extend(params.iter().map(|(name, ty, mode, span)| (*name, *ty, *mode, *span)));
+        let hir_params: Vec<Param> = signature_params
+            .iter()
+            .enumerate()
+            .map(|(index, (_, _, mode, _))| Param { local: LocalId(index as u32), mode: *mode })
+            .collect();
         self.signatures.push(Signature {
             params: signature_params,
             ret,
@@ -10401,17 +10792,428 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             symbol,
             is_unsafe: false,
             abi: None,
-            params: (0..arity)
-                .map(|i| Param { local: LocalId(i as u32), mode: Mode::Borrow })
-                .collect(),
+            params: hir_params,
             locals,
             ret,
             body,
             span,
             overflow: self.default_overflow,
             borrows: None,
+            closure_environment,
+            closure_captures_by_move,
         });
         def
+    }
+
+    /// `[CLO-2]` — determine whether an `owned fn` must be one-shot from the
+    /// checked closure body, rather than from capture mode alone. An owned
+    /// environment can be called repeatedly while its fields are only read;
+    /// it is `CallableOnce` exactly when a non-`Copy` capture is used in a
+    /// consuming value position.
+    fn closure_body_moves_capture(&self, body: &Block, environment: LocalId) -> bool {
+        body.stmts.iter().any(|stmt| self.closure_stmt_moves_capture(stmt, environment))
+    }
+
+    /// `[CLO-2]` — collect the environment fields that a non-owned closure
+    /// actually mutates. This runs on a typed all-`ref mut` probe body, so a
+    /// method receiver and a direct assignment travel through one ordinary
+    /// representation: both form a `ref mut` rooted in the generated
+    /// environment field.
+    fn closure_body_mutated_capture_fields(
+        &self,
+        body: &Block,
+        environment: LocalId,
+    ) -> HashSet<usize> {
+        let mut fields = HashSet::new();
+        for stmt in &body.stmts {
+            self.collect_mutated_capture_fields_stmt(stmt, environment, &mut fields);
+        }
+        fields
+    }
+
+    fn collect_mutated_capture_fields_stmt(
+        &self,
+        stmt: &Stmt,
+        environment: LocalId,
+        fields: &mut HashSet<usize>,
+    ) {
+        match stmt {
+            Stmt::Let { init, .. } => {
+                if let Some(init) = init {
+                    self.collect_mutated_capture_fields_expr(init, environment, fields);
+                }
+            }
+            Stmt::Assign { place, value } => {
+                if let Some(field) = Self::closure_capture_field_index(place, environment) {
+                    fields.insert(field);
+                }
+                self.collect_mutated_capture_fields_expr(place, environment, fields);
+                self.collect_mutated_capture_fields_expr(value, environment, fields);
+            }
+            Stmt::Destructure { value, bindings, .. } => {
+                self.collect_mutated_capture_fields_expr(value, environment, fields);
+                for binding in bindings {
+                    match binding {
+                        DestructureBinding::Let { value, .. } => {
+                            self.collect_mutated_capture_fields_expr(value, environment, fields);
+                        }
+                        DestructureBinding::Assign { place, value } => {
+                            if let Some(field) =
+                                Self::closure_capture_field_index(place, environment)
+                            {
+                                fields.insert(field);
+                            }
+                            self.collect_mutated_capture_fields_expr(place, environment, fields);
+                            self.collect_mutated_capture_fields_expr(value, environment, fields);
+                        }
+                    }
+                }
+            }
+            Stmt::Expr(expr) => self.collect_mutated_capture_fields_expr(expr, environment, fields),
+            Stmt::Return(value) => {
+                if let Some(value) = value {
+                    self.collect_mutated_capture_fields_expr(value, environment, fields);
+                }
+            }
+            Stmt::If { cond, then_block, else_block } => {
+                self.collect_mutated_capture_fields_expr(cond, environment, fields);
+                for stmt in &then_block.stmts {
+                    self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                }
+                if let Some(else_block) = else_block {
+                    for stmt in &else_block.stmts {
+                        self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                    }
+                }
+            }
+            Stmt::While { cond, body, else_block } => {
+                self.collect_mutated_capture_fields_expr(cond, environment, fields);
+                for stmt in &body.stmts {
+                    self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                }
+                if let Some(else_block) = else_block {
+                    for stmt in &else_block.stmts {
+                        self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                    }
+                }
+            }
+            Stmt::ForRange { start, end, body, else_block, .. } => {
+                self.collect_mutated_capture_fields_expr(start, environment, fields);
+                self.collect_mutated_capture_fields_expr(end, environment, fields);
+                for stmt in &body.stmts {
+                    self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                }
+                if let Some(else_block) = else_block {
+                    for stmt in &else_block.stmts {
+                        self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                    }
+                }
+            }
+            Stmt::Block(block) | Stmt::Defer(block) => {
+                for stmt in &block.stmts {
+                    self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                }
+            }
+            Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        }
+    }
+
+    fn collect_mutated_capture_fields_expr(
+        &self,
+        expr: &Expr,
+        environment: LocalId,
+        fields: &mut HashSet<usize>,
+    ) {
+        if let ExprKind::Ref { place, mutable: true } = &expr.kind {
+            if let Some(field) = Self::closure_capture_field_index(place, environment) {
+                fields.insert(field);
+            }
+        }
+
+        match &expr.kind {
+            ExprKind::Call { args, .. }
+            | ExprKind::Builtin { args, .. }
+            | ExprKind::TupleLit(args)
+            | ExprKind::ArrayLit(args)
+            | ExprKind::EnumLit { fields: args, .. } => {
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::CallIndirect { callee, args, .. } => {
+                self.collect_mutated_capture_fields_expr(callee, environment, fields);
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::StructLit { fields: args, .. } => {
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::ArrayRepeat { value, .. } => {
+                self.collect_mutated_capture_fields_expr(value, environment, fields);
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.collect_mutated_capture_fields_expr(scrutinee, environment, fields);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_mutated_capture_fields_expr(guard, environment, fields);
+                    }
+                    match &arm.body {
+                        hir::MatchArmBody::Block(block) => {
+                            for stmt in &block.stmts {
+                                self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                            }
+                        }
+                        hir::MatchArmBody::Expr(expr) => {
+                            self.collect_mutated_capture_fields_expr(expr, environment, fields);
+                        }
+                    }
+                }
+            }
+            ExprKind::Field { base, .. }
+            | ExprKind::Deref(base)
+            | ExprKind::Ref { place: base, .. }
+            | ExprKind::Cast { expr: base, .. }
+            | ExprKind::Widen { expr: base, .. }
+            | ExprKind::EraseRange(base) => {
+                self.collect_mutated_capture_fields_expr(base, environment, fields);
+            }
+            ExprKind::Index { base, index } => {
+                self.collect_mutated_capture_fields_expr(base, environment, fields);
+                self.collect_mutated_capture_fields_expr(index, environment, fields);
+            }
+            ExprKind::FString { parts, .. } => {
+                for part in parts {
+                    if let hir::FStringPart::Value(value) = part {
+                        self.collect_mutated_capture_fields_expr(value, environment, fields);
+                    }
+                }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.collect_mutated_capture_fields_expr(lhs, environment, fields);
+                self.collect_mutated_capture_fields_expr(rhs, environment, fields);
+            }
+            ExprKind::Unary { operand, .. } => {
+                self.collect_mutated_capture_fields_expr(operand, environment, fields);
+            }
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Local(_)
+            | ExprKind::FnValue(_)
+            | ExprKind::Error => {}
+        }
+    }
+
+    fn closure_stmt_moves_capture(&self, stmt: &Stmt, environment: LocalId) -> bool {
+        match stmt {
+            Stmt::Let { init, .. } => init
+                .as_ref()
+                .is_some_and(|value| self.closure_expr_moves_capture(value, environment, true)),
+            Stmt::Assign { place, value } => {
+                self.closure_expr_moves_capture(place, environment, false)
+                    || self.closure_expr_moves_capture(value, environment, true)
+            }
+            Stmt::Destructure { value, bindings, .. } => {
+                self.closure_expr_moves_capture(value, environment, true)
+                    || bindings.iter().any(|binding| match binding {
+                        DestructureBinding::Let { value, .. } => {
+                            self.closure_expr_moves_capture(value, environment, true)
+                        }
+                        DestructureBinding::Assign { place, value } => {
+                            self.closure_expr_moves_capture(place, environment, false)
+                                || self.closure_expr_moves_capture(value, environment, true)
+                        }
+                    })
+            }
+            Stmt::Expr(expr) => self.closure_expr_moves_capture(expr, environment, true),
+            Stmt::Return(value) => value
+                .as_ref()
+                .is_some_and(|value| self.closure_expr_moves_capture(value, environment, true)),
+            Stmt::If { cond, then_block, else_block } => {
+                self.closure_expr_moves_capture(cond, environment, false)
+                    || self.closure_body_moves_capture(then_block, environment)
+                    || else_block
+                        .as_ref()
+                        .is_some_and(|block| self.closure_body_moves_capture(block, environment))
+            }
+            Stmt::While { cond, body, else_block } => {
+                self.closure_expr_moves_capture(cond, environment, false)
+                    || self.closure_body_moves_capture(body, environment)
+                    || else_block
+                        .as_ref()
+                        .is_some_and(|block| self.closure_body_moves_capture(block, environment))
+            }
+            Stmt::ForRange { start, end, body, else_block, .. } => {
+                self.closure_expr_moves_capture(start, environment, false)
+                    || self.closure_expr_moves_capture(end, environment, false)
+                    || self.closure_body_moves_capture(body, environment)
+                    || else_block
+                        .as_ref()
+                        .is_some_and(|block| self.closure_body_moves_capture(block, environment))
+            }
+            Stmt::Block(block) | Stmt::Defer(block) => {
+                self.closure_body_moves_capture(block, environment)
+            }
+            Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        }
+    }
+
+    fn closure_expr_moves_capture(
+        &self,
+        expr: &Expr,
+        environment: LocalId,
+        consuming: bool,
+    ) -> bool {
+        if consuming
+            && !self.types.is_copy(expr.ty)
+            && Self::is_closure_capture_place(expr, environment)
+        {
+            return true;
+        }
+
+        match &expr.kind {
+            ExprKind::Call { callee, args } => {
+                let Some(signature) = self.signatures.get(callee.0 as usize) else {
+                    return args
+                        .iter()
+                        .any(|argument| self.closure_expr_moves_capture(argument, environment, false));
+                };
+                args.iter().enumerate().any(|(index, argument)| {
+                    let consuming = signature
+                        .params
+                        .get(index)
+                        .is_some_and(|(_, _, mode, _)| *mode == Mode::Owned);
+                    self.closure_expr_moves_capture(argument, environment, consuming)
+                })
+            }
+            ExprKind::CallIndirect { callee, args, consumes_callee } => {
+                self.closure_expr_moves_capture(callee, environment, *consumes_callee)
+                    || args
+                        .iter()
+                        .any(|argument| self.closure_expr_moves_capture(argument, environment, false))
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::TupleLit(fields)
+            | ExprKind::ArrayLit(fields)
+            | ExprKind::EnumLit { fields, .. } => fields
+                .iter()
+                .any(|field| self.closure_expr_moves_capture(field, environment, true)),
+            ExprKind::ArrayRepeat { value, .. } => {
+                self.closure_expr_moves_capture(value, environment, true)
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.closure_expr_moves_capture(scrutinee, environment, false)
+                    || arms.iter().any(|arm| {
+                        arm.guard
+                            .as_ref()
+                            .is_some_and(|guard| self.closure_expr_moves_capture(guard, environment, false))
+                            || match &arm.body {
+                                hir::MatchArmBody::Block(block) => {
+                                    self.closure_body_moves_capture(block, environment)
+                                }
+                                hir::MatchArmBody::Expr(value) => {
+                                    self.closure_expr_moves_capture(value, environment, true)
+                                }
+                            }
+                    })
+            }
+            ExprKind::Builtin { which, args } => args.iter().enumerate().any(|(index, argument)| {
+                self.closure_expr_moves_capture(
+                    argument,
+                    environment,
+                    Self::builtin_consumes_argument(*which, index),
+                )
+            }),
+            ExprKind::Field { base, .. }
+            | ExprKind::Deref(base)
+            | ExprKind::Cast { expr: base, .. }
+            | ExprKind::Widen { expr: base, .. }
+            | ExprKind::EraseRange(base) => self.closure_expr_moves_capture(base, environment, false),
+            ExprKind::Index { base, index } => {
+                self.closure_expr_moves_capture(base, environment, false)
+                    || self.closure_expr_moves_capture(index, environment, false)
+            }
+            ExprKind::Ref { place, .. } => self.closure_expr_moves_capture(place, environment, false),
+            ExprKind::FString { parts, .. } => parts.iter().any(|part| match part {
+                hir::FStringPart::Text(_) => false,
+                hir::FStringPart::Value(value) => {
+                    self.closure_expr_moves_capture(value, environment, false)
+                }
+            }),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.closure_expr_moves_capture(lhs, environment, false)
+                    || self.closure_expr_moves_capture(rhs, environment, false)
+            }
+            ExprKind::Unary { operand, .. } => {
+                self.closure_expr_moves_capture(operand, environment, false)
+            }
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Local(_)
+            | ExprKind::FnValue(_)
+            | ExprKind::Error => false,
+        }
+    }
+
+    fn is_closure_capture_place(expr: &Expr, environment: LocalId) -> bool {
+        Self::closure_capture_field_index(expr, environment).is_some()
+    }
+
+    /// Return the first generated-environment field on a place projection.
+    /// `(*env).field.subfield` and `(*env).field[index]` still belong to the
+    /// same capture for both its mutable-borrow and move-out capability.
+    fn closure_capture_field_index(expr: &Expr, environment: LocalId) -> Option<usize> {
+        match &expr.kind {
+            ExprKind::Field { base, index } => {
+                if Self::is_closure_environment_base(base, environment) {
+                    Some(*index)
+                } else {
+                    Self::closure_capture_field_index(base, environment)
+                }
+            }
+            ExprKind::Deref(base)
+            | ExprKind::Ref { place: base, .. }
+            | ExprKind::Cast { expr: base, .. }
+            | ExprKind::Widen { expr: base, .. }
+            | ExprKind::EraseRange(base) => Self::closure_capture_field_index(base, environment),
+            ExprKind::Index { base, .. } => Self::closure_capture_field_index(base, environment),
+            _ => None,
+        }
+    }
+
+    fn is_closure_environment_base(expr: &Expr, environment: LocalId) -> bool {
+        matches!(expr.kind, ExprKind::Local(local) if local == environment)
+            || matches!(&expr.kind, ExprKind::Deref(base) if matches!(base.kind, ExprKind::Local(local) if local == environment))
+    }
+
+    /// The compiler-known calls that receive an owned value. Ordinary
+    /// user-defined calls carry their parameter modes in `Signature` above.
+    fn builtin_consumes_argument(which: Builtin, index: usize) -> bool {
+        match which {
+            Builtin::BoxNew { .. }
+            | Builtin::MemForget { .. }
+            | Builtin::CellIntoInner
+            | Builtin::MaybeUninitAssumeInit { .. }
+            | Builtin::UnsafeCellIntoInner
+            | Builtin::MaybeUninitSpanAssumeInit { .. } => index == 0,
+            Builtin::MemReplace { .. }
+            | Builtin::CellSet
+            | Builtin::CellReplace
+            | Builtin::MaybeUninitWrite { .. }
+            | Builtin::ArenaAlloc { .. }
+            | Builtin::FixedArenaAlloc { .. }
+            | Builtin::ScopedArenaAlloc { .. }
+            | Builtin::ArenaArrayPush { .. } => index == 1,
+            Builtin::MaybeUninitWriteAt { .. } | Builtin::ArenaArrayInsert { .. } => index == 2,
+            Builtin::ArenaMapInsert { .. } => index == 2 || index == 3,
+            _ => false,
+        }
     }
 
     /// `[FN-6]` — a named function used as a value.
@@ -10442,22 +11244,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
-        // `[FN-1]` — a parameter's mode is part of how it is passed, and a
-        // `fn(A) -> R` type carries only the types. A function with a `mut` or
-        // `owned` parameter is therefore not a value of that type in this
-        // phase; `[CLO-3]`'s closure parameters are where the modes return.
-        if signature.params.iter().any(|(_, _, mode, _)| *mode != Mode::Borrow) {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E1010,
-                    span,
-                    format!("`{name}` has a `mut` or `owned` parameter, so it is not a value yet"),
-                )
-                .note("a `fn(A) -> R` type carries the types and not the modes [FN-1]"),
-            );
-            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
-        }
-        let params: Vec<Ty> = signature.params.iter().map(|(_, t, _, _)| *t).collect();
+        let params = signature
+            .params
+            .iter()
+            .map(|(_, ty, mode, _)| FnParam {
+                ty: *ty,
+                mode: fn_param_mode_from_hir(*mode),
+            })
+            .collect();
         let ret = signature.ret;
         let ty = self.types.intern(TyKind::Fn { params, ret });
         Some(Expr { ty, kind: ExprKind::FnValue(def), span })
@@ -10908,7 +11702,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     );
                     return error;
                 }
-                let fn_ty = self.types.intern(TyKind::Fn { params: vec![inner], ret: inner });
+                let fn_ty = self.types.intern(TyKind::Fn {
+                    params: vec![FnParam { ty: inner, mode: FnParamMode::Borrow }],
+                    ret: inner,
+                });
                 let f = self.check_expr(&args[0].value, fn_ty);
                 Expr {
                     ty: self.common.void,
@@ -13426,6 +14223,49 @@ fn mode_of(mode: ast::Mode) -> Mode {
     }
 }
 
+/// `[FN-6]`/`[FN-6a]` — callable type parameters use precisely the ordinary
+/// parameter-mode vocabulary.  Keep this conversion at the AST/HIR boundary
+/// so the type representation never needs to know about parser details.
+fn fn_param_mode(mode: ast::Mode) -> FnParamMode {
+    match mode {
+        ast::Mode::Borrow => FnParamMode::Borrow,
+        ast::Mode::Mut => FnParamMode::Mut,
+        ast::Mode::Owned => FnParamMode::Owned,
+    }
+}
+
+fn hir_mode(mode: FnParamMode) -> Mode {
+    match mode {
+        FnParamMode::Borrow => Mode::Borrow,
+        FnParamMode::Mut => Mode::Mut,
+        FnParamMode::Owned => Mode::Owned,
+    }
+}
+
+fn fn_param_mode_from_hir(mode: Mode) -> FnParamMode {
+    match mode {
+        Mode::Borrow => FnParamMode::Borrow,
+        Mode::Mut => FnParamMode::Mut,
+        Mode::Owned => FnParamMode::Owned,
+    }
+}
+
+fn fn_param_mode_name(mode: FnParamMode) -> &'static str {
+    match mode {
+        FnParamMode::Borrow => "borrowed",
+        FnParamMode::Mut => "mut",
+        FnParamMode::Owned => "owned",
+    }
+}
+
+fn ast_mode_name(mode: ast::Mode) -> &'static str {
+    match mode {
+        ast::Mode::Borrow => "borrowed",
+        ast::Mode::Mut => "mut",
+        ast::Mode::Owned => "owned",
+    }
+}
+
 /// `[LT-3]` — whether an expression's value has the `static` region.
 ///
 /// "String literals, `static` items, and `Span`s over them have the `static`
@@ -13720,6 +14560,20 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
     }
 }
 
+/// `[CLO-6]` — this syntax creates the implicit `CallableOnce` bound. The
+/// callable's own `fn(...)` type records its argument modes; the outer
+/// `owned` mode selects consumption of the callee value.
+fn is_owned_callable_param(param: &ast::Param) -> bool {
+    param.mode == ast::Mode::Owned && is_callable_param(param)
+}
+
+fn is_callable_param(param: &ast::Param) -> bool {
+    matches!(
+        param.kind,
+        ast::ParamKind::Named { ty: ast::TypeExpr { kind: ast::TypeKind::Fn { .. }, .. }, .. }
+    )
+}
+
 /// `[CLO-2]` — the scopes outside the closure being checked, kept so that a
 /// name the body cannot find can be reported as a capture rather than as a
 /// typo. A closure body sees none of them: `[CLO-1]`'s capture-free case is
@@ -13736,4 +14590,8 @@ struct CaptureWatch {
     /// Pass two: the environment parameter and its type, once built. `None`
     /// during discovery, when a captured name resolves to a placeholder.
     env: Option<(LocalId, StructId)>,
+    /// `owned fn` stores captures directly; every other closure captures a
+    /// shared borrow. This is carried across both body-check passes so capture
+    /// discovery and the final body use the same representation.
+    captures_by_move: bool,
 }

@@ -23,7 +23,7 @@ use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
 use ember_span::SourceMap;
-use ember_types::{EnumId, FloatTy, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
+use ember_types::{EnumId, FloatTy, FnParam, FnParamMode, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Output {
@@ -277,7 +277,10 @@ impl Emitter<'_> {
             // use names it.
             TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
                 let TyKind::Fn { params, ret } = self.types.kind(ty) else { unreachable!() };
-                let rendered: Vec<String> = params.iter().map(|&p| self.c_type(p)).collect();
+                let rendered: Vec<String> = params
+                    .iter()
+                    .map(|param| self.callable_param_c_type(*param))
+                    .collect();
                 let args = if rendered.is_empty() { "void".to_string() } else { rendered.join(", ") };
                 Definition::FnPointer { ret: self.c_type(*ret), args }
             }
@@ -607,6 +610,22 @@ impl Emitter<'_> {
         match self.structural.get(&ty) {
             Some(name) => name.clone(),
             None => panic!("no generated C type for `{}`", self.types.display(ty)),
+        }
+    }
+
+    /// `[FN-6]` — callable parameter modes are ordinary ABI adjustments.
+    /// They remain entirely in the type/signature metadata. Ordinary `mut T`
+    /// uses the same pointer parameter as a declaration, while `[FN-1a]`
+    /// keeps `mut MutSpan[T]` by value: the move-only view itself is the
+    /// exclusive access and wrapping it in another pointer would change the
+    /// established call boundary.
+    fn callable_param_c_type(&self, param: FnParam) -> String {
+        match param.mode {
+            FnParamMode::Borrow | FnParamMode::Owned => self.c_type(param.ty),
+            FnParamMode::Mut if matches!(self.types.kind(param.ty), TyKind::Span { mutable: true, .. }) => {
+                self.c_type(param.ty)
+            }
+            FnParamMode::Mut => format!("{}*", self.c_type(param.ty)),
         }
     }
 
@@ -1871,7 +1890,7 @@ impl Planner<'_> {
                     // A function pointer's parameter and return types are
                     // written out in its typedef, so they must be complete.
                     TyKind::Fn { params, ret } => {
-                        let mut all = params.clone();
+                        let mut all = params.iter().map(|param| param.ty).collect::<Vec<_>>();
                         all.push(*ret);
                         all
                     }

@@ -501,6 +501,8 @@ mod tests {
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,
+            closure_environment: None,
+            closure_captures_by_move: false,
         }
     }
 

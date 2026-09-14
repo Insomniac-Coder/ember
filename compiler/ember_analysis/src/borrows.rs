@@ -33,13 +33,14 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    Body, Builtin, CallableAccessSummary as CallAccessContract, CallableRegionMetadata, FuncRef,
-    LocalId, LocalKind, Operand, ParameterFieldAccess, Place, Projection, RegionAccessKind,
+    AggregateKind, Body, Builtin, CallableAccessSummary as CallAccessContract,
+    CallableRegionMetadata, FuncRef,
+    LocalId, LocalKind, Operand, ParameterFieldAccess, ParameterMode, Place, Projection, RegionAccessKind,
     ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, StmtKind,
     Terminator,
 };
 use ember_span::Span;
-use ember_types::{Ty, TyKind, TypeTable};
+use ember_types::{StructId, Ty, TyKind, TypeTable};
 
 use crate::facts::{
     AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
@@ -135,21 +136,46 @@ pub fn check_all_with_installed_callable_regions(
         .filter(|body| is_method_body(body))
         .map(|body| body.symbol.clone())
         .collect();
+    // `[CLO-4]` is decided at a call boundary by both the callee's declared
+    // parameter mode and the concrete closure environment's capture mode.
+    // Keep those facts in MIR rather than guessing from a generated symbol or
+    // treating all `owned` values as escaping views.
+    let direct_param_modes: HashMap<String, Vec<ParameterMode>> = bodies
+        .iter()
+        .map(|body| (body.symbol.clone(), body.param_modes.clone()))
+        .collect();
+    let borrowing_closure_environments: HashSet<StructId> = bodies
+        .iter()
+        .filter(|body| !body.closure_captures_by_move)
+        .filter_map(|body| body.closure_environment)
+        .collect();
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
     let summaries = contracts_from_metadata(bodies, &signatures);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
-    let invalid_result_bodies = infer_invalid_result_bodies(bodies, types, &call_contract);
+    let capture_contracts = closure_capture_contracts(bodies, &summaries);
+    let owned_closure_environments: HashSet<StructId> = bodies
+        .iter()
+        .filter(|body| body.closure_captures_by_move)
+        .filter_map(|body| body.closure_environment)
+        .collect();
+    let invalid_result_bodies =
+        infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts);
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol } => methods.contains(symbol.as_str()),
         _ => false,
     };
     for body in &*bodies {
+        let capture_paths = capture_borrow_paths(body, &capture_contracts);
         check_body(
             body,
             types,
             &call_contract,
+            &capture_paths,
+            &owned_closure_environments,
+            &borrowing_closure_environments,
+            &direct_param_modes,
             &invalid_result_bodies,
             &is_method,
             sink,
@@ -200,6 +226,203 @@ fn contracts_from_metadata(
         .collect()
 }
 
+/// `[LT-42]` — a capturing closure's environment type is compiler-generated
+/// and carried explicitly by MIR. Its access contract is therefore a verified
+/// source for narrowing the *synthetic* `&capture` used to construct that
+/// environment. No user-written `ref T` is eligible for this treatment.
+fn closure_capture_contracts(
+    bodies: &[Body],
+    contracts: &HashMap<String, CallRegionContract>,
+) -> HashMap<StructId, CallAccessContract> {
+    let mut result = HashMap::new();
+    for body in bodies {
+        let Some(environment) = body.closure_environment else { continue };
+        let Some(contract) = contracts.get(&body.symbol) else { continue };
+        // Each generated closure environment is nominally unique. Should an
+        // invalid MIR producer ever reuse one, retain the conservative choice
+        // by removing the identity instead of selecting either body.
+        if let Some(previous) = result.insert(environment, contract.access.clone())
+            && previous != contract.access
+        {
+            result.remove(&environment);
+        }
+    }
+    result
+}
+
+/// Locate synthetic capture borrows in a closure creator. A borrow is exact
+/// only when its temporary flows once, directly into a known generated
+/// environment field and the closure body's verified summary reaches that
+/// field through its `ref` dereference. Anything else stays an ordinary
+/// whole-place borrow.
+fn capture_borrow_paths(
+    body: &Body,
+    closure_contracts: &HashMap<StructId, CallAccessContract>,
+) -> HashMap<Point, Vec<Vec<Projection>>> {
+    let mut result = HashMap::new();
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            let StmtKind::Assign {
+                place: destination,
+                rvalue: Rvalue::Ref { mutable: false, .. },
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            if !destination.projection.is_empty() || body.local(destination.local).kind != LocalKind::Temp {
+                continue;
+            }
+            let uses = capture_temporary_uses(body, Point { block: block_index, index }, destination.local);
+            let [CaptureTemporaryUse::Environment { environment, field }] = uses.as_slice() else {
+                continue;
+            };
+            let Some(contract) = closure_contracts.get(environment) else { continue };
+            let Some(paths) = capture_field_paths(contract, *field) else { continue };
+            result.insert(Point { block: block_index, index }, paths);
+        }
+    }
+    result
+}
+
+/// Every value flow from a candidate synthetic capture temporary. The precise
+/// path is admissible only when this list has exactly one `Environment` item;
+/// a second use, a redefinition, an indirect call, or any other flow makes the
+/// creator fall back to the ordinary whole-place borrow.
+enum CaptureTemporaryUse {
+    Environment { environment: StructId, field: usize },
+    Other,
+}
+
+fn capture_temporary_uses(
+    body: &Body,
+    created_at: Point,
+    local: LocalId,
+) -> Vec<CaptureTemporaryUse> {
+    let mut uses = Vec::new();
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            let point = Point { block: block_index, index };
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            if point != created_at && place.local == local {
+                uses.push(CaptureTemporaryUse::Other);
+            }
+            match rvalue {
+                Rvalue::Aggregate {
+                    kind: ember_mir::AggregateKind::Struct(environment),
+                    operands,
+                } => {
+                    for (field, operand) in operands.iter().enumerate() {
+                        capture_operand_use(operand, local, || {
+                            CaptureTemporaryUse::Environment {
+                                environment: *environment,
+                                field,
+                            }
+                        }, &mut uses);
+                    }
+                }
+                _ => capture_rvalue_uses(rvalue, local, &mut uses),
+            }
+        }
+        match &block.terminator {
+            Terminator::SwitchInt { discr, .. } => {
+                capture_operand_use(discr, local, || CaptureTemporaryUse::Other, &mut uses)
+            }
+            Terminator::Call { func, args, dest, .. } => {
+                if dest.local == local {
+                    uses.push(CaptureTemporaryUse::Other);
+                }
+                if let FuncRef::Indirect(operand) = func {
+                    capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses);
+                }
+                for operand in args {
+                    capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses);
+                }
+            }
+            Terminator::Assert { cond, msg, .. } => {
+                capture_operand_use(cond, local, || CaptureTemporaryUse::Other, &mut uses);
+                if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
+                    capture_operand_use(file, local, || CaptureTemporaryUse::Other, &mut uses);
+                    capture_operand_use(line, local, || CaptureTemporaryUse::Other, &mut uses);
+                }
+            }
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+        }
+    }
+    uses
+}
+
+fn capture_rvalue_uses(
+    rvalue: &Rvalue,
+    local: LocalId,
+    uses: &mut Vec<CaptureTemporaryUse>,
+) {
+    let mut add = |operand: &Operand| {
+        capture_operand_use(operand, local, || CaptureTemporaryUse::Other, uses)
+    };
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+            add(operand)
+        }
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            add(lhs);
+            add(rhs);
+        }
+        Rvalue::Aggregate { operands, .. } => {
+            for operand in operands {
+                add(operand);
+            }
+        }
+        Rvalue::Repeat { value, .. } => add(value),
+        Rvalue::Discriminant(place) | Rvalue::Ref { place, .. }
+            if place.local == local =>
+        {
+            uses.push(CaptureTemporaryUse::Other)
+        }
+        Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+    }
+}
+
+fn capture_operand_use(
+    operand: &Operand,
+    local: LocalId,
+    kind: impl FnOnce() -> CaptureTemporaryUse,
+    uses: &mut Vec<CaptureTemporaryUse>,
+) {
+    if matches!(operand, Operand::Copy(place) | Operand::Move(place)
+        if place.local == local && place.projection.is_empty())
+    {
+        uses.push(kind());
+    }
+}
+
+fn capture_field_paths(
+    contract: &CallAccessContract,
+    field: usize,
+) -> Option<Vec<Vec<Projection>>> {
+    let CallAccessContract::Fields(accesses) = contract else { return None };
+    let mut paths = Vec::new();
+    for access in accesses {
+        if access.argument != 0 {
+            continue;
+        }
+        let [Projection::Field(capture), Projection::Deref, rest @ ..] = access.projection.as_slice()
+        else {
+            continue;
+        };
+        if *capture == field {
+            // An empty suffix means the closure used its captured aggregate as
+            // a whole value, which must retain every field.
+            if rest.is_empty() {
+                return None;
+            }
+            if !paths.iter().any(|path| path == rest) {
+                paths.push(rest.to_vec());
+            }
+        }
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
 /// `[VERIFY-3]` — rederive callable metadata from MIR and compare it with the
 /// artifact consumed by callers. A mismatch is an internal compiler failure,
 /// not an optimization hint or a reason to widen a region to `static`.
@@ -212,7 +435,7 @@ pub fn verify_callable_regions_all(
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
         .collect();
     let expected = infer_callable_summaries(bodies, types, &signatures);
-    let mut violations = Vec::new();
+    let mut violations = verify_closure_environments(bodies, types);
     for body in bodies {
         let Some(actual) = &body.callable_regions else {
             violations.push(ember_mir::verify::Violation {
@@ -245,8 +468,15 @@ pub fn verify_callable_regions_all(
     }) {
         let installed = contracts_from_metadata(bodies, &signatures);
         let call_contract = |func: &FuncRef| contract_for(func, &installed, &signatures);
+        let capture_contracts = closure_capture_contracts(bodies, &installed);
         for body in bodies {
-            let regions = Regions::infer(body, types, &call_contract);
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            let regions = Regions::infer_with_capture_borrow_paths(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+            );
             violations.extend(
                 regions
                     .verify_call_contracts(body, types, &call_contract)
@@ -256,6 +486,54 @@ pub fn verify_callable_regions_all(
                         message,
                     }),
             );
+        }
+    }
+    violations
+}
+
+/// The closure environment identity consumed by `[LT-42]` must describe the
+/// actual first parameter of one and only one closure body. This turns a
+/// malformed lowering record into a code-generation-boundary violation rather
+/// than letting it manufacture a precise capture fact.
+fn verify_closure_environments(
+    bodies: &[Body],
+    types: &TypeTable,
+) -> Vec<ember_mir::verify::Violation> {
+    let mut owners: HashMap<StructId, &Body> = HashMap::new();
+    let mut violations = Vec::new();
+    for body in bodies {
+        if body.closure_captures_by_move && body.closure_environment.is_none() {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: "owned-capture marker has no closure environment".to_string(),
+            });
+            continue;
+        }
+        let Some(environment) = body.closure_environment else { continue };
+        let parameter = (body.arg_count >= 1).then(|| body.local(LocalId(1)));
+        if !parameter.is_some_and(|parameter| {
+            match types.kind(parameter.ty) {
+                TyKind::Struct(found) => *found == environment,
+                TyKind::Ref { mutable: true, inner } => {
+                    matches!(types.kind(*inner), TyKind::Struct(found) if *found == environment)
+                }
+                _ => false,
+            }
+        }) {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: "closure-environment identity does not match parameter 0".to_string(),
+            });
+            continue;
+        }
+        if let Some(previous) = owners.insert(environment, body) {
+            violations.push(ember_mir::verify::Violation {
+                body: body.symbol.clone(),
+                message: format!(
+                    "closure-environment identity is also owned by `{}`",
+                    previous.symbol
+                ),
+            });
         }
     }
     violations
@@ -378,9 +656,16 @@ fn infer_callable_summaries(
     let mut summaries: HashMap<String, CallRegionContract> = HashMap::new();
     for _ in 0..=bodies.len() {
         let contract = |func: &FuncRef| contract_for(func, &summaries, signatures);
+        let capture_contracts = closure_capture_contracts(bodies, &summaries);
         let mut next = HashMap::new();
         for body in bodies {
-            let regions = Regions::infer(body, types, &contract);
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            let regions = Regions::infer_with_capture_borrow_paths(
+                body,
+                types,
+                &contract,
+                &capture_paths,
+            );
             next.insert(
                 body.symbol.clone(),
                 inferred_callable_summary(body, types, &regions),
@@ -491,11 +776,15 @@ fn infer_invalid_result_bodies(
     bodies: &[Body],
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    capture_contracts: &HashMap<StructId, CallAccessContract>,
 ) -> HashSet<String> {
     let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
     let regions: Vec<Regions> = bodies
         .iter()
-        .map(|body| Regions::infer(body, types, call_contract))
+        .map(|body| {
+            let capture_paths = capture_borrow_paths(body, capture_contracts);
+            Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths)
+        })
         .collect();
     let mut invalid = HashSet::new();
 
@@ -783,6 +1072,127 @@ fn check_box_storage_regions(body: &Body, types: &TypeTable, regions: &Regions, 
     }
 }
 
+/// `[CLO-4]`, `[TYP-15]` — an ordinary capturing closure contains reference
+/// fields. Passing it by `owned` mode gives the callee ownership of a value it
+/// may retain beyond this call, so the same unbounded-storage boundary applies
+/// at the call itself. This is deliberately narrower than rejecting all
+/// owned view arguments: it applies only to compiler-generated environments
+/// that capture by reference, and consults actual region provenance so a
+/// future static environment remains valid.
+fn check_owned_closure_argument_regions(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    borrowing_closure_environments: &HashSet<StructId>,
+    direct_param_modes: &HashMap<String, Vec<ParameterMode>>,
+    sink: &mut Sink,
+) {
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call { func: FuncRef::Direct { symbol }, args, .. } = &block.terminator
+        else {
+            continue;
+        };
+        let Some(modes) = direct_param_modes.get(symbol) else {
+            // An imported callable needs its parameter modes in its interface
+            // artifact before this check can make a storage claim. The
+            // separate-compilation boundary remains conservative elsewhere.
+            continue;
+        };
+        let point = Point {
+            block: block_index,
+            index: block.stmts.len(),
+        };
+        for (argument, mode) in args.iter().zip(modes) {
+            if *mode != ParameterMode::Owned {
+                continue;
+            }
+            let (Operand::Copy(place) | Operand::Move(place)) = argument else {
+                continue;
+            };
+            let TyKind::Struct(environment) = *types.kind(place_ty(body, types, place)) else {
+                continue;
+            };
+            if !borrowing_closure_environments.contains(&environment)
+                || regions.is_static_operand_at(argument, point)
+            {
+                continue;
+            }
+            sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3063,
+                    block.terminator_span,
+                    "a closure that captures by reference cannot be passed to an `owned` callable parameter",
+                )
+                .primary_label("moved across an ownership boundary here")
+                .help(
+                    "use `owned fn` to capture owned values, or take the callable as a borrowed or `mut` parameter and invoke it before its captures end",
+                )
+                .note(
+                    "an ordinary closure is a view over its captures; an `owned` callable parameter may retain that view (CLO-4, TYP-15)",
+                ),
+            );
+        }
+    }
+}
+
+/// `[LT-42]` with `[TYP-15]` — an `owned fn` environment owns its captures and
+/// can therefore escape the frame that constructed it. A captured view is
+/// consequently valid only when every carried region is static. This is
+/// checked where lowering constructs the compiler-generated environment, not
+/// by treating the environment name or C representation as source semantics.
+fn check_owned_closure_capture_regions(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    owned_closure_environments: &HashSet<StructId>,
+    sink: &mut Sink,
+) {
+    if owned_closure_environments.is_empty() {
+        return;
+    }
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (index, statement) in block.stmts.iter().enumerate() {
+            let StmtKind::Assign {
+                rvalue:
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Struct(environment),
+                        operands,
+                    },
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if !owned_closure_environments.contains(environment) {
+                continue;
+            }
+            let point = Point { block: block_index, index };
+            for (field, operand) in types.struct_def(*environment).fields.iter().zip(operands) {
+                if !types.is_view(field.ty) || regions.is_static_operand_at(operand, point) {
+                    continue;
+                }
+                let shown = types.display(field.ty);
+                sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3063,
+                        statement.span,
+                        format!(
+                            "`owned fn` captures `{shown}` by value, but that view is not static"
+                        ),
+                    )
+                    .primary_label("captured into an escaping closure here")
+                    .help(
+                        "capture an owned value instead, or use a non-`owned` closure whose lifetime is bounded by the borrowed source",
+                    )
+                    .note(
+                        "an `owned fn` can escape its defining frame, so every view region it captures must be static (LT-42, TYP-15)",
+                    ),
+                );
+            }
+        }
+    }
+}
+
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol } => {
@@ -794,6 +1204,10 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         body,
         types,
         &|_| conservative_contract(Elision::Everything),
+        &HashMap::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashMap::new(),
         &HashSet::new(),
         &is_method,
         sink,
@@ -804,12 +1218,30 @@ fn check_body(
     body: &Body,
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    capture_paths: &HashMap<Point, Vec<Vec<Projection>>>,
+    owned_closure_environments: &HashSet<StructId>,
+    borrowing_closure_environments: &HashSet<StructId>,
+    direct_param_modes: &HashMap<String, Vec<ParameterMode>>,
     invalid_result_bodies: &HashSet<String>,
     is_method: &dyn Fn(&FuncRef) -> bool,
     sink: &mut Sink,
 ) {
-    let regions = Regions::infer(body, types, call_contract);
+    let regions = Regions::infer_with_capture_borrow_paths(
+        body,
+        types,
+        call_contract,
+        capture_paths,
+    );
     check_box_storage_regions(body, types, &regions, sink);
+    check_owned_closure_argument_regions(
+        body,
+        types,
+        &regions,
+        borrowing_closure_environments,
+        direct_param_modes,
+        sink,
+    );
+    check_owned_closure_capture_regions(body, types, &regions, owned_closure_environments, sink);
     // Before the loans: a function that hands back a parameter has no loan of
     // its own, and `[LT-1a]` is about exactly that function.
     check_return_regions(body, types, &regions, sink);
@@ -843,7 +1275,16 @@ fn check_body(
                         mutable,
                     } = rvalue
                     {
-                        accesses.push((borrowed.clone(), Access::Borrow { mutable: *mutable }));
+                        if let Some(paths) = regions.capture_borrow_paths(point) {
+                            for path in paths {
+                                accesses.push((
+                                    project_place(borrowed, path),
+                                    Access::Borrow { mutable: *mutable },
+                                ));
+                            }
+                        } else {
+                            accesses.push((borrowed.clone(), Access::Borrow { mutable: *mutable }));
+                        }
                     } else {
                         rvalue_reads(rvalue, &mut accesses);
                     }
@@ -1179,23 +1620,34 @@ fn collect_loans(
             } else {
                 ReferenceKind::Reference
             };
-            let capability = BorrowCapability::statically_checked_reference(
-                place_ty(body, types, borrowed),
-                provenance_root(body, borrowed.local),
-                borrowed.clone(),
-                StorageIdentity::PlaceRoot(borrowed.local),
-                region,
-                permission,
-                reference_kind,
-            );
-            loans.push(Loan {
-                capability,
-                borrower: place.local,
-                created_at,
-                span: stmt.span,
-                reserved_at: reservation_window(body, place.local, created_at),
-                arena_scope: borrower_feeds_arena_scope(body, place.local),
-            });
+            let paths: &[Vec<Projection>] = regions
+                .capture_borrow_paths(created_at)
+                .unwrap_or(&[]);
+            let borrowed_places: Vec<Place> = if paths.is_empty() {
+                vec![borrowed.clone()]
+            } else {
+                paths.iter().map(|path| project_place(borrowed, path)).collect()
+            };
+            for borrowed in borrowed_places {
+                let storage_root = borrowed.local;
+                let capability = BorrowCapability::statically_checked_reference(
+                    place_ty(body, types, &borrowed),
+                    provenance_root(body, storage_root),
+                    borrowed,
+                    StorageIdentity::PlaceRoot(storage_root),
+                    region,
+                    permission,
+                    reference_kind,
+                );
+                loans.push(Loan {
+                    capability,
+                    borrower: place.local,
+                    created_at,
+                    span: stmt.span,
+                    reserved_at: reservation_window(body, place.local, created_at),
+                    arena_scope: borrower_feeds_arena_scope(body, place.local),
+                });
+            }
         }
 
         let Terminator::Call {
@@ -2065,6 +2517,12 @@ fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {
     }
 }
 
+fn project_place(place: &Place, path: &[Projection]) -> Place {
+    let mut projected = place.clone();
+    projected.projection.extend_from_slice(path);
+    projected
+}
+
 fn rvalue_reads(rvalue: &Rvalue, out: &mut Vec<(Place, Access)>) {
     match rvalue {
         Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => operand_read(o, out),
@@ -2079,7 +2537,9 @@ fn rvalue_reads(rvalue: &Rvalue, out: &mut Vec<(Place, Access)>) {
             }
         }
         Rvalue::Repeat { value, .. } => operand_read(value, out),
-        Rvalue::Discriminant(place) => out.push((place.clone(), Access::Read)),
+        // An enum tag read has no payload borrow. The region analysis likewise
+        // treats it as control flow rather than a whole-value field access.
+        Rvalue::Discriminant(_) => {}
         Rvalue::Ref { place, mutable } => {
             out.push((place.clone(), Access::Borrow { mutable: *mutable }))
         }
@@ -2117,6 +2577,8 @@ mod callable_region_metadata_tests {
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,
+            closure_environment: None,
+            closure_captures_by_move: false,
         }
     }
 
@@ -2127,6 +2589,44 @@ mod callable_region_metadata_tests {
         let mut sink = Sink::new();
         check_all(&mut bodies, &types, &mut sink);
         assert!(verify_callable_regions_all(&bodies, &types).is_empty());
+    }
+
+    #[test]
+    fn malformed_closure_environment_identity_is_rejected() {
+        let (types, common) = TypeTable::new();
+        let mut body = empty_body();
+        body.arg_count = 1;
+        body.param_modes = vec![ember_mir::ParameterMode::Borrow];
+        body.locals.push(LocalDecl {
+            ty: common.i32,
+            kind: LocalKind::Arg,
+            name: Some("env".to_string()),
+            span: Span::DUMMY,
+        });
+        // The environment record must name the actual first parameter's
+        // nominal struct, not an arbitrary compiler-internal id.
+        body.closure_environment = Some(ember_types::StructId(0));
+        let violations = verify_closure_environments(&[body], &types);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("closure-environment identity")),
+            "malformed closure identity crossed the verifier: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn owned_capture_marker_without_an_environment_is_rejected() {
+        let (types, _) = TypeTable::new();
+        let mut body = empty_body();
+        body.closure_captures_by_move = true;
+        let violations = verify_closure_environments(&[body], &types);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("owned-capture marker")),
+            "orphaned owned-capture marker crossed the verifier: {violations:?}"
+        );
     }
 
     #[test]

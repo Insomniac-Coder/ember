@@ -89,6 +89,16 @@ pub struct Body {
     /// from MIR before borrow checking. The unconditional code-generation
     /// verifier rejects a missing or corrupt record.
     pub callable_regions: Option<CallableRegionMetadata>,
+    /// Compiler-internal identity of the synthesized environment struct for a
+    /// capturing closure. This preserves the proof boundary between the
+    /// closure body and the synthetic capture borrows in its creator; it has
+    /// no source-level, ABI, layout, or generated-C meaning.
+    pub closure_environment: Option<StructId>,
+    /// Whether `closure_environment`, when present, owns its capture fields
+    /// because the source closure was written `owned fn`. This drives the
+    /// `[LT-42]` static-region storage check at the environment construction
+    /// site; it never becomes ABI data.
+    pub closure_captures_by_move: bool,
 }
 
 impl Body {

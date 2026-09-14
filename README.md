@@ -21,12 +21,12 @@ The authority levels matter:
 | Role | Current artifact |
 |---|---|
 | Adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), Ember v0.8.5_Hardened_1 |
-| Frozen development target | [`docs/spec-source/Ember_v0.9.6_Hardened_6.md`](docs/spec-source/Ember_v0.9.6_Hardened_6.md) |
-| Immediate target predecessor | Ember v0.9.6_Hardened_5, kept immutable |
+| Frozen development target | [`docs/spec-source/Ember_v0.9.7_Hardened_1.md`](docs/spec-source/Ember_v0.9.7_Hardened_1.md) |
+| Immediate target predecessor | Ember v0.9.6_Hardened_6, kept immutable |
 | Implementation phase | Phase 2, ownership |
 | Completed phases | Exactly 1 of 9 |
 
-The v0.9.6_Hardened_6 target is not yet adopted as the normative source. It is
+The v0.9.7_Hardened_1 target is not yet adopted as the normative source. It is
 the contract the implementation is working toward. A version is adopted only
 after its implementation, conformance, documentation, and regression gates
 pass and the owner explicitly installs it.
@@ -34,13 +34,14 @@ pass and the owner explicitly installs it.
 At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
-- all 206 Rust tests pass;
-- the conformance runner passes across 123 rule directories and 412 Ember
+- all 209 Rust tests pass;
+- the conformance runner passes across 131 rule directories and 459 Ember
   source files;
 - all six adopted-specification gates pass;
-- 86 recorded compiler defects are closed;
-- four known deviations remain open (D1–D4);
-- no owner semantic/API decision is currently open; ODR-014 is closed by H6.
+- 94 recorded compiler defects are closed;
+- three known deviations remain open (D1, D3, and D4); D2 is closed;
+- ODR-015 is closed by the owner-approved `@latebound` callable-type boundary;
+  its H1 implementation and conformance evidence remain outstanding.
 
 `ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
@@ -107,6 +108,15 @@ invalidate before use, and a private member remains local. Class-member
 lowering, layouts, effects, inline eligibility, item-granular reuse,
 non-direct dispatch, and the complete escape/storage matrix remain incomplete;
 unknown calls stay conservative.
+
+The current uncommitted H6-target slice makes callable parameter modes real
+compile-time type identity: `fn(T) -> R`, `fn(mut T) -> R`, and
+`fn(owned T) -> R` retain their complete mode vector through parsing, generic
+Callable/CallableOnce bounds, inference, lambda expectations, indirect calls,
+monomorphisation, generated C signatures, and the declaration-first interface
+artifact. EMIF schema 6 invalidates older mode-erasing records. This advances
+the frozen target only; it does not adopt H6 over the current v0.8.5 normative
+source.
 
 See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the complete verified state and
 [`docs/COLD-START.md`](docs/COLD-START.md) for the shortest safe route into the
@@ -272,7 +282,7 @@ The most useful project records are:
 - [`docs/DEFECTS.md`](docs/DEFECTS.md) — compiler defects and verification evidence;
 - [`docs/BACKLOG.md`](docs/BACKLOG.md) — implementation gaps and build order;
 - [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) — questions requiring owner authority;
-- [`docs/MIGRATION-0.9.6.md`](docs/MIGRATION-0.9.6.md) — H6 adoption and implementation map.
+- [`docs/MIGRATION-0.9.7.md`](docs/MIGRATION-0.9.7.md) — H1 adoption and implementation map.
 
 ## Development protocol
 

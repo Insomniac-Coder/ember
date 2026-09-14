@@ -160,6 +160,12 @@ pub struct Regions {
     drop_requires_regions: Vec<bool>,
     /// The region variable produced by the borrow expression at each point.
     loan_region: HashMap<Point, RegionVid>,
+    /// Exact field paths used by a verified capturing-closure body for a
+    /// synthetic environment borrow at this point. An absent entry is an
+    /// ordinary borrow of the complete place. This compiler-only fact keeps
+    /// `[LT-42]` precision at the closure boundary without changing reference
+    /// layout or granting any general projection-narrowing escape hatch.
+    capture_borrow_paths: HashMap<Point, Vec<Vec<Projection>>>,
     /// The possible value roots in every local region slot immediately before
     /// each MIR point. This is compile-time-only `[LT-21]` provenance; it is
     /// deliberately absent from layout, ABI, and generated code.
@@ -200,6 +206,18 @@ impl Regions {
         types: &TypeTable,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) -> Regions {
+        Self::infer_with_capture_borrow_paths(body, types, call_contract, &HashMap::new())
+    }
+
+    /// As [`infer`], but with the verified field paths of synthetic closure
+    /// captures supplied by the caller. The map is derived from direct closure
+    /// MIR summaries and is intentionally unavailable to source programs.
+    pub fn infer_with_capture_borrow_paths(
+        body: &Body,
+        types: &TypeTable,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+        capture_borrow_paths: &HashMap<Point, Vec<Vec<Projection>>>,
+    ) -> Regions {
         let mut local_regions = Vec::with_capacity(body.locals.len());
         let mut next = 0;
         for decl in &body.locals {
@@ -236,6 +254,7 @@ impl Regions {
             local_regions,
             drop_requires_regions: body.locals.iter().map(|decl| types.needs_drop(decl.ty)).collect(),
             loan_region,
+            capture_borrow_paths: capture_borrow_paths.clone(),
             values_at: HashMap::new(),
         };
 
@@ -268,6 +287,12 @@ impl Regions {
         regions.values_at = regions.infer_value_states(body, types, call_contract);
         regions.apply_value_states(body, call_contract, &slot_liveness);
         regions
+    }
+
+    /// The exact field paths of a compiler-generated closure capture borrow.
+    /// `None` means this is an ordinary whole-place borrow.
+    pub fn capture_borrow_paths(&self, point: Point) -> Option<&[Vec<Projection>]> {
+        self.capture_borrow_paths.get(&point).map(Vec::as_slice)
     }
 
     /// The region of the borrow expression at `point`, if there is one.
@@ -608,6 +633,32 @@ impl Regions {
         let mut result = HashMap::new();
         match rvalue {
             Rvalue::Ref { place, .. } => {
+                if let Some(paths) = self.capture_borrow_paths(point) {
+                    let Some(loan) = self.loan_region.get(&point).copied() else {
+                        return result;
+                    };
+                    for path in paths {
+                        let source = project_place(place, path);
+                        let mut fact = self.fact_for_place(state, &source);
+                        fact.roots.insert(loan);
+                        if self.deref_base(&source).is_none() {
+                            fact.origins.insert(match body.local(source.local).kind {
+                                LocalKind::Arg => Origin::Param(source.local),
+                                _ => Origin::Local(source.local),
+                            });
+                        }
+                        // A `ref Pair` has slots rooted at `Deref`; route the
+                        // selected source field to its corresponding slot
+                        // rather than copying a whole-pair fact to every slot.
+                        let mut target_path = vec![Projection::Deref];
+                        target_path.extend(path.iter().cloned());
+                        let target = project_place(destination, &target_path);
+                        for destination in self.assigned_place_regions(&target) {
+                            result.insert(destination, fact.clone());
+                        }
+                    }
+                    return result;
+                }
                 let mut fact = self.fact_for_place(state, place);
                 let Some(loan) = self.loan_region.get(&point).copied() else { return result };
                 fact.roots.insert(loan);
@@ -981,18 +1032,24 @@ impl Regions {
                 }
             }
             Rvalue::Repeat { value, .. } => self.operand_access_event(point, value, events),
-            Rvalue::Discriminant(place) => {
-                events.push((point, place.clone(), RegionAccessKind::Read))
-            }
-            Rvalue::Ref { place, mutable } => events.push((
-                point,
-                place.clone(),
-                if *mutable {
+            // The discriminant is representation metadata, not a borrowed
+            // payload read. Access summaries therefore reflect only the field
+            // projection reached on the selected control-flow edge.
+            Rvalue::Discriminant(_) => {}
+            Rvalue::Ref { place, mutable } => {
+                let operation = if *mutable {
                     RegionAccessKind::BorrowMut
                 } else {
                     RegionAccessKind::BorrowShared
-                },
-            )),
+                };
+                if let Some(paths) = self.capture_borrow_paths(point) {
+                    for path in paths {
+                        events.push((point, project_place(place, path), operation));
+                    }
+                } else {
+                    events.push((point, place.clone(), operation));
+                }
+            }
         }
     }
 
@@ -1119,8 +1176,9 @@ impl Regions {
                 live.clone(),
             );
             for (index, stmt) in block.stmts.iter().enumerate().rev() {
-                self.statement_liveness(&stmt.kind, &mut live);
-                points.insert(Point { block: block_index, index }, live.clone());
+                let point = Point { block: block_index, index };
+                self.statement_liveness(point, &stmt.kind, &mut live);
+                points.insert(point, live.clone());
             }
         }
         points
@@ -1136,17 +1194,26 @@ impl Regions {
         let block = body.blocks.get(block_index)?;
         let mut live = live_out.get(&block_index).cloned().unwrap_or_default();
         self.terminator_liveness(&block.terminator, &mut live, call_contract);
-        for stmt in block.stmts.iter().rev() {
-            self.statement_liveness(&stmt.kind, &mut live);
+        for (index, stmt) in block.stmts.iter().enumerate().rev() {
+            self.statement_liveness(
+                Point { block: block_index, index },
+                &stmt.kind,
+                &mut live,
+            );
         }
         Some(live)
     }
 
-    fn statement_liveness(&self, kind: &StmtKind, live: &mut HashSet<RegionVid>) {
+    fn statement_liveness(
+        &self,
+        point: Point,
+        kind: &StmtKind,
+        live: &mut HashSet<RegionVid>,
+    ) {
         match kind {
             StmtKind::Assign { place, rvalue } => {
                 self.write_place_liveness(place, live);
-                self.rvalue_liveness(rvalue, live);
+                self.rvalue_liveness(point, rvalue, live);
             }
             StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
                 self.write_place_liveness(dest, live);
@@ -1211,7 +1278,7 @@ impl Regions {
         }
     }
 
-    fn rvalue_liveness(&self, rvalue: &Rvalue, live: &mut HashSet<RegionVid>) {
+    fn rvalue_liveness(&self, point: Point, rvalue: &Rvalue, live: &mut HashSet<RegionVid>) {
         match rvalue {
             Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } => {
                 self.operand_liveness(operand, live)
@@ -1227,8 +1294,20 @@ impl Regions {
                 }
             }
             Rvalue::Repeat { value, .. } => self.operand_liveness(value, live),
-            Rvalue::Discriminant(place) => self.read_place_liveness(place, live),
-            Rvalue::Ref { place, .. } => self.read_place_liveness(place, live),
+            // Inspecting an enum tag selects a control-flow edge, but does not
+            // read any payload. Retaining every payload slot here would turn
+            // a later field projection through `Some`/`Ok` into a whole-value
+            // region use and violate `[LT-20]`/`[LT-24]`.
+            Rvalue::Discriminant(_) => {}
+            Rvalue::Ref { place, .. } => {
+                if let Some(paths) = self.capture_borrow_paths(point) {
+                    for path in paths {
+                        self.read_place_liveness(&project_place(place, path), live);
+                    }
+                } else {
+                    self.read_place_liveness(place, live);
+                }
+            }
         }
     }
 
@@ -1289,7 +1368,27 @@ impl Regions {
 
 fn view_region_paths(types: &TypeTable, ty: Ty) -> Vec<Vec<Projection>> {
     match types.kind(ty) {
-        TyKind::Ref { .. } | TyKind::Str | TyKind::Span { .. } => vec![Vec::new()],
+        // A reference is itself a view, but it must not collapse the field
+        // slots of a multi-region value behind it. This is especially
+        // load-bearing for `[LT-42]`: a closure environment stores `ref Pair`,
+        // and a closure body that projects `pair.left` must retain only that
+        // source field, not every field of `Pair`. An ordinary `ref T` still
+        // has one slot when `T` contains no view fields.
+        TyKind::Ref { inner, .. } => {
+            let paths = view_region_paths(types, *inner);
+            if paths.is_empty() {
+                vec![Vec::new()]
+            } else {
+                paths
+                    .into_iter()
+                    .map(|mut path| {
+                        path.insert(0, Projection::Deref);
+                        path
+                    })
+                    .collect()
+            }
+        }
+        TyKind::Str | TyKind::Span { .. } => vec![Vec::new()],
         TyKind::Struct(id) => types
             .struct_def(*id)
             .fields
@@ -1334,6 +1433,12 @@ fn view_region_paths(types: &TypeTable, ty: Ty) -> Vec<Vec<Projection>> {
         TyKind::Array { elem, .. } if types.is_view(*elem) => vec![Vec::new()],
         _ => Vec::new(),
     }
+}
+
+fn project_place(place: &Place, path: &[Projection]) -> Place {
+    let mut projected = place.clone();
+    projected.projection.extend_from_slice(path);
+    projected
 }
 
 fn path_is_prefix(prefix: &[Projection], path: &[Projection]) -> bool {

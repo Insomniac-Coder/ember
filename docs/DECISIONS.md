@@ -495,11 +495,17 @@ exactly the code `[SPN-*]` exists to make fast.
 > calling one is a direct call with the environment first. `[FN-6]` keeps
 > `fn(A) -> R` an ordinary function-pointer type everywhere *except* parameter
 > position, which is what lets a `fn`-typed local and a capturing argument
-> coexist. `[CLO-6]`'s `owned f` is refused rather than mis-compiled: the
-> consumption is a property of the bound, not of the closure's type, and until
-> a call can consume its callee, treating `CallableOnce` as `Callable` would
-> permit the second call the rule forbids. The clarification that was missing
-> is amendment A5 in `docs/spec-amendments.md`.
+> coexist. At the time of this decision, `[CLO-6]`'s `owned f` was refused
+> rather than mis-compiled: consumption is a property of the bound, not of the
+> closure's type, and treating `CallableOnce` as `Callable` would permit the
+> second call the rule forbids. That implementation residual closed on
+> 2026-09-14: HIR/MIR now carry an explicit consuming indirect-callee move, and
+> ordinary move/drop analysis turns a second call into E3040. The remaining
+> body-level distinction closed on 2026-09-14 as D-121: a concrete `owned fn`
+> becomes `CallableOnce` only when its checked body moves a non-`Copy` capture;
+> supplying it to plain `Callable` is E3030, while a read-only move-capture
+> closure stays reusable. The clarification that was missing is amendment A5 in `docs/spec-amendments.md`; no
+> specification decision changed to close the implementation gap.
 
 **Spec rule:** `[CLO-1]`, `[CLO-3]`, `[COST-3]`, `[FN-6]`.
 **Status:** taken 2026-09-09. **This is the deviation that capturing closures
@@ -1224,3 +1230,35 @@ authority/non-retention, and generated-C erasure. Removing the iterator result
 provenance edge or the chunk cursor advance makes its adversarial test fail.
 No new ownership category, opaque return, runtime region metadata, or unsafe
 boundary was introduced.
+
+## ADR-036 — Late-bound callbacks use one callable-type modifier
+
+**Owner ruling resolving ODR-015, 2026-09-14.** The existing `[LT-7]` and
+`with_views` rules required fresh invocation-local callback regions and escape
+rejection, but H6 supplied no general declaration mechanism. The owner selected
+the single callable-type modifier:
+
+```ember
+f: @latebound fn(Span[T]) -> R
+```
+
+**Decision.** `@latebound` belongs to the expected callable boundary, never to
+a named function declaration. Each invocation receives fresh compiler-internal
+regions for every borrowed or view parameter. A result, store, owned-closure
+capture, FFI publication, or other publication path that retains one of those
+regions is rejected by the existing region/escape machinery. An ordinary
+callback remains ordinary; no global inference changes unrelated APIs.
+
+**Representation.** The modifier participates in canonical callable identity,
+generic substitution, expected-callable checking, interface compatibility,
+EMIF, and incremental invalidation. It is not named lifetime syntax, runtime
+metadata, an ABI or reload-schema field, a dynamic-dispatch requirement, or a
+second ownership model. `std.borrow.with_views*` remains ordinary library code;
+the compiler must not recognize those names specially.
+
+**Version and evidence treatment.** This changes accepted/rejected callback
+programs, so H6 remains immutable and `0.9.7_Hardened_1` is the owner-selected
+language-revision successor. The target is specified, not implemented or
+adopted. Required evidence begins with the `with_views2(..., first)` escape
+reproducer and continues through freshness, nested-boundary, mutable, storage,
+owned-capture, FFI-publication, EMIF, and generated-code-erasure cases.

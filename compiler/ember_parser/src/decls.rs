@@ -994,7 +994,20 @@ impl Parser<'_> {
                 self.expect_punct(Punct::LParen);
                 let mut params = Vec::new();
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
-                    params.push(self.parse_type());
+                    let param_start = self.span();
+                    let mode = if self.eat_kw(Kw::Mut) {
+                        Mode::Mut
+                    } else if self.eat_kw(Kw::Owned) {
+                        Mode::Owned
+                    } else {
+                        Mode::Borrow
+                    };
+                    let ty = self.parse_type();
+                    params.push(CallableTypeParam {
+                        mode,
+                        span: param_start.to(ty.span),
+                        ty,
+                    });
                     if !self.eat_punct(Punct::Comma) {
                         break;
                     }

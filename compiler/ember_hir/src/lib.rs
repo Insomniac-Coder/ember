@@ -101,6 +101,20 @@ pub struct Function {
     /// a parameter is a local and the borrow checker has to answer "which
     /// parameter did this reference come from".
     pub borrows: Option<Vec<usize>>,
+    /// Compiler-internal identity for a capturing closure's environment
+    /// struct. It is absent for ordinary functions and capture-free closures.
+    ///
+    /// This is deliberately HIR/MIR metadata rather than a source-level type
+    /// rule: region analysis uses it to connect a synthesized environment
+    /// borrow to the verified access summary of the closure body (`[LT-42]`).
+    pub closure_environment: Option<StructId>,
+    /// Whether the generated closure environment owns its captured fields.
+    ///
+    /// This preserves the `owned fn` boundary through lowering. It is absent
+    /// from ordinary function declarations and is compiler-internal: source
+    /// observability comes from the closure's capture/move behavior, not from
+    /// an ABI flag or a user-spellable environment type.
+    pub closure_captures_by_move: bool,
 }
 
 impl Function {
@@ -180,8 +194,11 @@ pub enum ExprKind {
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
-    /// A call through a value of function type, rather than to a name.
-    CallIndirect { callee: Box<Expr>, args: Vec<Expr> },
+    /// A call through a value of function type, rather than to a name. An
+    /// `owned f: fn(...) -> R` parameter is `CallableOnce`, so this records
+    /// that the callee itself must be consumed; its argument modes remain the
+    /// callable type's own modes.
+    CallIndirect { callee: Box<Expr>, args: Vec<Expr>, consumes_callee: bool },
     /// `Vec3(1, 2, 3)` — the memberwise constructor (`[STR-1]`). Arguments are
     /// in declaration order with defaults already filled in.
     StructLit { struct_id: StructId, fields: Vec<Expr> },
@@ -908,9 +925,10 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             format!("call#{}({})", callee.0, inner.join(", "))
         }
         ExprKind::FnValue(def) => format!("fn#{}", def.0),
-        ExprKind::CallIndirect { callee, args } => {
+        ExprKind::CallIndirect { callee, args, consumes_callee } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
-            format!("({})({})", dump_expr(callee, function, types), inner.join(", "))
+            let mode = if *consumes_callee { "owned " } else { "" };
+            format!("{mode}({})({})", dump_expr(callee, function, types), inner.join(", "))
         }
         ExprKind::StructLit { struct_id, fields } => {
             let inner: Vec<String> = fields.iter().map(|f| dump_expr(f, function, types)).collect();

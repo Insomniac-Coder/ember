@@ -88,6 +88,24 @@ pub enum FloatTy {
     F64,
 }
 
+/// `[FN-6a]` — one callable parameter's ordinary Ember passing mode. This is
+/// part of canonical function-type identity and compile-time metadata, never
+/// a runtime field or a separate ownership model.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum FnParamMode {
+    Borrow,
+    Mut,
+    Owned,
+}
+
+/// One mode-bearing parameter in `fn(A) -> R`, `fn(mut A) -> R`, or
+/// `fn(owned A) -> R`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct FnParam {
+    pub ty: Ty,
+    pub mode: FnParamMode,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     Bool,
@@ -129,7 +147,7 @@ pub enum TyKind {
     /// a compiler-known type until Phase 2's generics let the standard library
     /// write it in Ember. `String` is this with `u8` elements.
     Vec { elem: Ty },
-    Fn { params: Vec<Ty>, ret: Ty },
+    Fn { params: Vec<FnParam>, ret: Ty },
     /// `[TYP-16]` — a generic parameter, opaque while the body that declares
     /// it is checked. `[TYP-17]` allows only what its bounds provide, so the
     /// bound list travels with the declaration rather than with the type.
@@ -465,7 +483,7 @@ impl TypeTable {
             TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic(*elem),
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic(t)),
             TyKind::Fn { params, ret } => {
-                params.iter().any(|&t| self.is_generic(t)) || self.is_generic(*ret)
+                params.iter().any(|param| self.is_generic(param.ty)) || self.is_generic(*ret)
             }
             _ => false,
         }
@@ -506,8 +524,13 @@ impl TypeTable {
                 self.intern(TyKind::Tuple(items))
             }
             TyKind::Fn { params, ret } => {
-                let params: Vec<Ty> =
-                    params.iter().map(|&t| self.substitute_self(t, concrete)).collect();
+                let params = params
+                    .iter()
+                    .map(|param| FnParam {
+                        ty: self.substitute_self(param.ty, concrete),
+                        mode: param.mode,
+                    })
+                    .collect();
                 let ret = self.substitute_self(ret, concrete);
                 self.intern(TyKind::Fn { params, ret })
             }
@@ -545,7 +568,13 @@ impl TypeTable {
                 self.intern(TyKind::Tuple(items))
             }
             TyKind::Fn { params, ret } => {
-                let params: Vec<Ty> = params.iter().map(|&t| self.substitute(t, args)).collect();
+                let params = params
+                    .iter()
+                    .map(|param| FnParam {
+                        ty: self.substitute(param.ty, args),
+                        mode: param.mode,
+                    })
+                    .collect();
                 let ret = self.substitute(ret, args);
                 self.intern(TyKind::Fn { params, ret })
             }
@@ -615,6 +644,20 @@ impl TypeTable {
                 a.iter()
                     .zip(b.iter())
                     .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
+            }
+            // `[FN-6a]` — callable parameter modes are part of the function
+            // type's identity.  Inference may solve the nested types, but it
+            // must never erase `borrow`/`mut`/`owned` on its way there.
+            (TyKind::Fn { params: a, ret: a_ret }, TyKind::Fn { params: b, ret: b_ret })
+                if a.len() == b.len()
+                    && a.iter().zip(&b).all(|(left, right)| left.mode == right.mode) =>
+            {
+                a.iter()
+                    .zip(&b)
+                    .all(|(left, right)| {
+                        self.unify_with_fixed(left.ty, right.ty, args, fixed)
+                    })
+                    && self.unify_with_fixed(a_ret, b_ret, args, fixed)
             }
             // A concrete declared type has nothing to infer; the ordinary
             // coercion check decides whether the argument fits.
@@ -1089,7 +1132,17 @@ impl TypeTable {
             }
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.display(*elem)),
             TyKind::Fn { params, ret } => {
-                let inner: Vec<String> = params.iter().map(|&t| self.display(t)).collect();
+                let inner: Vec<String> = params
+                    .iter()
+                    .map(|param| {
+                        let mode = match param.mode {
+                            FnParamMode::Borrow => "",
+                            FnParamMode::Mut => "mut ",
+                            FnParamMode::Owned => "owned ",
+                        };
+                        format!("{mode}{}", self.display(param.ty))
+                    })
+                    .collect();
                 format!("fn({}) -> {}", inner.join(", "), self.display(*ret))
             }
             TyKind::Infer(_) => "_".into(),
@@ -1180,7 +1233,12 @@ impl TypeTable {
                     if index != 0 {
                         out.push(',');
                     }
-                    out.push_str(&self.canonical_name(*param)?);
+                    match param.mode {
+                        FnParamMode::Borrow => {}
+                        FnParamMode::Mut => out.push_str("mut "),
+                        FnParamMode::Owned => out.push_str("owned "),
+                    }
+                    out.push_str(&self.canonical_name(param.ty)?);
                 }
                 out.push_str(")->");
                 out.push_str(&self.canonical_name(*ret)?);

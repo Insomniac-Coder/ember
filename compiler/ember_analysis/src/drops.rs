@@ -830,9 +830,14 @@ fn write_flag_updates(body: &mut Body, flags: &BTreeMap<Place, LocalId>) {
         }
 
         // Moves into a call happen in the terminator. Clear their flags in
-        // the final statements of this block, before control transfers.
-        if let Terminator::Call { args, .. } = &block.terminator {
+        // the final statements of this block, before control transfers. An
+        // indirect callee can itself be the consumed value for `[CLO-6]`'s
+        // `owned f: fn(...)` form, so it participates alongside arguments.
+        if let Terminator::Call { func, args, .. } = &block.terminator {
             let mut moved = Vec::new();
+            if let ember_mir::FuncRef::Indirect(callee) = func {
+                moved_by_operand(callee, &mut moved);
+            }
             for arg in args {
                 moved_by_operand(arg, &mut moved);
             }
@@ -929,10 +934,15 @@ fn step_terminator(
     paths: &MovePaths,
 ) {
     let span = body.blocks[index].terminator_span;
-    let Terminator::Call { args, dest, .. } = &body.blocks[index].terminator else { return };
+    let Terminator::Call { func, args, dest, .. } = &body.blocks[index].terminator else {
+        return;
+    };
 
     let mut read = Vec::new();
     let mut push = |place: &Place| read.push(place.clone());
+    if let ember_mir::FuncRef::Indirect(callee) = func {
+        read_by_operand(callee, &mut push);
+    }
     for arg in args {
         read_by_operand(arg, &mut push);
     }
@@ -945,6 +955,9 @@ fn step_terminator(
         }
     }
     let mut moved = Vec::new();
+    if let ember_mir::FuncRef::Indirect(callee) = func {
+        moved_by_operand(callee, &mut moved);
+    }
     for arg in args {
         moved_by_operand(arg, &mut moved);
     }

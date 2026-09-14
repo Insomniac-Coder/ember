@@ -960,13 +960,19 @@ fn declaration_signature(
                     let parameters = bound
                         .parameters
                         .iter()
-                        .map(|ty| {
-                            types.canonical_name(*ty).map_err(|error| {
+                        .map(|parameter| {
+                            let mode = match parameter.mode {
+                                ember_types::FnParamMode::Borrow => CallableParameterMode::Borrow,
+                                ember_types::FnParamMode::Mut => CallableParameterMode::Mut,
+                                ember_types::FnParamMode::Owned => CallableParameterMode::Owned,
+                            };
+                            let ty = types.canonical_name(parameter.ty).map_err(|error| {
                                 format!(
                                     "internal compiler error: [BLD-2] declaration `{}` has a non-canonical Callable bound parameter: {error}",
                                     declaration.symbol
                                 )
-                            })
+                            })?;
+                            Ok(CallableParameter { mode, ty })
                         })
                         .collect::<Result<Vec<_>, String>>()?;
                     let result = types.canonical_name(bound.result).map_err(|error| {

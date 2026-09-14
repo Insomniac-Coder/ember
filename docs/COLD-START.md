@@ -1,6 +1,6 @@
 # Cold start — read this first
 
-State as of 2026-09-13. Read `docs/MIGRATION-0.9.6.md` next for the active
+State as of 2026-09-14. Read `docs/MIGRATION-0.9.7.md` next for the active
 migration, then `docs/HANDOFF.md` §0 for the process and verified implementation
 state. `docs/MIGRATION-0.9.5.md` and `docs/MIGRATION-0.8.3.md` remain historical
 context for the 0.9.5 intake and original phase order.
@@ -12,7 +12,7 @@ context for the 0.9.5 intake and original phase order.
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
 | `docs/DECISIONS.md` | ADR-001..035 |
-| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..014 are closed; ODR-003 is deferred editorial; no owner semantic/API decision is currently open |
+| `docs/OWNER-QUEUE.md` | **questions an agent may not answer.** ODR-001/002 and ODR-004..015 are closed; ODR-003 is deferred editorial. `@latebound` implementation is now an H1 milestone, not an owner question |
 
 ---
 
@@ -83,8 +83,10 @@ post-H4 Revision 5 simplicity RFC was intended to produce the next hardened
 target. `Ember_v0.9.6_Hardened_5.md` materializes that architecture,
 tooling, documentation, and development contract while keeping H4 immutable.
 The owner then closed ODR-014's remaining Span iterator, chunk, and raw-pointer
-boundary in `Ember_v0.9.6_Hardened_6.md`, keeping H5 immutable. H6 is the
-frozen development target, but not yet the normative repository
+boundary in `Ember_v0.9.6_Hardened_6.md`, keeping H5 immutable. The owner then
+closed ODR-015 with the `@latebound` callable-type boundary in
+`Ember_v0.9.7_Hardened_1.md`, keeping H6 immutable. H1 is the frozen
+development target, but not yet the normative repository
 source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
 helper families; no mixed overloads are implied, and it requires one shared
@@ -141,7 +143,7 @@ the caveat.*
 ## 3. Versioning
 
 The adopted normative document is **v0.8.5_Hardened_1**; the frozen development
-target is **v0.9.6_Hardened_6**. Two numbers move independently:
+target is **v0.9.7_Hardened_1**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
@@ -153,10 +155,10 @@ target is **v0.9.6_Hardened_6**. Two numbers move independently:
   records the last one that way, and `207c69f` is the shape to follow when the
   file has outrun its header and the decision has not been made.
 
-`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` accepts the exact
-`"0.9"`, `"0.9.5"`, and `"0.9.6"` selectors plus the supported 0.8 contracts.
-That completed `VER-096-1` work is selector recognition, not evidence of
-adoption by itself.
+`LANGUAGE_VERSIONS` in `compiler/ember_parser/src/lib.rs` currently accepts
+the exact `"0.9"`, `"0.9.5"`, and `"0.9.6"` selectors plus the supported 0.8
+contracts. H1 specifies `"0.9.7"`, but recognition is implementation work and
+not evidence of adoption by itself.
 `docs/spec-source/Ember_v0.8.5_Hardened_1.md` is the frozen adopted snapshot.
 The current development lineage first diffed H1 against immutable H10, H2
 against immutable H1, H3 against immutable H2, H4 against immutable H3, and
@@ -169,22 +171,24 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.6_Hardened_6`, per the owner's explicit
-ODR-014 Span API completion. H5 is its immediate predecessor;
+The current development target is `0.9.7_Hardened_1`, per the owner's explicit
+ODR-015 `@latebound` callable-boundary completion. H6 is its immediate predecessor;
 H10 remains the
 immutable architecture-line predecessor. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
 modes; H8 records helper input modes and compile-time mode preservation through
 `Callable`; H9 records Arena-backed return provenance; H10 records the complete
 Arena initialization and `MaybeUninit` contract. The 0.9.5 multi-region-view
-feature itself is the owner-selected language change. H1 preserves 0.9.5's
+feature itself is the owner-selected language change. 0.9.6_Hardened_1 preserves 0.9.5's
 accepted/rejected ordinary-source sets while selecting the consolidated
 reference-compiler/conformance architecture. H2 completes the Arena-backed
 container contract, H3 completes the public hashing protocol, H4 selects
 static generic Hasher dispatch, H5 binds the approved post-H4 simplicity
 architecture/process contract without changing source semantics, and H6 fixes
-the public Span iterator/chunk/raw-pointer contract. Any later correction must
-become `0.9.6_Hardened_7`, not an in-place H6 edit.
+the public Span iterator/chunk/raw-pointer contract. `0.9.7_Hardened_1` adds
+the owner-approved `@latebound` callable-type language boundary. Any later
+hardening must become `0.9.7_Hardened_2`; another semantic change requires an
+owner-selected language revision, never an in-place H1 edit.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which
 change log was current by matching `"0.8.3"` and would have silently stopped
@@ -238,13 +242,15 @@ write through a shared `ref` caught only by clang's `const`.
 Where behaviour cannot be observed from output, **assert on the emitted C**
 (`#$ assert-c: contains("ember_vec_free")`).
 
-## 5. Callable declaration contracts cover current method forms; non-direct work is next
+## 5. The H1 callable-boundary implementation is next
 
-**Exact next task: continue the non-direct and remaining multi-region
-conformance matrix before adding interface sections for layouts, effects, or
-inline eligibility.** Continue in the order in `MIGRATION-0.9.6.md`. Do not
-fabricate still-unreachable class/thread/effect diagnostic shapes, add
-placeholder semantic facts, or attempt a big-bang rewrite.
+**Exact next task: implement `@latebound` according to
+`MIGRATION-0.9.7.md`, before starting unrelated Phase 2 matrices.** Preserve
+the ordinary-library status of `std.borrow.with_views*`; carry one compiler-only
+callable-boundary fact through parsing, canonical typing, EMIF, and region
+analysis; and use existing escape diagnostics. Do not invent named lifetimes,
+runtime/ABI metadata, global callback inference, or a name-specific compiler
+special case.
 
 **The direct callable-summary slice is complete at `90059c8`.** Building on
 `c913fbd`, analysis infers exact result-field provenance and parameter-field

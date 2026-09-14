@@ -301,6 +301,8 @@ impl<'a> Builder<'a> {
             borrowed_params,
             for_iterators,
             callable_regions: None,
+            closure_environment: self.function.closure_environment,
+            closure_captures_by_move: self.function.closure_captures_by_move,
         }
     }
 
@@ -1540,8 +1542,23 @@ impl<'a> Builder<'a> {
             // checked-without-panic form". One compare, a branch, and the two
             // `Option` variants.
             // `[CLO-3]` — a call through a value of function type.
-            hir::ExprKind::CallIndirect { callee, args } => {
-                let callee_op = self.lower_operand(callee);
+            hir::ExprKind::CallIndirect { callee, args, consumes_callee } => {
+                // `[CLO-6]` — the mode on `f`, not the callable's argument
+                // modes, selects `Callable` versus `CallableOnce`. A once
+                // call consumes the callee place even though the erased call
+                // signature is `fn(...) -> R`; ordinary indirect calls keep
+                // their existing borrowed read.
+                let callee_op = if *consumes_callee {
+                    match &callee.kind {
+                        hir::ExprKind::Local(_)
+                        | hir::ExprKind::Field { .. }
+                        | hir::ExprKind::Index { .. }
+                        | hir::ExprKind::Deref(_) => Operand::Move(self.lower_place(callee)),
+                        _ => self.lower_operand(callee),
+                    }
+                } else {
+                    self.lower_operand_borrowed(callee)
+                };
                 let args: Vec<Operand> =
                     args.iter().map(|a| self.lower_operand_borrowed(a)).collect();
                 let next = self.new_block();
