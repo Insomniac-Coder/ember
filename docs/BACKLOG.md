@@ -134,6 +134,12 @@ covered in all profiles. Indexed class-object roots, mutating methods invoked
 through class fields, instantaneous direct field writes, access elision, and
 the complete Phase 3 exclusivity matrix remain fail-closed or outstanding.
 
+The instantaneous class-field slice also admits direct `Copy` field writes
+through a class-handle local or mutable reference without emitting a runtime
+access pair. Non-`Copy`, nested/indexed class-object, and read-only forms stay
+fail-closed; view-typed field arguments and full static/dynamic access
+classification remain later work.
+
 ---
 
 ## Build order

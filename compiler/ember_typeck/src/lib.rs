@@ -6253,7 +6253,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 // `[MOD-7]` — assignment and augmented assignment are both
                 // writes.
-                self.reject_readonly_write(&place, target.span);
+                self.reject_readonly_write_in_assignment(&place, target.span);
                 let through_shared_ref =
                     self.reject_write_through_shared_ref(&place, target.span);
                 if !through_shared_ref {
@@ -6550,7 +6550,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if let ExprKind::Local(local) = place.kind {
                 self.local_ranges.remove(&local);
             }
-            self.reject_readonly_write(&place, leaf.target.span);
+            self.reject_readonly_write_in_assignment(&place, leaf.target.span);
             let through_shared_ref =
                 self.reject_write_through_shared_ref(&place, leaf.target.span);
             if !through_shared_ref {
@@ -10719,7 +10719,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span, false, false);
+    }
+
+    /// `[EXC-1]` — a direct write of one scalar/`Copy` field through a class
+    /// handle is instantaneous and needs no runtime access word. This is
+    /// intentionally separate from `ref mut`, a `mut` argument, and a mutating
+    /// method call, all of which are long-term accesses.
+    fn reject_readonly_write_in_assignment(&mut self, place: &Expr, span: Span) {
+        self.reject_readonly_write_inner(place, span, false, true);
     }
 
     /// `[EXC-1]` — a class field passed to a `mut` parameter is a permitted
@@ -10727,7 +10735,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// assignment, so the caller's MIR lowering will surround the call with
     /// the runtime access interval.
     fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, true);
+        self.reject_readonly_write_inner(place, span, true, false);
     }
 
     fn reject_readonly_write_inner(
@@ -10735,6 +10743,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         place: &Expr,
         span: Span,
         allow_class_mut_argument: bool,
+        allow_instantaneous_class_field: bool,
     ) {
         let mut current = place;
         loop {
@@ -10744,6 +10753,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         if self.class_init_field_index(place).is_none()
                             && self.class_method_field_index(current).is_none()
                             && !(allow_class_mut_argument && self.class_mut_argument_supported(place))
+                            && !(allow_instantaneous_class_field
+                                && self.class_instantaneous_field(place))
                         {
                             self.error(
                                 codes::E1010,
@@ -10807,6 +10818,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ExprKind::Index { base, .. } | ExprKind::Deref(base) => current = base,
                 _ => return,
             }
+        }
+    }
+
+    fn class_instantaneous_field(&self, expr: &Expr) -> bool {
+        let ExprKind::Field { base, .. } = &expr.kind else { return false };
+        if !matches!(self.types.kind(base.ty), TyKind::Class(_)) || !self.types.is_copy(expr.ty) {
+            return false;
+        }
+        match &base.kind {
+            ExprKind::Local(_) => true,
+            ExprKind::Deref(inner) => {
+                matches!(inner.kind, ExprKind::Local(_))
+                    && matches!(self.types.kind(inner.ty), TyKind::Ref { mutable: true, .. })
+            }
+            _ => false,
         }
     }
 

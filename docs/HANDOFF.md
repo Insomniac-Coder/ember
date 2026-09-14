@@ -5809,3 +5809,24 @@ exit gate, and phase accounting remains exactly **1 of 9 complete**. Accesses
 through mutating class methods on class fields, instantaneous direct class
 field writes, static access elision, and the remaining object/concurrency
 semantics are still open.
+
+### 0.95 Phase 3 instantaneous class-field writes — 2026-09-14
+
+Direct writes to a single `Copy` class field rooted in a class-handle local or
+mutable reference are now admitted as instantaneous accesses, matching
+`[EXC-1]`'s no-runtime-check case. The assignment checker is now context-aware:
+assignment/destructuring targets use the instantaneous rule, while `ref mut`,
+mutating receiver calls, and other long-term forms continue through their
+dynamic-access checks. Non-`Copy` class fields, nested class-object roots,
+read-only receivers, and indexed class-object evaluation remain rejected or
+fail-closed at their respective existing boundaries. The all-profile run-pass
+fixture covers a scalar field write; compile-fail coverage preserves the
+non-`Copy`, read-only-receiver, nested-object, and indexed-object restrictions.
+
+This is implementation-only progress: no specification, ADR, adopted source,
+or diagnostic semantics changed; the read-only receiver case continues to use
+the established E3023 borrowed-parameter diagnostic. Phase 2 is active, Phase
+3 has not passed its exit gate, and phase accounting remains exactly **1 of 9
+complete**. Class-field view arguments, indexed class-object access sharing,
+mutating methods through class fields, static access elision, and the remaining
+object/concurrency semantics are still outstanding.

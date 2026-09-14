@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-7, EXC-1
-#$ error[E1010]: mutable class-field access requires a `mut self` class method
+#$ error[E3023]: cannot mutate borrowed parameter `self`
 
 class ReadOnly:
     value: i32
