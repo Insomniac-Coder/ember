@@ -301,14 +301,16 @@ work.
 | Ledgers | 98 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
-The latest architecture continuation is `d35e94f`. It adds the first real
-consumer of the canonical `StorageIdentity::ArenaAllocation` fact: Arena
-allocation-return loans now carry their canonical Arena owner into
-`check_escapes`, which uses that owner for the existing `E3061` diagnostic and
-`@borrows` provenance decision. Explicit borrows of an Arena place retain the
-existing source-type fallback, so this is an `[IMP-7]` architecture migration,
-not a semantic change. `cargo test -p ember_analysis` and the complete
-`ember_driver` milestone suite (15/15) pass after the change.
+The latest architecture continuation is `30836ee`, building on `d35e94f`. The
+two commits add the first real consumer of the canonical
+`StorageIdentity::ArenaAllocation` fact: Arena allocation-return loans now
+carry their canonical Arena owner into `check_escapes`, which uses that owner
+for the existing `E3061` diagnostic and `@borrows` provenance decision, and
+the same checker honors the canonical storage-survival constraint. Explicit
+borrows of an Arena place retain the existing source-type fallback, so this is
+an `[IMP-7]` architecture migration, not a semantic change. `cargo test
+-p ember_analysis` and the complete `ember_driver` milestone suite (15/15)
+pass after the change.
 
 **The two commits this hand-off is about:**
 
