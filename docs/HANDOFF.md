@@ -6071,17 +6071,19 @@ parameters. The same defect existed in generic functions and generic methods.
 The type checker now has one binding pass for source-backed direct calls. It
 validates parameter names, rejects unknown names and positional arguments after
 the named portion, rejects duplicate parameter bindings, checks each expression
-in source order, and returns the checked operands in declaration order for HIR,
-MIR, and the callee ABI. The path is shared by ordinary, qualified, associated,
-inherited-bound, generic, and generic-method calls. Function-value and closure
+in source order, and returns the checked operands in declaration order for HIR
+and the callee ABI. HIR carries explicit source-evaluation-order metadata so MIR
+materializes nested arguments in the required order before issuing the ABI call.
+The path is shared by ordinary, qualified, associated, inherited-bound, generic,
+and generic-method calls. Function-value and closure
 calls intentionally remain positional: callable types do not carry source-level
 parameter names, and their existing contract rejects named arguments.
 
 `tests/run-pass/named_function_arguments.em` covers ordinary and explicit-generic
 function calls; `tests/run-pass/named_method_arguments.em` covers ordinary and
 generic source methods; and `tests/compile-fail/named_function_argument_errors.em`
-covers unknown, duplicate, and positional-after-named arguments in all three
-profiles. The new run-pass cases were red before the fix (`21` instead of `12`
+profiles. Commit `a2f4454` contains the implementation and fixtures. The new
+run-pass cases were red before the fix (`21` instead of `12`
 and `2` instead of `1`) and are green after it. This is a compiler defect
 against existing specification semantics, recorded as D-134; no specification,
 ADR, or owner decision changed. User-defined class-`init` named construction
