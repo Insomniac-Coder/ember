@@ -1,0 +1,10 @@
+error[E3030]: closure would move a captured value out
+  --> tests/ui/borrow/O5/once_callable_required.em:11:20
+   |
+11 |     println(invoke(task))
+   |                    ^^^^ this closure is callable only once
+   |
+   = help: declare the parameter `owned f: fn(...) -> ...` so it accepts `CallableOnce`, or use `mem.take` when the capture implements `Default`; clone only as a last resort
+   = note: the closure moves a non-`Copy` capture out of its environment [CLO-2]
+
+error: could not compile due to 1 error(s)
