@@ -295,7 +295,7 @@ work.
 | `cargo build` | **0 warnings** in debug/release (2026-09-14) |
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 133 top-level rule directories, 468 `.em` files including support modules; the focused and full conformance runner is green after the latebound storage case was made reachable and nested-boundary cases were added (2026-09-14) |
+| Conformance | 133 top-level rule directories, 469 `.em` files including support modules; the focused and full conformance runner is green after the latebound storage case was made reachable and nested/owned-capture cases were added (2026-09-14) |
 | Ledgers | 95 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 

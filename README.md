@@ -35,7 +35,7 @@ At the latest verified checkpoint:
 
 - `cargo build --workspace` is warning-free;
 - all 210 Rust tests pass;
-- the conformance runner passes across 133 rule directories and 468 Ember
+- the conformance runner passes across 133 rule directories and 469 Ember
   source files;
 - all six adopted-specification gates pass;
 - 95 recorded compiler defects are closed;

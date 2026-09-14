@@ -40,7 +40,7 @@ treating this sentence as live Git state.
       python tools/split_spec.py --check docs/spec-source/ember-spec.md docs/spec
                                              docs/spec/ is the split of the source
 
- 133 top-level conformance rule directories, 468 `.em` files including support
+ 133 top-level conformance rule directories, 469 `.em` files including support
  modules. 95 defects recorded, **none open**.
  **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **ERR-050 / ODR-009 is closed by the H10 owner rulings** on `Zeroable`,
