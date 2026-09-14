@@ -194,7 +194,61 @@ impl Emitter<'_> {
                 }
             }
         }
+        self.emit_class_type_infos();
         self.line("");
+    }
+
+    /// Emit the compiler-owned metadata consumed by the Phase 3 object
+    /// runtime.  This is deliberately a metadata-only boundary for now:
+    /// constructors, method tables, and drop glue are later consumers, so a
+    /// class declaration must not acquire a partially implemented allocation
+    /// path merely because its `TypeInfo` exists.
+    ///
+    /// The declarations are external-linkage `const` objects rather than
+    /// `static` objects.  That avoids a compiler-warning for an as-yet-unused
+    /// record in a translation unit containing only class field reads, while
+    /// keeping the generated names compiler-owned and deterministic.
+    fn emit_class_type_infos(&mut self) {
+        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        if classes.is_empty() {
+            return;
+        }
+        self.line("/* class type information */");
+        for id in &classes {
+            let name = ember_branding::type_info(&self.types.class_def(*id).name.to_string());
+            self.line(&format!("extern const ember_type_info {name};"));
+        }
+        for id in classes {
+            let def = self.types.class_def(id);
+            let object = ember_branding::object_struct(&def.name.to_string());
+            let info = ember_branding::type_info(&def.name.to_string());
+            let base = def
+                .base
+                .map(|base| {
+                    let name = self.types.class_def(base).name.to_string();
+                    format!("&{}", ember_branding::type_info(&name))
+                })
+                .unwrap_or_else(|| "NULL".to_string());
+            self.line(&format!("const ember_type_info {info} = {{"));
+            self.line(&format!("    (uint32_t)sizeof(struct {object}),"));
+            self.line(&format!("    (uint32_t)_Alignof(struct {object}),"));
+            // `[CLS-8]`/`[THR-*]` synchronization derivation is a later
+            // compiler phase.  Until it exists, all collected classes use
+            // the plain-counter runtime path and carry no Sync flag.
+            self.line("    UINT32_C(0),");
+            self.line(&format!("    {},", c_string_literal(&def.name.to_string())));
+            self.line(&format!("    {base},"));
+            // Drop and dispatch metadata remain null until their respective
+            // compiler mechanisms can produce verified functions/tables.
+            self.line("    NULL,");
+            self.line("    NULL,");
+            self.line("    NULL,");
+            self.line("    NULL,");
+            self.line("    UINT32_C(0),");
+            self.line("    NULL,");
+            self.line("    UINT32_C(0)");
+            self.line("};");
+        }
     }
 
     fn node_name(&self, node: TypeNode) -> String {

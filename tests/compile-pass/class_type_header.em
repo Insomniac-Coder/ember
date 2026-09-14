@@ -1,5 +1,10 @@
 #$ test: compile-pass
-#$ rules: CLS-1, CLS-4
+#$ rules: CLS-1, CLS-4, OBJ-1, OBJ-2
+#$ assert-c: contains(const ember_type_info em_ti_Entity)
+#$ assert-c: contains(const ember_type_info em_ti_Player)
+#$ assert-c: contains("Entity")
+#$ assert-c: contains("Player")
+#$ assert-c: contains(&em_ti_Entity)
 
 # Class declarations are now collected into the nominal type table.  The
 # runtime and source-level construction/lowering path is still a later slice.
