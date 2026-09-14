@@ -5,6 +5,8 @@
 #$ assert-c: contains("Entity")
 #$ assert-c: contains("Player")
 #$ assert-c: contains(&em_ti_Entity)
+#$ assert-c: contains(ember_retain((ember_obj_header*)
+#$ assert-c: contains(ember_release((ember_obj_header*)
 
 # Class declarations are now collected into the nominal type table.  The
 # runtime and source-level construction/lowering path is still a later slice.
@@ -27,6 +29,12 @@ fn read_inherited_id(player: Player) -> i32:
 
 fn read_inherited_method(player: Player) -> i32:
     return player.get_id()
+
+fn retain_copy(entity: Entity) -> Entity:
+    return entity
+
+fn consume(owned entity: Entity):
+    pass
 
 fn main():
     println(1)

@@ -216,7 +216,10 @@ impl Emitter<'_> {
         self.line("/* class type information */");
         for id in &classes {
             let name = ember_branding::type_info(&self.types.class_def(*id).name.to_string());
-            self.line(&format!("extern const ember_type_info {name};"));
+            self.line(&format!(
+                "extern const {} {name};",
+                ember_branding::runtime("type_info")
+            ));
         }
         for id in classes {
             let def = self.types.class_def(id);
@@ -229,7 +232,10 @@ impl Emitter<'_> {
                     format!("&{}", ember_branding::type_info(&name))
                 })
                 .unwrap_or_else(|| "NULL".to_string());
-            self.line(&format!("const ember_type_info {info} = {{"));
+            self.line(&format!(
+                "const {} {info} = {{",
+                ember_branding::runtime("type_info")
+            ));
             self.line(&format!("    (uint32_t)sizeof(struct {object}),"));
             self.line(&format!("    (uint32_t)_Alignof(struct {object}),"));
             // `[CLS-8]`/`[THR-*]` synchronization derivation is a later
@@ -417,6 +423,18 @@ impl Emitter<'_> {
     /// a tuple drops in reverse; an array drops its elements in index order.
     fn drop_lines(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
         match self.types.kind(ty) {
+            // `[OWN-7]` — class handles are language-level `Copy` values, but
+            // the copy is a strong-reference copy rather than a raw pointer
+            // duplicate.  The matching retain is emitted at the assignment
+            // boundary; every ordinary class lifetime end releases one
+            // strong reference through the runtime ABI.
+            TyKind::Class(_) => {
+                out.push(format!(
+                    "{}(({}*){access});",
+                    ember_branding::runtime("release"),
+                    ember_branding::runtime("obj_header")
+                ));
+            }
             TyKind::Vec { elem } => {
                 // An `Array[T]` owns its elements as well as its buffer.
                 if self.types.needs_drop(*elem) {
@@ -794,6 +812,16 @@ impl Emitter<'_> {
                 }
                 self.emit_line_directive(stmt.span);
                 let lhs = self.place_in(place, body);
+                // `[OWN-7]` — a class-handle copy retains before the new
+                // pointer becomes visible in its destination.  This is kept
+                // in the backend's explicit ownership boundary rather than
+                // relying on C's pointer assignment, which has no Ember
+                // reference-count semantics.
+                let mut retains = Vec::new();
+                self.retain_lines_for_rvalue(rvalue, ty, body, &mut retains);
+                for line in retains {
+                    self.line(&format!("    {line}"));
+                }
                 // `[value; count]` fills the array with a loop rather than
                 // `count` copies of the operand's text, so a large array costs
                 // one statement here and one in the emitted C.
@@ -847,6 +875,44 @@ impl Emitter<'_> {
             // Storage markers carry no code in C; the borrow checker and drop
             // elaboration consume them before this point.
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+        }
+    }
+
+    /// Emit the strong-reference increments required by an Ember `Copy`
+    /// operation.  Class handles are the one language-level `Copy` category
+    /// whose C representation cannot be copied bitwise without changing
+    /// ownership.  Moves transfer the existing reference and therefore do not
+    /// retain.  The current class construction slice only exposes direct
+    /// handle copies and nominal upcasts; aggregate ownership is deliberately
+    /// left to the same recursive lowering boundary when those constructors
+    /// become source-reachable.
+    fn retain_lines_for_rvalue(
+        &self,
+        rvalue: &Rvalue,
+        target: Ty,
+        body: &Body,
+        out: &mut Vec<String>,
+    ) {
+        match rvalue {
+            Rvalue::Use(Operand::Copy(place)) => {
+                if matches!(self.types.kind(target), TyKind::Class(_)) {
+                    out.push(format!(
+                        "{}(({}*){});",
+                        ember_branding::runtime("retain"),
+                        ember_branding::runtime("obj_header"),
+                        self.place_in(place, body)
+                    ));
+                }
+            }
+            Rvalue::Cast { kind: CastKind::ClassUpcast, operand: Operand::Copy(place), .. } => {
+                out.push(format!(
+                    "{}(({}*){});",
+                    ember_branding::runtime("retain"),
+                    ember_branding::runtime("obj_header"),
+                    self.place_in(place, body)
+                ));
+            }
+            _ => {}
         }
     }
 

@@ -5450,3 +5450,32 @@ annotation, which came in with ERR-006. Diffing the owner's file against
   `PATH` — the same trap RageV's build has.
 - `cargo` is on `PATH` only in shells started after the install; PowerShell
   calls in this project prepend the machine and user `Path` values.
+
+### 0.81 Phase 3 class-handle ownership boundary — 2026-09-14
+
+The class representation now carries its reference-count ownership semantics
+through the C backend. Class handles remain language-level `Copy` values, but
+their copies are not raw pointer duplicates: an assignment from a copied class
+handle, and a compiler-inserted derived-to-base class upcast from a copied
+handle, emit a runtime strong retain. A class value reaching an ordinary drop
+point emits the matching strong release. This covers owned class parameters and
+class-return/copy paths without changing the source-level class model or
+introducing a second ownership system.
+
+The generated C uses the shared branding helpers for runtime function, type,
+and object-header spellings; the `[RT-5]` branding audit remains clean. The
+class conformance fixture asserts the retain/release boundary, and the focused
+compile-pass, generated-C warning, and branding checks pass.
+
+This is an ownership/lowering foundation, not Phase 3 completion. Class
+construction, field initialization, generated class drop/type-info glue,
+dynamic exclusivity, virtual/interface dispatch, generic classes, and the
+complete Phase 3 conformance matrix remain outstanding. The phase count is
+still exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
+passed its exit gate.
+
+The next concrete Phase 3 slice is to make class construction reach the
+existing object runtime coherently: allocation, initialized fields, and the
+constructor/`init` boundary must be introduced together with verified
+ownership and drop behavior. Do not expose a partial constructor that can
+publish an uninitialized or unowned object.
