@@ -382,6 +382,9 @@ struct ClassInitState {
     owner: ClassId,
     receiver: LocalId,
     initialized: Vec<ClassFieldInit>,
+    /// `[CLS-4]` — inherited storage is unavailable to the derived body until
+    /// its direct base constructor has run on the same object.
+    base_initialized: bool,
 }
 
 /// The constructor-local field lattice. `Maybe` is deliberately not treated
@@ -5585,8 +5588,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         matches!(param.kind, ast::ParamKind::Receiver { .. })
                     }) =>
             {
+                let supports_state = {
+                    let mut current = Some(*id);
+                    let mut supported = true;
+                    while let Some(class_id) = current {
+                        let def = self.types.class_def(class_id);
+                        if def.fields.iter().any(|field| field.has_default) {
+                            supported = false;
+                            break;
+                        }
+                        current = def.base;
+                    }
+                    supported
+                };
                 let def = self.types.class_def(*id);
-                if def.base.is_some() || def.fields.iter().any(|field| field.has_default) {
+                if !supports_state {
                     None
                 } else {
                     let receiver = params
@@ -5596,7 +5612,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     Some(ClassInitState {
                         owner: *id,
                         receiver,
-                        initialized: vec![ClassFieldInit::Uninit; def.fields.len()],
+                        initialized: vec![
+                            ClassFieldInit::Uninit;
+                            self.types.class_field_count(*id)
+                        ],
+                        base_initialized: def.base.is_none(),
                     })
                 }
             }
@@ -5784,10 +5804,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn class_init_is_complete(&self) -> bool {
         self.class_init.as_ref().is_some_and(|state| {
-            state
-                .initialized
-                .iter()
-                .all(|status| matches!(status, ClassFieldInit::Init))
+            state.base_initialized
+                && state
+                    .initialized
+                    .iter()
+                    .all(|status| matches!(status, ClassFieldInit::Init))
         })
     }
 
@@ -5809,14 +5830,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn report_missing_class_init_fields(&mut self, span: Span) {
-        let Some(state) = self.class_init.as_ref() else { return };
+        let Some(state) = self.class_init.as_ref().cloned() else { return };
+        if self.types.class_def(state.owner).base.is_some() && !state.base_initialized {
+            self.error(
+                codes::E2100,
+                span,
+                "derived class `init` must call `super.init(...)` exactly once before returning",
+            );
+        }
+        let base_count = self
+            .types
+            .class_def(state.owner)
+            .base
+            .map_or(0, |base| self.types.class_field_count(base));
         let missing: Vec<Symbol> = state
             .initialized
             .iter()
             .enumerate()
             .filter_map(|(index, status)| {
-                (!matches!(status, ClassFieldInit::Init))
-                    .then(|| self.types.class_def(state.owner).fields.get(index).map(|f| f.name))
+                (index >= base_count && !matches!(status, ClassFieldInit::Init))
+                    .then(|| self.types.class_field_at(state.owner, index).map(|f| f.name))
                     .flatten()
             })
             .collect();
@@ -5838,6 +5871,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 for (left, right) in left.initialized.iter_mut().zip(right.initialized) {
                     *left = left.join(right);
                 }
+                left.base_initialized &= right.base_initialized;
                 Some(left)
             }
             (left, _) => left,
@@ -5914,10 +5948,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
         let Some(state) = self.class_init.as_ref() else { return };
+        let base_count = self
+            .types
+            .class_def(state.owner)
+            .base
+            .map_or(0, |base| self.types.class_field_count(base));
+        if index < base_count && !state.base_initialized {
+            self.error(
+                codes::E2100,
+                span,
+                "inherited class field is read before `super.init(...)`",
+            );
+            return;
+        }
         if matches!(state.initialized.get(index), Some(ClassFieldInit::Init)) {
             return;
         }
-        let Some(field) = self.types.class_def(state.owner).fields.get(index) else { return };
+        let Some(field) = self.types.class_field_at(state.owner, index) else { return };
         self.error(
             codes::E2100,
             span,
@@ -5927,6 +5974,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn mark_class_init_field(&mut self, place: &Expr) {
         let Some(index) = self.class_init_field_index(place) else { return };
+        let (owner, base_initialized) = self
+            .class_init
+            .as_ref()
+            .map(|state| (state.owner, state.base_initialized))
+            .expect("class-init field index implies constructor state");
+        let base_count = self
+            .types
+            .class_def(owner)
+            .base
+            .map_or(0, |base| self.types.class_field_count(base));
+        if index < base_count && !base_initialized {
+            self.error(
+                codes::E2100,
+                place.span,
+                "inherited class field is assigned before `super.init(...)`",
+            );
+            return;
+        }
         let status = self
             .class_init
             .as_ref()
@@ -5936,7 +6001,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let field = self
                     .class_init
                     .as_ref()
-                    .and_then(|state| self.types.class_def(state.owner).fields.get(index))
+                    .and_then(|state| self.types.class_field_at(state.owner, index))
                     .map(|field| field.name);
                 if let Some(field) = field {
                     self.error(
@@ -5950,7 +6015,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let field = self
                     .class_init
                     .as_ref()
-                    .and_then(|state| self.types.class_def(state.owner).fields.get(index))
+                    .and_then(|state| self.types.class_field_at(state.owner, index))
                     .map(|field| field.name);
                 if let Some(field) = field {
                     self.error(
@@ -5969,6 +6034,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             None => {}
         }
+    }
+
+    /// Mark the direct base storage initialized after a validated
+    /// `super.init(...)` call. A second call is rejected before it can make
+    /// the base constructor run twice.
+    fn mark_class_init_base(&mut self, span: Span) {
+        let Some(state) = self.class_init.as_mut() else { return };
+        if state.base_initialized {
+            self.error(codes::E1010, span, "`super.init(...)` may be called only once");
+            return;
+        }
+        let base_count = self
+            .types
+            .class_def(state.owner)
+            .base
+            .map_or(0, |base| self.types.class_field_count(base));
+        for status in state.initialized.iter_mut().take(base_count) {
+            *status = ClassFieldInit::Init;
+        }
+        state.base_initialized = true;
     }
 
     /// `[TYP-8]` — `@overflow(panic|wrap|saturate)` overrides the profile.
@@ -8501,6 +8586,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
             ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
+                // `[CLS-4]` — `super.init(...)` is constructor syntax, not
+                // ordinary inherited method dispatch. It is checked against
+                // the direct base constructor and records the base-field
+                // initialization fact before the body continues.
+                if is_single_path(recv, "super") {
+                    return self.synth_super_init(*name, generic_args, args, span);
+                }
                 if let Some(ty) = self.maybe_uninit_named(recv) {
                     return self.synth_maybe_uninit_construction(
                         ty,
@@ -11026,6 +11118,80 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let base = self.types.class_def(id).base?;
         let base_ty = self.class_ty(base)?;
         self.lookup_method(base_ty, name)
+    }
+
+    /// `[CLS-4]` — validate the one direct-base constructor call permitted in
+    /// a derived `init`. The resulting HIR builtin is deliberately narrow:
+    /// it carries the direct base constructor identity so MIR cannot turn
+    /// this into general inherited dispatch.
+    fn synth_super_init(
+        &mut self,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = || Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !generic_args.is_empty() {
+            self.error(codes::E2020, span, "`super.init` takes no type arguments");
+            return error();
+        }
+        if !name.name.is("init") {
+            self.error(codes::E1010, name.span, "`super` has no constructor other than `init`");
+            return error();
+        }
+        let Some(state) = self.class_init.as_ref().cloned() else {
+            self.error(
+                codes::E1010,
+                span,
+                "`super.init(...)` is only valid in a supported derived class constructor",
+            );
+            return error();
+        };
+        let Some(base_id) = self.types.class_def(state.owner).base else {
+            self.error(codes::E1010, span, "`super.init(...)` requires a base class");
+            return error();
+        };
+        if state.base_initialized {
+            self.error(codes::E1010, span, "`super.init(...)` may be called only once");
+            return error();
+        }
+        let Some(base_ty) = self.class_ty(base_id) else {
+            self.error(codes::E1010, span, "the direct base class type is unavailable");
+            return error();
+        };
+        let Some(entry) = self.methods.get(&(base_ty, Symbol::intern("init"))).copied() else {
+            self.error(codes::E1010, span, "the direct base class has no explicit `init`");
+            return error();
+        };
+        let signature = self.signatures[entry.def.0 as usize].params.clone();
+        if signature.first().is_none_or(|(_, _, mode, _)| *mode != Mode::Mut) {
+            self.error(codes::E1010, span, "the direct base constructor must declare `mut self`");
+            return error();
+        }
+        let params = &signature[1..];
+        if args.len() != params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`super.init(...)` takes {} arguments, found {}", params.len(), args.len()),
+            );
+            return error();
+        }
+        let values = args
+            .iter()
+            .zip(params.iter())
+            .map(|(arg, (_, param_ty, mode, _))| self.check_argument(&arg.value, *param_ty, *mode))
+            .collect();
+        self.mark_class_init_base(span);
+        Expr {
+            ty: self.common.void,
+            kind: ExprKind::Builtin {
+                which: Builtin::ClassSuperInit { base_id, base_ty, init: entry.def },
+                args: values,
+            },
+            span,
+        }
     }
 
     /// Part IV.11 — `recv.m(args)`. The receiver's type decides which method
@@ -15189,15 +15355,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if has_base {
-            self.error(
-                codes::E1010,
-                span,
-                format!("class construction for `{name}` is not implemented yet in this phase"),
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
-
         if has_init {
             let init = self
                 .methods
@@ -15244,6 +15401,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: Some(init) }, args: values },
                 span,
             };
+        }
+
+        // `[CLS-4]` — memberwise construction does not know how to invoke a
+        // base constructor. Derived classes therefore need an explicit init
+        // with `super.init(...)`; never publish a partially initialized base.
+        if has_base {
+            self.error(
+                codes::E1010,
+                span,
+                format!("class `{name}` with a base class requires an explicit `init`"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
         let defaults = self.class_default_literals.get(&id).cloned();

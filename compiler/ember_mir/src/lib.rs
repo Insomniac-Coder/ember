@@ -870,6 +870,11 @@ pub enum CastKind {
     /// occupy the prefix of the single-inheritance object layout; this is
     /// distinct from numeric casts so later verification can audit it.
     ClassUpcast,
+    /// `[CLS-4]` constructor plumbing — a derived handle viewed as its base
+    /// while calling `super.init`. Unlike `ClassUpcast`, this is a borrowed
+    /// pointer adjustment and MUST NOT retain the object: the scratch handle
+    /// is not an owning source local.
+    ClassUpcastBorrowed,
 }
 
 pub use ember_hir::{BinOp, Builtin, UnOp};

@@ -1358,7 +1358,8 @@ impl Emitter<'_> {
                     | Builtin::ArenaMapRemove { .. }
                     | Builtin::ArenaMapClear
                     | Builtin::ArenaMapIterNext { .. }
-                    | Builtin::SpanChunksNew { .. } => {
+                    | Builtin::SpanChunksNew { .. }
+                    | Builtin::ClassSuperInit { .. } => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
                             which.name()
@@ -1956,7 +1957,10 @@ impl Emitter<'_> {
                 match kind {
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.
-                    CastKind::Widen | CastKind::Numeric | CastKind::ClassUpcast => {
+                    CastKind::Widen
+                    | CastKind::Numeric
+                    | CastKind::ClassUpcast
+                    | CastKind::ClassUpcastBorrowed => {
                         format!("(({ty}){value})")
                     }
                 }

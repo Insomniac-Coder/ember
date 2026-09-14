@@ -5830,3 +5830,35 @@ the established E3023 borrowed-parameter diagnostic. Phase 2 is active, Phase
 complete**. Class-field view arguments, indexed class-object access sharing,
 mutating methods through class fields, static access elision, and the remaining
 object/concurrency semantics are still outstanding.
+
+### 0.96 Phase 3 derived-class constructor and `super.init` — 2026-09-14
+
+The supported class-constructor slice now includes single-inheritance
+construction for classes whose inheritance chain has no defaulted fields. A
+derived `init` must call its direct base constructor with `super.init(...)`
+exactly once before returning; inherited fields are not readable or writable
+before that call, and the call marks the inherited object-layout prefix
+definitely initialized. Own derived fields retain the existing first-write
+definite-initialization rules, and missing, duplicate, or late base
+initialization is rejected with the existing E2100/E1010 diagnostics.
+
+`super.init` is represented as a narrow compiler-known HIR operation and is
+lowered to a direct call of the direct base constructor. The base handle used
+for that call is a non-owning pointer adjustment, so constructor plumbing does
+not add a hidden retain/release pair or leak a reference-counted class object.
+Constructors also intentionally do not open the ordinary method-duration
+runtime access interval: the object is not source-reachable until
+initialization completes, and nesting a second write interval for
+`super.init` would incorrectly trip the runtime exclusivity counter. Ordinary
+`mut self` methods retain their explicit `BeginAccess`/`EndAccess` interval.
+
+Memberwise construction of a derived class without an explicit `init` remains
+fail-closed because it has no base-constructor call to establish inherited
+storage. Defaulted fields, inherited drop chaining, dispatch, and the broader
+Phase 3 constructor/exclusivity matrix remain open. This is implementation-only
+progress: no specification, ADR, adopted source, or diagnostic semantics
+changed; Phase 2 is active, Phase 3 has not passed its exit gate, and phase
+accounting remains exactly **1 of 9 complete**. The regression fixtures are
+`class_inherited_construct.em`, `class_inherited_missing_super.em`,
+`class_inherited_super_twice.em`, and
+`class_inherited_field_before_super.em`.

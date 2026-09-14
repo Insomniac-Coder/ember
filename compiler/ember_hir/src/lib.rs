@@ -332,6 +332,10 @@ pub enum Builtin {
     /// `init` is invoked after allocation and before the value is returned to
     /// source code. `None` retains the memberwise-construction path.
     ClassNew { class_id: ClassId, init: Option<DefId> },
+    /// `[CLS-4]` — invoke the direct base constructor on an already allocated
+    /// derived object. MIR lowers this to a borrowed base-handle adjustment
+    /// plus the ordinary constructor call; it never reaches the backend.
+    ClassSuperInit { base_id: ClassId, base_ty: Ty, init: DefId },
     /// `[HEAP-1]`, `[DRP-6]` — `Box(owned value)`. The payload and concrete
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.
@@ -586,6 +590,7 @@ impl Builtin {
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
             Builtin::ClassNew { .. } => "class",
+            Builtin::ClassSuperInit { .. } => "super.init",
             Builtin::BoxNew { .. } => "Box",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",

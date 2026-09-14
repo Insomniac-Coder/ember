@@ -215,19 +215,28 @@ impl<'a> Builder<'a> {
         }
 
         let arg_count = function.params.len();
-        let class_access = function.params.first().and_then(|param| {
-            if param.mode != hir::Mode::Mut {
-                return None;
-            }
-            let param_ty = function.local(param.local).ty;
-            match types.kind(param_ty) {
-                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_)) => {
-                    Some(Place { local: LocalId(1), projection: vec![Projection::Deref] })
-                }
-                _ => None,
-            }
-        });
         let class_init = function.class_init;
+        // Constructor initialization has exclusive access to the freshly
+        // allocated object before it can be observed by source code. Do not
+        // open the ordinary method-duration runtime interval here: a derived
+        // constructor's `super.init` would otherwise nest a write access on
+        // the same object and panic in the runtime checker.
+        let class_access = if class_init {
+            None
+        } else {
+            function.params.first().and_then(|param| {
+                if param.mode != hir::Mode::Mut {
+                    return None;
+                }
+                let param_ty = function.local(param.local).ty;
+                match types.kind(param_ty) {
+                    TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_)) => {
+                        Some(Place { local: LocalId(1), projection: vec![Projection::Deref] })
+                    }
+                    _ => None,
+                }
+            })
+        };
         // `[FN-1]` transfers an `owned` argument into the callee. Its lifetime
         // is therefore the function body just like an owned local's, and
         // `[OWN-2]` requires the callee to destroy it on every exit unless it
@@ -1679,6 +1688,12 @@ impl<'a> Builder<'a> {
                 args,
             } => {
                 self.lower_class_new(place, *class_id, *init, args, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ClassSuperInit { base_id, base_ty, init },
+                args,
+            } => {
+                self.lower_class_super_init(place, *base_id, *base_ty, *init, args, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
@@ -4539,12 +4554,13 @@ impl<'a> Builder<'a> {
     ///
     /// The memberwise path is still limited to a non-inheriting class without
     /// custom `init` and supports the literal-default subset type checking
-    /// can materialize at the call site. The supported custom-init path is
-    /// likewise non-inheriting and has no defaulted fields; type checking
-    /// admits direct field assignment, `pass`, and branch/loop paths. The
-    /// first write to each field is initialization, not an `[OWN-5]` overwrite,
-    /// so lowering must not drop the uninitialized storage returned by the
-    /// allocator.
+    /// can materialize at the call site. The supported custom-init path also
+    /// requires a no-default inheritance chain; derived constructors invoke
+    /// their direct base through the dedicated `super.init` lowering. Type
+    /// checking admits direct field assignment, `pass`, and branch/loop paths.
+    /// The first write to each field is initialization, not an `[OWN-5]`
+    /// overwrite, so lowering must not drop the uninitialized storage returned
+    /// by the allocator.
     fn lower_class_new(
         &mut self,
         place: Place,
@@ -4601,6 +4617,73 @@ impl<'a> Builder<'a> {
                 self.lower_into(place.clone().field(index), arg);
             }
         }
+    }
+
+    /// `[CLS-4]` — call the direct base constructor on the object allocated
+    /// for the derived constructor. The base handle is a compiler-only,
+    /// non-owning pointer adjustment: retaining it would leak a reference
+    /// because this scratch local is deliberately not an owned MIR local.
+    fn lower_class_super_init(
+        &mut self,
+        place: Place,
+        _base_id: ember_types::ClassId,
+        base_ty: Ty,
+        init: hir::DefId,
+        args: &'a [hir::Expr],
+        span: ember_span::Span,
+    ) {
+        let receiver = self
+            .function
+            .params
+            .first()
+            .map(|param| self.local_map[param.local.0 as usize])
+            .expect("derived constructor has a receiver parameter");
+        let object = Place { local: receiver, projection: vec![Projection::Deref] };
+
+        let scratch = LocalId(self.locals.len() as u32);
+        self.locals.push(LocalDecl {
+            ty: base_ty,
+            kind: LocalKind::Temp,
+            name: None,
+            span,
+        });
+        self.push(StmtKind::Assign {
+            place: Place::local(scratch),
+            rvalue: Rvalue::Cast {
+                kind: CastKind::ClassUpcastBorrowed,
+                operand: Operand::Copy(object),
+                to: base_ty,
+            },
+        });
+
+        let function = self.program.function(init);
+        let receiver_ty = function
+            .params
+            .first()
+            .map(|param| function.local(param.local).ty)
+            .expect("base constructor has a receiver parameter");
+        let base_receiver = self.temp(receiver_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(base_receiver),
+            rvalue: Rvalue::Ref { place: Place::local(scratch), mutable: true },
+        });
+
+        let mut call_args = vec![Operand::Copy(Place::local(base_receiver))];
+        for (arg, param) in args.iter().zip(function.params.iter().skip(1)) {
+            let operand = match param.mode {
+                hir::Mode::Owned => self.lower_operand(arg),
+                _ => self.lower_operand_borrowed(arg),
+            };
+            call_args.push(operand);
+        }
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Direct { symbol: function.symbol.clone(), latebound: false },
+            args: call_args,
+            dest: place,
+            next,
+        });
+        self.current = next;
     }
 
     fn is_class_init_field(&self, place: &Place) -> bool {
