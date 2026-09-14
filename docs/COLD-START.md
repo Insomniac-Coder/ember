@@ -18,8 +18,10 @@ context for the 0.9.5 intake and original phase order.
 
 ## 1. State
 
-**Last committed implementation baseline:** `8433479` on `main`, following
-`9ade1d0` for validated callable interface artifacts, `af7c525` for verified
+**Last committed implementation baseline:** `b04aa0d` on `main`, following
+`2087600` for the verified `@latebound` callable-boundary implementation,
+`8433479` for callable modes and the H1 target cut, `9ade1d0` for validated
+callable interface artifacts, `af7c525` for verified
 in-MIR callable metadata, `90059c8` for direct callable summaries, `c913fbd`
 for field-sensitive region vectors, `e0ba765` for canonical Array-loop
 borrowing, and `d077563` for the H6 Span implementation. All are pushed to `origin/main`
