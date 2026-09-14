@@ -8268,13 +8268,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_struct_literal(id, name, args, span);
         }
 
-        // `[CLS-1]` — the first source-reachable class construction slice.
-        // Keep this deliberately narrow until field initialization, user
-        // constructors, and recursive ownership lowering are all available:
-        // an object must never become reachable with an invented or partial
-        // field state. An empty, non-inheriting class with no `init` or `drop`
-        // can be allocated safely because its runtime header is the complete
-        // object state.
+        // `[CLS-1]` — the source-reachable class construction slice. Keep the
+        // supported boundary explicit until user constructors, inheritance,
+        // defaults, and recursive ownership/drop lowering are available: an
+        // object must never become reachable with an invented or partial field
+        // state. Empty classes and memberwise classes whose fields are all
+        // already non-dropping values can be initialized directly after the
+        // runtime allocates their header.
         if let Some(&id) = self.class_ids.get(&self.resolve_name(name)) {
             return self.synth_class_constructor(id, name, args, &explicit, span);
         }
@@ -14536,9 +14536,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
     ) -> Expr {
         let ty = self.class_ty(id).unwrap_or(self.common.error);
-        let (openness, has_fields, has_base, has_drop) = {
+        let (openness, fields, has_base, has_drop) = {
             let def = self.types.class_def(id);
-            (def.openness, !def.fields.is_empty(), def.base.is_some(), def.has_drop)
+            (def.openness, def.fields.clone(), def.base.is_some(), def.has_drop)
         };
         let has_init = self
             .methods
@@ -14556,15 +14556,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, span, format!("cannot instantiate abstract class `{name}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if !args.is_empty() {
+        if args.len() != fields.len() {
             self.error(
                 codes::E2020,
                 span,
-                format!("`{name}()` takes no arguments in this phase"),
+                format!("`{name}()` takes {} arguments, found {}", fields.len(), args.len()),
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if has_fields || has_base || has_init || has_drop {
+        if args.iter().any(|arg| arg.name.is_some()) {
+            self.error(
+                codes::E1010,
+                span,
+                format!("named class construction for `{name}` is not implemented yet in this phase"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if has_base || has_init || has_drop {
             self.error(
                 codes::E1010,
                 span,
@@ -14573,9 +14581,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
+        let values = args
+            .iter()
+            .zip(fields.iter())
+            .map(|(arg, field)| self.check_expr(&arg.value, field.ty))
+            .collect();
+
         Expr {
             ty,
-            kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id }, args: Vec::new() },
+            kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id }, args: values },
             span,
         }
     }

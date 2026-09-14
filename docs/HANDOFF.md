@@ -5480,28 +5480,54 @@ constructor/`init` boundary must be introduced together with verified
 ownership and drop behavior. Do not expose a partial constructor that can
 publish an uninitialized or unowned object.
 
-### 0.82 Phase 3 empty-class construction boundary — 2026-09-14
+### 0.82 Phase 3 initial class construction boundary — 2026-09-14
 
-The class construction slice is now source-reachable for the deliberately
-conservative case: an empty, non-generic, non-inheriting, non-abstract class
-with no user `init` and no `drop` can be written as `Empty()`. Type checking
-lowers this to a compiler-known `ClassNew` operation carrying the nominal
-`ClassId`; MIR uses the existing builtin-call boundary; and the C backend casts
-the runtime's validated object-header result to the generated class-handle type
-and passes the matching compiler-emitted `TypeInfo` record to `obj_new`.
+The class construction slice is now source-reachable for deliberately
+conservative cases: an empty class, or a non-inheriting class whose supplied
+memberwise fields do not need drop glue, can be written as `Name(args)`. Type
+checking lowers this to a compiler-known `ClassNew` operation carrying the
+nominal `ClassId`; MIR uses the existing builtin-call boundary; and the C
+backend casts the runtime's validated object-header result to the generated
+class-handle type and passes the matching compiler-emitted `TypeInfo` record to
+`obj_new`.
 
 The resulting object begins with strong count 1 and the implicit weak count,
-and ordinary class-handle drop emits the matching strong release. A compile-pass
-and run-pass fixture prove the source construction, method use, generated
-`obj_new` call, output, and warning-free C path. The implementation rejects
-field-bearing, inherited, custom-`init`, `drop`, generic, and abstract class
-construction rather than manufacturing a partial object or silently skipping
-initialization. This preserves `[CLS-1]`/`[CLS-2]` while the field initialization
-and constructor machinery is still absent.
+and ordinary class-handle drop emits the matching strong release. The initial
+empty-class fixtures prove the source construction, method use, generated
+`obj_new` call, output, and warning-free C path. The memberwise extension then
+allocates first and emits one MIR-visible field assignment per supplied field;
+the scalar-field fixture proves that fields can be read after construction.
+The implementation rejects owned-field, inherited, custom-`init`, `drop`,
+generic, and abstract class construction rather than manufacturing a partial
+object, silently skipping initialization, or publishing a value whose field
+drop glue is missing. This preserves `[CLS-1]`/`[CLS-2]` while the complete
+constructor and ownership machinery is still absent.
 
 This remains an implementation slice, not a specification change and not Phase
 3 completion. Phase accounting is still exactly **1 of 9 complete**; Phase 2
 remains active and Phase 3 has not passed its exit gate. The next construction
-work must add verified field initialization and the `init` boundary together,
+work must add verified default handling and the `init` boundary together,
 including recursive ownership/drop handling; do not broaden `ClassNew` by
 guessing defaults or emitting null drop/constructor glue for reachable objects.
+
+### 0.83 Phase 3 memberwise class field initialization — 2026-09-14
+
+Memberwise construction now emits initialized object fields for the narrow
+safe subset where the class has no base, no user `init`, no `drop`, and every
+field type is already known not to need destruction. The checker validates the
+arity and types of positional arguments, and rejects named construction until
+the class constructor surface can implement the same defaults/visibility
+rules as `[STR-1]`. MIR allocates the class through `ClassNew` first, then
+lowers each supplied value into the corresponding object-layout field. This
+keeps initialization visible to ownership and definite-initialization analyses
+instead of hiding it in a backend-only compound expression.
+
+The run-pass regression constructs `Point(19, 23)`, reads both fields through a
+method, and verifies the result `42`; compile-fail coverage proves that an
+owned `Array` field is not accepted while class drop metadata is still null.
+This is an implementation-only extension of the current Phase 3 foundation,
+not a specification revision and not Phase 3 completion. Phase accounting is
+still exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
+passed its exit gate. The next safe boundary is field ownership/destruction or
+the constructor/`init` protocol, but those must be implemented together rather
+than by making partially initialized or silently non-dropping objects reachable.

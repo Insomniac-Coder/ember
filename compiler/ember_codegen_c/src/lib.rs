@@ -45,6 +45,14 @@ fn drop_symbol(owner: &str) -> String {
     ember_branding::mangled(&format!("{}_drop", owner.trim_matches('_')))
 }
 
+fn class_drop_fields_symbol(owner: &str) -> String {
+    let owner: String = owner
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    ember_branding::mangled(&format!("{}_drop_fields", owner.trim_matches('_')))
+}
+
 pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
@@ -194,15 +202,68 @@ impl Emitter<'_> {
                 }
             }
         }
+        self.emit_class_field_drop_glue();
         self.emit_class_type_infos();
         self.line("");
     }
 
+    /// Generate the field half of `[CLS-6]`'s destruction contract. Class
+    /// objects are released through the runtime rather than by the ordinary
+    /// local drop walk, so the runtime needs a compiler-owned callback that
+    /// can reach the generated object fields. The callback walks the most
+    /// derived fields first and each declaration list in reverse order.
+    fn emit_class_field_drop_glue(&mut self) {
+        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        for id in classes {
+            if !self.class_has_dropping_fields(id) {
+                continue;
+            }
+            let def = self.types.class_def(id);
+            let object = ember_branding::object_struct(&def.name.to_string());
+            let symbol = class_drop_fields_symbol(&def.name.to_string());
+            self.line(&format!("static void {symbol}(void* raw) {{"));
+            self.line(&format!("    struct {object}* object = (struct {object}*)raw;"));
+
+            let mut chain = Vec::new();
+            let mut current = Some(id);
+            while let Some(class) = current {
+                chain.push(class);
+                current = self.types.class_def(class).base;
+            }
+            for class in chain {
+                let fields = self.types.class_def(class).fields.clone();
+                for field in fields.iter().rev() {
+                    if !self.types.needs_drop(field.ty) {
+                        continue;
+                    }
+                    let mut lines = Vec::new();
+                    self.drop_lines(&format!("object->{}", field.name), field.ty, &mut lines);
+                    for line in lines {
+                        self.line(&format!("    {line}"));
+                    }
+                }
+            }
+            self.line("}");
+            self.line("");
+        }
+    }
+
+    fn class_has_dropping_fields(&self, id: ClassId) -> bool {
+        let mut current = Some(id);
+        while let Some(class) = current {
+            let def = self.types.class_def(class);
+            if def.fields.iter().any(|field| self.types.needs_drop(field.ty)) {
+                return true;
+            }
+            current = def.base;
+        }
+        false
+    }
+
     /// Emit the compiler-owned metadata consumed by the Phase 3 object
-    /// runtime.  This is deliberately a metadata-only boundary for now:
-    /// constructors, method tables, and drop glue are later consumers, so a
-    /// class declaration must not acquire a partially implemented allocation
-    /// path merely because its `TypeInfo` exists.
+    /// runtime. Constructors, method tables, and user drop glue remain later
+    /// consumers, but field drop glue is available for the memberwise classes
+    /// whose values are now source-reachable.
     ///
     /// The declarations are external-linkage `const` objects rather than
     /// `static` objects.  That avoids a compiler-warning for an as-yet-unused
@@ -244,10 +305,19 @@ impl Emitter<'_> {
             self.line("    UINT32_C(0),");
             self.line(&format!("    {},", c_string_literal(&def.name.to_string())));
             self.line(&format!("    {base},"));
-            // Drop and dispatch metadata remain null until their respective
-            // compiler mechanisms can produce verified functions/tables.
+            // User-drop and dispatch metadata remain null until their
+            // respective compiler mechanisms can produce verified
+            // functions/tables. Field-drop glue is installed below when the
+            // object has fields that need destruction.
             self.line("    NULL,");
-            self.line("    NULL,");
+            if self.class_has_dropping_fields(id) {
+                self.line(&format!(
+                    "    &{},",
+                    class_drop_fields_symbol(&def.name.to_string())
+                ));
+            } else {
+                self.line("    NULL,");
+            }
             self.line("    NULL,");
             self.line("    NULL,");
             self.line("    UINT32_C(0),");

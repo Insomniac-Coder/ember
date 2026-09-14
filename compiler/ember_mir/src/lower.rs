@@ -1573,6 +1573,12 @@ impl<'a> Builder<'a> {
                 });
                 self.current = next;
             }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ClassNew { class_id },
+                args,
+            } => {
+                self.lower_class_new(place, *class_id, args, expr.ty, expr.span);
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
@@ -4421,6 +4427,42 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageLive(temp));
         self.lower_into(Place::local(temp), expr);
         Operand::Copy(Place::local(temp))
+    }
+
+    /// `[CLS-1]`/`[CLS-3]` — allocate a class object, then initialize its
+    /// already-checked memberwise fields. The allocator call is kept separate
+    /// from the field assignments so the object header is established by the
+    /// runtime and every field write remains visible to MIR ownership and
+    /// definite-initialization analyses.
+    ///
+    /// Type checking admits this path only for a non-inheriting class without
+    /// custom `init`/`drop` and with fields that do not need drop glue. That is
+    /// the boundary at which a partially initialized object cannot lose an
+    /// owned field during the current runtime metadata stage.
+    fn lower_class_new(
+        &mut self,
+        place: Place,
+        class_id: ember_types::ClassId,
+        args: &'a [hir::Expr],
+        ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let allocated = self.new_block();
+        self.at(span);
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::ClassNew { class_id },
+                arg_ty: ty,
+            },
+            args: Vec::new(),
+            dest: place.clone(),
+            next: allocated,
+        });
+        self.current = allocated;
+
+        for (index, arg) in args.iter().enumerate() {
+            self.lower_into(place.clone().field(index), arg);
+        }
     }
 
     /// An argument read in `[FN-1]`'s default **borrow** mode: the callee sees
