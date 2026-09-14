@@ -134,6 +134,9 @@ impl CallableSignature {
             }
         }
         if let Some(borrows) = &self.borrows {
+            if borrows.is_empty() {
+                return Err("`@borrows` must name at least one parameter");
+            }
             let mut previous = None;
             for &position in borrows {
                 if position >= self.parameters.len() {
@@ -1304,6 +1307,18 @@ mod tests {
         assert!(matches!(
             ModuleInterfaceArtifact::from_bytes(&bytes),
             Err(InterfaceArtifactError::StaleCacheKey { module }) if module == "root"
+        ));
+    }
+
+    #[test]
+    fn an_empty_borrows_contract_is_rejected_at_the_artifact_boundary() {
+        let mut invalid = input("root", "root", &[], 0);
+        invalid.callables[0].contract.signature.borrows = Some(Vec::new());
+
+        assert!(matches!(
+            build_artifacts(&[invalid], "test"),
+            Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
+                if reason == "`@borrows` must name at least one parameter"
         ));
     }
 }
