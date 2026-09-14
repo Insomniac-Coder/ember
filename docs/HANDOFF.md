@@ -5576,15 +5576,17 @@ the existing memberwise path. Constructor arguments use the ordinary
 parameter modes, so an `owned` argument is moved into `init` while borrowed
 and mutable arguments retain their existing call checking.
 
-The first body-checking boundary is intentionally straight-line: the body
-may contain `pass` and direct assignments of the form `self.field = value`,
-each field must be assigned exactly once, and every field must be definitely
-initialized before the body completes. Reads of a direct `self.field` before
-its assignment report E2100; unsupported control flow, compound assignments,
-duplicate assignments, and other shapes remain rejected with E1010 until the
-full per-path definite-initialization analysis is connected to class
-construction. A compiler-internal `class_init` marker, rather than a name or
-signature heuristic in MIR, identifies the already-checked constructor body.
+The first body-checking boundary permits branch-shaped initialization: the
+body may contain `pass`, nested `if` blocks, and direct assignments of the
+form `self.field = value`. A three-state constructor field lattice joins the
+branches, so every field must be definitely initialized on every reachable
+path before the body completes. Reads of a direct `self.field` before its
+assignment report E2100. Loops, matches, compound assignments, duplicate
+assignments, writes after a conditionally initialized field, and other shapes
+remain rejected with E1010 until the full per-path definite-initialization
+analysis is connected to class construction. A compiler-internal `class_init`
+marker, rather than a name or signature heuristic in MIR, identifies the
+already-checked constructor body.
 
 Constructor field writes are lowered as initialization stores: they bypass
 `[OWN-5]`'s old-value drop because `ember_obj_new` provides object storage but
@@ -5604,3 +5606,33 @@ open. Phase accounting is still exactly **1 of 9 complete**; Phase 2 remains
 active and Phase 3 has not passed its exit gate. The next work must preserve
 the fail-closed boundary while adding the missing constructor ownership and
 control-flow mechanisms rather than publishing partially initialized objects.
+
+### 0.86 Phase 3 branch-aware constructor initialization — 2026-09-14
+
+The supported custom-constructor slice now handles branch-shaped
+initialization. Within a non-inheriting class with no defaulted fields, an
+`init` body may contain nested `if` blocks, `pass`, and direct
+`self.field = value` assignments. The checker carries a three-state field
+lattice (`Uninit`, `Init`, `Maybe`) across the branches and joins paths
+conservatively. A field is readable only in the `Init` state, and construction
+is accepted only when every field is `Init` after all reachable paths.
+
+The checker rejects a write after a field is `Maybe`; otherwise that write
+could be an overwrite on only the paths that initialized the field, while the
+MIR constructor store is intentionally a no-drop initialization store. It
+also rejects same-path duplicate assignments. Unsupported loops, matches,
+compound assignments, whole-`self` use, inheritance/base initialization,
+defaulted fields, and other constructor shapes remain fail-closed with E1010.
+Partial final initialization and field reads in `Uninit`/`Maybe` state report
+E2100. The regular MIR/C lowering remains unchanged: it consumes only the
+already type-checked constructor marker and preserves the first-write
+no-drop behavior.
+
+The new regressions cover successful initialization in both branches, a
+missing field on one path, and the conditional-overwrite case. This is
+implementation-only progress; no specification, ADR, adopted source, or
+phase status changed. Phase accounting remains exactly **1 of 9 complete**;
+Phase 2 is active and Phase 3 has not passed its exit gate. The next
+constructor work is still full per-path dataflow over the remaining supported
+control-flow forms and then verified inheritance/base chaining, not a change
+to `[CLS-2]` semantics.

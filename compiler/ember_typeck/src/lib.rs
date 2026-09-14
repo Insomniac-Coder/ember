@@ -371,16 +371,37 @@ struct DestructureLeaf<'a> {
 }
 
 /// The deliberately narrow first constructor slice for `[CLS-2]`. The
-/// checker permits only a straight-line sequence of direct `self.field = ...`
-/// writes (plus `pass`) for a class `init` with no base and no defaulted
-/// fields. This is an implementation boundary, not a new language rule: it
-/// keeps the current lowering from publishing a partially initialized object
-/// until full per-path field dataflow is available.
+/// checker permits direct `self.field = ...` writes, `pass`, and nested `if`
+/// blocks for a class `init` with no base and no defaulted fields. This is an
+/// implementation boundary, not a new language rule: it keeps the current
+/// lowering from publishing a partially initialized object until the
+/// remaining constructor control-flow forms are connected.
 #[derive(Clone)]
 struct ClassInitState {
     owner: ClassId,
     receiver: LocalId,
-    initialized: Vec<bool>,
+    initialized: Vec<ClassFieldInit>,
+}
+
+/// The constructor-local field lattice. `Maybe` is deliberately not treated
+/// as a writable fresh slot: doing so would turn a write after a conditional
+/// initialization into an overwrite on only some paths, before class field
+/// drop flags exist.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClassFieldInit {
+    Uninit,
+    Init,
+    Maybe,
+}
+
+impl ClassFieldInit {
+    fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Uninit, Self::Uninit) => Self::Uninit,
+            (Self::Init, Self::Init) => Self::Init,
+            _ => Self::Maybe,
+        }
+    }
 }
 
 /// A declared interface: the methods a type must provide, and which of them
@@ -5536,7 +5557,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     Some(ClassInitState {
                         owner: *id,
                         receiver,
-                        initialized: vec![false; def.fields.len()],
+                        initialized: vec![ClassFieldInit::Uninit; def.fields.len()],
                     })
                 }
             }
@@ -5548,6 +5569,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.validate_class_init_shape(block, span);
         }
         let body = self.check_block(block);
+        if self.class_init.is_some() {
+            self.report_missing_class_init_fields(span);
+        }
         self.class_init = outer_class_init;
         self.self_ty = outer_self;
         let overflow = self.overflow_policy(attrs, span);
@@ -5575,58 +5599,83 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Validate the first source-reachable constructor slice. The runtime
     /// object is allocated before the body runs, so this conservative shape
-    /// admits only direct field initialization and keeps all control-flow and
-    /// whole-`self` uses outside the slice until the full per-path definite-init
-    /// analysis is connected to class construction.
+    /// admits direct field initialization, `pass`, and nested `if` blocks.
+    /// Loops, matches, whole-`self` uses, and other control-flow forms remain
+    /// outside the slice until their constructor dataflow is connected.
     fn validate_class_init_shape(&mut self, block: &ast::Block, span: Span) {
-        let Some(state) = self.class_init.as_ref() else { return };
-        let fields: Vec<Symbol> = self
-            .types
-            .class_def(state.owner)
-            .fields
-            .iter()
-            .map(|field| field.name)
-            .collect();
-        let mut seen = vec![false; fields.len()];
-        for stmt in &block.stmts {
-            let field = match &stmt.kind {
-                ast::StmtKind::Pass => continue,
-                ast::StmtKind::Assign { targets, op: None, .. } if targets.len() == 1 => {
-                    Self::class_init_target_name(&targets[0])
-                }
-                _ => None,
-            };
-            let Some(field) = field else {
-                self.error(
-                    codes::E1010,
-                    stmt.span,
-                    "class `init` currently supports only direct field assignments",
-                );
-                continue;
-            };
-            let Some(index) = fields.iter().position(|name| *name == field) else {
-                // Normal field lookup emits the more precise unknown-field
-                // diagnostic while checking the body. Keep this shape check
-                // quiet for that case to avoid a duplicate error.
-                continue;
-            };
-            if seen[index] {
-                self.error(
-                    codes::E1010,
-                    stmt.span,
-                    format!("class `init` assigns field `{field}` more than once in this phase"),
-                );
-            }
-            seen[index] = true;
+        if self.class_init.is_none() {
+            return;
         }
-        for (index, initialized) in seen.into_iter().enumerate() {
-            if !initialized {
-                self.error(
-                    codes::E2100,
-                    span,
-                    format!("field `{}` is not definitely initialized by class `init`", fields[index]),
-                );
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                ast::StmtKind::Pass => {}
+                ast::StmtKind::Assign { targets, op: None, .. }
+                    if targets.len() == 1 && Self::class_init_target_name(&targets[0]).is_some() => {}
+                ast::StmtKind::If(if_stmt) => {
+                    self.validate_class_init_shape(&if_stmt.then_block, span);
+                    match if_stmt.else_block.as_deref() {
+                        Some(ast::ElseBranch::Block(block)) => {
+                            self.validate_class_init_shape(block, span)
+                        }
+                        Some(ast::ElseBranch::If(nested)) => {
+                            self.validate_class_init_if(nested, span)
+                        }
+                        None => {}
+                    }
+                }
+                _ => {
+                    self.error(
+                        codes::E1010,
+                        stmt.span,
+                        "class `init` currently supports direct field assignments, `pass`, and `if`",
+                    );
+                }
             }
+        }
+    }
+
+    fn validate_class_init_if(&mut self, if_stmt: &ast::IfStmt, span: Span) {
+        self.validate_class_init_shape(&if_stmt.then_block, span);
+        match if_stmt.else_block.as_deref() {
+            Some(ast::ElseBranch::Block(block)) => self.validate_class_init_shape(block, span),
+            Some(ast::ElseBranch::If(nested)) => self.validate_class_init_if(nested, span),
+            None => {}
+        }
+    }
+
+    fn report_missing_class_init_fields(&mut self, span: Span) {
+        let Some(state) = self.class_init.as_ref() else { return };
+        let missing: Vec<Symbol> = state
+            .initialized
+            .iter()
+            .enumerate()
+            .filter_map(|(index, status)| {
+                (!matches!(status, ClassFieldInit::Init))
+                    .then(|| self.types.class_def(state.owner).fields.get(index).map(|f| f.name))
+                    .flatten()
+            })
+            .collect();
+        for field in missing {
+            self.error(
+                codes::E2100,
+                span,
+                format!("field `{field}` is not definitely initialized by class `init`"),
+            );
+        }
+    }
+
+    fn merge_class_init_paths(
+        left: Option<ClassInitState>,
+        right: Option<ClassInitState>,
+    ) -> Option<ClassInitState> {
+        match (left, right) {
+            (Some(mut left), Some(right)) if left.owner == right.owner && left.receiver == right.receiver => {
+                for (left, right) in left.initialized.iter_mut().zip(right.initialized) {
+                    *left = left.join(right);
+                }
+                Some(left)
+            }
+            (left, _) => left,
         }
     }
 
@@ -5655,7 +5704,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
         let Some(state) = self.class_init.as_ref() else { return };
-        if state.initialized.get(index).copied().unwrap_or(true) {
+        if matches!(state.initialized.get(index), Some(ClassFieldInit::Init)) {
             return;
         }
         let Some(field) = self.types.class_def(state.owner).fields.get(index) else { return };
@@ -5668,10 +5717,47 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn mark_class_init_field(&mut self, place: &Expr) {
         let Some(index) = self.class_init_field_index(place) else { return };
-        if let Some(state) = self.class_init.as_mut() {
-            if let Some(initialized) = state.initialized.get_mut(index) {
-                *initialized = true;
+        let status = self
+            .class_init
+            .as_ref()
+            .and_then(|state| state.initialized.get(index).copied());
+        match status {
+            Some(ClassFieldInit::Init) => {
+                let field = self
+                    .class_init
+                    .as_ref()
+                    .and_then(|state| self.types.class_def(state.owner).fields.get(index))
+                    .map(|field| field.name);
+                if let Some(field) = field {
+                    self.error(
+                        codes::E1010,
+                        place.span,
+                        format!("class `init` assigns field `{field}` more than once in this phase"),
+                    );
+                }
             }
+            Some(ClassFieldInit::Maybe) => {
+                let field = self
+                    .class_init
+                    .as_ref()
+                    .and_then(|state| self.types.class_def(state.owner).fields.get(index))
+                    .map(|field| field.name);
+                if let Some(field) = field {
+                    self.error(
+                        codes::E1010,
+                        place.span,
+                        format!("class `init` cannot overwrite conditionally initialized field `{field}` in this phase"),
+                    );
+                }
+            }
+            Some(ClassFieldInit::Uninit) => {
+                if let Some(state) = self.class_init.as_mut() {
+                    if let Some(initialized) = state.initialized.get_mut(index) {
+                        *initialized = ClassFieldInit::Init;
+                    }
+                }
+            }
+            None => {}
         }
     }
 
@@ -7179,7 +7265,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt) -> Stmt {
         let cond = self.check_condition(&if_stmt.cond);
+        let incoming_class_init = self.class_init.clone();
         let then_block = self.check_block(&if_stmt.then_block);
+        let then_class_init = self.class_init.clone();
+        self.class_init = incoming_class_init.clone();
         let else_block = match if_stmt.else_block.as_deref() {
             Some(ast::ElseBranch::Block(b)) => Some(self.check_block(b)),
             Some(ast::ElseBranch::If(nested)) => {
@@ -7188,6 +7277,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             None => None,
         };
+        let else_class_init = self.class_init.clone();
+        self.class_init = Self::merge_class_init_paths(then_class_init, else_class_init);
         Stmt::If { cond, then_block, else_block }
     }
 
@@ -14731,7 +14822,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, span, format!("cannot instantiate abstract class `{name}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if args.len() != fields.len() {
+        if !has_init && args.len() != fields.len() {
             self.error(
                 codes::E2020,
                 span,
