@@ -226,4 +226,13 @@ impl BorrowCapability {
     pub fn is_mut(&self) -> bool {
         self.access.permission.is_mut()
     }
+
+    /// Whether this capability carries the storage-survival obligation that
+    /// the return escape checker enforces. Keeping the query on the canonical
+    /// fact prevents a consumer from assuming that every future capability
+    /// kind has identical escape obligations.
+    pub fn must_not_outlive_storage(&self) -> bool {
+        self.escape_constraints
+            .contains(&EscapeConstraint::MustNotOutliveStorage)
+    }
 }

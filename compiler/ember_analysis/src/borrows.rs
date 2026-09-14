@@ -1456,6 +1456,13 @@ fn check_escapes(
     sink: &mut Sink,
 ) {
     for loan in in_scope(loans, regions, point) {
+        // `[IMP-7]` — enforce only the storage-survival obligation carried by
+        // the canonical capability. Current reference producers all include
+        // it; future raw/handle/observing capabilities may have different
+        // explicitly declared escape constraints.
+        if !loan.capability.must_not_outlive_storage() {
+            continue;
+        }
         let place = loan
             .capability
             .source_place()
