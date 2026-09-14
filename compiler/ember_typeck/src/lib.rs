@@ -15369,15 +15369,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if args.iter().any(|arg| arg.name.is_some()) {
-            self.error(
-                codes::E1010,
-                span,
-                format!("named class construction for `{name}` is not implemented yet in this phase"),
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
         if has_init {
+            if args.iter().any(|arg| arg.name.is_some()) {
+                self.error(
+                    codes::E1010,
+                    span,
+                    format!("named construction for `{name}` with a user-defined `init` is not implemented yet in this phase"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let init = self
                 .methods
                 .get(&(ty, Symbol::intern("init")))
@@ -15438,11 +15438,53 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let defaults = self.class_default_literals.get(&id).cloned();
+        // `[CLS-3]` — a memberwise class constructor follows the same
+        // positional/named field binding as a struct constructor. Keep the
+        // user-defined `init` path separate: its parameter names and defaults
+        // are a function-call contract, not field names.
+        let named = args.iter().any(|arg| arg.name.is_some());
+        let mut values_by_field: Vec<Option<Expr>> = (0..fields.len()).map(|_| None).collect();
+        if named {
+            for arg in args {
+                let Some(arg_name) = arg.name else {
+                    self.error(
+                        codes::E2020,
+                        arg.span,
+                        "positional arguments must come before named ones",
+                    );
+                    continue;
+                };
+                let Some(index) = fields.iter().position(|field| field.name == arg_name.name) else {
+                    self.error(
+                        codes::E2020,
+                        arg_name.span,
+                        format!("`{name}` has no field `{}`", arg_name.name),
+                    );
+                    continue;
+                };
+                let value = self.check_expr(&arg.value, fields[index].ty);
+                if values_by_field[index].replace(value).is_some() {
+                    self.error(
+                        codes::E1030,
+                        arg.value.span,
+                        format!("field `{}` is given twice", fields[index].name),
+                    );
+                }
+            }
+        } else {
+            for (index, arg) in args.iter().enumerate() {
+                if index >= fields.len() {
+                    break;
+                }
+                values_by_field[index] = Some(self.check_expr(&arg.value, fields[index].ty));
+            }
+        }
+
         let mut values = Vec::with_capacity(fields.len());
         let mut invalid = false;
         for (index, field) in fields.iter().enumerate() {
-            if let Some(arg) = args.get(index) {
-                values.push(self.check_expr(&arg.value, field.ty));
+            if let Some(value) = values_by_field[index].take() {
+                values.push(value);
                 continue;
             }
             if !field.has_default {
