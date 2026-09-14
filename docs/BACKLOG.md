@@ -159,6 +159,15 @@ access pair. Non-`Copy`, nested/indexed class-object, and read-only forms stay
 fail-closed; view-typed field arguments and full static/dynamic access
 classification remain later work.
 
+`OBJ-RT-1` continuation: direct class handles stored in a growable `Array`
+now retain at the `Array.push` copy boundary, so the container owns a strong
+reference independently of the source local. The indexed class-method
+regression `class_indexed_mut_method.em` also confirms that an element remains
+valid through mutation and final buffer destruction. Aggregate values containing
+class handles, virtual/interface dispatch, indexed access sharing for dynamic
+exclusivity, static elision, generic classes, and the complete Phase 3 matrix
+remain open; this fix does not claim those broader cases.
+
 ---
 
 ## Build order

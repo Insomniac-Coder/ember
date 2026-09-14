@@ -1248,6 +1248,39 @@ impl Emitter<'_> {
                     self.line(&format!("    goto bb{};", next.0));
                 }
             }
+            Terminator::Call {
+                func: func @ FuncRef::Builtin {
+                    which: Builtin::ArrayPush,
+                    arg_ty,
+                },
+                args,
+                next,
+                ..
+            } => {
+                // `[RC-1]` — `Array.push` consumes its value argument, but a
+                // class handle is a language-level `Copy` value.  The byte
+                // copy performed by `ember_vec_push` therefore needs the
+                // same strong-reference increment as any other class-handle
+                // copy; otherwise the caller's later release leaves the
+                // array with a dangling handle.
+                let elem = self.element_of(*arg_ty);
+                if matches!(self.types.kind(elem), TyKind::Class(_)) {
+                    let value = self.operand(&args[1], body);
+                    self.line(&format!(
+                        "    {}(({}*){});",
+                        ember_branding::runtime("retain"),
+                        ember_branding::runtime("obj_header"),
+                        value
+                    ));
+                }
+                let call = self.call_expression(func, args, body);
+                self.line(&format!("    {call};"));
+                if next.0 as usize == index + 1 {
+                    self.line("    /* fallthrough */");
+                } else {
+                    self.line(&format!("    goto bb{};", next.0));
+                }
+            }
             Terminator::Call { func, args, dest, next } => {
                 let call = self.call_expression(func, args, body);
                 let dest_ty = self.place_ty(dest, body);

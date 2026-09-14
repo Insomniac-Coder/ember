@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-14 — growable Arrays did not retain copied class handles
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-130 | **`Array[Class]` copied a class handle into its backing buffer without retaining it.** Class handles are language-level `Copy` values, so `items.push(child)` must give the Array its own strong reference. The byte copy in `ember_vec_push` left the buffer holding the caller's sole reference; the caller's later release then made the Array contain a dangling pointer and the eventual buffer release panicked with `release of object with no strong references`. The newly added indexed-method fixture exposed this through a real run, even though the method itself printed the expected value. | `[RC-1]`, `[RC-2]`, `[OWN-7]`, `[CLS-1]` | **fixed** | The `ArrayPush` C-lowering path emits one `retain` for a direct class element before the byte copy, while move-only element types retain the existing move path. `tests/run-pass/class_indexed_mut_method.em` now covers Array ownership, indexed class-method use, runtime output, and the generated retain. Verified red before the fix and green after it with the focused run-pass gate. No specification or owner decision changed. |
+
+---
+
 ## 2026-09-14 — inherited-destructor run-pass fixture asserted the wrong result
 
 | # | Defect | Rule | Status | Fixed in |

@@ -5949,3 +5949,30 @@ access, generic classes, static access elision, or the complete Phase 3
 exclusivity matrix. It is implementation-only progress: no specification,
 ADR, adopted source, or diagnostic semantics changed; phase accounting remains
 exactly **1 of 9 complete**.
+
+### 0.101 Phase 3 Array ownership for class handles — 2026-09-14
+
+The first indexed class-method probe exposed a separate ownership defect in
+the existing growable `Array` path. `Array[Class].push(value)` copies the
+pointer-sized class handle into the backing buffer, but class handles are
+language-level `Copy` values under `[RC-1]`/`[OWN-7]`; the copy must therefore
+retain before the byte copy gives the Array its independent strong reference.
+Before the fix, `items.push(child)` left the Array pointing at the caller's
+sole reference. The caller's scope-end release then left a dangling element,
+and the final Array destruction panicked with `release of object with no strong
+references`.
+
+The C backend now emits exactly that retain for a direct class element on the
+`ArrayPush` boundary. Move-only element types keep the existing ownership
+transfer path. `tests/run-pass/class_indexed_mut_method.em` is the adversarial
+regression: it stores a class handle in an Array, calls its `mut self` method
+through `items[0]`, observes `7`, and asserts the generated retain. It was red
+before the change and passes in debug, release, and shipping. This is a
+compiler defect, recorded as D-130; the specification was already correct and
+was not changed.
+
+This slice does not claim recursive retain handling for aggregate elements that
+contain class handles, full indexed dynamic-exclusivity/access sharing,
+virtual or interface dispatch, generic classes, static access elision, or
+Phase 3 completion. Phase accounting remains exactly **1 of 9 complete**;
+Phase 2 remains active and Phase 3 has not passed its exit gate.
