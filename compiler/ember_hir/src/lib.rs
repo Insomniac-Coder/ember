@@ -123,6 +123,13 @@ pub struct Function {
     /// observability comes from the closure's capture/move behavior, not from
     /// an ABI flag or a user-spellable environment type.
     pub closure_captures_by_move: bool,
+    /// `[DSP-2]` — the class that declares this method, when this is a
+    /// class method.  Kept as compiler metadata so MIR can select the
+    /// runtime vtable without re-discovering the source declaration.
+    pub class_owner: Option<ClassId>,
+    /// `[DSP-2]` — the vtable slot assigned to a virtual or override method.
+    /// `None` means ordinary static dispatch.
+    pub class_virtual_slot: Option<usize>,
 }
 
 impl Function {

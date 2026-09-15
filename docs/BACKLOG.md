@@ -78,24 +78,25 @@ do yet, found while applying v0.5.
 | Id | Task | Gate | Done when |
 |---|---|---|---|
 | ~~**RT-GEN-1**~~ | ~~Generate `ember_rt.h` and `ember_rt.c` from `EMBER_SYMBOL_PREFIX`~~ | — | **done 2026-09-14 in `d941511`.** `tools/generate_runtime.py` reads the canonical `symbol_prefix!` branding macro, renders the C11 header/source from `.in` templates, and supports deterministic `--check` verification. The checked-in outputs carry a generated-file marker, are validated by the generator rather than treated as hand-authored branding, and the branding checker no longer exempts them. A custom-prefix regression proves the emitted identifiers and include name change together; strict C11 compilation and the workspace/conformance suites remain green |
-| **OBJ-RT-1** | Phase 3 object header and reference-count runtime boundary | 3 | **Started 2026-09-14 in `14d55fe`; compiler foundations in `a63ff1d`, `6a281f3`, `9205a94`, `4e2b63f`, `1ea9af3`, `74f15c3`, `97d8131`; class-handle ownership in `0f0c555`; empty/scalar-field construction in `fea9663`/`a289b2b`; the supported custom-`init` constructor subset, including branch-joined `if`, exhaustive `match`, conservative `while`/`for` analysis, state-aware whole-`self` use, and derived construction through direct `super.init(...)`, is added in the current working checkpoint.** The generated C11 runtime exposes the `[OBJ-1]` 24-byte header and `[RT-3]` type-info layout, object allocation, plain/atomic strong and weak retain/release, weak upgrade, deinitialisation with the two `[OBJ-5]` resurrection checks, base-chain downcast, and the !Sync exclusivity access word. `ember_types` has nominal `ClassId`/`ClassDef`/`TyKind::Class` identity and pointer-sized counted-handle properties. The type checker now collects non-generic class fields, openness, and single-inheritance identity; inherited field reads and read-only methods lower through generated C object structs with base fields first. Class-handle copies and class upcasts now retain, and class drop points release, with branding-derived runtime spellings. Empty and non-inheriting memberwise classes now construct through the existing object allocator, initialize fields through visible MIR assignments, and class fields that need destruction are released by generated field-drop glue. A source `drop(mut self)` in this narrow no-base/no-`init` subset is adapted to the runtime callback ABI through a compiler-generated handle-slot adapter and runs before field destruction. Receiver-rooted class-field writes from `mut self` methods now use the narrow dynamic access slice; non-mutating or distinct-object writes remain explicitly rejected. Static access elision and complete dynamic exclusivity remain open. Strict Clang C11 compilation, focused type/type-checker/MIR/codegen tests, compile-pass/run-pass coverage, and branding/generator regressions pass. Defaulted derived fields, inherited drop chaining, dynamic exclusivity, dispatch, generic classes, and the complete Phase 3 conformance matrix remain outstanding; this is a foundation, not class implementation completion. The CI regression at `6415303` was a test-fixture correction only: the inherited-drop case now asserts one derived destructor followed by one base destructor and uses adapter-specific order anchors. The current checkpoint also admits inherited `mut self` method calls through a borrow-preserving derived-to-base receiver cast (`ClassUpcastBorrowed`), with generated-C no-retain coverage; virtual/override dispatch, indexed class-object access, static elision, generic classes, and the complete Phase 3 matrix remain open |
+| **OBJ-RT-1** | Phase 3 object header and reference-count runtime boundary | 3 | **Started 2026-09-14 in `14d55fe`; compiler foundations in `a63ff1d`, `6a281f3`, `9205a94`, `4e2b63f`, `1ea9af3`, `74f15c3`, `97d8131`; class-handle ownership in `0f0c555`; empty/scalar-field construction in `fea9663`/`a289b2b`; the supported custom-`init` constructor subset, including branch-joined `if`, exhaustive `match`, conservative `while`/`for` analysis, state-aware whole-`self` use, and derived construction through direct `super.init(...)`, is added in the current working checkpoint.** The generated C11 runtime exposes the `[OBJ-1]` 24-byte header and `[RT-3]` type-info layout, object allocation, plain/atomic strong and weak retain/release, weak upgrade, deinitialisation with the two `[OBJ-5]` resurrection checks, base-chain downcast, and the !Sync exclusivity access word. `ember_types` has nominal `ClassId`/`ClassDef`/`TyKind::Class` identity and pointer-sized counted-handle properties. The type checker now collects non-generic class fields, openness, and single-inheritance identity; inherited field reads and read-only methods lower through generated C object structs with base fields first. Class-handle copies and class upcasts now retain, and class drop points release, with branding-derived runtime spellings. Empty and non-inheriting memberwise classes now construct through the existing object allocator, initialize fields through visible MIR assignments, and class fields that need destruction are released by generated field-drop glue. A source `drop(mut self)` in this narrow no-base/no-`init` subset is adapted to the runtime callback ABI through a compiler-generated handle-slot adapter and runs before field destruction. Receiver-rooted class-field writes from `mut self` methods now use the narrow dynamic access slice; non-mutating or distinct-object writes remain explicitly rejected. Static access elision and complete dynamic exclusivity remain open. Strict Clang C11 compilation, focused type/type-checker/MIR/codegen tests, compile-pass/run-pass coverage, and branding/generator regressions pass. Defaulted derived fields, inherited drop chaining, dynamic exclusivity, generic classes, and the complete Phase 3 conformance matrix remain outstanding; this is a foundation, not class implementation completion. The CI regression at `6415303` was a test-fixture correction only: the inherited-drop case now asserts one derived destructor followed by one base destructor and uses adapter-specific order anchors. The current checkpoint also admits inherited `mut self` method calls through a borrow-preserving derived-to-base receiver cast (`ClassUpcastBorrowed`), with generated-C no-retain coverage; virtual/override dispatch is implemented, while indexed class-object access, interface/dyn dispatch, static elision, generic classes, and the complete Phase 3 matrix remain open |
 `OBJ-RT-1` continuation: mutable arguments rooted in indexed class handles
 now use one evaluated MIR place for both the mutable reference and the
 dynamic exclusivity access interval. The type checker no longer rejects a
 valid place such as `increment(items[next_index(state)].value)`, and lowering
 preserves the index's ordinary bounds check and source evaluation order. The
 side-effecting-index regression is recorded as D-136. Virtual/override
-dispatch, static access elision, generic classes, and the complete Phase 3
-conformance matrix remain open.
+dispatch is now implemented for class vtables; static access elision,
+interface/dyn dispatch, generic classes, and the complete Phase 3 conformance
+matrix remain open.
 
 The compiler now also lowers class-handle identity checks end to end. `is` and
 `is not` remain distinct from value equality, accept equal or related class
 handles through the existing upcast path, and compare the pointer
 representation in generated C. Non-class operands are rejected rather than
 being silently treated as value comparisons. The focused identity fixtures
-pass in debug, release, and shipping. Virtual/override dispatch, downcasts,
-static access elision, generic classes, and the complete Phase 3 conformance
-matrix remain open.
+pass in debug, release, and shipping. Virtual/override dispatch is now
+implemented separately below; dynamic downcasts, static access elision,
+generic classes, and the complete Phase 3 conformance matrix remain open.
 
 The dynamic downcast slice is now implemented as well. `as?` accepts related
 class handles and returns `Option[Target]` after one runtime base-chain query;
@@ -103,9 +104,18 @@ success retains the returned handle and failure constructs `None`. `as!` uses
 the same query and aborts through `[PAN-1]` when it returns null. Unrelated
 classes are rejected statically. The positive, negative, and forced-failure
 fixtures pass, and generated C shows the expected single query and owning
-retain. Virtual/override dispatch, indexed class-object access, static access
-elision, generic classes, and the complete Phase 3 conformance matrix remain
-open.
+retain. Virtual/override dispatch is implemented; indexed class-object access,
+static access elision, interface/dyn dispatch, generic classes, and the
+complete Phase 3 conformance matrix remain open.
+
+The class virtual-dispatch slice is now implemented under D-153. Type checking
+assigns deterministic base-first slots and carries the declaring class and slot
+through HIR/MIR. The C backend emits per-class vtable layouts, derived-prefix
+compatibility, override adapters for nominal receiver types, and type-info
+vtable pointers. A base-typed call therefore selects the derived override at
+runtime; the focused run-pass fixture covers all three profiles. This does not
+claim interface/dyn dispatch, devirtualisation reporting, static-access
+elision, generic classes, or Phase 3 completion.
 
 The earlier row's “defaulted derived fields” wording is superseded by the
 2026-09-15 D-140 continuation: supported explicit derived constructors now

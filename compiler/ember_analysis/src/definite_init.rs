@@ -503,6 +503,8 @@ mod tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
         }
     }
 

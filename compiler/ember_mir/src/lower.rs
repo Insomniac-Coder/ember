@@ -339,6 +339,8 @@ impl<'a> Builder<'a> {
             callable_regions: None,
             closure_environment: self.function.closure_environment,
             closure_captures_by_move: self.function.closure_captures_by_move,
+            class_owner: self.function.class_owner,
+            class_virtual_slot: self.function.class_virtual_slot,
         }
     }
 
@@ -1697,8 +1699,12 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
                 let next = self.new_block();
+                let func = match (function.class_owner, function.class_virtual_slot) {
+                    (Some(owner), Some(slot)) => FuncRef::Virtual { owner, slot },
+                    _ => FuncRef::Direct { symbol, latebound: *latebound },
+                };
                 self.terminate(Terminator::Call {
-                    func: FuncRef::Direct { symbol, latebound: *latebound },
+                    func,
                     args,
                     dest: place,
                     next,

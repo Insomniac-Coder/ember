@@ -99,6 +99,10 @@ pub struct Body {
     /// `[LT-42]` static-region storage check at the environment construction
     /// site; it never becomes ABI data.
     pub closure_captures_by_move: bool,
+    /// `[DSP-2]` — compiler-only class method identity used to build and
+    /// select vtables.  It is not runtime metadata in the Ember value ABI.
+    pub class_owner: Option<ember_types::ClassId>,
+    pub class_virtual_slot: Option<usize>,
 }
 
 impl Body {
@@ -1055,6 +1059,11 @@ pub enum FuncRef {
     /// compile-time callable-boundary fact retained for region analysis and
     /// erased before code generation.
     Direct { symbol: String, latebound: bool },
+    /// `[DSP-2]` — a call through the receiver's class vtable. `owner` is
+    /// the declaration that established the slot, so the C backend can use
+    /// the stable base signature even when a derived override supplies the
+    /// implementation.
+    Virtual { owner: ember_types::ClassId, slot: usize },
     /// `[CLO-3]`, `[FN-6b]` — a call through a value of function type. The
     /// operand holds the callee; `latebound` is the expected callable-boundary
     /// fact and is erased before code generation.
@@ -1327,6 +1336,9 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                     (if *latebound { "@latebound " } else { "" }, symbol.clone())
                 }
                 FuncRef::Builtin { which, .. } => ("", which.name().to_string()),
+                FuncRef::Virtual { owner, slot } => {
+                    ("@virtual ", format!("class#{}::slot{}", owner.0, slot))
+                }
                 FuncRef::Indirect { operand, latebound } => (
                     if *latebound { "@latebound " } else { "" },
                     dump_operand(operand, types),

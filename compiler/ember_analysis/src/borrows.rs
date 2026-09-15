@@ -588,6 +588,9 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
             ..
         } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
+        // A virtual method has no direct symbol at this stage. Preserve the
+        // conservative call contract until a class-specific summary exists.
+        FuncRef::Virtual { .. } => Elision::Everything,
         // `[CLO-3]` — a call through a function value. `[EFF-2]`'s
         // reasoning applies to regions too: nothing is known about the
         // callee, so the permissive reading of `[LT-1]` rule 3 is taken
@@ -2651,6 +2654,8 @@ mod callable_region_metadata_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
         }
     }
 

@@ -175,6 +175,7 @@ pub fn check(
         checker.collect_methods(&loaded.module);
     }
     checker.validate_class_methods(modules);
+    checker.assign_class_virtual_slots();
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
     // and can run before a later module's extension has been collected.
@@ -451,6 +452,14 @@ struct Checker<'a> {
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
+    /// Class methods in declaration order. This is the source of truth for
+    /// `[DSP-2]` slot numbering; the ordinary method lookup map is keyed by
+    /// name and intentionally does not preserve declaration order.
+    class_declared_methods: HashMap<ClassId, Vec<(Symbol, DefId, ast::Dispatch)>>,
+    /// Assigned after all class declarations are collected, before bodies and
+    /// calls are checked. Keys are method definitions, not receiver spellings,
+    /// so inherited calls and overrides share one slot.
+    class_virtual_slots: HashMap<DefId, usize>,
     /// Receiver-less functions reachable as `Type.name(...)`.
     associated: HashMap<(Ty, Symbol), AssociatedEntry>,
     /// Interfaces by name, with what each requires.
@@ -655,6 +664,8 @@ impl<'a> Checker<'a> {
             fn_ids: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
+            class_declared_methods: HashMap::new(),
+            class_virtual_slots: HashMap::new(),
             associated: HashMap::new(),
             interfaces: HashMap::new(),
             implemented: Vec::new(),
@@ -1855,6 +1866,74 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Preserve class-method declaration order for `[DSP-2]`.  The ordinary
+    /// method table is a hash map because lookup is name-based; using it for
+    /// slot numbering would make the generated ABI depend on hash order.
+    fn record_class_virtual_methods(&mut self, ty: Ty, members: &[ast::Member]) {
+        let TyKind::Class(id) = *self.types.kind(ty) else { return };
+        let mut methods = Vec::new();
+        for member in members {
+            let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+            if decl.dispatch == ast::Dispatch::Static {
+                continue;
+            }
+            let Some(entry) = self.methods.get(&(ty, decl.name.name)) else { continue };
+            // Interface default methods are not class vtable declarations.
+            if entry.from_interface.is_none() {
+                methods.push((decl.name.name, entry.def, decl.dispatch));
+            }
+        }
+        self.class_declared_methods.insert(id, methods);
+    }
+
+    /// Assign stable class-vtable slots after the whole-program method
+    /// collection pass.  A derived class starts with its base slots, appends
+    /// new `virtual` declarations in source order, and reuses a base slot for
+    /// `override`.  Final-class `virtual` declarations retain their accepted
+    /// warning but do not create dynamic dispatch metadata.
+    fn assign_class_virtual_slots(&mut self) {
+        let ids: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let mut layouts: HashMap<ClassId, HashMap<Symbol, usize>> = HashMap::new();
+        for id in ids {
+            let _ = self.class_virtual_layout(id, &mut layouts);
+        }
+    }
+
+    fn class_virtual_layout(
+        &mut self,
+        id: ClassId,
+        layouts: &mut HashMap<ClassId, HashMap<Symbol, usize>>,
+    ) -> HashMap<Symbol, usize> {
+        if let Some(layout) = layouts.get(&id) {
+            return layout.clone();
+        }
+        let mut layout = self
+            .types
+            .class_def(id)
+            .base
+            .map(|base| self.class_virtual_layout(base, layouts))
+            .unwrap_or_default();
+        let mut next = layout.values().copied().max().map_or(0, |slot| slot + 1);
+        let is_final = self.types.class_def(id).openness == ClassOpenness::Final;
+        for (name, def, dispatch) in self.class_declared_methods.get(&id).cloned().unwrap_or_default() {
+            let slot = match dispatch {
+                ast::Dispatch::Override => layout.get(&name).copied(),
+                ast::Dispatch::Virtual if !is_final => {
+                    let slot = next;
+                    next += 1;
+                    Some(slot)
+                }
+                _ => None,
+            };
+            if let Some(slot) = slot {
+                layout.insert(name, slot);
+                self.class_virtual_slots.insert(def, slot);
+            }
+        }
+        layouts.insert(id, layout.clone());
+        layout
+    }
+
     /// `[TYP-16]` — collect generic struct recipes after nominal headers are
     /// globally visible and before any ordinary function signature is read.
     fn collect_generic_structs(&mut self, module: &ast::Module) {
@@ -2408,6 +2487,7 @@ impl<'a> Checker<'a> {
                         item.span,
                         item_index,
                     );
+                    self.record_class_virtual_methods(ty, &decl.members);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Enum(decl) => {
@@ -4112,7 +4192,14 @@ impl<'a> Checker<'a> {
                 Signature { params, ret, generics, borrows: method.borrows.clone() };
             let generic = !signature.generics.is_empty();
             let def = if let Some(receiver) = method.receiver {
-                self.register_method(ty, method.name, signature, receiver, None, method.span)
+                self.register_method(
+                    ty,
+                    method.name,
+                    signature,
+                    receiver,
+                    None,
+                    method.span,
+                )
             } else {
                 self.register_associated(ty, method.name, signature, None, method.span)
             };
@@ -5000,6 +5087,8 @@ impl<'a> Checker<'a> {
                 borrows: self.signatures[def.0 as usize].borrows.clone(),
                 closure_environment: None,
                 closure_captures_by_move: false,
+                class_owner: None,
+                class_virtual_slot: None,
             });
         }
 
@@ -5366,6 +5455,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             closure_environment: None,
             closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
         }
     }
 
@@ -5699,6 +5790,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             closure_environment: None,
             closure_captures_by_move: false,
+            class_owner: match self.types.kind(owner) {
+                TyKind::Class(id) => Some(*id),
+                _ => None,
+            },
+            class_virtual_slot: self.class_virtual_slots.get(&def).copied(),
         })
     }
 
@@ -12663,6 +12759,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: None,
             closure_environment,
             closure_captures_by_move,
+            class_owner: None,
+            class_virtual_slot: None,
         });
         def
     }

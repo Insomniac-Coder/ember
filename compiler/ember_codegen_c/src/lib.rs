@@ -84,6 +84,8 @@ pub fn emit(
         order,
         structural,
         usize_ty,
+        virtual_tables: BTreeMap::new(),
+        virtual_signatures: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main);
     Output { c_source: emitter.out }
@@ -102,6 +104,18 @@ struct Emitter<'a> {
     /// `usize`, for the lengths inside an `Array[T]`. The emitter has no
     /// `CommonTypes`, so it finds the one the interner already holds.
     usize_ty: Ty,
+    /// `[DSP-2]` — effective implementation for each class vtable slot.
+    virtual_tables: BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
+    /// The signature established by the first declaration in each hierarchy.
+    virtual_signatures: BTreeMap<(ClassId, usize), VirtualMethod>,
+}
+
+#[derive(Clone)]
+struct VirtualMethod {
+    owner: ClassId,
+    symbol: String,
+    params: Vec<Ty>,
+    ret: Ty,
 }
 
 /// Where a projection walk has reached: a type, plus the variant a
@@ -154,6 +168,8 @@ impl Emitter<'_> {
 
         self.emit_type_declarations();
         self.emit_prototypes(bodies);
+        self.collect_virtual_methods(bodies);
+        self.emit_virtual_tables();
         self.emit_class_drop_adapters();
         self.emit_class_field_drop_glue();
         self.emit_class_type_infos();
@@ -333,11 +349,181 @@ impl Emitter<'_> {
         false
     }
 
+    /// Collect the effective class vtables from the already checked method
+    /// bodies.  The type checker assigned slots in declaration order; this
+    /// pass only materializes the inherited-prefix/override layout required
+    /// by `[DSP-2]`.
+    fn collect_virtual_methods(&mut self, bodies: &[Body]) {
+        let declared: BTreeMap<(ClassId, usize), VirtualMethod> = bodies
+            .iter()
+            .filter_map(|body| {
+                Some((
+                    (body.class_owner?, body.class_virtual_slot?),
+                    VirtualMethod {
+                        owner: body.class_owner?,
+                        symbol: body.symbol.clone(),
+                        params: body.args().map(|(_, decl)| decl.ty).collect(),
+                        ret: body.return_ty(),
+                    },
+                ))
+            })
+            .collect();
+        let mut layouts = BTreeMap::new();
+        let ids: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        for id in ids {
+            let layout = self.build_virtual_layout(id, &declared, &mut layouts);
+            for slot in 0..layout.len() {
+                if let Some(signature) = self.virtual_slot_signature(id, slot, &declared) {
+                    self.virtual_signatures.insert((id, slot), signature);
+                }
+            }
+        }
+        self.virtual_tables = layouts;
+    }
+
+    fn build_virtual_layout(
+        &self,
+        id: ClassId,
+        declared: &BTreeMap<(ClassId, usize), VirtualMethod>,
+        layouts: &mut BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
+    ) -> Vec<Option<VirtualMethod>> {
+        if let Some(layout) = layouts.get(&id) {
+            return layout.clone();
+        }
+        let mut layout = self
+            .types
+            .class_def(id)
+            .base
+            .map(|base| self.build_virtual_layout(base, declared, layouts))
+            .unwrap_or_default();
+        for ((owner, slot), method) in declared {
+            if *owner != id {
+                continue;
+            }
+            if layout.len() <= *slot {
+                layout.resize(*slot + 1, None);
+            }
+            layout[*slot] = Some(method.clone());
+        }
+        layouts.insert(id, layout.clone());
+        layout
+    }
+
+    /// The first declaration in the inheritance chain establishes a slot's
+    /// C function-pointer signature. Overrides are adapted to that signature
+    /// below rather than relying on incompatible function-pointer casts.
+    fn virtual_slot_signature(
+        &self,
+        id: ClassId,
+        slot: usize,
+        declared: &BTreeMap<(ClassId, usize), VirtualMethod>,
+    ) -> Option<VirtualMethod> {
+        if let Some(base) = self.types.class_def(id).base
+            && let Some(signature) = self.virtual_slot_signature(base, slot, declared)
+        {
+            return Some(signature);
+        }
+        declared.get(&(id, slot)).cloned()
+    }
+
+    fn virtual_field_signature(&self, method: &VirtualMethod, field: &str) -> String {
+        let params = method
+            .params
+            .iter()
+            .map(|ty| self.c_type(*ty))
+            .collect::<Vec<_>>();
+        let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+        format!("{} (*{field})({params})", self.c_type(method.ret))
+    }
+
+    /// Emit compiler-owned vtable structs, override adapters and concrete
+    /// tables. Each derived table begins with the exact base-slot prefix, so a
+    /// base-typed call can inspect a derived object's `type_info` safely.
+    fn emit_virtual_tables(&mut self) {
+        let tables: Vec<(ClassId, Vec<Option<VirtualMethod>>)> = self
+            .virtual_tables
+            .iter()
+            .filter(|(_, slots)| slots.iter().any(Option::is_some))
+            .map(|(id, slots)| (*id, slots.clone()))
+            .collect();
+        if tables.is_empty() {
+            return;
+        }
+        self.line("/* class virtual tables */");
+        for (id, slots) in &tables {
+            let name = ember_branding::vtable(&self.types.class_def(*id).name.to_string());
+            self.line(&format!("struct {name} {{"));
+            for (slot, signature) in slots.iter().enumerate() {
+                let Some(signature) = signature else { continue };
+                let signature = self
+                    .virtual_signatures
+                    .get(&(*id, slot))
+                    .unwrap_or(signature);
+                self.line(&format!("    {};", self.virtual_field_signature(signature, &format!("slot{slot}"))));
+            }
+            self.line("};");
+        }
+        self.line("");
+
+        for (id, slots) in &tables {
+            let class_name = self.types.class_def(*id).name.to_string();
+            let table_name = ember_branding::vtable(&class_name);
+            for (slot, implementation) in slots.iter().enumerate() {
+                let Some(implementation) = implementation else { continue };
+                let Some(signature) = self.virtual_signatures.get(&(*id, slot)).cloned() else {
+                    continue;
+                };
+                if implementation.owner == signature.owner {
+                    continue;
+                }
+                let adapter = format!("{table_name}_slot{slot}");
+                let params = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| format!("{} _{index}", self.c_type(*ty)))
+                    .collect::<Vec<_>>();
+                let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+                self.line(&format!("static {} {adapter}({params}) {{", self.c_type(signature.ret)));
+                let args = implementation
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| format!("({})_{index}", self.c_type(*ty)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if self.is_void(signature.ret) {
+                    self.line(&format!("    {}({args});", implementation.symbol));
+                } else {
+                    self.line(&format!("    return {}({args});", implementation.symbol));
+                }
+                self.line("}");
+            }
+        }
+        self.line("");
+
+        for (id, slots) in &tables {
+            let table_name = ember_branding::vtable(&self.types.class_def(*id).name.to_string());
+            self.line(&format!("static const struct {table_name} {table_name} = {{"));
+            for (slot, implementation) in slots.iter().enumerate() {
+                let Some(implementation) = implementation else { continue };
+                let Some(signature) = self.virtual_signatures.get(&(*id, slot)) else { continue };
+                let value = if implementation.owner == signature.owner {
+                    implementation.symbol.clone()
+                } else {
+                    format!("{table_name}_slot{slot}")
+                };
+                self.line(&format!("    {value},"));
+            }
+            self.line("};");
+        }
+        self.line("");
+    }
+
     /// Emit the compiler-owned metadata consumed by the Phase 3 object
-    /// runtime. Constructors, method tables, and virtual dispatch remain later
-    /// consumers. The narrow memberwise construction slice installs the
-    /// generated user-drop adapter and field-drop glue when those values are
-    /// source-reachable.
+    /// runtime. The narrow memberwise construction slice installs the
+    /// generated user-drop adapter, field-drop glue and class vtable when
+    /// those values are source-reachable.
     ///
     /// The declarations are external-linkage `const` objects rather than
     /// `static` objects.  That avoids a compiler-warning for an as-yet-unused
@@ -379,10 +565,9 @@ impl Emitter<'_> {
             self.line("    UINT32_C(0),");
             self.line(&format!("    {},", c_string_literal(&def.name.to_string())));
             self.line(&format!("    {base},"));
-            // User-drop and dispatch metadata remain null until their
-            // respective compiler mechanisms can produce verified
-            // functions/tables. Field-drop glue is installed below when the
-            // object has fields that need destruction.
+            // Field-drop glue is installed below when the object has fields
+            // that need destruction. Virtual tables are compiler-owned and
+            // use the stable runtime type-info pointer boundary.
             if self.class_has_user_drop(id) {
                 self.line(&format!(
                     "    &{},",
@@ -399,7 +584,16 @@ impl Emitter<'_> {
             } else {
                 self.line("    NULL,");
             }
-            self.line("    NULL,");
+            if self
+                .virtual_tables
+                .get(&id)
+                .is_some_and(|slots| slots.iter().any(Option::is_some))
+            {
+                let table = ember_branding::vtable(&def.name.to_string());
+                self.line(&format!("    (const {}*)&{},", ember_branding::runtime("vtable"), table));
+            } else {
+                self.line("    NULL,");
+            }
             self.line("    NULL,");
             self.line("    UINT32_C(0),");
             self.line("    NULL,");
@@ -1487,6 +1681,23 @@ impl Emitter<'_> {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
             FuncRef::Direct { symbol, .. } => format!("{symbol}({})", rendered.join(", ")),
+            FuncRef::Virtual { owner, slot } => {
+                let signature = self
+                    .virtual_signatures
+                    .get(&(*owner, *slot))
+                    .expect("virtual call has a collected vtable signature");
+                let receiver = rendered.first().expect("virtual call has a receiver");
+                let receiver_ty = signature.params.first().copied();
+                let object = match receiver_ty.map(|ty| self.types.kind(ty)) {
+                    Some(TyKind::Ref { .. }) => format!("*({receiver})"),
+                    _ => receiver.clone(),
+                };
+                let table = ember_branding::vtable(&self.types.class_def(*owner).name.to_string());
+                format!(
+                    "(((const struct {table}*)(((const {RT}obj_header*)({object}))->ti->vtable))->slot{slot})({})",
+                    rendered.join(", ")
+                )
+            }
             // `[CLO-3]` — a call through a value. In C a function value is
             // its address, so the callee expression is called directly.
             FuncRef::Indirect { operand: callee, .. } => {

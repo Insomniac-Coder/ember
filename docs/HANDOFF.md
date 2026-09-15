@@ -6536,3 +6536,36 @@ Phase 3 conformance matrix remain open under `OBJ-RT-1`. No adopted
 specification, ADR, owner decision, or version changed. Phase accounting
 remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has
 not passed its exit gate.
+
+### 0.123 Class virtual/override dispatch lowering — 2026-09-15
+
+The adopted `[DSP-1]`/`[DSP-2]` contract was already clear: non-virtual
+methods use static dispatch, while a virtual call loads the receiver's
+`type_info->vtable[slot]`, with base-first slot numbering and overrides reusing
+the inherited slot. The compiler previously accepted the declarations but
+lowered every method call to the selected source symbol and emitted null
+vtable pointers. That was D-153, a compiler defect rather than a
+specification problem.
+
+The type checker now records class method ownership and assigns deterministic
+slots after whole-program method collection. HIR/MIR carry the class owner and
+slot as compiler-only metadata; virtual calls use a distinct MIR `FuncRef`
+variant, while constructors, `super.init`, non-virtual methods, and ordinary
+functions remain direct calls. The C backend builds the inherited vtable
+prefix, emits one typed table per class, and generates a receiver adapter when
+an override's nominal class pointer differs from the base slot signature. Each
+class type-info record points at its table when it has virtual slots.
+
+`tests/run-pass/class_virtual_dispatch.em` uses a `Base`-typed handle that
+contains a `Child` object and verifies that the override runs in debug,
+release, and shipping. Generated C inspection confirms that the call performs
+one type-info/vtable load and that the derived table uses an adapter rather
+than an incompatible C function-pointer cast. The existing declaration tests
+continue to cover accepted `virtual`/`override` syntax and rejection of an
+override of a non-virtual method.
+
+This slice does not claim interface/`dyn` dispatch, devirtualisation reporting,
+static access elision, generic classes, or Phase 3 completion. The current
+phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate. No adopted specification, ADR, owner
+decision, or version changed.

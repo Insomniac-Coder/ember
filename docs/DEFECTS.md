@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — virtual methods were always lowered as direct calls
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-153 | **The compiler accepted `virtual`/`override` declarations but did not carry their dispatch contract into calls.** Method lookup selected a source definition and MIR always emitted a direct symbol call; generated class type-info also left `vtable` null. A base-typed handle therefore invoked the base implementation even when its object was a derived instance. | `[DSP-1]`, `[DSP-2]`, `[CLS-4]` | **fixed** | Type checking assigns deterministic base-first slots and records class-method ownership in HIR/MIR. MIR now lowers calls to virtual methods through a distinct virtual-call reference. The C backend emits inherited-prefix vtable layouts, override adapters for the nominal receiver type, and type-info vtable pointers. `tests/run-pass/class_virtual_dispatch.em` proves a `Base`-typed handle invokes `Child`'s override in debug, release, and shipping; the existing `class_virtual_override.em` and `class_override_nonvirtual.em` retain declaration validation coverage. This is a compiler-only correction to the existing specification; no adopted specification, ADR, owner decision, or version changed. Indexed class-object access, interface/dyn dispatch, static access elision, generic classes, and the complete Phase 3 matrix remain open. |
+
 ## 2026-09-15 — class-handle identity was parsed but not lowered
 
 | # | Defect | Rule | Status | Fixed in |
