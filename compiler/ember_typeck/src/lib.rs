@@ -7712,10 +7712,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::Condition::Pattern { value, .. } => self.check_class_init_whole_self_use(value),
         }
         let cond = self.check_condition(&if_stmt.cond);
+        // `[RNG-4]` — a comparison in an `if` contributes a fact to the
+        // corresponding arm.  Keep the two branch maps separate: allowing a
+        // fact learned in the then arm to leak into the else arm would make a
+        // range construction depend on an impossible path.  The join below
+        // keeps only facts present on both paths and widens them to the union
+        // of the two intervals.
+        let incoming_ranges = self.local_ranges.clone();
         let incoming_class_init = self.class_init.clone();
+        self.refine_ranges_from_condition(&cond, true);
         let then_block = self.check_block(&if_stmt.then_block);
         let then_class_init = self.class_init.clone();
+        let then_ranges = self.local_ranges.clone();
+        self.local_ranges = incoming_ranges.clone();
         self.class_init = incoming_class_init.clone();
+        self.refine_ranges_from_condition(&cond, false);
         let else_block = match if_stmt.else_block.as_deref() {
             Some(ast::ElseBranch::Block(b)) => Some(self.check_block(b)),
             Some(ast::ElseBranch::If(nested)) => {
@@ -7725,8 +7736,139 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             None => None,
         };
         let else_class_init = self.class_init.clone();
+        let else_ranges = self.local_ranges.clone();
+        self.local_ranges = Self::merge_local_ranges(then_ranges, else_ranges);
         self.class_init = Self::merge_class_init_paths(then_class_init, else_class_init);
         Stmt::If { cond, then_block, else_block }
+    }
+
+    /// Refine the range facts visible in one `if` arm.  The v1 surface keeps
+    /// this deliberately small and explicit: scalar comparisons against a
+    /// constant, plus conjunctions in the true arm.  A disjunction and the
+    /// false arm of a conjunction are left unchanged because their precise
+    /// facts require a disjunctive lattice rather than the interval lattice
+    /// used by `[RNG-4]`.
+    fn refine_ranges_from_condition(&mut self, condition: &Expr, truth: bool) {
+        let ExprKind::Binary { op, lhs, rhs } = &condition.kind else { return };
+        if *op == BinOp::And {
+            if truth {
+                self.refine_ranges_from_condition(lhs, true);
+                self.refine_ranges_from_condition(rhs, true);
+            }
+            return;
+        }
+        if *op == BinOp::Or {
+            return;
+        }
+        let Some((local, bound, op)) = self.range_comparison_operands(lhs, rhs, *op) else {
+            return;
+        };
+        let (mut lo, mut hi) = if let Some(fact) = self.local_ranges.get(&local).copied() {
+            fact
+        } else {
+            let Some(local_ty) = self.locals.get(local.0 as usize).map(|decl| decl.ty) else {
+                return;
+            };
+            let Some(fact) = self.full_integral_range(local_ty) else { return };
+            fact
+        };
+        let Bound::Int(bound) = bound else {
+            // Strict float inequalities do not have a representable
+            // predecessor/successor in this fact lattice.  Leaving the fact
+            // unchanged is conservative and still permits closed comparisons
+            // to be used for diagnostics in future work.
+            return;
+        };
+        let Some((new_lo, new_hi)) = (match (op, truth) {
+            (BinOp::Eq, true) => Some((Bound::Int(bound), Bound::Int(bound))),
+            (BinOp::Le, true) => Some((lo, Bound::Int(bound))),
+            (BinOp::Lt, true) if bound > i128::MIN => {
+                Some((lo, Bound::Int(bound - 1)))
+            }
+            (BinOp::Ge, true) => Some((Bound::Int(bound), hi)),
+            (BinOp::Gt, true) if bound < i128::MAX => {
+                Some((Bound::Int(bound + 1), hi))
+            }
+            (BinOp::Le, false) if bound < i128::MAX => {
+                Some((Bound::Int(bound + 1), hi))
+            }
+            (BinOp::Lt, false) => Some((Bound::Int(bound), hi)),
+            (BinOp::Ge, false) if bound > i128::MIN => {
+                Some((lo, Bound::Int(bound - 1)))
+            }
+            (BinOp::Gt, false) => Some((lo, Bound::Int(bound))),
+            (BinOp::Ne, false) => Some((Bound::Int(bound), Bound::Int(bound))),
+            _ => None,
+        }) else {
+            return;
+        };
+        lo = if lo.le(new_lo) { new_lo } else { lo };
+        hi = if new_hi.le(hi) { new_hi } else { hi };
+        if lo.le(hi) {
+            self.local_ranges.insert(local, (lo, hi));
+        }
+    }
+
+    /// The initial interval for an integral local with no narrower fact yet.
+    /// This is what lets a parameter be refined by its first comparison; a
+    /// missing entry does not mean that the local is non-numeric.
+    fn full_integral_range(&self, ty: Ty) -> Option<(Bound, Bound)> {
+        let max = int_max(self.types, ty)?;
+        let max = i128::try_from(max).ok()?;
+        if matches!(self.types.kind(ty), TyKind::Int(_)) {
+            Some((Bound::Int(-max - 1), Bound::Int(max)))
+        } else {
+            Some((Bound::Int(0), Bound::Int(max)))
+        }
+    }
+
+    /// Normalize `constant < local` into `local > constant`, so the
+    /// refinement table above has one direction for each comparison.
+    fn range_comparison_operands(
+        &self,
+        lhs: &Expr,
+        rhs: &Expr,
+        op: BinOp,
+    ) -> Option<(LocalId, Bound, BinOp)> {
+        if let ExprKind::Local(local) = lhs.kind {
+            if let Some(bound) = self.constant_bound_of(rhs)
+                && matches!(self.types.kind(lhs.ty), TyKind::Int(_) | TyKind::Uint(_))
+            {
+                return Some((local, bound, op));
+            }
+        }
+        if let ExprKind::Local(local) = rhs.kind {
+            if let Some(bound) = self.constant_bound_of(lhs)
+                && matches!(self.types.kind(rhs.ty), TyKind::Int(_) | TyKind::Uint(_))
+            {
+                let reversed = match op {
+                    BinOp::Lt => BinOp::Gt,
+                    BinOp::Le => BinOp::Ge,
+                    BinOp::Gt => BinOp::Lt,
+                    BinOp::Ge => BinOp::Le,
+                    other => other,
+                };
+                return Some((local, bound, reversed));
+            }
+        }
+        None
+    }
+
+    /// Join interval facts at an `if` merge.  The union of two intervals is
+    /// represented by their hull; a fact absent on either path is discarded
+    /// because the value may have been overwritten there.
+    fn merge_local_ranges(
+        left: HashMap<LocalId, (Bound, Bound)>,
+        right: HashMap<LocalId, (Bound, Bound)>,
+    ) -> HashMap<LocalId, (Bound, Bound)> {
+        left.into_iter()
+            .filter_map(|(local, (left_lo, left_hi))| {
+                let (right_lo, right_hi) = right.get(&local).copied()?;
+                let lo = if left_lo.le(right_lo) { left_lo } else { right_lo };
+                let hi = if left_hi.le(right_hi) { right_hi } else { left_hi };
+                Some((local, (lo, hi)))
+            })
+            .collect()
     }
 
     /// `[CTL-0]` — the fix-it for a non-`bool` condition, chosen by type. The

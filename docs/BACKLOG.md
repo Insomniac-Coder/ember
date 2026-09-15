@@ -239,6 +239,15 @@ class-specific positive and negative fixtures above; virtual/interface
 dispatch, indexed access sharing, static access elision, generic classes, and
 the complete Phase 3 conformance matrix remain open.
 
+`RNG-4` continuation: comparison facts are now refined in `if` arms for the
+existing interval lattice. Integer comparisons against constants, including
+conjunctions in the true arm and safe negated bounds in the false arm, can now
+prove a range construction without a redundant check. Branch facts are
+isolated and joined conservatively; strict floating-point bounds and
+disjunctions remain unchanged until the lattice can represent them precisely.
+D-141 records the compiler defect and its two adversarial conformance cases.
+No specification or owner decision changed.
+
 ---
 
 ## Build order

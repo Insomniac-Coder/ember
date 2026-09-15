@@ -6253,3 +6253,28 @@ and shipping. No specification, ADR, or owner decision changed. Virtual or
 interface dispatch, static access elision, generic classes, and the complete
 Phase 3 conformance matrix remain open; phase accounting remains exactly **1 of
 9 complete**, with Phase 2 active and Phase 3 not yet passed.
+
+### 0.111 Range comparison refinement in conditional arms — 2026-09-15
+
+`[RNG-4]` already requires the compiler to track the arms of an `if` that
+compared a value, but the implementation previously tracked only literal,
+binding, and arithmetic intervals. That was D-141: a proven integer bound such
+as `value >= 0 and value <= 100` did not make `value` eligible for a `Percent`
+construction inside the true arm, and branch facts were not isolated before
+checking the else arm.
+
+The typechecker now refines the existing interval lattice for integer
+comparisons against constants, combines conjunctive predicates in the true
+arm, and applies representable negated bounds in the false arm. At the merge,
+facts absent from either path are discarded and facts present on both paths are
+joined by interval hull. Strict floating-point inequalities and disjunctions
+remain conservative because the current lattice cannot represent their exact
+open or disjunctive sets.
+
+`tests/conformance/RNG-4/accept_branch_refinement.em` proves construction from
+the refined value in debug, release, and shipping; the paired
+`reject_branch_fact_does_not_escape.em` proves that the fact is not usable
+after the conditional. This is a compiler-only correction to the existing
+specification; no adopted source, ADR, owner decision, or version changed.
+Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate.

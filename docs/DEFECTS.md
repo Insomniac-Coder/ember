@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — range facts were not refined in `if` arms
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-141 | **The range checker ignored comparison facts in conditional arms.** `[RNG-4]` explicitly includes the arms of an `if` that compared a value, but the compiler tracked only literals, bindings, and arithmetic. A proven `0 <= value <= 100` therefore still failed when constructing `Percent` from `value` inside the true arm; branch-local facts also were not isolated before the else arm. | `[RNG-4]`, `[RNG-4a]`, `[RNG-10]` | **fixed** | The typechecker now refines the existing interval lattice for integer comparisons, combines conjunctive conditions in the true arm, applies safe negated bounds in the false arm, and joins the two branch maps by interval hull while discarding facts absent from either path. It remains conservative for strict floating-point bounds and disjunctions. `tests/conformance/RNG-4/accept_branch_refinement.em` proves a branch-only construction in all profiles, while `reject_branch_fact_does_not_escape.em` proves the fact is not available after the `if`. No specification, ADR, or owner decision changed. |
+
+---
+
 ## 2026-09-15 — inherited class defaults were fail-closed
 
 | # | Defect | Rule | Status | Fixed in |
