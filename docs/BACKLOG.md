@@ -112,10 +112,13 @@ The class virtual-dispatch slice is now implemented under D-153. Type checking
 assigns deterministic base-first slots and carries the declaring class and slot
 through HIR/MIR. The C backend emits per-class vtable layouts, derived-prefix
 compatibility, override adapters for nominal receiver types, and type-info
-vtable pointers. A base-typed call therefore selects the derived override at
-runtime; the focused run-pass fixture covers all three profiles. This does not
-claim interface/dyn dispatch, devirtualisation reporting, static-access
-elision, generic classes, or Phase 3 completion.
+vtable pointers. Inherent `extend Class:` blocks now contribute virtual and
+override declarations in source/module order as well, with the same override
+diagnostic boundary. A base-typed call therefore selects the derived override
+at runtime; the focused run-pass fixtures cover class-body and extension
+declarations in all three profiles. This does not claim interface/dyn
+dispatch, devirtualisation reporting, static-access elision, generic classes,
+or Phase 3 completion.
 
 The earlier row's “defaulted derived fields” wording is superseded by the
 2026-09-15 D-140 continuation: supported explicit derived constructors now

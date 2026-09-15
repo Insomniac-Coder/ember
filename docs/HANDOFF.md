@@ -6569,3 +6569,32 @@ static access elision, generic classes, or Phase 3 completion. The current
 phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
 and Phase 3 has not passed its exit gate. No adopted specification, ADR, owner
 decision, or version changed.
+
+### 0.124 Class virtual dispatch through inherent extensions — 2026-09-15
+
+The first D-153 implementation recorded virtual declarations only when they
+appeared in a class body. That left a compiler-only hole in the existing
+`[IFC-1]` inherent-extension path: a valid `extend Child:` could add a
+`virtual` method or replace an inherited virtual method with `override`, but
+the vtable layout did not include the declaration. An extension override of a
+non-virtual method also did not receive the class-body `E2110` diagnostic.
+
+D-154 closes that gap without changing the adopted language contract. The
+typechecker appends virtual declarations from inherent class extensions in
+source/module order, preserves base-first slot numbering, and reuses the
+inherited slot for an extension `override`. Interface extensions remain
+outside the class vtable path. The same inherited-virtual validation now runs
+for inherent extensions, so an invalid extension override is rejected rather
+than silently lowered as a static method.
+
+`tests/run-pass/class_virtual_dispatch_extend.em` proves a base-typed call
+reaches an override declared in an inherent extension in debug, release, and
+shipping. `tests/compile-fail/class_extend_override_nonvirtual.em` proves the
+negative boundary and expected `E2110`. The formatter now also preserves
+`virtual`/`override` markers, so the new source round-trips through the
+`[FMT-1]` parse-preservation gate. The focused compile-fail and run-pass
+suites pass. This is a compiler-only correction; no adopted specification,
+ADR, owner decision, or version changed. The phase ledger remains exactly
+**1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed its
+exit gate. Interface/`dyn` dispatch, static access elision, generic classes,
+and the complete Phase 3 conformance matrix remain open.

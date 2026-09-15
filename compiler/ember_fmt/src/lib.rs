@@ -363,9 +363,14 @@ impl Printer<'_> {
             .map(|t| format!(" -> {}", self.type_expr(t)))
             .unwrap_or_default();
         let unsafe_ = if decl.is_unsafe { "unsafe " } else { "" };
+        let dispatch = match decl.dispatch {
+            ast::Dispatch::Static => "",
+            ast::Dispatch::Virtual => "virtual ",
+            ast::Dispatch::Override => "override ",
+        };
         let generics = self.generics(&decl.generics);
         let header = format!(
-            "{vis}{unsafe_}fn {}{generics}({}){ret}:",
+            "{vis}{unsafe_}{dispatch}fn {}{generics}({}){ret}:",
             decl.name.name,
             params.join(", ")
         );
@@ -375,7 +380,10 @@ impl Printer<'_> {
                 // `[FMT-1]`'s width applies to the header; a long parameter
                 // list breaks one per line with a trailing comma.
                 if header.len() + self.depth * INDENT.len() > LINE_WIDTH && !params.is_empty() {
-                    self.line(&format!("{vis}{unsafe_}fn {}{generics}(", decl.name.name));
+                    self.line(&format!(
+                        "{vis}{unsafe_}{dispatch}fn {}{generics}(",
+                        decl.name.name
+                    ));
                     self.depth += 1;
                     for param in &params {
                         self.line(&format!("{param},"));

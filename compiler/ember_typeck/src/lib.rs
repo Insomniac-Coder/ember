@@ -1864,6 +1864,38 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // Inherent `extend Class:` blocks may also replace inherited virtual
+        // methods.  Validate that boundary using the same rule as methods
+        // written in the class body; interface extensions are a separate
+        // implementation path and do not contribute to a class vtable.
+        let saved_module = self.current_module;
+        for (module, loaded) in modules.iter().enumerate() {
+            self.current_module = module;
+            for item in &loaded.module.items {
+                let ast::ItemKind::Extend(decl) = &item.kind else { continue };
+                if !decl.implements.is_empty() {
+                    continue;
+                }
+                let ty = self.resolve_type(&decl.target);
+                let TyKind::Class(id) = *self.types.kind(ty) else { continue };
+                for member in &decl.members {
+                    let ast::MemberKind::Fn(method) = &member.kind else { continue };
+                    if method.dispatch != ast::Dispatch::Override {
+                        continue;
+                    }
+                    if self.inherited_class_method_dispatch(modules, id, method.name.name)
+                        != Some(ast::Dispatch::Virtual)
+                    {
+                        self.error(
+                            codes::E2110,
+                            method.name.span,
+                            "override of a method that is not virtual",
+                        );
+                    }
+                }
+            }
+        }
+        self.current_module = saved_module;
     }
 
     /// Preserve class-method declaration order for `[DSP-2]`.  The ordinary
@@ -1883,7 +1915,7 @@ impl<'a> Checker<'a> {
                 methods.push((decl.name.name, entry.def, decl.dispatch));
             }
         }
-        self.class_declared_methods.insert(id, methods);
+        self.class_declared_methods.entry(id).or_default().extend(methods);
     }
 
     /// Assign stable class-vtable slots after the whole-program method
@@ -2527,6 +2559,13 @@ impl<'a> Checker<'a> {
                         item.span,
                         item_index,
                     );
+                    // Inherent `extend` blocks can add class virtual methods
+                    // after the class header.  Keep them in source/module
+                    // order for `[DSP-2]`; interface extensions are excluded
+                    // by `from_interface` in `record_class_virtual_methods`.
+                    if interface.is_none() {
+                        self.record_class_virtual_methods(ty, &decl.members);
+                    }
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 _ => {}

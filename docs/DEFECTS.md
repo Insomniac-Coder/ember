@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — class virtual dispatch ignored inherent extensions
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-154 | **The virtual-dispatch metadata pass considered only methods written in the class body.** An inherent `extend Child:` block could declare a valid `override` or new `virtual` method, but the class vtable layout did not see it, so base-typed calls could select the wrong slot or bypass dynamic dispatch. The extension path also lacked the same non-virtual-override diagnostic as a class body, and the formatter dropped dispatch markers from member headers. | `[DSP-1]`, `[DSP-2]`, `[CLS-4]`, `[IFC-1]`, `[FMT-1]` | **fixed** | Virtual declarations from inherent class extensions now append in source/module order to the class layout; inherited slots are reused for extension overrides, invalid extension overrides receive `E2110`, and `ember fmt` preserves `virtual`/`override`. `tests/run-pass/class_virtual_dispatch_extend.em` and `tests/compile-fail/class_extend_override_nonvirtual.em` cover the positive, negative, and formatting boundaries. This is a compiler-only correction to the existing specification; no adopted specification, ADR, owner decision, or version changed. Interface extensions remain separate from class-vtable declarations. |
+
 ## 2026-09-15 — virtual methods were always lowered as direct calls
 
 | # | Defect | Rule | Status | Fixed in |
