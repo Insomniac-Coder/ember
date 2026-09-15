@@ -298,6 +298,12 @@ values and general OR/XOR remain conservative. D-148 records the compiler
 defect; the pairwise case is covered by `accept_bitwise_range_refinement.em`.
 No specification or owner decision changed.
 
+`RNG-4` continuation: non-negative interval `|` and `^` operands now transfer
+an all-bits upper mask derived from the larger operand upper bound. Negative-
+capable intervals remain conservative. D-149 records the compiler defect; the
+pairwise OR/XOR cases are covered by `accept_bitwise_range_refinement.em`. No
+specification or owner decision changed.
+
 ---
 
 ## Build order

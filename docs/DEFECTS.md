@@ -70,6 +70,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 |---|---|---|---|---|
 | D-148 | **The range checker discarded a sound interval bound for bitwise AND.** Exact masks were handled by D-146, but `a & b` remained unknown even when both operands were known non-negative intervals, although the result is necessarily non-negative and no greater than either operand's upper bound. | `[RNG-4]`, `[RNG-4a]`, `[RNG-10]` | **fixed** | `bitwise_interval` now transfers two non-negative operand intervals as `0 ..= min(a.hi, b.hi)`. Signed intervals that may include negative values and general OR/XOR remain fail-closed. `accept_bitwise_range_refinement.em` covers the two-interval case in all profiles. No specification, ADR, owner decision, or version changed. |
 
+## 2026-09-15 — non-negative interval OR/XOR facts were missing
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-149 | **The range checker discarded safe non-negative interval bounds for OR and XOR.** Exact constants were handled by D-146, but two known non-negative operands still could not construct a target range even though their result fits within the all-bits mask for the largest operand upper bound. | `[RNG-4]`, `[RNG-4a]`, `[RNG-10]` | **fixed** | `bitwise_interval` now derives `0 ..= (2^k - 1)` for non-negative `|`/`^` operands, where `k` is the bit width needed for the larger upper bound. Negative-capable intervals remain fail-closed. `accept_bitwise_range_refinement.em` covers both operators in all profiles. No specification, ADR, owner decision, or version changed. |
+
 ## 2026-09-15 — range facts were not refined in `if` arms
 
 | # | Defect | Rule | Status | Fixed in |

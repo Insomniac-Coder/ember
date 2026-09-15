@@ -16724,7 +16724,20 @@ fn bitwise_interval(
             return Some((Bound::Int(0), Bound::Int(upper)));
         }
     }
+    if matches!(op, BinOp::BitOr | BinOp::BitXor) && a0 >= 0 && b0 >= 0 {
+        let upper = if a1 >= b1 { a1 } else { b1 };
+        let mask = nonnegative_bit_mask(upper)?;
+        return Some((Bound::Int(0), Bound::Int(mask)));
+    }
     None
+}
+
+fn nonnegative_bit_mask(upper: i128) -> Option<i128> {
+    if upper < 0 {
+        return None;
+    }
+    let width = if upper == 0 { 0 } else { 128 - upper.leading_zeros() };
+    Some(1i128.checked_shl(width)?.checked_sub(1)?)
 }
 
 /// Shift ranges are profile-independent only when the amount is known to be a

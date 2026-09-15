@@ -6439,3 +6439,18 @@ two-interval cases in debug, release, and shipping. This is a compiler-only
 correction to the existing specification; no adopted source, ADR, owner
 decision, or version changed. Phase accounting remains exactly **1 of 9
 complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.119 Non-negative interval OR/XOR transfer — 2026-09-15
+
+D-149 extends the conservative bitwise range slice to non-negative interval
+operands of `|` and `^`. The compiler derives an all-bits upper mask from the
+larger operand upper bound: if that bound needs `k` bits, the result is in
+`0 ..= 2^k - 1`. This is deliberately broader than endpoint evaluation but
+remains sound for non-negative bit patterns. Intervals that may contain negative
+values remain unknown.
+
+`accept_bitwise_range_refinement.em` covers pairwise OR and XOR in debug,
+release, and shipping. This is a compiler-only correction to the existing
+specification; no adopted source, ADR, owner decision, or version changed.
+Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate.
