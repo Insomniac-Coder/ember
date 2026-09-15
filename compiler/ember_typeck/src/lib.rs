@@ -5598,7 +5598,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let supports_state = {
                     let mut current = Some(*id);
                     let mut supported = true;
-                    let has_base = self.types.class_def(*id).base.is_some();
                     while let Some(class_id) = current {
                         let def = self.types.class_def(class_id);
                         let default_exprs = self.class_default_exprs.get(&class_id);
@@ -5609,13 +5608,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     .and_then(Option::as_ref)
                                     .is_none()
                         });
-                        // Defaults are materialized by the construction call
-                        // in this phase. A `super.init` call invokes the base
-                        // body directly, so an inherited default cannot yet
-                        // be materialized at the correct object-layout offset.
-                        // Keep the inherited-default case fail-closed until
-                        // that constructor path carries the same metadata.
-                        if has_unsupported_default || (has_base && def.fields.iter().any(|field| field.has_default)) {
+                        // Defaults are materialized by the outer construction
+                        // call in physical base-first layout order. The base
+                        // constructor body is then invoked on the same object,
+                        // so inherited defaults are already live when
+                        // `super.init` marks the base portion initialized.
+                        if has_unsupported_default {
                             supported = false;
                             break;
                         }
@@ -15642,28 +15640,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
-            let inherited_default = if has_base {
-                let mut current = Some(id);
-                let mut found = false;
-                while let Some(class_id) = current {
-                    let class_def = self.types.class_def(class_id);
-                    found |= class_def.fields.iter().any(|field| field.has_default);
-                    current = class_def.base;
-                }
-                found
-            } else {
-                false
-            };
-            if inherited_default {
-                self.error(
-                    codes::E1010,
-                    span,
-                    format!(
-                        "class construction with inherited defaulted fields is not implemented yet in this phase"
-                    ),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
             let init = self
                 .methods
                 .get(&(ty, Symbol::intern("init")))
@@ -15693,28 +15669,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             let slots = self.call_argument_slots(name, args, params);
             let values = self.check_bound_call_arguments(args, params, &slots);
-            let defaults = self.class_default_exprs.get(&id).cloned();
-            let mut default_fields = Vec::with_capacity(fields.len());
+            let defaults = self.class_default_exprs_for_layout(id);
+            let field_count = self.types.class_field_count(id);
+            let layout_fields: Vec<(Ty, Span, Symbol, bool)> = (0..field_count)
+                .filter_map(|index| {
+                    self.types.class_field_at(id, index).map(|field| {
+                        (field.ty, field.span, field.name, field.has_default)
+                    })
+                })
+                .collect();
+            let mut default_fields = Vec::with_capacity(field_count);
             let mut invalid_default = false;
-            for (index, field) in fields.iter().enumerate() {
-                if !field.has_default {
+            for (index, (field_ty, field_span, field_name, has_default)) in layout_fields.iter().copied().enumerate() {
+                if !has_default {
                     default_fields.push(None);
                     continue;
                 }
-                let Some(Some(default_expr)) = defaults.as_ref().and_then(|items| items.get(index)) else {
+                let Some(Some(default_expr)) = defaults.get(index) else {
                     self.error(
                         codes::E1010,
-                        field.span,
+                        field_span,
                         format!(
                             "default expression for class field `{}` is not available in this phase",
-                            field.name
+                            field_name
                         ),
                     );
                     invalid_default = true;
                     default_fields.push(None);
                     continue;
                 };
-                default_fields.push(Some(self.check_expr(default_expr, field.ty)));
+                default_fields.push(Some(self.check_expr(default_expr, field_ty)));
             }
             if invalid_default {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -15826,6 +15810,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: None }, args: values },
             span,
         }
+    }
+
+    /// Return source defaults in the physical object-layout order used by
+    /// `ClassNew`: inherited fields first, then fields declared by `id`.
+    /// Keeping this flattening here makes the constructor boundary explicit;
+    /// MIR can then materialize every default with an ordinary field place.
+    fn class_default_exprs_for_layout(&self, id: ClassId) -> Vec<Option<ast::Expr>> {
+        let def = self.types.class_def(id);
+        let mut defaults = def
+            .base
+            .map(|base| self.class_default_exprs_for_layout(base))
+            .unwrap_or_default();
+        if let Some(own) = self.class_default_exprs.get(&id) {
+            defaults.extend(own.iter().cloned());
+        } else {
+            defaults.extend((0..def.fields.len()).map(|_| None));
+        }
+        defaults
     }
 
     fn zero_of(&mut self, ty: Ty, span: Span) -> Expr {

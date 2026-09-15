@@ -88,6 +88,12 @@ side-effecting-index regression is recorded as D-136. Virtual/override
 dispatch, static access elision, generic classes, and the complete Phase 3
 conformance matrix remain open.
 
+The earlier row's “defaulted derived fields” wording is superseded by the
+2026-09-15 D-140 continuation: supported explicit derived constructors now
+materialize inherited and declared defaults in physical base-first order.
+Inherited drop chaining remains implemented; dynamic exclusivity, dispatch,
+generic classes, and the complete Phase 3 conformance matrix remain open.
+
 | ~~**LT-REG-1**~~ | ~~Real region variables with a constraint graph~~ | — | **done 2026-09-09.** `compiler/ember_analysis/src/regions.rs`; `[LT-1]`'s elision is in at the call site and in the body (`E3062`). `[LT-2]`'s view structs and `[LT-7]`'s callback regions build on it |
 | **LNT-CFG-1** | `[MAN-3]`'s `[lints]` configuration | 2 | `[LT-1b]`'s `L3014` is an opt-in lint and there is nowhere to opt in |
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |
@@ -109,18 +115,23 @@ conformance matrix remain open.
 `OBJ-RT-1` current checkpoint also includes defaulted memberwise construction
 for non-inheriting classes: omitted fields are materialized from the source
 default expression and checked at the construction site using ordinary
-expression typing and coercion. Defaulted derived construction remains
-outstanding and intentionally fail-closed. Explicit derived constructors now
-preserve inherited initialization through the direct-base `super.init(...)`
-slice described above.
+expression typing and coercion. Explicit derived constructors now flatten and
+materialize inherited and declared defaults in physical base-first order before
+the constructor body; `super.init(...)` then preserves the existing inherited
+initialization boundary. The regression
+`tests/run-pass/class_inherited_defaults.em` covers a base default read inside
+the base constructor and a derived default read after `super.init(...)` in all
+profiles. Defaulted derived construction is no longer fail-closed; virtual or
+interface dispatch, indexed access sharing, static elision, generic classes,
+and the complete Phase 3 conformance matrix remain open.
 
 `OBJ-RT-1` continuation: custom `init` now accepts default expressions on a
 non-inheriting class. HIR carries the checked defaults, MIR materializes them
 after allocation and before the constructor body, and definite-initialization
 checking treats them as already live. An explicit assignment to such a field
 uses ordinary overwrite lowering, preserving `[OWN-5]` drop-before-store
-ordering. Inherited/defaulted derived construction remains fail-closed until
-the base-constructor materialization path can carry the same facts safely.
+ordering. The later inherited-default continuation extends the same metadata
+through the base-first object layout.
 
 `OBJ-RT-1` continuation: inherited source-destructor chaining is now emitted
 for concrete single-inheritance classes. Release invokes the most-derived

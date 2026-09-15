@@ -4669,9 +4669,11 @@ impl<'a> Builder<'a> {
     /// The memberwise path is still limited to a non-inheriting class without
     /// custom `init` and supports defaults that type checking has already
     /// materialized at the call site. The supported custom-init path also
-    /// requires a no-default inheritance chain; derived constructors invoke
-    /// their direct base through the dedicated `super.init` lowering. Type
-    /// checking admits direct field assignment, `pass`, and branch/loop paths.
+    /// materializes inherited and declared defaults in physical base-first
+    /// order before invoking the constructor body; derived constructors then
+    /// invoke their direct base through the dedicated `super.init` lowering.
+    /// Type checking admits direct field assignment, `pass`, and branch/loop
+    /// paths.
     /// The first write to each field is initialization, not an `[OWN-5]`
     /// overwrite, so lowering must not drop the uninitialized storage returned
     /// by the allocator.

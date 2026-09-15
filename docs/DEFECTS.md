@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — inherited class defaults were fail-closed
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-140 | **A derived class constructor was rejected whenever its base or derived fields had defaults, even though `[CLS-2]` and `[CLS-4]` permit those defaults to be established before the corresponding constructor body runs.** The compiler could materialize defaults for non-inheriting classes, but `super.init(...)` had no flattened default metadata and the constructor gate rejected the whole inheritance chain. | `[CLS-1]`, `[CLS-2]`, `[CLS-4]`, `[OWN-5]` | **fixed** | The type checker now flattens source defaults in physical base-first field order, checks each expression against its declared type, and marks the derived constructor's own defaults live while `super.init(...)` marks the base portion initialized. MIR materializes the complete default vector immediately after allocation, before the derived body, and preserves ordinary overwrite/drop ordering for explicit assignments. `tests/run-pass/class_inherited_defaults.em` proves an inherited default is readable in `Base.init` and a derived default is readable after `super.init`, in debug, release, and shipping. No specification, ADR, or owner decision changed. |
+
 ## 2026-09-15 — class default expressions were limited to literals
 
 | # | Defect | Rule | Status | Fixed in |

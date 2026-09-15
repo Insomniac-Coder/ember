@@ -289,8 +289,8 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_1**, with 0.9.6_Hardened_6 as its immutable immediate predecessor; no 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | Current worktree contains the D-117 through D-139 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, fail-closed EMIF cache-key validation, rejection of empty or malformed explicit `@borrows` arguments, the completed RT-GEN-1 runtime-output generator, reachable O5 `CallableOnce` ownership UI snapshot with a compiling repair, and non-inheriting class default-expression materialization for memberwise and custom-`init` construction. H1 remains a frozen development target, not the adopted repository-normative source |
-| Latest continuation checkpoint | `ec1c324` implements non-literal class field defaults for non-inheriting memberwise and custom-`init` construction; the final workspace regression and repository gates pass |
+| Current implementation checkpoint | Current worktree contains the D-117 through D-140 closure, the H6-target callable-mode slice, the owner-approved 0.9.7 H1 `@latebound` callable-boundary implementation, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, positive static-view provenance coverage, fail-closed EMIF cache-key validation, rejection of empty or malformed explicit `@borrows` arguments, the completed RT-GEN-1 runtime-output generator, reachable O5 `CallableOnce` ownership UI snapshot with a compiling repair, non-inheriting class default-expression materialization, and inherited/declared default materialization for supported derived constructors. H1 remains a frozen development target, not the adopted repository-normative source |
+| Latest continuation checkpoint | Pending commit: inherited and declared class defaults are flattened in physical base-first order for supported derived constructors; the focused profile matrix passes |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
 | Recent commits | `812b9eb` corrects the closed-deviation ledger wording · `ba91755` records the runtime-generation checkpoint · `d941511` generates runtime C outputs from the canonical branding source · `d55f580` records malformed `@borrows` source hardening · `523c030` rejects malformed source `@borrows` arguments · `c4fccdc` rejects empty explicit EMIF borrow contracts · `acd7d86` refreshed the defect count and current handoff ledgers · `451a4d4` recorded the D-126 EMIF cache-key integrity fix and synchronized the cold-start/handoff ledgers · `5332572` rejects self-inconsistent EMIF cache keys at the decode boundary · `41d65ed` added static-view provenance coverage through a latebound callback · `e762b8c` refreshed the cold-start checkpoint · `9db27e3` recorded the imported latebound consumer · `5aa804d` added the imported latebound callable consumer and its LT-40 conformance case · `27cfb81` recorded the complete latebound arity matrix · `1c6b285` added all-mutable three- and four-view late-bound coverage · `b25e317` added all-shared three- and four-view late-bound coverage and generated-C erasure evidence · `2d4bb17` recorded the late-bound freshness checkpoint · `24ae0af` added sequential-invocation freshness coverage and a local callback-value escape regression · `72d1ffd` recorded statically independent callback results through a specialized reusable `@latebound` callable instance and added LT-10 conformance evidence · `2087600` committed latebound callable boundaries and conformance/documentation evidence · `8433479` H6 callable modes and 0.9.7 H1 target cut · `30a05d1` schema-5 EMIF member declaration boundary · `6e37063` visible member declaration cache · `6ad9834` schema-4 resolved top-level callable declarations/generic bounds · `7bcca7f` import-visible callable cache/schema v2 · `9ade1d0` validated EMIF callable cache/LT-40 identity invalidation · `af7c525` verified MIR callable metadata/LT-21/D-116 · `90059c8` direct callable summaries/E3065/B14 · `c913fbd` field-sensitive multi-region core · `e0ba765` canonical Array-loop borrowing/E3020/B2 · `d077563` complete Span API · `a02c0a5` UnsafeCell · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
 | Working tree | Expected clean after the current verified implementation and synchronized documentation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
@@ -298,7 +298,7 @@ work.
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 133 top-level rule directories, 479 `.em` files including support modules; the focused and full conformance runner is green after source `@borrows` contract-shape coverage was added (2026-09-14) |
-| Ledgers | 99 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
+| Ledgers | 100 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H1 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
 The latest architecture continuation is `30836ee`, building on `d35e94f`. The
@@ -6223,9 +6223,33 @@ overwrite, so `[OWN-5]` drop-old-before-store-new ordering stays intact.
 default read inside `init`, an overwrite after that read, and an omitted
 memberwise field with the same non-literal default in debug, release, and
 shipping. The old compile-fail fixture for non-literal class defaults was
-removed because that program is now accepted. Inherited/defaulted derived
-construction remains fail-closed: the base `super.init` path still invokes
-the base body directly and does not yet materialize base defaults at the
-correct object-layout offset. No specification, ADR, or owner decision changed.
-Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
-and Phase 3 has not passed its exit gate.
+removed because that program is now accepted. The inherited-default boundary
+was later closed by §0.110 using the same checked-expression path and
+base-first physical layout metadata. No specification, ADR, or owner decision
+changed. Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains
+active and Phase 3 has not passed its exit gate.
+
+### 0.110 Phase 3 inherited class default expressions — 2026-09-15
+
+The earlier derived-constructor path rejected any inheritance chain containing
+a defaulted field because `super.init(...)` invoked the base body directly and
+the call carried no metadata for defaults in inherited object-layout slots.
+That was an implementation limitation, not a specification ambiguity: `[CLS-2]`
+and `[CLS-4]` already require defaults and direct-base initialization to compose.
+The limitation is recorded as D-140.
+
+The type checker now flattens defaults recursively in physical base-first order,
+checks every source expression against its declared field type, and emits the
+complete vector in `ClassNew`. MIR materializes those defaults immediately after
+object allocation and before the derived constructor body. Existing
+`super.init(...)` lowering then invokes the base body on the same object and
+marks the base field prefix initialized; explicit assignments remain ordinary
+overwrites and preserve `[OWN-5]` drop-before-store ordering.
+
+`tests/run-pass/class_inherited_defaults.em` proves both sides of the boundary:
+the base constructor reads its inherited default, and the derived constructor
+reads its own default after `super.init(...)`. The case passes in debug, release,
+and shipping. No specification, ADR, or owner decision changed. Virtual or
+interface dispatch, static access elision, generic classes, and the complete
+Phase 3 conformance matrix remain open; phase accounting remains exactly **1 of
+9 complete**, with Phase 2 active and Phase 3 not yet passed.
