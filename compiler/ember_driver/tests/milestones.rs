@@ -313,6 +313,35 @@ fn dynamic_access_safety_side_table_is_written() {
         json.contains("\"status\":\"emitted\""),
         "missing emitted status: {json}"
     );
+
+    let side_table_arg = side_table.to_string_lossy().into_owned();
+    let report = ember(&["inspect", "--safety", &side_table_arg], &root);
+    assert_eq!(report.exit, 0, "inspect failed:\n{}", report.stderr);
+    assert!(
+        report.stdout.contains("Aliasing 1"),
+        "inspect did not report the emitted check:\n{}",
+        report.stdout
+    );
+    let json_report = ember(
+        &["inspect", "--safety", "--json", &side_table_arg],
+        &root,
+    );
+    assert_eq!(json_report.exit, 0, "JSON inspect failed:\n{}", json_report.stderr);
+    assert!(
+        json_report.stdout.contains("\"status\":\"emitted\""),
+        "JSON inspect omitted the emitted record:\n{}",
+        json_report.stdout
+    );
+    let filtered = ember(
+        &["inspect", "--safety", "--elided-only", &side_table_arg],
+        &root,
+    );
+    assert_eq!(filtered.exit, 0, "elided-only inspect failed:\n{}", filtered.stderr);
+    assert!(
+        filtered.stdout.contains("none"),
+        "elided-only inspect should be empty until elision exists:\n{}",
+        filtered.stdout
+    );
 }
 
 fn profiles(expectations: &Expectations) -> Vec<&str> {

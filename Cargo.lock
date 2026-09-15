@@ -121,6 +121,7 @@ dependencies = [
  "ember_span",
  "ember_typeck",
  "ember_types",
+ "serde_json",
 ]
 
 [[package]]

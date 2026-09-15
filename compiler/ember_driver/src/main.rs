@@ -27,6 +27,7 @@ usage:
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
     ember explain <CODE>              describe a diagnostic code
+    ember inspect --safety <path>     report emitted/elided safety checks
 
 options:
     --profile debug|release|shipping   default: debug
@@ -243,6 +244,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 .ok_or("`ember explain` needs a code, e.g. E3040")?;
             explain(code)
         }
+        "inspect" => inspect(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
             // first made `ember check --syntax-only f.em` fail with "needs a
@@ -281,6 +283,162 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             format_file(Path::new(input), check_only, write)
         }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
+    }
+}
+
+fn inspect(args: &[String]) -> Result<ExitCode, String> {
+    let mut safety = false;
+    let mut elided_only = false;
+    let mut json = false;
+    let mut path = None;
+
+    for arg in args {
+        match arg.as_str() {
+            "--safety" => safety = true,
+            "--elided-only" => elided_only = true,
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(format!("unknown inspect option `{value}`"));
+            }
+            value if path.is_none() => path = Some(PathBuf::from(value)),
+            value => return Err(format!("unexpected inspect argument `{value}`")),
+        }
+    }
+
+    if !safety {
+        return Err("`ember inspect` currently requires `--safety`".to_string());
+    }
+    let path = path.ok_or("`ember inspect --safety` needs a side-table path")?;
+    inspect_safety(&path, elided_only, json)
+}
+
+fn inspect_safety(path: &Path, elided_only: bool, json: bool) -> Result<ExitCode, String> {
+    let resolved = resolve_safety_path(path);
+    let text = std::fs::read_to_string(&resolved).map_err(|error| {
+        format!(
+            "could not read safety side table `{}`: {error}",
+            resolved.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "invalid safety side table `{}`: {error}",
+            resolved.display()
+        )
+    })?;
+    let schema = value
+        .get("schema")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("safety side table is missing numeric schema")?;
+    if schema != 1 {
+        return Err(format!("unsupported safety side-table schema {schema}"));
+    }
+    let checks = value
+        .get("checks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("safety side table is missing its checks array")?;
+    for check in checks {
+        validate_safety_check(check)?;
+    }
+    let selected: Vec<serde_json::Value> = checks
+        .iter()
+        .filter(|check| {
+            !elided_only
+                || check.get("status").and_then(serde_json::Value::as_str) == Some("elided")
+        })
+        .cloned()
+        .collect();
+
+    if json {
+        let report = serde_json::json!({ "schema": schema, "checks": selected });
+        println!(
+            "{}",
+            serde_json::to_string(&report).map_err(|error| error.to_string())?
+        );
+    } else {
+        print_safety_report(&resolved, &selected, elided_only);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn resolve_safety_path(path: &Path) -> PathBuf {
+    if path.is_file() {
+        return path.to_path_buf();
+    }
+    let candidates = [
+        PathBuf::from("target/debug/inspect"),
+        PathBuf::from("target/release/inspect"),
+        PathBuf::from("target/shipping/inspect"),
+    ];
+    for directory in candidates {
+        let candidate = directory.join(format!("{}.safety.json", path.display()));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    path.to_path_buf()
+}
+
+fn validate_safety_check(check: &serde_json::Value) -> Result<(), String> {
+    let object = check
+        .as_object()
+        .ok_or("safety side-table check is not an object")?;
+    for field in ["kind", "source", "function", "mechanism", "reason", "status"] {
+        if object.get(field).and_then(serde_json::Value::as_str).is_none() {
+            return Err(format!("safety side-table check is missing string field `{field}`"));
+        }
+    }
+    match object.get("status").and_then(serde_json::Value::as_str) {
+        Some("emitted" | "elided") => Ok(()),
+        Some(status) => Err(format!("unknown safety side-table status `{status}`")),
+        None => unreachable!("status was checked above"),
+    }
+}
+
+fn print_safety_report(path: &Path, checks: &[serde_json::Value], elided_only: bool) {
+    println!("Safety checks: {}", path.display());
+    println!(
+        "{}:",
+        if elided_only {
+            "Elided checks"
+        } else {
+            "Runtime checks"
+        }
+    );
+    if checks.is_empty() {
+        println!("  none");
+        return;
+    }
+
+    let mut counts = std::collections::BTreeMap::new();
+    for check in checks {
+        let kind = check
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        *counts.entry(kind).or_insert(0usize) += 1;
+    }
+    for (kind, count) in counts {
+        println!("  {kind} {count}");
+    }
+    for check in checks {
+        let source = check
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unknown>");
+        let function = check
+            .get("function")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unknown>");
+        let mechanism = check
+            .get("mechanism")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unknown>");
+        let reason = check
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unknown>");
+        println!("    {source}  {function}  {mechanism}  reason: {reason}");
     }
 }
 

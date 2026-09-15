@@ -365,8 +365,10 @@ are rejected before code generation. The C backend also writes the first
 `[EFF-10]` emitted-check records to
 `target/<profile>/inspect/<module>.safety.json`. This is still not static
 elision: elided records and the `ember inspect --safety` reader are required
-before any runtime access may be removed. No specification or owner decision
-changed.
+before any runtime access may be removed. The reader now validates and reports
+the module side table in human or `--json` form, including `--elided-only`;
+function-level filtering and elided records remain pending the analysis pass.
+No specification or owner decision changed.
 
 ## Build order
 

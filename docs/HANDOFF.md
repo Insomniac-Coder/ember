@@ -6681,13 +6681,11 @@ close order, and access state that differs at a join before malformed MIR can
 reach C code generation.
 
 The verifier is deliberately fail-closed and does not perform static access
-elision. The C backend now produces the first `[EFF-10]` side-table slice for
-the dynamic `BeginAccess` checks it emits, including the source location,
-function, mechanism, reason, and emitted status, at
-`target/<profile>/inspect/<module>.safety.json`. Elided-check records and the
-`ember inspect --safety` reader are still absent. Removing a runtime access
-pair without the remaining proof/reporting boundary would violate the current
-target contract, so static elision remains open under `OBJ-RT-1`.
+elision. At the time of this historical slice, the C backend had not yet
+produced the `[EFF-10]` side table or its reader; entries 0.128 and 0.129
+record those follow-up slices. Removing a runtime access pair without the
+remaining proof/reporting boundary would violate the current target contract,
+so static elision remains open under `OBJ-RT-1`.
 
 Adversarial MIR unit tests cover an access left open at return, non-LIFO close
 order, and incompatible access stacks at a CFG join. This is an
@@ -6705,10 +6703,29 @@ side-table record with `kind = Aliasing`, source location, function identity,
 `target/<profile>/inspect/<module>.safety.json`; the end-to-end milestone test
 proves the artifact is created and contains these required fields.
 
-This is only the emitted-check producer. No elided-check records are generated
-because static access elision is not implemented, and the `ember inspect
---safety` reader is not present yet. The existing MIR interval verifier remains
+This is only the emitted-check producer. At the time of this entry, no
+elided-check records were generated because static access elision was not
+implemented, and the `ember inspect --safety` reader had not yet been added;
+entry 0.129 records that reader. The existing MIR interval verifier remains
 the fail-closed boundary that prevents malformed access brackets from reaching
 this producer. No adopted specification, ADR, owner decision, diagnostic
 contract, or language version changed. Phase accounting remains exactly **1 of
 9 complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.129 `[CLI-3]` safety side-table reader — 2026-09-15
+
+The driver now implements the first `ember inspect --safety` slice. It reads a
+generated module side table, validates schema `1` and every record's required
+fields/status, reports emitted checks in human-readable form, supports
+machine-readable `--json`, and supports `--elided-only`. A module name may be
+resolved from the default debug/release/shipping inspect directories, while an
+explicit side-table path is accepted for deterministic tooling use.
+
+This reader deliberately does not claim function-level filtering or elided
+records: the current producer emits only dynamic module records, and no static
+access-elision analysis exists yet. `--elided-only` therefore reports an empty
+set until such records are produced. The reader is a reporting boundary only;
+it does not affect code generation or remove runtime checks. No adopted
+specification, ADR, owner decision, diagnostic contract, or language version
+changed. Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains
+active and Phase 3 has not passed its exit gate.
