@@ -7769,35 +7769,48 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let Some(local_ty) = self.locals.get(local.0 as usize).map(|decl| decl.ty) else {
                 return;
             };
-            let Some(fact) = self.full_integral_range(local_ty) else { return };
+            let Some(fact) = self.full_numeric_range(local_ty) else { return };
             fact
         };
-        let Bound::Int(bound) = bound else {
-            // Strict float inequalities do not have a representable
-            // predecessor/successor in this fact lattice.  Leaving the fact
-            // unchanged is conservative and still permits closed comparisons
-            // to be used for diagnostics in future work.
-            return;
-        };
-        let Some((new_lo, new_hi)) = (match (op, truth) {
-            (BinOp::Eq, true) => Some((Bound::Int(bound), Bound::Int(bound))),
-            (BinOp::Le, true) => Some((lo, Bound::Int(bound))),
-            (BinOp::Lt, true) if bound > i128::MIN => {
-                Some((lo, Bound::Int(bound - 1)))
+        let Some((new_lo, new_hi)) = (match bound {
+            Bound::Int(bound) => match (op, truth) {
+                (BinOp::Eq, true) => Some((Bound::Int(bound), Bound::Int(bound))),
+                (BinOp::Le, true) => Some((lo, Bound::Int(bound))),
+                (BinOp::Lt, true) if bound > i128::MIN => {
+                    Some((lo, Bound::Int(bound - 1)))
+                }
+                (BinOp::Ge, true) => Some((Bound::Int(bound), hi)),
+                (BinOp::Gt, true) if bound < i128::MAX => {
+                    Some((Bound::Int(bound + 1), hi))
+                }
+                (BinOp::Le, false) if bound < i128::MAX => {
+                    Some((Bound::Int(bound + 1), hi))
+                }
+                (BinOp::Lt, false) => Some((Bound::Int(bound), hi)),
+                (BinOp::Ge, false) if bound > i128::MIN => {
+                    Some((lo, Bound::Int(bound - 1)))
+                }
+                (BinOp::Gt, false) => Some((lo, Bound::Int(bound))),
+                (BinOp::Ne, false) => Some((Bound::Int(bound), Bound::Int(bound))),
+                _ => None,
+            },
+            Bound::Float(bound) if bound.is_finite() => {
+                // A strict float comparison has no portable predecessor or
+                // successor in this interval lattice.  Widening it to the
+                // adjacent closed bound remains sound: `x < c` implies
+                // `x <= c`, and `x > c` implies `x >= c`.  The widened fact
+                // may reject an optimisation opportunity, but it cannot make
+                // an out-of-branch value appear proven in-range.
+                match (op, truth) {
+                    (BinOp::Eq, true) => Some((Bound::Float(bound), Bound::Float(bound))),
+                    (BinOp::Le | BinOp::Lt, true) => Some((lo, Bound::Float(bound))),
+                    (BinOp::Ge | BinOp::Gt, true) => Some((Bound::Float(bound), hi)),
+                    (BinOp::Le | BinOp::Lt, false) => Some((Bound::Float(bound), hi)),
+                    (BinOp::Ge | BinOp::Gt, false) => Some((lo, Bound::Float(bound))),
+                    (BinOp::Ne, false) => Some((Bound::Float(bound), Bound::Float(bound))),
+                    _ => None,
+                }
             }
-            (BinOp::Ge, true) => Some((Bound::Int(bound), hi)),
-            (BinOp::Gt, true) if bound < i128::MAX => {
-                Some((Bound::Int(bound + 1), hi))
-            }
-            (BinOp::Le, false) if bound < i128::MAX => {
-                Some((Bound::Int(bound + 1), hi))
-            }
-            (BinOp::Lt, false) => Some((Bound::Int(bound), hi)),
-            (BinOp::Ge, false) if bound > i128::MIN => {
-                Some((lo, Bound::Int(bound - 1)))
-            }
-            (BinOp::Gt, false) => Some((lo, Bound::Int(bound))),
-            (BinOp::Ne, false) => Some((Bound::Int(bound), Bound::Int(bound))),
             _ => None,
         }) else {
             return;
@@ -7809,16 +7822,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    /// The initial interval for an integral local with no narrower fact yet.
+    /// The initial interval for a numeric local with no narrower fact yet.
     /// This is what lets a parameter be refined by its first comparison; a
     /// missing entry does not mean that the local is non-numeric.
-    fn full_integral_range(&self, ty: Ty) -> Option<(Bound, Bound)> {
-        let max = int_max(self.types, ty)?;
-        let max = i128::try_from(max).ok()?;
-        if matches!(self.types.kind(ty), TyKind::Int(_)) {
-            Some((Bound::Int(-max - 1), Bound::Int(max)))
-        } else {
-            Some((Bound::Int(0), Bound::Int(max)))
+    fn full_numeric_range(&self, ty: Ty) -> Option<(Bound, Bound)> {
+        match self.types.kind(ty) {
+            TyKind::Int(_) | TyKind::Uint(_) => {
+                let max = i128::try_from(int_max(self.types, ty)?).ok()?;
+                if matches!(self.types.kind(ty), TyKind::Int(_)) {
+                    Some((Bound::Int(-max - 1), Bound::Int(max)))
+                } else {
+                    Some((Bound::Int(0), Bound::Int(max)))
+                }
+            }
+            TyKind::Float(kind) => {
+                let max = match kind {
+                    ember_types::FloatTy::F16 => 65_504.0,
+                    ember_types::FloatTy::F32 => f32::MAX as f64,
+                    ember_types::FloatTy::F64 => f64::MAX,
+                };
+                Some((Bound::Float(-max), Bound::Float(max)))
+            }
+            _ => None,
         }
     }
 
@@ -7832,14 +7857,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Option<(LocalId, Bound, BinOp)> {
         if let ExprKind::Local(local) = lhs.kind {
             if let Some(bound) = self.constant_bound_of(rhs)
-                && matches!(self.types.kind(lhs.ty), TyKind::Int(_) | TyKind::Uint(_))
+                && matches!(
+                    self.types.kind(lhs.ty),
+                    TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
+                )
             {
                 return Some((local, bound, op));
             }
         }
         if let ExprKind::Local(local) = rhs.kind {
             if let Some(bound) = self.constant_bound_of(lhs)
-                && matches!(self.types.kind(rhs.ty), TyKind::Int(_) | TyKind::Uint(_))
+                && matches!(
+                    self.types.kind(rhs.ty),
+                    TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
+                )
             {
                 let reversed = match op {
                     BinOp::Lt => BinOp::Gt,

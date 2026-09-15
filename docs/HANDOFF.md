@@ -6454,3 +6454,28 @@ release, and shipping. This is a compiler-only correction to the existing
 specification; no adopted source, ADR, owner decision, or version changed.
 Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
 and Phase 3 has not passed its exit gate.
+
+### 0.120 Finite floating comparison range transfer — 2026-09-15
+
+D-150 closes the remaining non-disjunctive comparison gap in the `[RNG-4]`
+interval slice. Before this change, `refine_ranges_from_condition` accepted
+only integral locals, so a finite floating condition such as
+`value > 0.0 and value < 1.0` could not prove a compatible `0.0 ..= 1.0`
+range in its true arm. That was an implementation defect against the existing
+specification, not a semantic ambiguity.
+
+The typechecker now accepts finite floating constants in comparison facts and
+starts an unconstrained numeric local from its finite representation range.
+Strict comparisons are intentionally widened to closed bounds because the
+current interval lattice has no portable floating predecessor/successor
+operation: `x < c` records `x <= c`, and `x > c` records `x >= c`. This may
+forgo an optimisation opportunity but cannot make an out-of-branch value look
+proven in-range. NaN/non-finite bounds and disjunctions remain fail-closed.
+
+`tests/conformance/RNG-4/accept_float_branch_refinement.em` proves the
+positive path, and `reject_float_branch_fact_does_not_escape.em` proves that
+the fact is not available after the conditional. Both cases are declared for
+debug, release, and shipping. Focused run/check validation passed. No adopted
+specification, ADR, owner decision, or version changed. Phase accounting remains
+exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
+its exit gate.

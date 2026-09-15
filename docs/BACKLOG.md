@@ -242,11 +242,12 @@ the complete Phase 3 conformance matrix remain open.
 `RNG-4` continuation: comparison facts are now refined in `if` arms for the
 existing interval lattice. Integer comparisons against constants, including
 conjunctions in the true arm and safe negated bounds in the false arm, can now
-prove a range construction without a redundant check. Branch facts are
-isolated and joined conservatively; strict floating-point bounds and
-disjunctions remain unchanged until the lattice can represent them precisely.
-D-141 records the compiler defect and its two adversarial conformance cases.
-No specification or owner decision changed.
+prove a range construction without a redundant check. D-150 extends the same
+mechanism to finite floating comparisons using conservative closed bounds for
+strict inequalities. Branch facts are isolated and joined conservatively;
+disjunctions remain unchanged. D-141 and D-150 record the compiler defects
+and their adversarial conformance cases. No specification or owner decision
+changed.
 
 `RNG-4` continuation: canonical `std.math` `min_i32`, `max_i32`, `clamp_i32`,
 and their `f32` counterparts now transfer interval facts through their resolved
@@ -303,6 +304,16 @@ an all-bits upper mask derived from the larger operand upper bound. Negative-
 capable intervals remain conservative. D-149 records the compiler defect; the
 pairwise OR/XOR cases are covered by `accept_bitwise_range_refinement.em`. No
 specification or owner decision changed.
+
+`RNG-4` continuation: finite floating comparison facts now refine `if` arms.
+The checker starts an unconstrained numeric local from its finite
+representation interval, and strict comparisons widen to closed bounds because
+the interval lattice has no floating predecessor/successor operation. The
+result is conservative and profile-independent; non-finite bounds and
+disjunctions remain fail-closed. D-150 records the compiler defect, with
+`accept_float_branch_refinement.em` and
+`reject_float_branch_fact_does_not_escape.em` covering acceptance and branch
+isolation in all profiles. No specification or owner decision changed.
 
 ---
 
