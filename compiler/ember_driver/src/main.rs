@@ -27,7 +27,8 @@ usage:
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
     ember explain <CODE>              describe a diagnostic code
-    ember inspect --safety <path>     report emitted/elided safety checks
+    ember inspect --safety [options] <path>
+                                      report emitted/elided safety checks
 
 options:
     --profile debug|release|shipping   default: debug
@@ -38,6 +39,10 @@ options:
     --out-dir <dir>                    default: target/
     --json                             machine-readable diagnostics
     -D warnings                        treat warnings as errors
+
+inspect options:
+    --function <name>                  restrict safety output to one function
+    --elided-only                      report only statically elided checks
 ";
 
 fn main() -> ExitCode {
@@ -290,29 +295,49 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut safety = false;
     let mut elided_only = false;
     let mut json = false;
+    let mut function = None;
     let mut path = None;
 
-    for arg in args {
-        match arg.as_str() {
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
             "--safety" => safety = true,
             "--elided-only" => elided_only = true,
             "--json" => json = true,
+            "--function" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or("`--function` needs a function name")?;
+                if value.starts_with('-') {
+                    return Err("`--function` needs a function name".to_string());
+                }
+                if function.replace(value.clone()).is_some() {
+                    return Err("`--function` may be specified only once".to_string());
+                }
+            }
             value if value.starts_with('-') => {
                 return Err(format!("unknown inspect option `{value}`"));
             }
             value if path.is_none() => path = Some(PathBuf::from(value)),
             value => return Err(format!("unexpected inspect argument `{value}`")),
         }
+        index += 1;
     }
 
     if !safety {
         return Err("`ember inspect` currently requires `--safety`".to_string());
     }
     let path = path.ok_or("`ember inspect --safety` needs a side-table path")?;
-    inspect_safety(&path, elided_only, json)
+    inspect_safety(&path, elided_only, function.as_deref(), json)
 }
 
-fn inspect_safety(path: &Path, elided_only: bool, json: bool) -> Result<ExitCode, String> {
+fn inspect_safety(
+    path: &Path,
+    elided_only: bool,
+    function: Option<&str>,
+    json: bool,
+) -> Result<ExitCode, String> {
     let resolved = resolve_safety_path(path);
     let text = std::fs::read_to_string(&resolved).map_err(|error| {
         format!(
@@ -343,8 +368,11 @@ fn inspect_safety(path: &Path, elided_only: bool, json: bool) -> Result<ExitCode
     let selected: Vec<serde_json::Value> = checks
         .iter()
         .filter(|check| {
-            !elided_only
-                || check.get("status").and_then(serde_json::Value::as_str) == Some("elided")
+            (!elided_only
+                || check.get("status").and_then(serde_json::Value::as_str) == Some("elided"))
+                && function.is_none_or(|name| {
+                    check.get("function").and_then(serde_json::Value::as_str) == Some(name)
+                })
         })
         .cloned()
         .collect();
@@ -356,7 +384,7 @@ fn inspect_safety(path: &Path, elided_only: bool, json: bool) -> Result<ExitCode
             serde_json::to_string(&report).map_err(|error| error.to_string())?
         );
     } else {
-        print_safety_report(&resolved, &selected, elided_only);
+        print_safety_report(&resolved, &selected, elided_only, function);
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -395,7 +423,12 @@ fn validate_safety_check(check: &serde_json::Value) -> Result<(), String> {
     }
 }
 
-fn print_safety_report(path: &Path, checks: &[serde_json::Value], elided_only: bool) {
+fn print_safety_report(
+    path: &Path,
+    checks: &[serde_json::Value],
+    elided_only: bool,
+    function: Option<&str>,
+) {
     println!("Safety checks: {}", path.display());
     println!(
         "{}:",
@@ -405,6 +438,9 @@ fn print_safety_report(path: &Path, checks: &[serde_json::Value], elided_only: b
             "Runtime checks"
         }
     );
+    if let Some(function) = function {
+        println!("Function: {function}");
+    }
     if checks.is_empty() {
         println!("  none");
         return;

@@ -6749,3 +6749,16 @@ compiler-only implementation slice; no adopted specification, ADR, owner
 decision, diagnostic contract, or language version changed. Phase accounting
 remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
 passed its exit gate.
+
+### 0.131 `[CLI-3]` function-filtered safety inspection — 2026-09-15
+
+`ember inspect --safety` now accepts `--function <name>` and filters both
+human-readable and `--json` reports by the exact compiler function identity.
+The existing schema validation and `--elided-only` filter are applied before
+the function selection, so the option composes with the emitted/elided view
+without changing the side-table schema or code generation. The milestone
+fixture covers both human and machine-readable function filtering. This is a
+compiler-tooling slice only: no adopted specification, ADR, owner decision,
+diagnostic contract, or language version changed. Phase accounting remains
+exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
+its exit gate.

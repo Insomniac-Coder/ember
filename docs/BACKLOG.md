@@ -369,8 +369,8 @@ unneeded bracket for an unprojected, unescaped local class handle and records
 `reason = unique_handle`; receiver-reference, indexed/projection, and escaped
 cases remain dynamic. The reader validates and reports the module side table
 in human or `--json` form, including `--elided-only`. Function-level filtering
-and the remaining `[EXC-3]` proof cases remain pending. No specification or
-owner decision changed.
+is now available with `--function <name>`; the remaining `[EXC-3]` proof cases
+remain pending. No specification or owner decision changed.
 
 ## Build order
 

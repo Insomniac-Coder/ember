@@ -342,6 +342,44 @@ fn dynamic_access_safety_side_table_is_written() {
         "elided-only inspect should be empty until elision exists:\n{}",
         filtered.stdout
     );
+    let function_filtered = ember(
+        &[
+            "inspect",
+            "--safety",
+            "--function",
+            "bump",
+            &side_table_arg,
+        ],
+        &root,
+    );
+    assert_eq!(
+        function_filtered.exit, 0,
+        "function-filtered inspect failed:\n{}",
+        function_filtered.stderr
+    );
+    assert!(
+        function_filtered.stdout.contains("Function: bump")
+            && function_filtered.stdout.contains("bump"),
+        "function-filtered inspect omitted bump:\n{}",
+        function_filtered.stdout
+    );
+    let function_json = ember(
+        &[
+            "inspect",
+            "--safety",
+            "--json",
+            "--function",
+            "bump",
+            &side_table_arg,
+        ],
+        &root,
+    );
+    assert_eq!(function_json.exit, 0, "JSON function filter failed:\n{}", function_json.stderr);
+    assert!(
+        function_json.stdout.contains("\"function\":\"bump\""),
+        "JSON function filter omitted bump:\n{}",
+        function_json.stdout
+    );
 }
 
 #[test]
