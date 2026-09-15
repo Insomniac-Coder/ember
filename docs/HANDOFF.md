@@ -6721,11 +6721,31 @@ machine-readable `--json`, and supports `--elided-only`. A module name may be
 resolved from the default debug/release/shipping inspect directories, while an
 explicit side-table path is accepted for deterministic tooling use.
 
-This reader deliberately does not claim function-level filtering or elided
-records: the current producer emits only dynamic module records, and no static
-access-elision analysis exists yet. `--elided-only` therefore reports an empty
-set until such records are produced. The reader is a reporting boundary only;
-it does not affect code generation or remove runtime checks. No adopted
-specification, ADR, owner decision, diagnostic contract, or language version
-changed. Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains
-active and Phase 3 has not passed its exit gate.
+At the time of this entry the producer emitted only dynamic module records and
+the reader reported no elided records; entry 0.130 adds the first conservative
+`unique_handle` proof. The reader is a reporting boundary only; it does not
+itself affect code generation. No adopted specification, ADR, owner decision,
+diagnostic contract, or language version changed. Phase accounting remains
+exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
+its exit gate.
+
+### 0.130 `[EXC-3]` conservative unique-handle elision — 2026-09-15
+
+The compiler now performs the first sound static exclusivity elision. It removes
+an explicit mutable access interval only when the access is rooted at an
+unprojected local class handle, the matching end is proven on the same straight
+call interval, and the handle is never copied, passed, returned, or otherwise
+escaped in the MIR body. The pass records `reason = unique_handle` as an
+`[EFF-10]` elided record, and the C backend therefore emits no runtime access
+pair for that site while `ember inspect --safety --elided-only` reports it.
+
+The proof is deliberately conservative: method-wide `ref mut` receiver access,
+indexed or projected object roots, and any unknown handle use remain dynamic.
+The existing MIR interval verifier still runs before this transformation, and
+the final code-generation verifier runs after it. The run-pass matrix now
+covers both the elided local-handle case and preserved dynamic checks, while
+the side-table milestone verifies the elision reason/status. This is a
+compiler-only implementation slice; no adopted specification, ADR, owner
+decision, diagnostic contract, or language version changed. Phase accounting
+remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
+passed its exit gate.

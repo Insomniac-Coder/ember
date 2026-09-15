@@ -364,11 +364,13 @@ Missing closes, mismatched close order, and incompatible access stacks at joins
 are rejected before code generation. The C backend also writes the first
 `[EFF-10]` emitted-check records to
 `target/<profile>/inspect/<module>.safety.json`. This is still not static
-elision: elided records and the `ember inspect --safety` reader are required
-before any runtime access may be removed. The reader now validates and reports
-the module side table in human or `--json` form, including `--elided-only`;
-function-level filtering and elided records remain pending the analysis pass.
-No specification or owner decision changed.
+elision in general: the conservative `unique_handle` proof now removes the
+unneeded bracket for an unprojected, unescaped local class handle and records
+`reason = unique_handle`; receiver-reference, indexed/projection, and escaped
+cases remain dynamic. The reader validates and reports the module side table
+in human or `--json` form, including `--elided-only`. Function-level filtering
+and the remaining `[EXC-3]` proof cases remain pending. No specification or
+owner decision changed.
 
 ## Build order
 

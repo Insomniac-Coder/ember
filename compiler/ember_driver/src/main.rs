@@ -1398,6 +1398,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
+    // `[EXC-3]`/`[EXC-3a]` — remove only the access intervals for which the
+    // MIR proof establishes a unique, unescaped class handle. All other
+    // intervals remain explicit runtime checks.
+    ember_analysis::elide_static_accesses_all(&mut bodies, &types);
     if command == "check" {
         interface_cache
             .commit()

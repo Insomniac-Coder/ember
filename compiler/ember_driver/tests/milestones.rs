@@ -344,6 +344,40 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+#[test]
+fn static_access_elision_is_recorded_in_the_safety_side_table() {
+    let root = workspace_root();
+    let out_dir = std::env::temp_dir().join(format!(
+        "ember-static-elision-side-table-{}",
+        std::process::id()
+    ));
+    let run = ember(
+        &[
+            "build",
+            &format!("tests/run-pass/class_field_mut_method.{SOURCE_EXT}"),
+            "--out-dir",
+            &out_dir.to_string_lossy(),
+        ],
+        &root,
+    );
+    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
+
+    let side_table = out_dir
+        .join("debug")
+        .join("inspect")
+        .join("class_field_mut_method.safety.json");
+    let json = std::fs::read_to_string(&side_table)
+        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+    assert!(
+        json.contains("\"reason\":\"unique_handle\""),
+        "missing unique-handle elision: {json}"
+    );
+    assert!(
+        json.contains("\"status\":\"elided\""),
+        "missing elided status: {json}"
+    );
+}
+
 fn profiles(expectations: &Expectations) -> Vec<&str> {
     if expectations.profiles.is_empty() {
         vec!["debug"]

@@ -2,8 +2,8 @@
 #$ rules: CLS-4, CLS-7, EXC-1
 #$ profiles: debug, release, shipping
 #$ assert-c: contains(em_Base_bump)
-#$ assert-c-count: contains("ember_access_begin_write") == 2
-#$ assert-c-count: contains("ember_access_end_write") == 2
+#$ assert-c-count: contains("ember_access_begin_write") == 1
+#$ assert-c-count: contains("ember_access_end_write") == 1
 #$ stdout: 7
 
 open class Base:

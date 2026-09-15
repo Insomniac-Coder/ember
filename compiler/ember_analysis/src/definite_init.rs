@@ -505,6 +505,7 @@ mod tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            elided_accesses: Vec::new(),
         }
     }
 

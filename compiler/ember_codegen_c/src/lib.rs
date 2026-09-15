@@ -31,8 +31,8 @@ pub struct Output {
     pub c_source: String,
     /// `[EFF-10]` — per-site safety metadata for the checks this translation
     /// unit emits. The driver writes this to the profile's inspect directory;
-    /// elided-check entries are absent until an elision pass can provide the
-    /// required proof and reason.
+    /// elided-check entries are added when an elision pass provides the
+    /// required proof and reason; unsupported cases remain emitted checks.
     pub safety_json: String,
 }
 
@@ -99,11 +99,11 @@ pub fn emit(
     }
 }
 
-/// Render the first `[EFF-10]` side-table slice. Dynamic class exclusivity
-/// checks are already explicit `BeginAccess` MIR statements, so their source
-/// locations are authoritative at this boundary. The JSON is deliberately
-/// written without a serialization dependency: this artifact is a compiler
-/// output with a fixed, small schema rather than a user-facing data model.
+/// Render the `[EFF-10]` side table. Dynamic class exclusivity checks are
+/// explicit `BeginAccess` MIR statements, while proven elisions are retained
+/// as compiler metadata on the body. The JSON is deliberately written without
+/// a serialization dependency: this artifact is a compiler output with a
+/// fixed, small schema rather than a user-facing data model.
 fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
     let mut entries = Vec::new();
     for body in bodies {
@@ -119,6 +119,14 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
                     json_string(&body.name),
                 ));
             }
+        }
+        for elided in &body.elided_accesses {
+            entries.push(format!(
+                "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"static exclusivity\",\"reason\":{},\"status\":\"elided\"}}",
+                json_string(&map.location(elided.span)),
+                json_string(&body.name),
+                json_string(elided.reason.as_str()),
+            ));
         }
     }
     format!("{{\"schema\":1,\"checks\":[{}]}}\n", entries.join(","))

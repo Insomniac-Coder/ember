@@ -103,6 +103,29 @@ pub struct Body {
     /// select vtables.  It is not runtime metadata in the Ember value ABI.
     pub class_owner: Option<ember_types::ClassId>,
     pub class_virtual_slot: Option<usize>,
+    /// `[EXC-3a]` — dynamic accesses removed by a verified static proof.
+    /// These records are compiler metadata only; the C backend serializes
+    /// them into the `[EFF-10]` safety side table.
+    pub elided_accesses: Vec<ElidedAccess>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ElidedAccess {
+    pub span: Span,
+    pub reason: AccessElisionReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccessElisionReason {
+    UniqueHandle,
+}
+
+impl AccessElisionReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UniqueHandle => "unique_handle",
+        }
+    }
 }
 
 impl Body {
