@@ -292,6 +292,12 @@ non-finite float endpoints, boolean `not`, and general complements remain
 conservative. D-147 records the compiler defect with
 `accept_unary_range_refinement.em`. No specification or owner decision changed.
 
+`RNG-4` continuation: `&` now also transfers two known non-negative operand
+intervals as `0 ..= min(upper bounds)`. Intervals that may include negative
+values and general OR/XOR remain conservative. D-148 records the compiler
+defect; the pairwise case is covered by `accept_bitwise_range_refinement.em`.
+No specification or owner decision changed.
+
 ---
 
 ## Build order

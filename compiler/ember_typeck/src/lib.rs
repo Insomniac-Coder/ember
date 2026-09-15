@@ -16719,6 +16719,10 @@ fn bitwise_interval(
         if b0 == b1 && b0 >= 0 {
             return Some((Bound::Int(0), Bound::Int(b0)));
         }
+        if a0 >= 0 && b0 >= 0 {
+            let upper = if a1 <= b1 { a1 } else { b1 };
+            return Some((Bound::Int(0), Bound::Int(upper)));
+        }
     }
     None
 }

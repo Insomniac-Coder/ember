@@ -6425,3 +6425,17 @@ owner decision, or version changed. Strict floating inequalities, disjunctions,
 and general bitwise facts remain conservative later work. Phase accounting
 remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
 passed its exit gate.
+
+### 0.118 Non-negative interval AND transfer — 2026-09-15
+
+D-148 extends the conservative bitwise slice without introducing a bit-set
+lattice. When both operands of `&` are known non-negative intervals, the result
+is necessarily in `0 ..= min(left.hi, right.hi)`, so the typechecker now carries
+that fact through `[RNG-4]`. Intervals that may contain negative values and
+general OR/XOR remain unknown, preserving ordinary checks.
+
+`accept_bitwise_range_refinement.em` now covers both the exact-mask and
+two-interval cases in debug, release, and shipping. This is a compiler-only
+correction to the existing specification; no adopted source, ADR, owner
+decision, or version changed. Phase accounting remains exactly **1 of 9
+complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
