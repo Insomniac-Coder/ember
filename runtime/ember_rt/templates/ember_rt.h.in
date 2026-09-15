@@ -85,6 +85,14 @@ typedef struct ember_mutspan {
     size_t len;
 } ember_mutspan;
 
+/* [TYP-22] A `ref dyn I` carries the data pointer and the interface vtable
+ * pointer together. The compiler owns the concrete vtable type; this opaque
+ * carrier keeps the ABI shape independent of any one interface declaration. */
+typedef struct ember_dyn {
+    void* data;
+    const void* vtable;
+} ember_dyn;
+
 /* -- source locations ------------------------------------------------------ */
 
 typedef struct ember_loc {

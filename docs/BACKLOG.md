@@ -372,6 +372,15 @@ in human or `--json` form, including `--elided-only`. Function-level filtering
 is now available with `--function <name>`; the remaining `[EXC-3]` proof cases
 remain pending. No specification or owner decision changed.
 
+`[TYP-22]` continuation: `dyn I` formation now has a canonical `TyKind::Dyn`
+identity, resolves interface bounds, rejects non-dyn-compatible interfaces with
+the existing `E2050` diagnostic, rejects bare unsized values in parameter and
+return positions, and exposes the fixed opaque `{data*, vtable*}` carrier in
+generated C. This is only the semantic formation boundary. Interface-object
+coercion, vtable construction, method-slot ABI adaptation, and dynamic calls
+remain open under the Phase 3 object/dispatch work; do not mark interface/dyn
+dispatch complete from this slice.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

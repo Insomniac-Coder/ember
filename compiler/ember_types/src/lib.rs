@@ -160,6 +160,11 @@ pub enum TyKind {
     /// A mode-bearing callable type. `latebound` is a compile-time callable
     /// boundary fact; it is not runtime metadata or an ABI field.
     Fn { latebound: bool, params: Vec<FnParam>, ret: Ty },
+    /// `[TYP-22]` — an unsized interface value. The interface identities are
+    /// retained in declaration order; runtime fat-pointer/vtable lowering is
+    /// a later backend slice, so this kind must never acquire a guessed
+    /// ordinary value layout.
+    Dyn { interfaces: Vec<Symbol> },
     /// `[TYP-16]` — a generic parameter, opaque while the body that declares
     /// it is checked. `[TYP-17]` allows only what its bounds provide, so the
     /// bound list travels with the declaration rather than with the type.
@@ -542,6 +547,43 @@ impl TypeTable {
                 .fields
                 .iter()
                 .any(|field| self.is_generic(field.ty)),
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` contains an unsized component in a by-value position.
+    /// References/pointers are the intentional indirection boundary for
+    /// `[TYP-22]`; owning wrappers such as `Box[dyn I]` are represented by a
+    /// sized compiler-known struct and therefore do not recurse through that
+    /// wrapper here.
+    pub fn has_unsized_by_value(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Ref { .. } | TyKind::Ptr { .. } => false,
+            TyKind::Array { elem, .. }
+            | TyKind::Vec { elem }
+            | TyKind::Span { elem, .. } => self.has_unsized_by_value(*elem),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.has_unsized_by_value(item)),
+            TyKind::Fn { params, ret, .. } => {
+                params.iter().any(|param| self.has_unsized_by_value(param.ty))
+                    || self.has_unsized_by_value(*ret)
+            }
+            TyKind::Struct(id) => self
+                .struct_def(*id)
+                .fields
+                .iter()
+                .any(|field| self.has_unsized_by_value(field.ty)),
+            TyKind::Class(id) => self
+                .class_def(*id)
+                .fields
+                .iter()
+                .any(|field| self.has_unsized_by_value(field.ty)),
+            TyKind::Enum(id) => self
+                .enum_def(*id)
+                .variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter())
+                .any(|field| self.has_unsized_by_value(field.ty)),
             _ => false,
         }
     }
@@ -969,6 +1011,9 @@ impl TypeTable {
             },
             // A parameter has no layout until it is substituted away.
             TyKind::Param { .. } | TyKind::Assoc { .. } => Layout::ZERO,
+            // `[TYP-22]` — `dyn I` is unsized and may only occur behind an
+            // indirection such as `ref` or `Box`.
+            TyKind::Dyn { .. } => Layout::ZERO,
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => Layout::ZERO,
         }
     }
@@ -1071,6 +1116,7 @@ impl TypeTable {
             // `[TYP-17]` — whether a parameter is `Copy` is what its bounds
             // say, which the checker consults rather than the type table.
             TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_) => false,
+            TyKind::Dyn { .. } => false,
         }
     }
 
@@ -1124,6 +1170,7 @@ impl TypeTable {
             | TyKind::Enum(_)
             | TyKind::Param { .. }
             | TyKind::Assoc { .. }
+            | TyKind::Dyn { .. }
             | TyKind::Infer(_)
             | TyKind::IntLit
             | TyKind::FloatLit => false,
@@ -1154,6 +1201,7 @@ impl TypeTable {
             // An `Array[T]` or a `String` always owns a heap buffer, whatever
             // the element type is.
             TyKind::Vec { .. } => true,
+            TyKind::Dyn { .. } => true,
             _ => false,
         }
     }
@@ -1172,6 +1220,7 @@ impl TypeTable {
             // The handle itself is not a view; a projected field may be a
             // view and is classified when that field's type is inspected.
             TyKind::Class(_) => false,
+            TyKind::Dyn { .. } => false,
             TyKind::Enum(id) => self
                 .enum_def(*id)
                 .variants
@@ -1200,6 +1249,7 @@ impl TypeTable {
             // Class handles are owning runtime values, not `@layout(c)`
             // value types. Opaque foreign handles have a separate boundary.
             TyKind::Class(_) => false,
+            TyKind::Dyn { .. } => false,
             _ => false,
         }
     }
@@ -1290,6 +1340,14 @@ impl TypeTable {
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Param { name, .. } => name.to_string(),
             TyKind::Assoc { name } => format!("Self.{name}"),
+            TyKind::Dyn { interfaces } => format!(
+                "dyn {}",
+                interfaces
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            ),
             // `String` prints as itself, not as `Array[u8]`.
             TyKind::Vec { elem } if matches!(self.kind(*elem), TyKind::Uint(UintTy::U8)) => {
                 "String".into()
@@ -1396,6 +1454,14 @@ impl TypeTable {
                 out.push(')');
                 out
             }
+            TyKind::Dyn { interfaces } => format!(
+                "dyn {}",
+                interfaces
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("+")
+            ),
             TyKind::Ref { mutable, inner } => format!(
                 "{}{}",
                 if *mutable { "ref mut " } else { "ref " },

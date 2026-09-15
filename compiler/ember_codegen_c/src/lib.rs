@@ -2554,6 +2554,15 @@ impl Emitter<'_> {
             // It emits no C type of its own, so `Roughness` and `f32` are the
             // same bits and `[RNG-8]`'s FFI representation falls out.
             TyKind::Range(id) => self.c_type(self.types.range_def(*id).repr),
+            // `[TYP-22]` — an interface reference is already a fat pointer;
+            // do not add a second C indirection around its `{data*, vtable*}`
+            // representation. Dispatch/vtable materialisation is a later
+            // backend slice, but the storage shape is fixed here.
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }
+                if matches!(self.types.kind(*inner), TyKind::Dyn { .. }) =>
+            {
+                format!("{RT}dyn")
+            }
             TyKind::Ref { mutable, inner } | TyKind::Ptr { mutable, inner } => {
                 let inner = self.c_type(*inner);
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }
@@ -2563,6 +2572,9 @@ impl Emitter<'_> {
             // size travels with each runtime call instead of with the type.
             TyKind::Vec { .. } => format!("{RT}vec"),
             TyKind::Fn { .. } => self.structural_name(ty),
+            // The semantic type is unsized, but references to it use the
+            // runtime's fixed two-word fat-pointer carrier.
+            TyKind::Dyn { .. } => format!("{RT}dyn"),
             // A generic parameter never reaches the backend: monomorphisation
             // substitutes it away, and a body still holding one was never
             // instantiated.

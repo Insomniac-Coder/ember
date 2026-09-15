@@ -6762,3 +6762,25 @@ compiler-tooling slice only: no adopted specification, ADR, owner decision,
 diagnostic contract, or language version changed. Phase accounting remains
 exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
 its exit gate.
+
+### 0.132 `[TYP-22]` dyn interface-type formation boundary — 2026-09-15
+
+The compiler now gives parsed `dyn I` types a canonical semantic identity:
+`TyKind::Dyn { interfaces }` retains the resolved interface identities in
+written order. Formation validates that every bound names a declared
+interface in written bound order and checks the existing `[TYP-22]`
+dyn-compatibility conditions: every member must have a receiver,
+no member may be generic, and a by-value `Self` result is rejected unless it
+is a default method explicitly marked `where Self: Sized`. Supertraits are
+checked recursively with cycle protection. Diagnostics use the existing
+`E2050` identity and identify the offending member/clause.
+
+Bare unsized interface values are rejected in parameter and return positions
+with the existing `E2020` type error; `ref dyn I` and the compiler-known
+indirection boundary remain representable. The C backend and generated runtime
+header now carry the fixed opaque `{data*, vtable*}` carrier shape, but method
+slot materialization, object-to-interface coercion, and dynamic interface-call
+dispatch are deliberately not claimed by this slice. No specification, ADR,
+owner decision, diagnostic identity, or language version changed. The phase
+ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
+has not passed its exit gate.

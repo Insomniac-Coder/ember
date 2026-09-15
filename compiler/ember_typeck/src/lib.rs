@@ -156,6 +156,13 @@ pub fn check(
         checker.current_module = index;
         checker.collect_generic_structs(&loaded.module);
     }
+    // Interfaces must be available before ordinary function signatures are
+    // resolved: `ref dyn I` names an interface in the signature itself, not
+    // only in a later method/implementation body.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_interfaces(&loaded.module);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -165,10 +172,6 @@ pub fn check(
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.validate_class_bases(&loaded.module);
-    }
-    for (index, loaded) in modules.iter().enumerate() {
-        checker.current_module = index;
-        checker.collect_interfaces(&loaded.module);
     }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
@@ -432,6 +435,9 @@ struct InterfaceDef {
     /// generic body is never emitted, only its instantiations are.
     methods: Vec<(Symbol, DefId, Option<Mode>, bool)>,
     supertraits: Vec<Symbol>,
+    /// Default methods returning `Self` by value are dyn-compatible only when
+    /// their declaration explicitly carries `where Self: Sized` (`[TYP-22]`).
+    dyn_sized_defaults: HashSet<DefId>,
 }
 
 struct Checker<'a> {
@@ -923,6 +929,21 @@ impl<'a> Checker<'a> {
     /// not at the region.
     fn reject_stored_view(&mut self, ty: Ty, span: Span, place: &str) {
         self.reject_stored_view_unless(ty, span, place, false)
+    }
+
+    /// `[TYP-22]` — `dyn I` is unsized and may not be passed, returned, or
+    /// stored by value. `ref dyn I` and compiler-known owning indirections
+    /// such as `Box[dyn I]` are the legal boundaries.
+    fn reject_unsized_by_value(&mut self, ty: Ty, span: Span, context: &str) -> Ty {
+        if !self.types.has_unsized_by_value(ty) {
+            return ty;
+        }
+        self.error(
+            codes::E2020,
+            span,
+            format!("an unsized interface value cannot be used by value in {context}"),
+        );
+        self.common.error
     }
 
     /// As above, with `static_region` true where the value being stored is
@@ -2294,6 +2315,7 @@ impl<'a> Checker<'a> {
                         .filter_map(|p| match &p.kind {
                             ast::ParamKind::Named { name, ty } => {
                                 let ty = self.callable_param_ty(ty, p.mode, &mut generics, 0);
+                                let ty = self.reject_unsized_by_value(ty, p.span, "a parameter");
                                 Some((name.name, ty, mode_of(p.mode), p.span))
                             }
                             // A receiver outside a type body is meaningless;
@@ -2304,7 +2326,10 @@ impl<'a> Checker<'a> {
                     let ret = decl
                         .ret
                         .as_ref()
-                        .map(|t| self.resolve_type(t))
+                        .map(|t| {
+                            let resolved = self.resolve_type(t);
+                            self.reject_unsized_by_value(resolved, t.span, "a return type")
+                        })
                         .unwrap_or(self.common.void);
                     let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     self.type_params.clear();
@@ -2858,6 +2883,7 @@ impl<'a> Checker<'a> {
             self.assoc_scope.insert(*name);
         }
         let mut methods = Vec::new();
+        let mut dyn_sized_defaults = HashSet::new();
         for member in &decl.members {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
             let Some((receiver, signature)) =
@@ -2869,6 +2895,9 @@ impl<'a> Checker<'a> {
             // signature to take its type from.
             let def = DefId(self.signatures.len() as u32);
             self.signatures.push(signature);
+            if f.body.is_some() && has_self_sized_bound(&f.where_clause) {
+                dyn_sized_defaults.insert(def);
+            }
             if visibility != ast::VisKind::Private && member.vis.kind != ast::VisKind::Private {
                 let signature = &self.signatures[def.0 as usize];
                 let mut parameters = self.signature_parameters(signature);
@@ -2915,7 +2944,52 @@ impl<'a> Checker<'a> {
         // signatures were read, which is all the declaration needs them for;
         // an implementation records what each one stands for.
         let _ = &assoc;
-        self.interfaces.insert(name, InterfaceDef { methods, supertraits });
+        self.interfaces.insert(
+            name,
+            InterfaceDef { methods, supertraits, dyn_sized_defaults },
+        );
+    }
+
+    /// Return the precise `[TYP-22]` reason a declared interface cannot be
+    /// used as a `dyn` bound. Keeping this check at type formation means the
+    /// diagnostic names the offending interface member instead of allowing an
+    /// unsized type to drift into later lowering with an invalid vtable shape.
+    fn dyn_incompatibility(&self, interface: Symbol) -> Option<String> {
+        self.dyn_incompatibility_inner(interface, &mut HashSet::new())
+    }
+
+    fn dyn_incompatibility_inner(
+        &self,
+        interface: Symbol,
+        visiting: &mut HashSet<Symbol>,
+    ) -> Option<String> {
+        // Malformed cyclic supertraits are diagnosed by the interface
+        // collection/validation pass. Do not turn such a declaration into an
+        // infinite recursion while checking a later `dyn` bound.
+        if !visiting.insert(interface) {
+            return None;
+        }
+        let def = self.interfaces.get(&interface)?;
+        for (method, declaration, receiver, _) in &def.methods {
+            if receiver.is_none() {
+                return Some(format!("method `{method}` has no receiver"));
+            }
+            let signature = &self.signatures[declaration.0 as usize];
+            if !signature.generics.is_empty() {
+                return Some(format!("method `{method}` is generic"));
+            }
+            if matches!(self.types.kind(signature.ret), TyKind::Param { index, .. } if *index == ember_types::SELF_PARAM)
+                && !def.dyn_sized_defaults.contains(declaration)
+            {
+                return Some(format!("method `{method}` returns `Self` by value"));
+            }
+        }
+        for parent in &def.supertraits {
+            if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
+                return Some(format!("supertrait `{parent}` is not `dyn`-compatible: {reason}"));
+            }
+        }
+        None
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`
@@ -2959,11 +3033,19 @@ impl<'a> Checker<'a> {
                         &mut generics,
                         generic_index_base,
                     );
+                    let ty = self.reject_unsized_by_value(ty, param.span, "a parameter");
                     params.push((name.name, ty, mode_of(param.mode), param.span))
                 }
             }
         }
-        let ret = decl.ret.as_ref().map(|t| self.resolve_type(t)).unwrap_or(self.common.void);
+        let ret = decl
+            .ret
+            .as_ref()
+            .map(|t| {
+                let resolved = self.resolve_type(t);
+                self.reject_unsized_by_value(resolved, t.span, "a return type")
+            })
+            .unwrap_or(self.common.void);
         // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
         // is resolved against the same parameter list the body will see.
         let borrows = self.check_borrows_attribute(attrs, &params, ret);
@@ -3208,6 +3290,14 @@ impl<'a> Checker<'a> {
             }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
+                if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                    self.error(
+                        codes::E2020,
+                        ty.span,
+                        "an unsized interface type may not be used behind a raw pointer",
+                    );
+                    return self.common.error;
+                }
                 self.types.intern(TyKind::Ptr { mutable: *mutable, inner })
             }
             ast::TypeKind::Tuple(items) => {
@@ -3241,6 +3331,46 @@ impl<'a> Checker<'a> {
                     .map(|t| self.resolve_type(t))
                     .unwrap_or(self.common.void);
                 self.types.intern(TyKind::Fn { latebound: *latebound, params, ret })
+            }
+            ast::TypeKind::Dyn(bounds) => {
+                let mut interfaces = Vec::with_capacity(bounds.len());
+                for bound in bounds {
+                    let Some(written) = interface_name(bound) else {
+                        self.error(
+                            codes::E1010,
+                            bound.span,
+                            "a `dyn` bound must name an interface",
+                        );
+                        continue;
+                    };
+                    let name = self.resolve_name(written);
+                    if !self.interfaces.contains_key(&name) {
+                        self.error(
+                            codes::E1010,
+                            bound.span,
+                            format!("cannot find interface `{written}` in this scope"),
+                        );
+                        continue;
+                    }
+                    interfaces.push(name);
+                }
+                if interfaces.is_empty() {
+                    return self.common.error;
+                }
+                for interface in &interfaces {
+                    if let Some(reason) = self.dyn_incompatibility(*interface) {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2050,
+                                ty.span,
+                                format!("interface `{interface}` is not `dyn`-compatible"),
+                            )
+                            .primary_label(reason),
+                        );
+                        return self.common.error;
+                    }
+                }
+                self.types.intern(TyKind::Dyn { interfaces })
             }
             ast::TypeKind::Array { elem, len } => {
                 let elem = self.resolve_type(elem);
@@ -3311,8 +3441,8 @@ impl<'a> Checker<'a> {
                 self.common.error
             }
             _ => {
-                // Generics, `dyn`, arrays and function types arrive in later
-                // phases; Phase 0 reports rather than guessing.
+                // Any syntax not covered by the semantic type table is
+                // rejected rather than guessed.
                 self.error(
                     codes::E1010,
                     ty.span,
@@ -16885,6 +17015,27 @@ fn interface_name(ty: &ast::TypeExpr) -> Option<Symbol> {
         }
         _ => None,
     }
+}
+
+/// `[TYP-22]`'s one exception for a default method returning `Self` by value.
+/// This is deliberately structural: it recognizes only the exact
+/// `where Self: Sized` spelling and does not invent a general sizedness
+/// inference rule for interface methods.
+fn has_self_sized_bound(bounds: &[ast::Bound]) -> bool {
+    bounds.iter().any(|bound| {
+        matches!(
+            &bound.subject.kind,
+            ast::TypeKind::SelfType
+        ) && bound.bounds.iter().any(|bound| {
+            matches!(
+                &bound.kind,
+                ast::TypeKind::Path { segments, args }
+                    if args.is_empty()
+                        && segments.len() == 1
+                        && segments[0].name.is("Sized")
+            )
+        })
+    })
 }
 
 /// Whether an expression names a location rather than a value — the test
