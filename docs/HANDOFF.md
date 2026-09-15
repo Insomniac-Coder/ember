@@ -6331,3 +6331,28 @@ No specification, ADR, owner decision, or version changed. Remainder, shifts,
 bitwise facts, strict floating inequalities, and disjunctions remain later
 conservative work. Phase accounting remains exactly **1 of 9 complete**; Phase
 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.114 Proven-safe remainder range transfer — 2026-09-15
+
+The same `[RNG-4]` arithmetic gap affected `%`: before D-144, every remainder
+expression was treated as unknown, even when its divisor was a known non-zero
+constant. The compiler therefore rejected a quotient-family range construction
+such as `value % 10` into `-9 ..= 9`, although `[TYP-8]` already specifies the
+zero-divisor failure and the non-zero execution has a safe mathematical bound.
+
+The typechecker now derives an integer remainder interval only when the divisor
+interval excludes zero. It uses the maximum absolute divisor magnitude, bounds
+the remainder strictly below that magnitude, and preserves the sign of the
+dividend. This is intentionally a broad interval for variable divisors and does
+not assume that remainder is corner-monotone. A zero-capable or unknown divisor
+returns no range fact, so ordinary runtime checks and `[RNG-10]` rejection remain
+in force.
+
+`tests/conformance/RNG-4/accept_division_range_refinement.em` now covers the
+non-zero remainder alongside integer and float division in debug, release, and
+shipping. `reject_division_unknown_divisor.em` expects `E2215` for both `/` and
+`%` with an unconstrained divisor. This is a compiler-only correction to the
+existing specification; no adopted source, ADR, owner decision, or version
+changed. Strict floating inequalities, disjunctions, shifts, and bitwise facts
+remain later conservative work. Phase accounting remains exactly **1 of 9
+complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.

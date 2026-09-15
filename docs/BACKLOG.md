@@ -264,6 +264,13 @@ compiler defect; `accept_division_range_refinement.em` covers integer and float
 quotients, and `reject_division_unknown_divisor.em` preserves the fail-closed
 boundary. No specification or owner decision changed.
 
+`RNG-4` continuation: remainder now transfers a conservative integer interval
+when its divisor is wholly non-zero, using the divisor's maximum magnitude and
+the dividend's sign. It does not assume `%` is corner-monotone. Zero-capable or
+unknown divisors remain unknown and preserve ordinary runtime checks. D-144
+records the compiler defect; the division refinement fixture covers both the
+positive and fail-closed paths. No specification or owner decision changed.
+
 ---
 
 ## Build order

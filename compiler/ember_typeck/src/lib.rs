@@ -16620,9 +16620,10 @@ fn mangle(name: Symbol, is_main: bool) -> String {
 ///
 /// `+`, `-`, `*`, and division by an interval proven not to contain zero are
 /// derived. A zero-capable divisor panics under `[TYP-8]` rather than
-/// producing a value, so no range fact is claimed for that path. `%`, shifts
-/// and the bitwise operators are the "bit-operation facts" D-018 lists as
-/// later work.
+/// producing a value, so no range fact is claimed for that path. Remainder is
+/// transferred with the same non-zero divisor proof; shifts and the bitwise
+/// operators are the remaining "bit-operation facts" D-018 lists as later
+/// work.
 fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
     let corners = |f: fn(f64, f64) -> f64, g: fn(i128, i128) -> Option<i128>| {
         match (a.0, a.1, b.0, b.1) {
@@ -16647,6 +16648,7 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Sub => corners(|x, y| x - y, |x, y| x.checked_sub(y)),
         BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
         BinOp::Div => division_interval(a, b),
+        BinOp::Rem => remainder_interval(a, b),
         _ => None,
     }
 }
@@ -16686,6 +16688,27 @@ fn division_interval(a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bou
             }
         }
         _ => None,
+    }
+}
+
+/// A remainder has magnitude strictly below the divisor's magnitude and the
+/// sign of the dividend. This deliberately returns a broad interval for a
+/// variable divisor; it is still useful for a range construction while never
+/// pretending that `%` has corner-monotone behavior.
+fn remainder_interval(a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    let (Bound::Int(a0), Bound::Int(a1)) = a else { return None };
+    let (Bound::Int(b0), Bound::Int(b1)) = b else { return None };
+    if (b0 <= 0 && b1 >= 0) || b0 == 0 || b1 == 0 {
+        return None;
+    }
+    let max_abs_divisor = b0.checked_abs()?.max(b1.checked_abs()?);
+    let magnitude = max_abs_divisor.checked_sub(1)?;
+    if a0 >= 0 {
+        Some((Bound::Int(0), Bound::Int(a1.min(magnitude))))
+    } else if a1 <= 0 {
+        Some((Bound::Int((-magnitude).max(a0)), Bound::Int(0)))
+    } else {
+        Some((Bound::Int(-magnitude), Bound::Int(magnitude)))
     }
 }
 
