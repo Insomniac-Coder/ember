@@ -16237,6 +16237,49 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         lhs = self.read_through(lhs);
         rhs = self.read_through(rhs);
 
+        // `[CLS-4]`/Part VIII — `is` and `is not` compare class-handle
+        // identity. They are deliberately not routed through `Eq`: value
+        // equality is an interface operation, while handles have the
+        // language-level identity operation described by the object model.
+        // Related class handles are compared after the ordinary single-base
+        // upcast; unrelated types are rejected rather than compared through
+        // an unsafe C pointer conversion.
+        if matches!(op, ast::BinOp::Is | ast::BinOp::IsNot) {
+            let compatible = match (self.types.kind(lhs.ty), self.types.kind(rhs.ty)) {
+                (TyKind::Class(left), TyKind::Class(right)) if left == right => true,
+                (TyKind::Class(left), TyKind::Class(right))
+                    if self.types.class_is_subclass_of(*left, *right) =>
+                {
+                    lhs = self.coerce(lhs, rhs.ty);
+                    true
+                }
+                (TyKind::Class(left), TyKind::Class(right))
+                    if self.types.class_is_subclass_of(*right, *left) =>
+                {
+                    rhs = self.coerce(rhs, lhs.ty);
+                    true
+                }
+                _ => false,
+            };
+            if !compatible {
+                let left = self.types.display(lhs.ty);
+                let right = self.types.display(rhs.ty);
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`{}` requires related class handles, found `{left}` and `{right}`",
+                        op.as_str()
+                    ),
+                );
+            }
+            return Expr {
+                ty: self.common.bool_,
+                kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                span,
+            };
+        }
+
         // `[TYP-21]` — an operator on a non-scalar is an interface method
         // call. `a + b` on a `Vec3` is `a.add(b)`, with both sides passed in
         // the modes the interface declared.
@@ -16372,7 +16415,9 @@ fn convert_binop(op: ast::BinOp) -> Option<BinOp> {
         ast::BinOp::Le => BinOp::Le,
         ast::BinOp::Gt => BinOp::Gt,
         ast::BinOp::Ge => BinOp::Ge,
-        // `**`, `is`, `in` desugar to interface calls, which Phase 0 lacks.
+        ast::BinOp::Is => BinOp::Is,
+        ast::BinOp::IsNot => BinOp::IsNot,
+        // `**` and `in` desugar to interface calls, which Phase 0 lacks.
         _ => return None,
     })
 }

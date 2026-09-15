@@ -727,6 +727,9 @@ pub enum BinOp {
     Le,
     Gt,
     Ge,
+    /// `[CLS-4]`/Part VIII — class-handle identity, not value equality.
+    Is,
+    IsNot,
     /// `and` / `or`, which short-circuit (`[EXP-3]`).
     And,
     Or,
@@ -734,7 +737,17 @@ pub enum BinOp {
 
 impl BinOp {
     pub fn is_comparison(self) -> bool {
-        matches!(self, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+        matches!(
+            self,
+            BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge
+                | BinOp::Is
+                | BinOp::IsNot
+        )
     }
 
     pub fn is_short_circuit(self) -> bool {
@@ -761,6 +774,8 @@ impl BinOp {
             BinOp::Le => "<=",
             BinOp::Gt => ">",
             BinOp::Ge => ">=",
+            BinOp::Is => "==",
+            BinOp::IsNot => "!=",
             BinOp::And => "&&",
             BinOp::Or => "||",
         }

@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — class-handle identity was parsed but not lowered
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-151 | **The compiler parsed class-handle identity operators but rejected them before HIR lowering.** The adopted contract treats `is` and `is not` as identity checks on class handles, distinct from value equality. The typechecker had no accepted path for either operator, so valid related-class comparisons could not reach code generation. | `[CLS-4]`, `[OBJ-2]` | **fixed** | HIR now preserves identity as a distinct operation and code generation uses the existing pointer representation. The typechecker accepts equal or related class handles, inserting the existing ordinary derived-to-base upcast where required, and rejects non-class or unrelated operands with `E2020`. `tests/run-pass/class_identity.em` covers same-object, distinct-object, derived/base, and negated identity in all profiles; `tests/compile-fail/class_identity_nonclass.em` covers the invalid non-class case. This is a compiler-only correction to the existing specification; no adopted specification, ADR, owner decision, or version changed. Virtual/override dispatch, downcast operators, indexed class-object access, static elision, generic classes, and the complete Phase 3 matrix remain open. |
+
 ## 2026-09-15 — floating comparison facts were discarded in `if` arms
 
 | # | Defect | Rule | Status | Fixed in |

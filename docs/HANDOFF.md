@@ -6479,3 +6479,31 @@ debug, release, and shipping. Focused run/check validation passed. No adopted
 specification, ADR, owner decision, or version changed. Phase accounting remains
 exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
 its exit gate.
+
+### 0.121 Class-handle identity lowering — 2026-09-15
+
+The adopted specification already treats `is` and `is not` as class-handle
+identity checks, not value equality. The parser recognized these operators, but
+the typechecker previously rejected them before HIR lowering. That was a
+compiler defect, not a specification gap.
+
+D-151 closes the gap. HIR now preserves `Is` and `IsNot` as distinct binary
+operations, and the typechecker accepts operands with the same class type or
+related class types. For a derived/base comparison it uses the existing
+ordinary class upcast before the identity comparison; unrelated classes and
+non-class operands are rejected with `E2020`. C lowering uses the already
+established pointer representation, so the generated operation is pointer
+identity and does not introduce value-equality semantics.
+
+`tests/run-pass/class_identity.em` covers identical handles, distinct handles,
+derived/base handles, and `is not` in debug, release, and shipping. The
+compile-fail fixture `tests/compile-fail/class_identity_nonclass.em` confirms
+that integer operands are rejected. The focused milestone suite and workspace
+type checks pass.
+
+This change is intentionally narrow. It does not implement virtual/override
+dispatch, `as?`/`as!` downcasts, indexed class-object access, static access
+elision, generic classes, or the complete Phase 3 conformance matrix. Those
+remain open under `OBJ-RT-1`. No adopted specification, ADR, owner decision,
+or version changed. Phase accounting remains exactly **1 of 9 complete**;
+Phase 2 remains active and Phase 3 has not passed its exit gate.

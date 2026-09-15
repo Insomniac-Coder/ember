@@ -88,6 +88,15 @@ side-effecting-index regression is recorded as D-136. Virtual/override
 dispatch, static access elision, generic classes, and the complete Phase 3
 conformance matrix remain open.
 
+The compiler now also lowers class-handle identity checks end to end. `is` and
+`is not` remain distinct from value equality, accept equal or related class
+handles through the existing upcast path, and compare the pointer
+representation in generated C. Non-class operands are rejected rather than
+being silently treated as value comparisons. The focused identity fixtures
+pass in debug, release, and shipping. Virtual/override dispatch, downcasts,
+static access elision, generic classes, and the complete Phase 3 conformance
+matrix remain open.
+
 The earlier row's “defaulted derived fields” wording is superseded by the
 2026-09-15 D-140 continuation: supported explicit derived constructors now
 materialize inherited and declared defaults in physical base-first order.
