@@ -248,6 +248,14 @@ disjunctions remain unchanged until the lattice can represent them precisely.
 D-141 records the compiler defect and its two adversarial conformance cases.
 No specification or owner decision changed.
 
+`RNG-4` continuation: canonical `std.math` `min_i32`, `max_i32`, `clamp_i32`,
+and their `f32` counterparts now transfer interval facts through their resolved
+direct-call definitions. `clamp` can establish its output bounds even when the
+clamped value has no prior fact, provided the bound intervals prove `lo <= hi`;
+unknown or mixed-representation calls remain fail-closed. D-142 records the
+compiler defect and `accept_math_range_refinement.em` covers a parameter clamp
+and a branch-refined min/max chain. No specification or owner decision changed.
+
 ---
 
 ## Build order

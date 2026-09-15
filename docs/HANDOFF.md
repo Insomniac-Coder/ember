@@ -6278,3 +6278,30 @@ after the conditional. This is a compiler-only correction to the existing
 specification; no adopted source, ADR, owner decision, or version changed.
 Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
 and Phase 3 has not passed its exit gate.
+
+### 0.112 Canonical `std.math` range transfers — 2026-09-15
+
+`[RNG-4]` already requires the compiler to track `min`, `max`, and `clamp`,
+and `std.math` provides the canonical scalar implementations. The remaining
+gap was D-142: `range_of` treated those ordinary direct calls as unknown, so
+`clamp_i32(value, 0, 100)` could not construct a `Percent` even though the
+specified helper guarantees the result lies between its ordered bounds. A
+`max_i32`/`min_i32` chain also lost its fact after branch refinement.
+
+The typechecker now recovers the resolved qualified function name from the HIR
+`DefId` and transfers intervals through the canonical `std.math` helpers.
+`min` and `max` combine corresponding endpoint minima/maxima. `clamp` first
+uses the supplied bound interval directly when every execution proves `lo <=
+hi`, which is enough even if the value being clamped has no range fact; when
+that proof is unavailable, it composes the conservative interval operations
+only if the value is itself known. Mixed representations, unknown functions,
+and non-canonical lookalikes remain unknown and therefore retain ordinary
+range checks.
+
+`tests/conformance/RNG-4/accept_math_range_refinement.em` covers a parameter
+clamp and a branch-refined `max_i32`/`min_i32` chain in debug, release, and
+shipping. This is a compiler-only correction to the existing specification;
+no adopted source, ADR, owner decision, or version changed. Strict floating
+inequalities, disjunctions, and bit-operation range facts remain conservative
+later work. Phase accounting remains exactly **1 of 9 complete**; Phase 2
+remains active and Phase 3 has not passed its exit gate.

@@ -8257,9 +8257,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// "The compiler tracks a known range for every numeric expression it can
     /// — literals, `min`/`max`/`clamp`, the arms of an `if` or `match` that
     /// compared the value, and arithmetic on operands with known ranges."
-    /// This covers the first and the last of those; the branch arms need a
-    /// flow-sensitive pass and `min`/`max`/`clamp` need `std.math`, and both
-    /// are still missing (D-018).
+    /// This covers literals, arithmetic, conditional branch facts, and the
+    /// canonical `std.math` `min`/`max`/`clamp` family. The transfer remains
+    /// deliberately interval-based and conservative.
     ///
     /// The fact that carries most of the weight is not arithmetic at all: **a
     /// value of a range type is in its declared range**, because `[RNG-9]`
@@ -8302,6 +8302,57 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // from depending on that difference. So a derived interval is
                 // kept only where it provably fits the representation.
                 self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+            }
+            ExprKind::Call { callee, args, .. } => {
+                let name = self.function_name_for_def(*callee)?;
+                let (lo, hi) = self.math_range_call(name, args)?;
+                // `[RNG-4a]` applies to library calls as well as operators: a
+                // range fact is useful only when its endpoints are representable
+                // in the call's result type in every profile.
+                self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+            }
+            _ => None,
+        }
+    }
+
+    /// Recover the source-qualified name for a direct call. The HIR keeps the
+    /// resolved `DefId`, not the spelling used at the call site, so aliases and
+    /// namespace-qualified calls naturally share the same range transfer.
+    fn function_name_for_def(&self, def: DefId) -> Option<Symbol> {
+        self.fn_ids.iter().find_map(|(name, candidate)| (*candidate == def).then_some(*name))
+    }
+
+    /// Transfer `[RNG-4]` through the canonical scalar helpers in
+    /// `std.math`. These are ordinary library functions in HIR; recognizing
+    /// their specified interval behavior here is the compiler's range-analysis
+    /// implementation, not a second callable or ownership mechanism.
+    fn math_range_call(&self, name: Symbol, args: &[Expr]) -> Option<(Bound, Bound)> {
+        let arg = |index: usize| args.get(index).and_then(|value| self.range_of(value));
+        match name.as_str() {
+            "std.math.min_i32" | "std.math.min_f32" if args.len() == 2 => {
+                let a = arg(0)?;
+                let b = arg(1)?;
+                Some((bound_min(a.0, b.0)?, bound_min(a.1, b.1)?))
+            }
+            "std.math.max_i32" | "std.math.max_f32" if args.len() == 2 => {
+                let a = arg(0)?;
+                let b = arg(1)?;
+                Some((bound_max(a.0, b.0)?, bound_max(a.1, b.1)?))
+            }
+            "std.math.clamp_i32" | "std.math.clamp_f32" if args.len() == 3 => {
+                let lower = arg(1)?;
+                let upper = arg(2)?;
+                // `clamp` keeps its result between the supplied bounds even
+                // when the value being clamped has no interval fact. Require
+                // the bound intervals to establish `lo <= hi` on every
+                // execution; otherwise the v1 `min(max(v, lo), hi)` spelling
+                // has no such general result interval.
+                if lower.1.le(upper.0) {
+                    return Some((lower.0, upper.1));
+                }
+                let value = arg(0)?;
+                let raised = (bound_max(value.0, lower.0)?, bound_max(value.1, lower.1)?);
+                Some((bound_min(raised.0, upper.0)?, bound_min(raised.1, upper.1)?))
             }
             _ => None,
         }
@@ -16596,6 +16647,25 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Add => corners(|x, y| x + y, |x, y| x.checked_add(y)),
         BinOp::Sub => corners(|x, y| x - y, |x, y| x.checked_sub(y)),
         BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
+        _ => None,
+    }
+}
+
+/// Interval endpoint operations used by the range-preserving scalar helpers.
+/// Mixed integer/float endpoints are never a valid range fact, so fail closed
+/// rather than manufacturing a conversion at analysis time.
+fn bound_min(a: Bound, b: Bound) -> Option<Bound> {
+    match (a, b) {
+        (Bound::Int(a), Bound::Int(b)) => Some(Bound::Int(a.min(b))),
+        (Bound::Float(a), Bound::Float(b)) => Some(Bound::Float(a.min(b))),
+        _ => None,
+    }
+}
+
+fn bound_max(a: Bound, b: Bound) -> Option<Bound> {
+    match (a, b) {
+        (Bound::Int(a), Bound::Int(b)) => Some(Bound::Int(a.max(b))),
+        (Bound::Float(a), Bound::Float(b)) => Some(Bound::Float(a.max(b))),
         _ => None,
     }
 }
