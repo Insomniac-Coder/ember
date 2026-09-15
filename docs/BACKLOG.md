@@ -271,6 +271,14 @@ unknown divisors remain unknown and preserve ordinary runtime checks. D-144
 records the compiler defect; the division refinement fixture covers both the
 positive and fail-closed paths. No specification or owner decision changed.
 
+`RNG-4` continuation: shifts now transfer intervals when the amount is proven
+non-negative and below the operand width. Left shifts use checked endpoint
+arithmetic and therefore do not claim a fact across mathematical overflow;
+right shifts use sign-aware arithmetic-shift bounds. D-145 records the compiler
+defect, with `accept_shift_range_refinement.em` and
+`reject_shift_unknown_amount.em` covering the positive and fail-closed paths in
+all profiles. No specification or owner decision changed.
+
 ---
 
 ## Build order

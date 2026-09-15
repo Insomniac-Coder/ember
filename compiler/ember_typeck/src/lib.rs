@@ -8294,7 +8294,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Binary { op, lhs, rhs } => {
                 let a = self.range_of(lhs)?;
                 let b = self.range_of(rhs)?;
-                let (lo, hi) = interval(*op, a, b)?;
+                let (lo, hi) = match op {
+                    BinOp::Shl | BinOp::Shr => shift_interval(*op, a, b, expr.ty, self.types)?,
+                    _ => interval(*op, a, b)?,
+                };
                 // `[RNG-4a]` — "A range fact MUST NOT be derived from the
                 // mathematical range of an operation that can overflow, **in
                 // any profile**", because `[TYP-8]`'s policy differs between
@@ -16621,9 +16624,9 @@ fn mangle(name: Symbol, is_main: bool) -> String {
 /// `+`, `-`, `*`, and division by an interval proven not to contain zero are
 /// derived. A zero-capable divisor panics under `[TYP-8]` rather than
 /// producing a value, so no range fact is claimed for that path. Remainder is
-/// transferred with the same non-zero divisor proof; shifts and the bitwise
-/// operators are the remaining "bit-operation facts" D-018 lists as later
-/// work.
+/// transferred with the same non-zero divisor proof. Shifts are transferred
+/// only when their amount is proven within the operand width; bitwise operators
+/// are the remaining "bit-operation facts" D-018 lists as later work.
 fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
     let corners = |f: fn(f64, f64) -> f64, g: fn(i128, i128) -> Option<i128>| {
         match (a.0, a.1, b.0, b.1) {
@@ -16650,6 +16653,64 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Div => division_interval(a, b),
         BinOp::Rem => remainder_interval(a, b),
         _ => None,
+    }
+}
+
+/// Shift ranges are profile-independent only when the amount is known to be a
+/// valid shift. Left shifts additionally use checked arithmetic so a wrapping
+/// or overflowing result never becomes a range fact. Right shifts are bounded
+/// by the input interval and use the target's arithmetic-shift semantics.
+fn shift_interval(
+    op: BinOp,
+    a: (Bound, Bound),
+    b: (Bound, Bound),
+    repr: Ty,
+    types: &TypeTable,
+) -> Option<(Bound, Bound)> {
+    let width = integral_bit_width(types, repr)?;
+    let (Bound::Int(a0), Bound::Int(a1)) = a else { return None };
+    let (Bound::Int(b0), Bound::Int(b1)) = b else { return None };
+    if b0 < 0 || b1 < b0 || b1 >= i128::from(width) {
+        return None;
+    }
+    let first = u32::try_from(b0).ok()?;
+    let last = u32::try_from(b1).ok()?;
+    match op {
+        BinOp::Shl => {
+            let (lo, hi) = if a0 >= 0 {
+                (a0.checked_shl(first)?, a1.checked_shl(last)?)
+            } else if a1 <= 0 {
+                (a0.checked_shl(last)?, a1.checked_shl(first)?)
+            } else {
+                (a0.checked_shl(last)?, a1.checked_shl(last)?)
+            };
+            Some((Bound::Int(lo), Bound::Int(hi)))
+        }
+        BinOp::Shr => {
+            let (lo, hi) = if a0 >= 0 {
+                (a0 >> last, a1 >> first)
+            } else if a1 <= 0 {
+                (a0 >> first, a1 >> last)
+            } else {
+                (a0 >> first, a1 >> first)
+            };
+            Some((Bound::Int(lo), Bound::Int(hi)))
+        }
+        _ => None,
+    }
+}
+
+fn integral_bit_width(types: &TypeTable, ty: Ty) -> Option<u32> {
+    let max = int_max(types, ty)?;
+    if max == 0 {
+        return None;
+    }
+    if matches!(types.kind(ty), TyKind::Int(_)) {
+        Some((max + 1).ilog2() + 1)
+    } else if matches!(types.kind(ty), TyKind::Uint(_)) {
+        Some(max.ilog2() + 1)
+    } else {
+        None
     }
 }
 

@@ -5560,6 +5560,8 @@ inherited drop chaining, custom-`init` construction, defaulted fields, dynamic
 class exclusivity, dispatch, generic classes, and the complete Phase 3
 conformance matrix remain open. Phase accounting is exactly **1 of 9
 complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+
 The next safe boundary is the constructor/`init` protocol, which must be
 implemented with verified definite initialization and failure/drop handling
 rather than by making partially initialized objects reachable.
@@ -6356,3 +6358,29 @@ existing specification; no adopted source, ADR, owner decision, or version
 changed. Strict floating inequalities, disjunctions, shifts, and bitwise facts
 remain later conservative work. Phase accounting remains exactly **1 of 9
 complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.
+
+### 0.115 Proven-safe shift range transfer — 2026-09-15
+
+The remaining basic arithmetic gap after D-144 was shift analysis. Before
+D-145, `range_of` discarded every `<<` and `>>` fact, even when a range-typed
+operand and a bounded shift amount made the result statically known. This was
+an implementation omission under `[RNG-4]`, not a language ambiguity.
+
+The typechecker now transfers shifts only when the amount interval is
+non-negative and strictly below the operand bit width required by `[TYP-10]`.
+Left shifts evaluate sign-aware endpoint combinations with checked arithmetic;
+if the mathematical result could overflow, no range fact is claimed in any
+profile. Right shifts use sign-aware arithmetic-shift bounds, with positive,
+negative, and zero-crossing operand intervals handled separately. Unknown or
+out-of-width amounts remain unknown, preserving the ordinary shift runtime
+check rather than assuming release masking.
+
+`tests/conformance/RNG-4/accept_shift_range_refinement.em` covers a positive
+left shift and a signed right shift in debug, release, and shipping. The paired
+`reject_shift_unknown_amount.em` proves that an unconstrained shift amount does
+not manufacture a range fact and still produces `E2215`. This is a compiler-only
+correction to the existing specification; no adopted source, ADR, owner
+decision, or version changed. Strict floating inequalities, disjunctions, and
+bitwise facts remain later conservative work. Phase accounting remains exactly
+**1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed its exit
+gate.
