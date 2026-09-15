@@ -16618,12 +16618,11 @@ fn mangle(name: Symbol, is_main: bool) -> String {
 /// `[RNG-4]` — the interval an arithmetic operation produces, given its
 /// operands' intervals.
 ///
-/// Only `+`, `-` and `*` are derived. Division is left out on purpose: the
-/// interval depends on whether the divisor's range straddles zero, and a
-/// divisor that can be zero panics under `[TYP-8]` rather than producing a
-/// value, so the fact would describe a program that does not reach the
-/// statement. `%`, shifts and the bitwise operators are the "bit-operation
-/// facts" D-018 lists as later work.
+/// `+`, `-`, `*`, and division by an interval proven not to contain zero are
+/// derived. A zero-capable divisor panics under `[TYP-8]` rather than
+/// producing a value, so no range fact is claimed for that path. `%`, shifts
+/// and the bitwise operators are the "bit-operation facts" D-018 lists as
+/// later work.
 fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
     let corners = |f: fn(f64, f64) -> f64, g: fn(i128, i128) -> Option<i128>| {
         match (a.0, a.1, b.0, b.1) {
@@ -16647,6 +16646,45 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Add => corners(|x, y| x + y, |x, y| x.checked_add(y)),
         BinOp::Sub => corners(|x, y| x - y, |x, y| x.checked_sub(y)),
         BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
+        BinOp::Div => division_interval(a, b),
+        _ => None,
+    }
+}
+
+/// A division interval is sound when the divisor is wholly positive or wholly
+/// negative. In either case quotient extrema occur at rectangle corners. A
+/// checked integer operation also rejects the one signed-overflow quotient
+/// (`MIN / -1`), while finite float endpoints reject an infinite result.
+fn division_interval(a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    match (a, b) {
+        ((Bound::Int(a0), Bound::Int(a1)), (Bound::Int(b0), Bound::Int(b1)))
+            if (b0 > 0 && b1 > 0) || (b0 < 0 && b1 < 0) =>
+        {
+            let values = [
+                a0.checked_div(b0)?,
+                a0.checked_div(b1)?,
+                a1.checked_div(b0)?,
+                a1.checked_div(b1)?,
+            ];
+            Some((Bound::Int(*values.iter().min()?), Bound::Int(*values.iter().max()?)))
+        }
+        ((Bound::Float(a0), Bound::Float(a1)), (Bound::Float(b0), Bound::Float(b1)))
+            if a0.is_finite()
+                && a1.is_finite()
+                && b0.is_finite()
+                && b1.is_finite()
+                && ((b0 > 0.0 && b1 > 0.0) || (b0 < 0.0 && b1 < 0.0)) =>
+        {
+            let values = [a0 / b0, a0 / b1, a1 / b0, a1 / b1];
+            if values.iter().all(|value| value.is_finite()) {
+                Some((
+                    Bound::Float(values.iter().copied().fold(f64::INFINITY, f64::min)),
+                    Bound::Float(values.iter().copied().fold(f64::NEG_INFINITY, f64::max)),
+                ))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }

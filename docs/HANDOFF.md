@@ -6305,3 +6305,29 @@ no adopted source, ADR, owner decision, or version changed. Strict floating
 inequalities, disjunctions, and bit-operation range facts remain conservative
 later work. Phase accounting remains exactly **1 of 9 complete**; Phase 2
 remains active and Phase 3 has not passed its exit gate.
+
+### 0.113 Proven-safe division range transfer — 2026-09-15
+
+`[RNG-4]` requires known ranges for arithmetic expressions, but the interval
+helper previously handled only `+`, `-`, and `*`; every division returned
+unknown even when its divisor was known not to contain zero. That was D-143,
+an implementation defect rather than a specification ambiguity. The omission
+was especially visible when a quotient whose divisor was a non-zero constant
+could not be used to construct a narrower range type.
+
+The interval transfer now handles `/` only when the divisor interval is wholly
+positive or wholly negative. Integer transfer evaluates the four quotient
+corners with `checked_div`, which rejects the signed `MIN / -1` overflow case.
+Float transfer requires finite operands, a divisor interval excluding zero,
+and finite quotient corners. If any of those proofs fail, `range_of` returns
+unknown and ordinary division-by-zero/overflow/runtime checks remain in place.
+This preserves `[TYP-8]` and `[RNG-4a]` across all profiles.
+
+`tests/conformance/RNG-4/accept_division_range_refinement.em` covers integer and
+float quotients in debug, release, and shipping. The paired
+`reject_division_unknown_divisor.em` proves that a divisor whose interval may
+contain zero does not manufacture a range fact and still produces `E2215`.
+No specification, ADR, owner decision, or version changed. Remainder, shifts,
+bitwise facts, strict floating inequalities, and disjunctions remain later
+conservative work. Phase accounting remains exactly **1 of 9 complete**; Phase
+2 remains active and Phase 3 has not passed its exit gate.

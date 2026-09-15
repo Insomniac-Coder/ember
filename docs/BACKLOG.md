@@ -256,6 +256,14 @@ unknown or mixed-representation calls remain fail-closed. D-142 records the
 compiler defect and `accept_math_range_refinement.em` covers a parameter clamp
 and a branch-refined min/max chain. No specification or owner decision changed.
 
+`RNG-4` continuation: division now transfers a quotient interval when the
+divisor is wholly positive or wholly negative and all endpoint computations are
+representable. Zero-capable divisors and the signed `MIN / -1` overflow case
+remain unknown, so the ordinary runtime checks are preserved. D-143 records the
+compiler defect; `accept_division_range_refinement.em` covers integer and float
+quotients, and `reject_division_unknown_divisor.em` preserves the fail-closed
+boundary. No specification or owner decision changed.
+
 ---
 
 ## Build order
