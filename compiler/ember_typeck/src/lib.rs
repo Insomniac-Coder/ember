@@ -16625,8 +16625,8 @@ fn mangle(name: Symbol, is_main: bool) -> String {
 /// derived. A zero-capable divisor panics under `[TYP-8]` rather than
 /// producing a value, so no range fact is claimed for that path. Remainder is
 /// transferred with the same non-zero divisor proof. Shifts are transferred
-/// only when their amount is proven within the operand width; bitwise operators
-/// are the remaining "bit-operation facts" D-018 lists as later work.
+/// only when their amount is proven within the operand width. Bitwise facts
+/// remain deliberately narrow and conservative.
 fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
     let corners = |f: fn(f64, f64) -> f64, g: fn(i128, i128) -> Option<i128>| {
         match (a.0, a.1, b.0, b.1) {
@@ -16652,8 +16652,44 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
         BinOp::Div => division_interval(a, b),
         BinOp::Rem => remainder_interval(a, b),
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => bitwise_interval(op, a, b),
         _ => None,
     }
+}
+
+/// Bitwise range transfer is intentionally limited to cases whose result is
+/// obvious without a bit-set lattice. Exact constants can be evaluated
+/// directly. An exact non-negative operand used with `&` is also a valid mask:
+/// every signed integer has `value & mask` in `0..=mask`. General OR/XOR, and
+/// masks that may include a sign bit, remain unknown rather than pretending
+/// that signed bit-pattern arithmetic is interval-monotone.
+fn bitwise_interval(
+    op: BinOp,
+    a: (Bound, Bound),
+    b: (Bound, Bound),
+) -> Option<(Bound, Bound)> {
+    let (Bound::Int(a0), Bound::Int(a1)) = a else { return None };
+    let (Bound::Int(b0), Bound::Int(b1)) = b else { return None };
+
+    if a0 == a1 && b0 == b1 {
+        let value = match op {
+            BinOp::BitAnd => a0 & b0,
+            BinOp::BitOr => a0 | b0,
+            BinOp::BitXor => a0 ^ b0,
+            _ => return None,
+        };
+        return Some((Bound::Int(value), Bound::Int(value)));
+    }
+
+    if op == BinOp::BitAnd {
+        if a0 == a1 && a0 >= 0 {
+            return Some((Bound::Int(0), Bound::Int(a0)));
+        }
+        if b0 == b1 && b0 >= 0 {
+            return Some((Bound::Int(0), Bound::Int(b0)));
+        }
+    }
+    None
 }
 
 /// Shift ranges are profile-independent only when the amount is known to be a

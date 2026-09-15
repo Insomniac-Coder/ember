@@ -279,6 +279,13 @@ defect, with `accept_shift_range_refinement.em` and
 `reject_shift_unknown_amount.em` covering the positive and fail-closed paths in
 all profiles. No specification or owner decision changed.
 
+`RNG-4` continuation: exact integer bitwise constants now transfer their exact
+interval, and `&` with an exact non-negative mask transfers `0 ..= mask`. General
+OR/XOR, sign-bearing masks, and unknown operands remain conservative. D-146
+records the compiler defect, with `accept_bitwise_range_refinement.em` and
+`reject_bitwise_unproven_range.em` covering the positive and fail-closed paths.
+No specification or owner decision changed.
+
 ---
 
 ## Build order

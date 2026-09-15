@@ -6384,3 +6384,27 @@ decision, or version changed. Strict floating inequalities, disjunctions, and
 bitwise facts remain later conservative work. Phase accounting remains exactly
 **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed its exit
 gate.
+
+### 0.116 Conservative bitwise range transfer — 2026-09-15
+
+The next `[RNG-4]` gap after D-145 was bitwise analysis. Before D-146,
+`range_of` discarded even exact integer `&`, `|`, and `^` expressions, so a
+constant bitwise expression could not construct a narrower range type. It also
+discarded the useful and sound case where an arbitrary integer is ANDed with an
+exact non-negative mask.
+
+The typechecker now evaluates exact integer bitwise constants and transfers
+`value & mask` as `0 ..= mask` when the exact mask is non-negative. The result
+still passes the existing representation-fit check. General OR/XOR, sign-bearing
+masks, unknown operands, and non-integral cases remain unknown, preserving
+ordinary runtime checks and avoiding an unsound interval interpretation of
+signed bit patterns.
+
+`tests/conformance/RNG-4/accept_bitwise_range_refinement.em` covers an exact
+OR and a masked value in debug, release, and shipping. The paired
+`reject_bitwise_unproven_range.em` proves that an unconstrained OR still fails
+with `E2215`. This is a compiler-only correction to the existing specification;
+no adopted source, ADR, owner decision, or version changed. Strict floating
+inequalities, disjunctions, and general bitwise facts remain conservative later
+work. Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains
+active and Phase 3 has not passed its exit gate.
