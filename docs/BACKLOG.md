@@ -358,6 +358,14 @@ conformance cases keep direct, generic, and `with_views*_mut` mode mismatches
 on the same diagnostic path. This closes the current B15 implementation
 slice; it does not claim the remaining diagnostic catalogue or Phase 3 matrix.
 
+`OBJ-RT-1` Phase 3 continuation: MIR verification now propagates every
+reachable `BeginAccess`/`EndAccess` interval as a LIFO state through the CFG.
+Missing closes, mismatched close order, and incompatible access stacks at joins
+are rejected before code generation. This is a verifier hardening boundary,
+not static elision: `[EXC-3a]`'s safety side-table producer and
+`ember inspect --safety` reporting consumer are still required before any
+runtime access may be removed. No specification or owner decision changed.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

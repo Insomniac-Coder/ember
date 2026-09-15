@@ -6668,3 +6668,28 @@ preserving the authority boundary and the existing rule: compiler difficulty
 does not justify weakening the specification. The current phase ledger remains
 exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
 its exit gate.
+
+### 0.127 Phase 3 MIR dynamic-access interval verification — 2026-09-15
+
+The MIR verifier now checks the dynamic exclusivity brackets emitted by the
+Phase 3 class-access lowering. `BeginAccess`/`EndAccess` state is propagated
+through every reachable CFG path as a LIFO stack: nested reborrows must close
+the innermost matching place and mode, all paths reaching a CFG join must carry
+the same open-access stack, and every reachable return or terminal block must
+have no access left open. This catches missing closes on one branch, mismatched
+close order, and access state that differs at a join before malformed MIR can
+reach C code generation.
+
+The verifier is deliberately fail-closed and does not perform static access
+elision. `[EXC-3a]` also requires each elision to be recorded in the `[EFF-10]`
+safety side table and exposed through `ember inspect --safety`; that producer
+and reporting consumer do not yet exist in this checkout. Removing a runtime
+access pair without that proof/reporting boundary would violate the current
+target contract, so static elision remains open under `OBJ-RT-1`.
+
+Adversarial MIR unit tests cover an access left open at return, non-LIFO close
+order, and incompatible access stacks at a CFG join. This is an
+implementation/verifier hardening slice only: no adopted specification, ADR,
+owner decision, diagnostic contract, or language version changed. The phase
+ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
+has not passed its exit gate.

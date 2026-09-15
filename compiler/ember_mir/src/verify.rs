@@ -13,6 +13,8 @@
 //! `[MIR-5]` retain/release only on handles) are added by the phases that
 //! introduce the constructs they govern.
 
+use std::collections::VecDeque;
+
 use crate::{
     BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue,
     StmtKind, Terminator,
@@ -106,6 +108,86 @@ impl Verifier<'_> {
                 "{at} jumps to bb{}, which does not exist",
                 target.0
             ));
+        }
+    }
+
+    /// Verify `[MIR-3]` for the dynamic exclusivity brackets introduced by
+    /// Phase 3 lowering.
+    ///
+    /// Access state is a small stack because nested reborrows are legal, but
+    /// an `EndAccess` must close the most recently opened matching access.
+    /// The state is propagated through the reachable CFG; a join is valid only
+    /// when every predecessor arrives with the same stack.  This catches both
+    /// a missing close on one branch and an interval that is closed on only
+    /// some paths before a later merge.  It intentionally does not decide
+    /// whether an access *may* be elided: that requires `[EXC-3a]`'s safety
+    /// side-table producer and reporting consumer, which are a separate
+    /// implementation boundary.
+    fn access_intervals(&mut self, body: &Body) {
+        type Access = (Place, bool);
+
+        let mut incoming: Vec<Option<Vec<Access>>> = vec![None; body.blocks.len()];
+        let mut work = VecDeque::from([(BasicBlockId(0), Vec::<Access>::new())]);
+
+        while let Some((block_id, mut state)) = work.pop_front() {
+            let index = block_id.0 as usize;
+            if index >= body.blocks.len() {
+                // The structural pass above emits the precise bad-target
+                // diagnostic. Do not duplicate it here.
+                continue;
+            }
+
+            if let Some(previous) = &incoming[index] {
+                if previous != &state {
+                    self.fail(format!("bb{index} receives incompatible dynamic-access stacks: previous {previous:?}, incoming {state:?}"));
+                }
+                continue;
+            }
+            incoming[index] = Some(state.clone());
+
+            for stmt in &body.blocks[index].stmts {
+                match &stmt.kind {
+                    StmtKind::BeginAccess { place, mutable } => {
+                        state.push((place.clone(), *mutable));
+                    }
+                    StmtKind::EndAccess { place, mutable } => {
+                        let expected = (place.clone(), *mutable);
+                        match state.last() {
+                            Some(actual) if actual == &expected => {
+                                state.pop();
+                            }
+                            Some(actual) => self.fail(format!("bb{index} ends dynamic access {expected:?}, but the innermost open access is {actual:?}")),
+                            None => self.fail(format!("bb{index} ends dynamic access {expected:?}, but no dynamic access is open")),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut enqueue = |target: BasicBlockId| {
+                if (target.0 as usize) < body.blocks.len() {
+                    work.push_back((target, state.clone()));
+                }
+            };
+            match &body.blocks[index].terminator {
+                Terminator::Goto(target) => enqueue(*target),
+                Terminator::SwitchInt {
+                    targets, otherwise, ..
+                } => {
+                    for (_, target) in targets {
+                        enqueue(*target);
+                    }
+                    enqueue(*otherwise);
+                }
+                Terminator::Call { next, .. } | Terminator::Assert { next, .. } => enqueue(*next),
+                Terminator::Return | Terminator::Unreachable => {
+                    if !state.is_empty() {
+                        self.fail(format!(
+                            "bb{index} terminates with dynamic accesses still open: {state:?}"
+                        ));
+                    }
+                }
+            }
         }
     }
 }
@@ -227,13 +309,17 @@ pub fn verify(body: &Body) -> Vec<Violation> {
         }
     }
 
+    // Run after structural place/target checks so the dataflow does not
+    // produce duplicate diagnostics for malformed block references.
+    v.access_intervals(body);
+
     v.violations
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BasicBlock, LocalDecl, LocalKind, Stmt};
+    use crate::{BasicBlock, LocalDecl, LocalKind, ParameterMode, Stmt};
     use ember_span::Span;
 
     /// A body with one empty block and a real span on its terminator.
@@ -310,6 +396,125 @@ mod tests {
             Span::new(ember_span::FileId(0), 0, 1),
         ));
         assert!(violations.is_empty(), "got {violations:?}");
+    }
+
+    #[test]
+    fn dynamic_access_must_close_before_return() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let stmt = Stmt::new(
+            StmtKind::BeginAccess {
+                place: Place::local(LocalId(0)),
+                mutable: true,
+            },
+            span,
+        );
+        let violations = verify(&body_with(vec![stmt], span));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("still open")),
+            "missing unclosed-access violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_access_end_must_match_the_innermost_open_access() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let outer = Place::local(LocalId(0));
+        let inner = outer.clone().field(0);
+        let violations = verify(&body_with(
+            vec![
+                Stmt::new(
+                    StmtKind::BeginAccess {
+                        place: outer.clone(),
+                        mutable: true,
+                    },
+                    span,
+                ),
+                Stmt::new(
+                    StmtKind::BeginAccess {
+                        place: inner.clone(),
+                        mutable: true,
+                    },
+                    span,
+                ),
+                Stmt::new(
+                    StmtKind::EndAccess {
+                        place: outer,
+                        mutable: true,
+                    },
+                    span,
+                ),
+                Stmt::new(
+                    StmtKind::EndAccess {
+                        place: inner,
+                        mutable: true,
+                    },
+                    span,
+                ),
+            ],
+            span,
+        ));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("innermost open access")),
+            "missing LIFO access violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_access_state_must_agree_at_cfg_joins() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let (_, common) = TypeTable::new();
+        let mut body = body_with(Vec::new(), span);
+        body.arg_count = 1;
+        body.param_modes = vec![ParameterMode::Borrow];
+        body.locals.push(LocalDecl {
+            ty: common.bool_,
+            name: Some("choose".to_string()),
+            kind: LocalKind::Arg,
+            span,
+        });
+        body.blocks = vec![
+            BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::SwitchInt {
+                    discr: Operand::Copy(Place::local(LocalId(1))),
+                    targets: vec![(1, BasicBlockId(1))],
+                    otherwise: BasicBlockId(2),
+                },
+                terminator_span: span,
+            },
+            BasicBlock {
+                stmts: vec![Stmt::new(
+                    StmtKind::BeginAccess {
+                        place: Place::local(LocalId(0)),
+                        mutable: true,
+                    },
+                    span,
+                )],
+                terminator: Terminator::Goto(BasicBlockId(3)),
+                terminator_span: span,
+            },
+            BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Goto(BasicBlockId(3)),
+                terminator_span: span,
+            },
+            BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                terminator_span: span,
+            },
+        ];
+        let violations = verify(&body);
+        assert!(
+            violations.iter().any(|violation| violation
+                .message
+                .contains("incompatible dynamic-access stacks")),
+            "missing CFG-join access violation: {violations:?}"
+        );
     }
 
     #[test]
