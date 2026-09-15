@@ -6408,3 +6408,20 @@ no adopted source, ADR, owner decision, or version changed. Strict floating
 inequalities, disjunctions, and general bitwise facts remain conservative later
 work. Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains
 active and Phase 3 has not passed its exit gate.
+
+### 0.117 Conservative unary range transfer — 2026-09-15
+
+After D-146, `range_of` still discarded unary numeric expressions. D-147 adds
+the safe subset required by `[RNG-4]`: negation reverses a known interval when
+both integer endpoints can be negated exactly, and `~` transfers an exact
+integer complement. Non-finite floating endpoints, integer overflow, boolean
+`not`, and non-exact signed complements remain unknown so normal checks are
+preserved.
+
+`tests/conformance/RNG-4/accept_unary_range_refinement.em` covers bounded
+negation and exact complement in debug, release, and shipping. This is a
+compiler-only correction to the existing specification; no adopted source, ADR,
+owner decision, or version changed. Strict floating inequalities, disjunctions,
+and general bitwise facts remain conservative later work. Phase accounting
+remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not
+passed its exit gate.

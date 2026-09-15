@@ -286,6 +286,12 @@ records the compiler defect, with `accept_bitwise_range_refinement.em` and
 `reject_bitwise_unproven_range.em` covering the positive and fail-closed paths.
 No specification or owner decision changed.
 
+`RNG-4` continuation: unary negation now reverses a safely negated interval,
+and exact integer `~` now transfers its exact complement. Integer overflow,
+non-finite float endpoints, boolean `not`, and general complements remain
+conservative. D-147 records the compiler defect with
+`accept_unary_range_refinement.em`. No specification or owner decision changed.
+
 ---
 
 ## Build order

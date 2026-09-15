@@ -8284,6 +8284,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Widen { expr, .. } => self.range_of(expr),
             ExprKind::Local(local) => self.local_ranges.get(local).copied(),
             ExprKind::Deref(inner) => self.range_of(inner),
+            ExprKind::Unary { op, operand } => {
+                let value = self.range_of(operand)?;
+                let (lo, hi) = unary_interval(*op, value)?;
+                self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+            }
             // The erasure `[TYP-5]` inserts. The value is the representation's
             // now, and what is known about it is the range it came from.
             ExprKind::EraseRange(inner) => {
@@ -16654,6 +16659,32 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Rem => remainder_interval(a, b),
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => bitwise_interval(op, a, b),
         _ => None,
+    }
+}
+
+/// Unary numeric transfer remains conservative around operations whose result
+/// depends on profile-specific overflow or boolean semantics. Negation is
+/// interval-safe when its endpoints can be negated exactly; complement is
+/// transferred only for an exact integer because a general signed bit-pattern
+/// interval has no useful ordering without a bit-set lattice.
+fn unary_interval(op: UnOp, value: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    match op {
+        UnOp::Neg => match value {
+            (Bound::Int(lo), Bound::Int(hi)) => {
+                Some((Bound::Int(hi.checked_neg()?), Bound::Int(lo.checked_neg()?)))
+            }
+            (Bound::Float(lo), Bound::Float(hi))
+                if lo.is_finite() && hi.is_finite() =>
+            {
+                Some((Bound::Float(-hi), Bound::Float(-lo)))
+            }
+            _ => None,
+        },
+        UnOp::BitNot => {
+            let (Bound::Int(lo), Bound::Int(hi)) = value else { return None };
+            (lo == hi).then_some((Bound::Int(!lo), Bound::Int(!lo)))
+        }
+        UnOp::Not => None,
     }
 }
 
