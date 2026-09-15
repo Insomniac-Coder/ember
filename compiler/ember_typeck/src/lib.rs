@@ -8165,6 +8165,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
+        if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
+            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
+        }
         // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
         // open/abstract base without changing the pointed-to object. Keep
         // this as a distinct compiler-inserted cast so C receives a pointer
@@ -8320,6 +8323,91 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .note("Ember does not convert between numeric types implicitly [TYP-4]"),
         );
         Expr { ty: expected, kind: ExprKind::Error, span }
+    }
+
+    /// `[FN-6a]`/`[LT-11a]` — callable parameter modes are part of the
+    /// callable contract.  When the parameter and result types otherwise
+    /// match, report the mode mismatch as B15 rather than hiding it inside
+    /// the generic type-mismatch diagnostic.  The full signatures are kept in
+    /// the help text so a caller can make the repair without reconstructing
+    /// the expected callable boundary from the source.
+    fn emit_callable_mode_mismatch(&mut self, span: Span, expected: Ty, found: Ty) -> bool {
+        let Some(found) = self.callable_signature_of_value(found) else {
+            return false;
+        };
+        let (
+            TyKind::Fn { params: expected_params, ret: expected_ret, .. },
+            TyKind::Fn { params: found_params, ret: found_ret, .. },
+        ) = (self.types.kind(expected), self.types.kind(found))
+        else {
+            return false;
+        };
+        if expected_params.len() != found_params.len()
+            || expected_ret != found_ret
+        {
+            return false;
+        }
+        let Some((index, expected_mode, found_mode)) = expected_params
+            .iter()
+            .zip(found_params)
+            .enumerate()
+            .find_map(|(index, (expected, found))| {
+                (expected.ty == found.ty && expected.mode != found.mode)
+                    .then_some((index, expected.mode, found.mode))
+            })
+        else {
+            return false;
+        };
+
+        let expected_signature = self.types.display(expected);
+        let found_signature = self.types.display(found);
+        self.sink.emit_classified(
+            Diagnostic::error(
+                codes::E2228,
+                span,
+                format!(
+                    "callable parameter mode mismatch at parameter {index}: expected `{}`, found `{}`",
+                    fn_param_mode_name(expected_mode),
+                    fn_param_mode_name(found_mode),
+                ),
+            )
+            .primary_label(format!("parameter {index} supplies `{}`", fn_param_mode_name(found_mode)))
+            .help(format!(
+                "expected callable signature `{expected_signature}`, supplied callable signature `{found_signature}`"
+            ))
+            .note("callable parameter modes are part of the canonical callable type [FN-6a]"),
+        );
+        true
+    }
+
+    /// Return the canonical callable signature carried by a value. A named
+    /// function or capture-free lambda already has a `Fn` type. A capturing
+    /// lambda carries its environment struct at runtime, but its generated
+    /// call body still supplies the same compile-time callable signature for
+    /// `[FN-6a]` mode checking.
+    fn callable_signature_of_value(&mut self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty).clone() {
+            TyKind::Fn { .. } => Some(ty),
+            TyKind::Struct(id) => {
+                let closure = self.closure_calls.get(&id)?;
+                let signature = &self.signatures[closure.def.0 as usize];
+                let params = signature
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty, mode, _)| FnParam {
+                        ty: *ty,
+                        mode: fn_param_mode_from_hir(*mode),
+                    })
+                    .collect();
+                Some(self.types.intern(TyKind::Fn {
+                    latebound: false,
+                    params,
+                    ret: signature.ret,
+                }))
+            }
+            _ => None,
+        }
     }
 
     /// `[RNG-3]`/`[RNG-10]` — a range-typed value arises in Safe code only
@@ -9934,11 +10022,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
-                self.error(
-                    codes::E2020,
-                    arg.value.span,
-                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
-                );
+                let expected_callable = self.callable_hint(param_ty, &generics, &solved);
+                if !expected_callable
+                    .is_some_and(|expected| self.emit_callable_mode_mismatch(arg.value.span, expected, value.ty))
+                {
+                    self.error(
+                        codes::E2020,
+                        arg.value.span,
+                        format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                    );
+                }
             }
             checked_args[index] = Some(value);
         }
@@ -9970,11 +10063,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
-                self.error(
-                    codes::E2020,
-                    arg.value.span,
-                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
-                );
+                let expected_callable = self.callable_hint(param_ty, &generics, &solved);
+                if !expected_callable
+                    .is_some_and(|expected| self.emit_callable_mode_mismatch(arg.value.span, expected, value.ty))
+                {
+                    self.error(
+                        codes::E2020,
+                        arg.value.span,
+                        format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                    );
+                }
             }
             checked_args[index] = Some(value);
         }
@@ -10155,11 +10253,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
-                self.error(
-                    codes::E2020,
-                    arg.value.span,
-                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
-                );
+                let expected_callable = self.callable_hint(param_ty, &generics, &solved);
+                if !expected_callable
+                    .is_some_and(|expected| self.emit_callable_mode_mismatch(arg.value.span, expected, value.ty))
+                {
+                    self.error(
+                        codes::E2020,
+                        arg.value.span,
+                        format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                    );
+                }
             }
             checked_args[index] = Some(value);
         }
@@ -10184,11 +10287,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             {
                 let want = self.types.display(param_ty);
                 let got = self.types.display(value.ty);
-                self.error(
-                    codes::E2020,
-                    arg.value.span,
-                    format!("`{name}` cannot take `{got}` where it expects `{want}`"),
-                );
+                let expected_callable = self.callable_hint(param_ty, &generics, &solved);
+                if !expected_callable
+                    .is_some_and(|expected| self.emit_callable_mode_mismatch(arg.value.span, expected, value.ty))
+                {
+                    self.error(
+                        codes::E2020,
+                        arg.value.span,
+                        format!("`{name}` cannot take `{got}` where it expects `{want}`"),
+                    );
+                }
             }
             checked_args[index] = Some(value);
         }
@@ -12393,19 +12501,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.common.error
                 }
             };
-            if let Some(expected) = expected
-                && fn_param_mode(param.mode) != expected.mode
-            {
-                let expected = fn_param_mode_name(expected.mode);
-                let found = ast_mode_name(param.mode);
-                self.error(
-                    codes::E2020,
-                    param.span,
-                    format!(
-                        "callable parameter mode mismatch: expected `{expected}`, found `{found}`"
-                    ),
-                );
-            }
             params.push((name.name, resolved, hir_mode(fn_param_mode(param.mode)), param.span));
         }
 
@@ -16669,14 +16764,6 @@ fn fn_param_mode_name(mode: FnParamMode) -> &'static str {
         FnParamMode::Borrow => "borrowed",
         FnParamMode::Mut => "mut",
         FnParamMode::Owned => "owned",
-    }
-}
-
-fn ast_mode_name(mode: ast::Mode) -> &'static str {
-    match mode {
-        ast::Mode::Borrow => "borrowed",
-        ast::Mode::Mut => "mut",
-        ast::Mode::Owned => "owned",
     }
 }
 

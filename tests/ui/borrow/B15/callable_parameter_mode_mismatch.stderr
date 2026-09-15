@@ -1,0 +1,10 @@
+error[E2228]: callable parameter mode mismatch at parameter 0: expected `mut`, found `borrowed`
+ --> tests/ui/borrow/B15/callable_parameter_mode_mismatch.em:6:19
+  |
+6 |     println(apply(fn(x) => x, value))
+  |                   ^^^^^^^^^^ parameter 0 supplies `borrowed`
+  |
+  = help: expected callable signature `fn(mut i32) -> i32`, supplied callable signature `fn(i32) -> i32`
+  = note: callable parameter modes are part of the canonical callable type [FN-6a]
+
+error: could not compile due to 1 error(s)

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: LT-8a, LT-11a, FN-6, FN-6a, TST-20, TST-21
-#$ error[E2020]: callable parameter mode mismatch: expected `mut`, found `borrowed`
+#$ error[E2228]: callable parameter mode mismatch at parameter 0: expected `mut`, found `borrowed`
 
 from std.borrow import with_views2_mut
 

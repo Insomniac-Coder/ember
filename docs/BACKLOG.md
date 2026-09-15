@@ -349,6 +349,15 @@ isolation in all profiles. No specification or owner decision changed.
 
 ---
 
+## Current implementation continuation
+
+`DIA-UI-1` H3 continuation: the callable-mode boundary now has `E2228`/`B15`
+coverage with an exact UI snapshot and compiling repair. The fixture requires
+the expected and supplied callable signatures in the primary help, while the
+conformance cases keep direct, generic, and `with_views*_mut` mode mismatches
+on the same diagnostic path. This closes the current B15 implementation
+slice; it does not claim the remaining diagnostic catalogue or Phase 3 matrix.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

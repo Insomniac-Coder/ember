@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — callable mode mismatches used the generic type error
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-155 | **A callable parameter-mode mismatch was reported as generic `E2020` at the callable boundary.** This affected direct callable assignment, generic callable parameters, and the ordinary `std.borrow.with_views*_mut` path. A late-bound callback could also produce a duplicate mode diagnostic because lambda synthesis and generic-call validation both attempted to report the same source mismatch. The compiler therefore failed to expose the H3 `B15`/`E2228` diagnostic boundary required by `[FN-6a]` and `[LT-11a]`. | `[FN-6a]`, `[LT-11a]`, `[DIA-7]` | **fixed** | Callable checking now canonicalizes capture-free functions, lambdas, and capturing closure environments to their compile-time callable signatures for mode comparison, reports one `E2228` with the differing parameter position, expected/supplied modes, and full signatures, and leaves late-bound region checking independent of mode checking. `tests/ui/borrow/B15/callable_parameter_mode_mismatch.em` pins the exact diagnostic and its compiling repair; the FN-6 and LT-8 conformance cases cover direct assignment, generic callable parameters, and `with_views2_mut`. `cargo test -p ember_driver --test ui`, the full milestone/conformance suite, and `python tools/error_pages.py` pass. This is a compiler-only correction to the H3 target; no adopted specification, ADR, owner decision, or version changed. |
+
 ## 2026-09-15 — class virtual dispatch ignored inherent extensions
 
 | # | Defect | Rule | Status | Fixed in |

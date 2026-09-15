@@ -89,6 +89,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B12 => &["owned copy"],
         Shape::B13 => &["separate parameters"],
         Shape::B14 => &["owned value", "separately", "@borrows"],
+        Shape::B15 => &["expected callable signature", "supplied callable signature"],
         Shape::X1 => &["block"],
         Shape::S1 => &["access"],
         Shape::A1 => &["Arena", "arena", "alloc_nodrop", "scope"],

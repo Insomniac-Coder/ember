@@ -299,8 +299,18 @@ work.
 | `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 133 top-level rule directories, 479 `.em` files including support modules; the focused and full conformance runner is green after source `@borrows` contract-shape coverage was added (2026-09-14) |
-| Ledgers | 100 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H3 remains a target and is not adopted |
+| Ledgers | 125 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H3 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
+
+**Current continuation supersession (2026-09-15).** The H3 callable-mode
+diagnostic slice described in §0.126 is now present in the worktree and has
+been verified by `cargo build --workspace --locked`, the full
+`cargo test --workspace --locked` suite, the focused B15 UI test,
+`python tools/error_pages.py`, `python tools/rule_index.py`, and
+`git diff --check`. The defect ledger now contains 125 recorded defects, all
+closed; the three intentional open deviations remain D1, D3, and D4. This
+addendum supersedes the older checkpoint wording in the table above until the
+next synchronized handoff refresh.
 
 The latest architecture continuation is `30836ee`, building on `d35e94f`. The
 two commits add the first real consumer of the canonical
@@ -6480,6 +6490,39 @@ debug, release, and shipping. Focused run/check validation passed. No adopted
 specification, ADR, owner decision, or version changed. Phase accounting remains
 exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has not passed
 its exit gate.
+
+### 0.126 H3 callable-mode diagnostic boundary — 2026-09-15
+
+The H3 implementation slice for `[FN-6a]`/`[LT-11a]` is now complete. Before
+this checkpoint, a callable parameter-mode mismatch was reported through the
+generic `E2020` type error. The failure was reproducible in three places:
+direct callable assignment, a generic callable parameter, and the ordinary
+`std.borrow.with_views2_mut` boundary. Lambda synthesis could also report the
+same mismatch a second time after generic-call validation.
+
+`E2228` is now registered as the dedicated type diagnostic and maps to the
+`B15` UI shape. Callable values are compared through one compiler-local
+canonical signature path: capture-free functions and lambdas already carry a
+`fn` type, while a capturing closure's environment is projected to the
+generated call-body signature for compile-time mode checking only. Late-bound
+callback regions remain a separate fact; a source lambda's ordinary callable
+type must not hide a `mut`/borrowed mode mismatch at a late-bound boundary.
+The compiler emits one diagnostic naming the parameter position, expected and
+supplied modes, and complete expected/supplied callable signatures.
+
+The exact UI fixture and compiling repair are under
+`tests/ui/borrow/B15/`; the three adversarial conformance cases are the FN-6
+callable-parameter and function-value cases plus the LT-8 mutable-helper
+boundary case. `docs/errors/E2228.md` documents the same contract. Focused
+UI, error-page, rule-index, workspace-check, milestone, and full conformance
+tests pass. This is a compiler/test/documentation correction against the H3
+target; the adopted v0.8.5 specification, language semantics, ADRs, and
+version remain unchanged.
+
+The phase ledger remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate. Interface/`dyn` dispatch, static
+access elision, generic classes, and the complete Phase 3 conformance matrix
+remain open.
 
 ### 0.121 Class-handle identity lowering — 2026-09-15
 

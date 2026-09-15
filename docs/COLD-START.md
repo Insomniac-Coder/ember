@@ -50,7 +50,7 @@ live Git state.
                                              docs/spec/ is the split of the source
 
  133 top-level conformance rule directories, 479 `.em` files including support
- modules. 98 defects recorded, **none open**.
+ modules. 125 defects recorded, **none open**.
 **3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
 **D-126 through D-128 are fixed:** EMIF decoding recomputes the cache key from
 the artifact's identity inputs and rejects self-inconsistent metadata,
@@ -74,6 +74,14 @@ reason in the commit message.
 five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
+
+**Current continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
+implemented and recorded as D-155. `E2228`/`B15` now covers direct callable
+assignment, generic callable parameters, and `std.borrow.with_views*_mut`,
+with an exact UI snapshot, error page, and compiling repair. The full workspace
+build/test suite, focused UI test, `error_pages.py`, `rule_index.py`, and
+`git diff --check` are green. This is a compiler correction against the frozen
+H3 development target; the adopted v0.8.5 specification remains unchanged.
 
 **0.9.6 status:** the owner-supplied 0.9.5 H2/H3 files and the Revision 5
 simplicity-consolidation RFC are preserved unchanged under
