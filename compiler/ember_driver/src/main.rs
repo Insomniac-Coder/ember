@@ -152,6 +152,7 @@ fn collect_body_function_symbols(
                     }
                     ember_mir::FuncRef::Builtin { .. } => {}
                     ember_mir::FuncRef::Virtual { .. } => {}
+                    ember_mir::FuncRef::Interface { .. } => {}
                 }
                 for arg in args {
                     collect_operand_function_symbols(arg, out);

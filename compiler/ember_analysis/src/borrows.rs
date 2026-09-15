@@ -164,6 +164,7 @@ pub fn check_all_with_installed_callable_regions(
         infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts);
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol, .. } => methods.contains(symbol.as_str()),
+        FuncRef::Interface { .. } | FuncRef::Virtual { .. } => true,
         _ => false,
     };
     for body in &*bodies {
@@ -591,6 +592,10 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // A virtual method has no direct symbol at this stage. Preserve the
         // conservative call contract until a class-specific summary exists.
         FuncRef::Virtual { .. } => Elision::Everything,
+        // A dynamic interface method likewise has no statically known
+        // implementation summary. Treat it as fully opaque for provenance and
+        // borrow checking until interface-object summaries are available.
+        FuncRef::Interface { .. } => Elision::Everything,
         // `[CLO-3]` — a call through a function value. `[EFF-2]`'s
         // reasoning applies to regions too: nothing is known about the
         // callee, so the permissive reading of `[LT-1]` rule 3 is taken

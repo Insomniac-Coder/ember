@@ -205,6 +205,7 @@ pub fn check(
     }
 }
 
+#[derive(Clone)]
 struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
@@ -2990,6 +2991,64 @@ impl<'a> Checker<'a> {
             }
         }
         None
+    }
+
+    /// Return the methods visible through a `dyn` bound in stable vtable
+    /// order. Supertrait methods occupy the prefix, followed by the methods
+    /// declared by the interface itself. This is the same declaration-order
+    /// rule used by the `[TYP-22]` vtable contract; keeping the calculation in
+    /// the checker gives HIR a concrete slot rather than asking MIR or C
+    /// code generation to rediscover interface inheritance.
+    fn dyn_methods_in_order(
+        &self,
+        interface: Symbol,
+        methods: &mut Vec<(Symbol, DefId, Mode)>,
+        visiting: &mut HashSet<Symbol>,
+    ) {
+        if !visiting.insert(interface) {
+            return;
+        }
+        let Some(def) = self.interfaces.get(&interface) else { return };
+        for parent in &def.supertraits {
+            self.dyn_methods_in_order(*parent, methods, visiting);
+        }
+        for (name, declaration, receiver, _) in &def.methods {
+            let Some(receiver) = receiver else { continue };
+            methods.push((*name, *declaration, *receiver));
+        }
+    }
+
+    /// Resolve a method call whose receiver is `ref dyn I` (or a compatible
+    /// multi-bound form). Inherent and concrete-interface calls continue to
+    /// use the ordinary method path; this helper is only the dynamic-vtable
+    /// boundary and therefore returns the chosen interface and stable slot.
+    fn dyn_method(
+        &self,
+        receiver_ty: Ty,
+        name: Symbol,
+    ) -> Option<(Symbol, DefId, Mode, usize, Option<Symbol>)> {
+        let TyKind::Ref { inner, .. } = *self.types.kind(receiver_ty) else { return None };
+        let TyKind::Dyn { interfaces } = self.types.kind(inner).clone() else { return None };
+
+        let mut candidates = Vec::new();
+        let mut all_methods = Vec::new();
+        let mut visiting = HashSet::new();
+        for interface in interfaces {
+            let start = all_methods.len();
+            self.dyn_methods_in_order(interface, &mut all_methods, &mut visiting);
+            for (index, (method, declaration, receiver)) in all_methods[start..].iter().enumerate() {
+                if *method == name {
+                    candidates.push((interface, *declaration, *receiver, start + index));
+                }
+            }
+        }
+        let (interface, declaration, receiver, slot) = candidates.first().copied()?;
+        let ambiguity = candidates
+            .iter()
+            .skip(1)
+            .find(|candidate| candidate.1 != declaration)
+            .map(|candidate| candidate.0);
+        Some((interface, declaration, receiver, slot, ambiguity))
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`
@@ -6458,6 +6517,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.read_guard_through(read);
         }
         let TyKind::Ref { inner, .. } = *self.types.kind(ty) else { return read };
+        // `[TYP-22]` — `ref dyn I` is a fat-pointer carrier, not an
+        // ordinary reference that can be read through to an unsized value.
+        // Keep the carrier at method-call boundaries so `x.m()` can select
+        // the interface vtable instead of manufacturing a by-value `dyn I`.
+        if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+            return read;
+        }
         if let Some(expected) = expected {
             if expected == ty || matches!(self.types.kind(expected), TyKind::Ref { .. }) {
                 return read;
@@ -12031,6 +12097,76 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 receiver = self.read_box_through(receiver);
             }
         }
+        // `[TYP-22]` — once the receiver is an interface reference, method
+        // lookup is a vtable lookup rather than a concrete `DefId` call. The
+        // interface declaration still supplies the ordinary argument
+        // signature, so argument names and parameter modes are checked by
+        // the same path as a static interface method.
+        if let Some((interface, def, receiver_mode, slot, ambiguity)) =
+            self.dyn_method(receiver.ty, name.name)
+        {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if receiver_mode == Mode::Owned {
+                self.error(
+                    codes::E2020,
+                    span,
+                    "an owned interface receiver cannot be called through `ref dyn` yet",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if let Some(other) = ambiguity {
+                self.error(
+                    codes::E2070,
+                    name.span,
+                    format!("`{}` is offered by both `{interface}` and `{other}`", name.name),
+                );
+            }
+            if receiver_mode == Mode::Mut
+                && !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. })
+            {
+                self.error(
+                    codes::E2140,
+                    span,
+                    "a `mut self` interface method needs `ref mut dyn` access",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let signature = self.signatures[def.0 as usize].clone();
+            if args.len() != signature.params.len() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!(
+                        "`{}` takes {} arguments, found {}",
+                        name.name,
+                        signature.params.len(),
+                        args.len()
+                    ),
+                );
+            }
+            let slots = self.call_argument_slots(name.name, args, &signature.params);
+            let checked = self.check_bound_call_arguments(args, &signature.params, &slots);
+            let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
+            return Expr {
+                ty: signature.ret,
+                kind: ExprKind::InterfaceCall {
+                    interface,
+                    slot,
+                    receiver: Box::new(receiver),
+                    args: checked,
+                    modes,
+                    arg_eval_order: Self::call_eval_order(&slots),
+                },
+                span,
+            };
+        }
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
@@ -13175,6 +13311,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.collect_mutated_capture_fields_expr(arg, environment, fields);
                 }
             }
+            ExprKind::InterfaceCall { receiver, args, .. } => {
+                self.collect_mutated_capture_fields_expr(receiver, environment, fields);
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
             ExprKind::StructLit { fields: args, .. } => {
                 for arg in args {
                     self.collect_mutated_capture_fields_expr(arg, environment, fields);
@@ -13324,6 +13466,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     || args
                         .iter()
                         .any(|argument| self.closure_expr_moves_capture(argument, environment, false))
+            }
+            ExprKind::InterfaceCall { receiver, args, modes, .. } => {
+                self.closure_expr_moves_capture(receiver, environment, false)
+                    || args.iter().enumerate().any(|(index, argument)| {
+                        let consuming = modes.get(index).is_some_and(|mode| *mode == Mode::Owned);
+                        self.closure_expr_moves_capture(argument, environment, consuming)
+                    })
             }
             ExprKind::StructLit { fields, .. }
             | ExprKind::TupleLit(fields)

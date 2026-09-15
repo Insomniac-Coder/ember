@@ -6784,3 +6784,27 @@ dispatch are deliberately not claimed by this slice. No specification, ADR,
 owner decision, diagnostic identity, or language version changed. The phase
 ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
 has not passed its exit gate.
+
+### 0.133 `[TYP-22]` dynamic-interface call boundary — 2026-09-15
+
+The next `[TYP-22]` continuation now recognizes method calls through a
+`ref dyn I` carrier as a distinct `InterfaceCall` in HIR and a distinct
+`FuncRef::Interface` in MIR. Type checking preserves the interface's
+declaration-order slot (including supertrait prefixes), checks the interface
+method's ordinary argument modes and named-argument evaluation order, and
+rejects an `owned self` call at this reference boundary rather than silently
+inventing a move from a fat pointer. Shared and mutable dynamic receivers are
+covered by compile-pass cases.
+
+The C backend emits a compiler-owned, typed vtable struct for every dynamic
+interface call site and lowers the call through `{data*, vtable*}` using the
+erased `void*` receiver slot. This is a real call-shape/lowering boundary, not
+an assertion that a concrete object can already be coerced into the carrier:
+object-to-interface coercion, concrete vtable construction, implementation
+adapters, `Box[dyn I]` ownership, and the complete Phase 3 interface matrix
+remain open. Interface dispatch must not be marked complete from this entry.
+
+The implementation is compiler-only; no adopted specification text, ADR,
+owner decision, diagnostic identity, or language version changed. Phase
+accounting remains exactly **1 of 9 complete**; Phase 2 remains active and
+Phase 3 has not passed its exit gate.

@@ -1715,6 +1715,60 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
             }
+            hir::ExprKind::InterfaceCall {
+                interface,
+                slot,
+                receiver,
+                arg_eval_order,
+                args,
+                modes,
+            } => {
+                // The fat pointer itself is a borrowed, two-word value. The
+                // receiver mode has already been validated against `ref dyn`
+                // by type checking, so no second reference is formed here.
+                let mut lowered_args = vec![self.lower_operand_borrowed(receiver)];
+                let order = arg_eval_order
+                    .clone()
+                    .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
+                let mut explicit: Vec<Option<Operand>> = (0..args.len()).map(|_| None).collect();
+                let mut class_accesses = Vec::new();
+                for index in order {
+                    let Some(arg) = args.get(index) else { continue };
+                    let operand = match modes.get(index).copied() {
+                        Some(hir::Mode::Mut) => {
+                            let (operand, access) = self.lower_mut_argument_with_access(arg);
+                            if let Some(place) = access {
+                                class_accesses.push(place);
+                            }
+                            operand
+                        }
+                        Some(hir::Mode::Owned) => self.lower_operand(arg),
+                        _ => self.lower_operand_borrowed(arg),
+                    };
+                    explicit[index] = Some(operand);
+                }
+                lowered_args.extend(explicit.into_iter().flatten());
+                for place in &class_accesses {
+                    self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
+                }
+                let params = args.iter().map(|arg| arg.ty).collect();
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Interface {
+                        interface: *interface,
+                        slot: *slot,
+                        params,
+                        ret: expr.ty,
+                    },
+                    args: lowered_args,
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+                for access in class_accesses.into_iter().rev() {
+                    self.push(StmtKind::EndAccess { place: access, mutable: true });
+                }
+            }
             // `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two
             // compares and a branch, building `Ok(v)` or `Err(OutOfRange)`.
             // It is lowered here rather than in the backend because it

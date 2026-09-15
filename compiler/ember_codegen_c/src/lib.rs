@@ -91,6 +91,7 @@ pub fn emit(
         usize_ty,
         virtual_tables: BTreeMap::new(),
         virtual_signatures: BTreeMap::new(),
+        interface_signatures: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main);
     Output {
@@ -166,12 +167,23 @@ struct Emitter<'a> {
     virtual_tables: BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
     /// The signature established by the first declaration in each hierarchy.
     virtual_signatures: BTreeMap<(ClassId, usize), VirtualMethod>,
+    /// `[TYP-22]` — signatures observed at dynamic-interface call sites,
+    /// keyed by interface name and vtable slot. Interface declarations are
+    /// type-checker data rather than TypeTable entries, so MIR carries the
+    /// exact erased call signature across this backend boundary.
+    interface_signatures: BTreeMap<(String, usize), InterfaceMethod>,
 }
 
 #[derive(Clone)]
 struct VirtualMethod {
     owner: ClassId,
     symbol: String,
+    params: Vec<Ty>,
+    ret: Ty,
+}
+
+#[derive(Clone)]
+struct InterfaceMethod {
     params: Vec<Ty>,
     ret: Ty,
 }
@@ -225,8 +237,10 @@ impl Emitter<'_> {
         self.line("");
 
         self.emit_type_declarations();
-        self.emit_prototypes(bodies);
         self.collect_virtual_methods(bodies);
+        self.collect_interface_methods(bodies);
+        self.emit_interface_vtable_types();
+        self.emit_prototypes(bodies);
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
         self.emit_class_field_drop_glue();
@@ -437,6 +451,70 @@ impl Emitter<'_> {
             }
         }
         self.virtual_tables = layouts;
+    }
+
+    /// Collect the dynamic-interface call signatures carried by MIR. This
+    /// slice emits the typed vtable *shape* and call expression; concrete
+    /// object-to-interface coercion and vtable materialisation remain a later
+    /// Phase 3 slice, so no guessed implementation table is emitted here.
+    fn collect_interface_methods(&mut self, bodies: &[Body]) {
+        for body in bodies {
+            for block in &body.blocks {
+                let Terminator::Call { func: FuncRef::Interface { interface, slot, params, ret }, .. } = &block.terminator else {
+                    continue;
+                };
+                self.interface_signatures
+                    .entry((interface.to_string(), *slot))
+                    .or_insert_with(|| InterfaceMethod { params: params.clone(), ret: *ret });
+            }
+        }
+    }
+
+    /// Emit one compiler-owned C struct per interface whose vtable is read by
+    /// this translation unit. The first three fields follow `[TYP-22]`'s
+    /// `{drop, size, align, method0, ...}` shape; method slots use an erased
+    /// `void*` receiver and the statically known interface argument types.
+    fn emit_interface_vtable_types(&mut self) {
+        let mut grouped: BTreeMap<String, Vec<(usize, InterfaceMethod)>> = BTreeMap::new();
+        for ((interface, slot), method) in &self.interface_signatures {
+            grouped
+                .entry(interface.clone())
+                .or_default()
+                .push((*slot, method.clone()));
+        }
+        if grouped.is_empty() {
+            return;
+        }
+        self.line("/* dynamic interface vtable types */");
+        for (interface, mut methods) in grouped {
+            methods.sort_by_key(|(slot, _)| *slot);
+            let table = ember_branding::vtable(&format!("dyn_{interface}"));
+            self.line(&format!("struct {table} {{"));
+            self.line("    void (*drop)(void*);");
+            self.line("    size_t size;");
+            self.line("    size_t align;");
+            let max_slot = methods.last().map_or(0, |(slot, _)| *slot);
+            let by_slot: BTreeMap<usize, InterfaceMethod> = methods.into_iter().collect();
+            for slot in 0..=max_slot {
+                let Some(method) = by_slot.get(&slot) else {
+                    self.line(&format!("    void (*slot{slot})(void*);"));
+                    continue;
+                };
+                let params = method
+                    .params
+                    .iter()
+                    .map(|ty| self.c_type(*ty))
+                    .collect::<Vec<_>>();
+                let params = if params.is_empty() {
+                    "void*".to_string()
+                } else {
+                    format!("void*, {}", params.join(", "))
+                };
+                self.line(&format!("    {} (*slot{slot})({params});", self.c_type(method.ret)));
+            }
+            self.line("};");
+        }
+        self.line("");
     }
 
     fn build_virtual_layout(
@@ -1754,6 +1832,19 @@ impl Emitter<'_> {
                 format!(
                     "(((const struct {table}*)(((const {RT}obj_header*)({object}))->ti->vtable))->slot{slot})({})",
                     rendered.join(", ")
+                )
+            }
+            FuncRef::Interface { interface, slot, .. } => {
+                let receiver = rendered.first().expect("interface call has a receiver");
+                let table = ember_branding::vtable(&format!("dyn_{interface}"));
+                let args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
+                let args = if args.is_empty() {
+                    format!("{receiver}.data")
+                } else {
+                    format!("{receiver}.data, {args}")
+                };
+                format!(
+                    "(((const struct {table}*)({receiver}.vtable))->slot{slot})({args})"
                 )
             }
             // `[CLO-3]` — a call through a value. In C a function value is

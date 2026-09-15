@@ -218,6 +218,21 @@ pub enum ExprKind {
         args: Vec<Expr>,
         latebound: bool,
     },
+    /// `[TYP-22]` — a call through a `ref dyn I` fat pointer.  Interface
+    /// methods do not have an ordinary function body `DefId` at the call
+    /// boundary: the receiver selects the concrete implementation through
+    /// the interface vtable.  The slot is assigned from the interface's
+    /// declaration order (including supertraits) during type checking.
+    InterfaceCall {
+        interface: Symbol,
+        slot: usize,
+        receiver: Box<Expr>,
+        args: Vec<Expr>,
+        modes: Vec<Mode>,
+        /// Source-order slots for named arguments; `None` is the common
+        /// positional case. The receiver is evaluated before this list.
+        arg_eval_order: Option<Vec<usize>>,
+    },
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
@@ -1009,6 +1024,11 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             let boundary = if *latebound { "@latebound " } else { "" };
             format!("{boundary}call#{}({})", callee.0, inner.join(", "))
+        }
+        ExprKind::InterfaceCall { interface, slot, receiver, args, .. } => {
+            let mut inner = vec![dump_expr(receiver, function, types)];
+            inner.extend(args.iter().map(|a| dump_expr(a, function, types)));
+            format!("@dyn {interface}::slot{slot}({})", inner.join(", "))
         }
         ExprKind::FnValue(def) => format!("fn#{}", def.0),
         ExprKind::CallIndirect { callee, args, consumes_callee, latebound } => {

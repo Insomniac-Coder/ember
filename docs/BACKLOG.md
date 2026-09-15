@@ -377,9 +377,21 @@ identity, resolves interface bounds, rejects non-dyn-compatible interfaces with
 the existing `E2050` diagnostic, rejects bare unsized values in parameter and
 return positions, and exposes the fixed opaque `{data*, vtable*}` carrier in
 generated C. This is only the semantic formation boundary. Interface-object
-coercion, vtable construction, method-slot ABI adaptation, and dynamic calls
-remain open under the Phase 3 object/dispatch work; do not mark interface/dyn
-dispatch complete from this slice.
+coercion, vtable construction, method-slot ABI adaptation, and runtime
+materialization remain open under the Phase 3 object/dispatch work; do not
+mark interface/dyn dispatch complete from this slice.
+
+The next continuation adds a real `InterfaceCall` HIR/MIR boundary for method
+calls through `ref dyn I`. It preserves interface slot order, callable
+parameter modes, named-argument evaluation order, and the existing opaque
+`{data*, vtable*}` carrier. The C backend emits a typed per-interface vtable
+shape and performs the indirect slot call, while deliberately refusing to
+invent concrete object-to-interface coercion or implementation tables. The
+compile-pass matrix covers shared and mutable dynamic receivers. This is an
+implementation-only continuation; no adopted specification, owner decision,
+diagnostic identity, or language version changed. Interface-object creation,
+concrete adapters, `Box[dyn I]` ownership, and the complete Phase 3 matrix
+remain open.
 
 ## Build order
 
