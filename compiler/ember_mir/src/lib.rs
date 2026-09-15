@@ -1027,6 +1027,9 @@ pub enum AssertKind {
     /// `Bounds`, the operands travel here so the backend needs no new call
     /// shape for them.
     RefCellBorrow { file: Operand, line: Operand },
+    /// `[DSP-4]` — `as!` failed its runtime class-chain check. The v1 panic
+    /// model aborts; there is no recovery edge after this assertion fails.
+    Downcast,
 }
 
 impl AssertKind {
@@ -1040,6 +1043,7 @@ impl AssertKind {
             AssertKind::ShiftTooLarge => "panic_overflow",
             AssertKind::Bounds { .. } => "panic_bounds",
             AssertKind::RefCellBorrow { .. } => "panic_refcell",
+            AssertKind::Downcast => "panic",
         };
         ember_branding::runtime(name)
     }

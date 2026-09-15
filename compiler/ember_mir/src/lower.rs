@@ -1799,6 +1799,20 @@ impl<'a> Builder<'a> {
             } => {
                 self.lower_class_super_init(place, *base_id, *base_ty, *init, args, expr.span);
             }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::ClassDowncast { target, target_ty, option, forced },
+                args,
+            } => {
+                self.lower_class_downcast(
+                    place,
+                    &args[0],
+                    *target,
+                    *target_ty,
+                    *option,
+                    *forced,
+                    expr.span,
+                );
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
@@ -4657,6 +4671,95 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageLive(temp));
         self.lower_into(Place::local(temp), expr);
         Operand::Copy(Place::local(temp))
+    }
+
+    /// `[DSP-4]` — query the runtime base chain once, then turn the borrowed
+    /// query result into an owning class handle. The raw query result is kept
+    /// in a compiler-only class-typed temporary whose automatic drop is
+    /// deliberately suppressed: `ember_downcast` does not retain, and the
+    /// successful `Copy` into `Some` or the forced result performs exactly one
+    /// retain at the owning boundary.
+    fn lower_class_downcast(
+        &mut self,
+        place: Place,
+        source: &'a hir::Expr,
+        target: ember_types::ClassId,
+        target_ty: Ty,
+        option: Option<EnumId>,
+        forced: bool,
+        span: ember_span::Span,
+    ) {
+        let source = self.lower_operand_borrowed(source);
+        let raw = self.temp(target_ty, span);
+        // `raw` is a borrowed runtime query result, not an owning Ember
+        // handle. Keep its storage, but never run class drop glue for it.
+        self.statement_temps.retain(|local| *local != raw);
+        self.push(StmtKind::StorageLive(raw));
+
+        let checked = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::ClassDowncast {
+                    target,
+                    target_ty,
+                    option,
+                    forced,
+                },
+                arg_ty: target_ty,
+            },
+            args: vec![source],
+            dest: Place::local(raw),
+            next: checked,
+        });
+        self.current = checked;
+
+        if forced {
+            let success = self.new_block();
+            self.terminate(Terminator::Assert {
+                cond: Operand::Copy(Place::local(raw)),
+                expected: true,
+                msg: AssertKind::Downcast,
+                next: success,
+                span,
+            });
+            self.current = success;
+            self.push(StmtKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(Place::local(raw))),
+            });
+            self.push(StmtKind::StorageDead(raw));
+            return;
+        }
+
+        let option = option.expect("non-forced class downcast must have an Option type");
+        let success = self.new_block();
+        let failure = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(raw)),
+            targets: vec![(0, failure)],
+            otherwise: success,
+        });
+
+        self.current = failure;
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(option, 0), operands: Vec::new() },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = success;
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, 1),
+                operands: vec![Operand::Copy(Place::local(raw))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = join;
+        self.push(StmtKind::StorageDead(raw));
     }
 
     /// `[CLS-1]`/`[CLS-2]`/`[CLS-3]` — allocate a class object, then initialize

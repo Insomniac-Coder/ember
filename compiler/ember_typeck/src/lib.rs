@@ -8969,6 +8969,68 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(inner), to }, span }
             }
 
+            ast::ExprKind::Downcast { expr: inner, ty, forced } => {
+                // `[DSP-4]` — the runtime query is only meaningful for
+                // nominal class handles. Related static types are accepted;
+                // an upcast-shaped query is harmless and remains a runtime
+                // type-info operation, while unrelated classes are rejected
+                // before code generation.
+                let to = self.resolve_type(ty);
+                let inner = self.synth_committed(inner);
+                let (source, target) = match (self.types.kind(inner.ty), self.types.kind(to)) {
+                    (TyKind::Class(source), TyKind::Class(target)) => (*source, *target),
+                    _ => {
+                        if inner.ty != self.common.error {
+                            let from = self.types.display(inner.ty);
+                            let target = self.types.display(to);
+                            self.error(
+                                codes::E2020,
+                                span,
+                                format!(
+                                    "`as?`/`as!` requires related class handles, found `{from}` and `{target}`"
+                                ),
+                            );
+                        }
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
+                };
+                let related = source == target
+                    || self.types.class_is_subclass_of(source, target)
+                    || self.types.class_is_subclass_of(target, source);
+                if !related {
+                    let from = self.types.display(inner.ty);
+                    let target = self.types.display(to);
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("cannot downcast `{from}` to unrelated class `{target}`"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                let (result_ty, option) = if *forced {
+                    (to, None)
+                } else {
+                    let option_ty = self.option_of(to);
+                    let TyKind::Enum(option) = *self.types.kind(option_ty) else {
+                        unreachable!("option_of must return an enum")
+                    };
+                    (option_ty, Some(option))
+                };
+                Expr {
+                    ty: result_ty,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::ClassDowncast {
+                            target,
+                            target_ty: to,
+                            option,
+                            forced: *forced,
+                        },
+                        args: vec![inner],
+                    },
+                    span,
+                }
+            }
+
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
             // view struct's field; every other borrow is implicit in a

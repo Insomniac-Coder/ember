@@ -164,7 +164,8 @@ fn collect_body_function_symbols(
                     ember_mir::AssertKind::Overflow(_)
                     | ember_mir::AssertKind::DivisionByZero
                     | ember_mir::AssertKind::SignedDivisionOverflow
-                    | ember_mir::AssertKind::ShiftTooLarge => {}
+                    | ember_mir::AssertKind::ShiftTooLarge
+                    | ember_mir::AssertKind::Downcast => {}
                 }
             }
             ember_mir::Terminator::Goto(_)

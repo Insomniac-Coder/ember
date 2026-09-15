@@ -1276,6 +1276,9 @@ impl Emitter<'_> {
                         self.operand(file, body),
                         self.operand(line, body)
                     ),
+                    AssertKind::Downcast => format!(
+                        "{RT}panic(\"invalid downcast\", sizeof(\"invalid downcast\") - 1, {location})"
+                    ),
                 };
                 self.line(&format!("    if ({negate}{cond}) {{ {call}; }}"));
                 if next.0 as usize == index + 1 {
@@ -1665,6 +1668,20 @@ impl Emitter<'_> {
                             &self.types.class_def(*class_id).name.to_string(),
                         );
                         return format!("(({class_ty}){RT}obj_new(&{type_info}))");
+                    }
+                    // `[DSP-4]` — the runtime walks the object's type-info
+                    // base chain. The returned pointer is deliberately only
+                    // the query result; MIR performs the owning retain when
+                    // it constructs `Some` or the forced result.
+                    Builtin::ClassDowncast { target, .. } => {
+                        let class_ty = self.c_type(*arg_ty);
+                        let type_info = ember_branding::type_info(
+                            &self.types.class_def(*target).name.to_string(),
+                        );
+                        return format!(
+                            "(({class_ty}){RT}downcast(({RT}obj_header*){}, &{type_info}))",
+                            rendered[0]
+                        );
                     }
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");

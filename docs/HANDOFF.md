@@ -6502,8 +6502,37 @@ that integer operands are rejected. The focused milestone suite and workspace
 type checks pass.
 
 This change is intentionally narrow. It does not implement virtual/override
-dispatch, `as?`/`as!` downcasts, indexed class-object access, static access
-elision, generic classes, or the complete Phase 3 conformance matrix. Those
-remain open under `OBJ-RT-1`. No adopted specification, ADR, owner decision,
-or version changed. Phase accounting remains exactly **1 of 9 complete**;
-Phase 2 remains active and Phase 3 has not passed its exit gate.
+dispatch, indexed class-object access, static access elision, generic classes,
+or the complete Phase 3 conformance matrix. Those remain open under
+`OBJ-RT-1`. No adopted specification, ADR, owner decision, or version changed.
+
+### 0.122 Class downcast lowering — 2026-09-15
+
+The adopted specification already defines `[DSP-4]`: `h as? D` performs a
+runtime class-chain query and returns `Option[D]`, while `h as! D` performs the
+same query and panics when the target is not present. The parser and runtime
+query existed, but the typechecker did not lower either AST form. That was a
+compiler defect, not a specification gap.
+
+D-152 closes the missing pipeline. HIR carries the target `ClassId`, target
+type, optional `Option` enum identity, and forced/non-forced mode. MIR emits
+one builtin call to `ember_downcast` and keeps the result in a compiler-only
+temporary. `as?` branches on that result, constructs `None` or `Some`, and the
+aggregate copy retains the successful class handle exactly once. `as!` asserts
+non-null and then retains the successful result; failure uses the existing
+abort-only panic model with `invalid downcast`. The temporary is explicitly
+non-owning and is never sent through class drop glue.
+
+`tests/run-pass/class_downcast.em` covers a successful `as?`, a failed
+`as?`, and a successful `as!` in debug, release, and shipping.
+`tests/compile-fail/class_downcast_unrelated.em` verifies static rejection of
+unrelated classes, and `tests/run-fail/class_downcast_forced.em` verifies the
+forced failure path. Generated-C inspection confirms one runtime query per
+operation and a retain only at the successful owning boundary.
+
+This remains a narrow downcast slice. Virtual/override dispatch, indexed
+class-object access, static access elision, generic classes, and the complete
+Phase 3 conformance matrix remain open under `OBJ-RT-1`. No adopted
+specification, ADR, owner decision, or version changed. Phase accounting
+remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3 has
+not passed its exit gate.

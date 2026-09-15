@@ -358,6 +358,14 @@ pub enum Builtin {
     /// `init` is invoked after allocation and before the value is returned to
     /// source code. `None` retains the memberwise-construction path.
     ClassNew { class_id: ClassId, init: Option<DefId> },
+    /// `[DSP-4]` — query a class handle's runtime type-info base chain.
+    /// MIR performs the owning `Option` construction or forced-cast assertion.
+    ClassDowncast {
+        target: ClassId,
+        target_ty: Ty,
+        option: Option<EnumId>,
+        forced: bool,
+    },
     /// `[CLS-4]` — invoke the direct base constructor on an already allocated
     /// derived object. MIR lowers this to a borrowed base-handle adjustment
     /// plus the ordinary constructor call; it never reaches the backend.
@@ -616,6 +624,8 @@ impl Builtin {
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
             Builtin::ClassNew { .. } => "class",
+            Builtin::ClassDowncast { forced: true, .. } => "as!",
+            Builtin::ClassDowncast { forced: false, .. } => "as?",
             Builtin::ClassSuperInit { .. } => "super.init",
             Builtin::BoxNew { .. } => "Box",
             Builtin::ArrayPush => "push",

@@ -97,6 +97,16 @@ pass in debug, release, and shipping. Virtual/override dispatch, downcasts,
 static access elision, generic classes, and the complete Phase 3 conformance
 matrix remain open.
 
+The dynamic downcast slice is now implemented as well. `as?` accepts related
+class handles and returns `Option[Target]` after one runtime base-chain query;
+success retains the returned handle and failure constructs `None`. `as!` uses
+the same query and aborts through `[PAN-1]` when it returns null. Unrelated
+classes are rejected statically. The positive, negative, and forced-failure
+fixtures pass, and generated C shows the expected single query and owning
+retain. Virtual/override dispatch, indexed class-object access, static access
+elision, generic classes, and the complete Phase 3 conformance matrix remain
+open.
+
 The earlier row's “defaulted derived fields” wording is superseded by the
 2026-09-15 D-140 continuation: supported explicit derived constructors now
 materialize inherited and declared defaults in physical base-first order.
