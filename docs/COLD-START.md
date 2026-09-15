@@ -1,8 +1,9 @@
 # Cold start — read this first
 
-State as of 2026-09-14. Read `docs/MIGRATION-0.9.7.md` next for the active
-migration, then `docs/HANDOFF.md` §0 for the process and verified implementation
-state. `docs/MIGRATION-0.9.5.md` and `docs/MIGRATION-0.8.3.md` remain historical
+State as of 2026-09-15. Read `docs/MIGRATION-0.9.7.md` for historical H1
+context, then read the current H3 target and `docs/HANDOFF.md` §0 for the active
+migration, process, and verified implementation state. `docs/MIGRATION-0.9.5.md`
+and `docs/MIGRATION-0.8.3.md` remain historical
 context for the 0.9.5 intake and original phase order.
 
 | Ledger | Answers |
@@ -99,7 +100,7 @@ tooling, documentation, and development contract while keeping H4 immutable.
 The owner then closed ODR-014's remaining Span iterator, chunk, and raw-pointer
 boundary in `Ember_v0.9.6_Hardened_6.md`, keeping H5 immutable. The owner then
 closed ODR-015 with the `@latebound` callable-type boundary in
-`Ember_v0.9.7_Hardened_1.md`, keeping H6 immutable. H1 is the frozen
+`Ember_v0.9.7_Hardened_1.md`, keeping H6 immutable. H1 was the frozen
 development target, but not yet the normative repository
 source. It retains the owner-
 selected multi-region-view target and separate shared/all-mutable callback-
@@ -157,7 +158,7 @@ the caveat.*
 ## 3. Versioning
 
 The adopted normative document is **v0.8.5_Hardened_1**; the frozen development
-target is **v0.9.7_Hardened_1**. Two numbers move independently:
+target is **v0.9.7_Hardened_3**. Two numbers move independently:
 
 * **language version** — moves when the set of accepted programs changes, and
   **resets the hardening number to 1**. 0.8.4 exists for exactly one change: S1,
@@ -185,8 +186,10 @@ now; where they ever differ, the working source governs for implementation and
 `docs/HANDOFF.md` §0.17 is the authoritative statement of which artifact is
 normative for what.
 
-The current development target is `0.9.7_Hardened_1`, per the owner's explicit
-ODR-015 `@latebound` callable-boundary completion. H6 is its immediate predecessor;
+The current development target is `0.9.7_Hardened_3`, per the owner's explicit
+selection of the supplied H3 specification. H3 names H2 as its immutable
+immediate predecessor; that H2 artifact is not present in this checkout. H6
+remains the architecture-line predecessor of H1;
 H10 remains the
 immutable architecture-line predecessor. H5 recovered the missing
 source; H6 records the mutable-helper family; H7 records callable parameter
@@ -199,9 +202,10 @@ reference-compiler/conformance architecture. H2 completes the Arena-backed
 container contract, H3 completes the public hashing protocol, H4 selects
 static generic Hasher dispatch, H5 binds the approved post-H4 simplicity
 architecture/process contract without changing source semantics, and H6 fixes
-the public Span iterator/chunk/raw-pointer contract. `0.9.7_Hardened_1` adds
-the owner-approved `@latebound` callable-type language boundary. Any later
-hardening must become `0.9.7_Hardened_2`; another semantic change requires an
+the public Span iterator/chunk/raw-pointer contract. `0.9.7_Hardened_1` added
+the owner-approved `@latebound` callable-type language boundary. H3 closes
+ODR-016 and withdraws the two H2 detector findings described in its change log.
+Any later hardening must become `0.9.7_Hardened_4`; another semantic change requires an
 owner-selected language revision, never an in-place H1 edit.
 
 **Do not couple a tool to a version string.** `rule_index.py` decided which

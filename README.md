@@ -21,12 +21,12 @@ The authority levels matter:
 | Role | Current artifact |
 |---|---|
 | Adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), Ember v0.8.5_Hardened_1 |
-| Frozen development target | [`docs/spec-source/Ember_v0.9.7_Hardened_1.md`](docs/spec-source/Ember_v0.9.7_Hardened_1.md) |
-| Immediate target predecessor | Ember v0.9.6_Hardened_6, kept immutable |
+| Frozen development target | [`docs/spec-source/Ember_v0.9.7_Hardened_3.md`](docs/spec-source/Ember_v0.9.7_Hardened_3.md) |
+| Immediate target predecessor | Ember v0.9.7_Hardened_2, as named by H3; predecessor artifact not present in this checkout |
 | Implementation phase | Phase 2, ownership |
 | Completed phases | Exactly 1 of 9 |
 
-The v0.9.7_Hardened_1 target is not yet adopted as the normative source. It is
+The v0.9.7_Hardened_3 target is not yet adopted as the normative source. It is
 the contract the implementation is working toward. A version is adopted only
 after its implementation, conformance, documentation, and regression gates
 pass and the owner explicitly installs it.
@@ -41,8 +41,8 @@ At the latest verified checkpoint:
 - 98 recorded compiler defects are closed;
 - three known deviations remain open (D1, D3, and D4); D2 is closed;
 - ODR-015 is closed by the owner-approved `@latebound` callable-type boundary;
-  the H1 implementation now has a verified first slice, while the remaining
-  precision matrix is still incomplete and H1 is not adopted.
+  H3 is the current frozen target, while implementation and conformance remain
+  incomplete and H3 is not adopted.
 
 `ARN-COLL-1` is complete at implementation commit `825eac5`: the public static
 `Hash`/`Hasher` protocol, move-only `DefaultHasher`, built-in and user-defined
