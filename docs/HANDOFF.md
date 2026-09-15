@@ -6681,10 +6681,12 @@ close order, and access state that differs at a join before malformed MIR can
 reach C code generation.
 
 The verifier is deliberately fail-closed and does not perform static access
-elision. `[EXC-3a]` also requires each elision to be recorded in the `[EFF-10]`
-safety side table and exposed through `ember inspect --safety`; that producer
-and reporting consumer do not yet exist in this checkout. Removing a runtime
-access pair without that proof/reporting boundary would violate the current
+elision. The C backend now produces the first `[EFF-10]` side-table slice for
+the dynamic `BeginAccess` checks it emits, including the source location,
+function, mechanism, reason, and emitted status, at
+`target/<profile>/inspect/<module>.safety.json`. Elided-check records and the
+`ember inspect --safety` reader are still absent. Removing a runtime access
+pair without the remaining proof/reporting boundary would violate the current
 target contract, so static elision remains open under `OBJ-RT-1`.
 
 Adversarial MIR unit tests cover an access left open at return, non-LIFO close
@@ -6693,3 +6695,20 @@ implementation/verifier hardening slice only: no adopted specification, ADR,
 owner decision, diagnostic contract, or language version changed. The phase
 ledger remains exactly **1 of 9 complete**; Phase 2 remains active and Phase 3
 has not passed its exit gate.
+
+### 0.128 `[EFF-10]` emitted-access side-table foundation — 2026-09-15
+
+The C backend now serializes every emitted dynamic `BeginAccess` as a safety
+side-table record with `kind = Aliasing`, source location, function identity,
+`mechanism = dynamic exclusivity`, `reason = not_proven_by_analysis`, and
+`status = emitted`. The driver writes the deterministic JSON artifact to
+`target/<profile>/inspect/<module>.safety.json`; the end-to-end milestone test
+proves the artifact is created and contains these required fields.
+
+This is only the emitted-check producer. No elided-check records are generated
+because static access elision is not implemented, and the `ember inspect
+--safety` reader is not present yet. The existing MIR interval verifier remains
+the fail-closed boundary that prevents malformed access brackets from reaching
+this producer. No adopted specification, ADR, owner decision, diagnostic
+contract, or language version changed. Phase accounting remains exactly **1 of
+9 complete**; Phase 2 remains active and Phase 3 has not passed its exit gate.

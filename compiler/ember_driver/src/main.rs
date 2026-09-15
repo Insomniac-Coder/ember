@@ -1305,6 +1305,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     let c_path = layout.c.join(format!("{module_name}.c"));
     std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
+    let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
+    std::fs::write(&safety_path, &emitted.safety_json).map_err(|e| e.to_string())?;
 
     let runtime = runtime_dir()?;
     let exe_name = if cfg!(windows) {

@@ -209,6 +209,7 @@ pub struct Layout {
     pub c: PathBuf,
     pub obj: PathBuf,
     pub bin: PathBuf,
+    pub inspect: PathBuf,
 }
 
 impl Layout {
@@ -218,11 +219,13 @@ impl Layout {
             c: root.join("c"),
             obj: root.join("obj"),
             bin: root.join("bin"),
+            inspect: root.join("inspect"),
             root,
         };
         std::fs::create_dir_all(&layout.c)?;
         std::fs::create_dir_all(&layout.obj)?;
         std::fs::create_dir_all(&layout.bin)?;
+        std::fs::create_dir_all(&layout.inspect)?;
         Ok(layout)
     }
 }

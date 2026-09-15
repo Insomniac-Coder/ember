@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
+use ember_branding::SOURCE_EXT;
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
@@ -276,6 +277,42 @@ fn ember(args: &[&str], root: &Path) -> Run {
         stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
         exit: output.status.code().unwrap_or(-1),
     }
+}
+
+#[test]
+fn dynamic_access_safety_side_table_is_written() {
+    let root = workspace_root();
+    let source = format!(
+        "tests/run-pass/class_mut_method_access.{SOURCE_EXT}"
+    );
+    let out_dir = std::env::temp_dir().join(format!(
+        "ember-safety-side-table-{}",
+        std::process::id()
+    ));
+    let run = ember(
+        &[
+            "build",
+            &source,
+            "--out-dir",
+            &out_dir.to_string_lossy(),
+        ],
+        &root,
+    );
+    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
+
+    let side_table = out_dir
+        .join("debug")
+        .join("inspect")
+        .join("class_mut_method_access.safety.json");
+    let json = std::fs::read_to_string(&side_table)
+        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+    assert!(json.contains("\"schema\":1"), "missing side-table schema: {json}");
+    assert!(json.contains("\"kind\":\"Aliasing\""), "missing access kind: {json}");
+    assert!(json.contains("\"function\":\"bump\""), "missing function identity: {json}");
+    assert!(
+        json.contains("\"status\":\"emitted\""),
+        "missing emitted status: {json}"
+    );
 }
 
 fn profiles(expectations: &Expectations) -> Vec<&str> {

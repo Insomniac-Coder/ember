@@ -29,6 +29,11 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Output {
     /// The single translation unit for this module.
     pub c_source: String,
+    /// `[EFF-10]` — per-site safety metadata for the checks this translation
+    /// unit emits. The driver writes this to the profile's inspect directory;
+    /// elided-check entries are absent until an elision pass can provide the
+    /// required proof and reason.
+    pub safety_json: String,
 }
 
 /// `[MNG-1]` — the C symbol of a type's `drop` method.
@@ -88,7 +93,52 @@ pub fn emit(
         virtual_signatures: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main);
-    Output { c_source: emitter.out }
+    Output {
+        c_source: emitter.out,
+        safety_json: safety_json(bodies, map),
+    }
+}
+
+/// Render the first `[EFF-10]` side-table slice. Dynamic class exclusivity
+/// checks are already explicit `BeginAccess` MIR statements, so their source
+/// locations are authoritative at this boundary. The JSON is deliberately
+/// written without a serialization dependency: this artifact is a compiler
+/// output with a fixed, small schema rather than a user-facing data model.
+fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
+    let mut entries = Vec::new();
+    for body in bodies {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if !matches!(stmt.kind, StmtKind::BeginAccess { .. }) {
+                    continue;
+                }
+                let location = map.location(stmt.span);
+                entries.push(format!(
+                    "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"dynamic exclusivity\",\"reason\":\"not_proven_by_analysis\",\"status\":\"emitted\"}}",
+                    json_string(&location),
+                    json_string(&body.name),
+                ));
+            }
+        }
+    }
+    format!("{{\"schema\":1,\"checks\":[{}]}}\n", entries.join(","))
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 struct Emitter<'a> {
