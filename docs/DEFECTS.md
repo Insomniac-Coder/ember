@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-15 — class default expressions were limited to literals
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-139 | **Non-inheriting class construction only materialized literal field defaults even though `[CLS-2]` permits a field with a default expression to be omitted.** Memberwise construction and user-defined `init` construction both had the same literal-only side table, so `value: i32 = default_value()` either failed at the custom-init boundary or at the memberwise omitted-field boundary. | `[CLS-1]`, `[CLS-2]`, `[CLS-3]`, `[CLS-6]`, `[OWN-5]` | **fixed** | The checker now preserves source default expressions for class fields and checks them at the construction site against the declared field type, reusing ordinary expression typing, coercion, and lowering. MIR still stores defaults immediately after allocation and before a user `init`, and explicit constructor assignments to those fields remain ordinary overwrites. `tests/run-pass/class_construct_nonliteral_defaults.em` covers a function-call default read inside `init`, overwrite after that read, and an omitted memberwise field with the same non-literal default in debug, release, and shipping. Inherited/defaulted derived construction remains fail-closed because base-default materialization through `super.init` still needs layout-offset metadata. No specification, ADR, or owner decision changed. |
+
+---
+
 ## 2026-09-14 — direct calls ignored named parameter binding
 
 ## 2026-09-14 — B8 UI snapshot lagged the class-field call span
@@ -66,7 +74,7 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 | # | Defect | Rule | Status | Fixed in |
 |---|---|---|---|---|
-| D-138 | **A user-defined class `init` rejected all defaulted fields even though `[CLS-2]` permits a field with a default to be omitted.** The compiler already had a narrow literal-default materialization path for memberwise classes, but the custom-constructor path rejected it before checking the constructor body. | `[CLS-1]`, `[CLS-2]`, `[CLS-3]`, `[OWN-5]` | **fixed** | Commit `01a1eab` carries literal defaults through HIR and MIR, stores them after allocation and before the custom `init` body, and marks those fields readable during definite-initialization checking. An explicit constructor assignment to a defaulted field remains an ordinary overwrite, including drop-before-store ordering for a future drop-capable literal. Non-literal defaults and inherited/defaulted derived construction remain fail-closed with `E1010` because their evaluator and base-constructor materialization paths are not implemented in this phase. `tests/run-pass/class_construct_init_default_literals.em` covers readable defaults, explicit overwrite, generated construction, and all profiles; `tests/compile-fail/class_construct_init_nonliteral_default.em` preserves the unsupported boundary. No specification, ADR, or owner decision changed. |
+| D-138 | **A user-defined class `init` rejected all defaulted fields even though `[CLS-2]` permits a field with a default to be omitted.** The compiler already had a narrow literal-default materialization path for memberwise classes, but the custom-constructor path rejected it before checking the constructor body. | `[CLS-1]`, `[CLS-2]`, `[CLS-3]`, `[OWN-5]` | **fixed** | Commit `01a1eab` carries literal defaults through HIR and MIR, stores them after allocation and before the custom `init` body, and marks those fields readable during definite-initialization checking. An explicit constructor assignment to a defaulted field remains an ordinary overwrite, including drop-before-store ordering for a future drop-capable literal. At that checkpoint, non-literal defaults and inherited/defaulted derived construction remained fail-closed; D-139 later closes the non-literal boundary for non-inheriting classes. `tests/run-pass/class_construct_init_default_literals.em` covers readable defaults, explicit overwrite, generated construction, and all profiles. No specification, ADR, or owner decision changed. |
 
 ---
 

@@ -5722,20 +5722,22 @@ constructor value and lowered through the same first-write initialization
 stores as explicit arguments. A class call may still provide an explicit
 prefix of field arguments; required fields without values report E2020.
 
-This is intentionally a narrow implementation boundary. Named class
+This was intentionally a narrow implementation boundary. Named class
 construction, inherited classes, custom `init` bodies with defaulted fields,
-and non-literal defaults remain fail-closed with E1010 until the full default
-expression evaluator and the related ownership/inheritance mechanisms are
-available. The compiler does not guess or fabricate values for defaults that
-it cannot evaluate. The run-pass regression covers omitted literal defaults
-and an explicit prefix argument, including both scalar types.
+and non-literal defaults remained fail-closed with E1010 at this checkpoint.
+Later sections close the named/custom-init and non-literal boundaries for
+non-inheriting classes (§0.104, §0.106, §0.108, and §0.109). Inherited/base
+default materialization remains the live boundary. The run-pass regression
+covers omitted literal defaults and an explicit prefix argument, including
+both scalar types.
 
 This is implementation-only progress: no specification, ADR, adopted source,
 or diagnostic semantics changed. Phase 2 is active, Phase 3 has not passed
 its exit gate, and phase accounting remains exactly **1 of 9 complete**.
-The next constructor boundaries are full default-expression evaluation,
-inherited/base initialization, and the ownership/drop protocol for those
-paths; none is claimed by this checkpoint.
+The next constructor boundaries at this checkpoint were full default-expression
+evaluation, inherited/base initialization, and the ownership/drop protocol for
+those paths. §0.109 closes the non-inheriting default-expression slice; base
+default materialization remains open.
 
 ### 0.92 Phase 3 loop-`else` constructor initialization — 2026-09-14
 
@@ -6178,13 +6180,52 @@ explicit overwrite cannot accidentally erase this distinction.
 `tests/run-pass/class_construct_init_default_literals.em` proves that a
 defaulted field is readable inside `init`, that an explicit argument overwrites
 another default, and that the result is correct in debug, release, and
-shipping. `tests/compile-fail/class_construct_init_nonliteral_default.em`
-preserves the fail-closed boundary for defaults that are not literal. The
-implementation also rejects inherited/defaulted derived construction in this
-phase: `super.init` currently invokes the base body directly and does not yet
-carry the base's default expressions to the correct object-layout offset.
-Non-literal evaluation, base-default materialization, and the broader Phase 3
-constructor matrix remain open. Full workspace tests pass; the known lexer
-unit-test naming warning remains unchanged. No specification, ADR, or adopted
-source changed. Phase accounting remains exactly **1 of 9 complete**; Phase 2
-remains active and Phase 3 has not passed its exit gate.
+shipping. At this checkpoint, `tests/compile-fail/class_construct_init_nonliteral_default.em`
+preserved the fail-closed boundary for defaults that were not literal. That
+boundary is no longer current: §0.109 closes it for non-inheriting classes.
+The implementation still rejects inherited/defaulted derived construction:
+`super.init` currently invokes the base body directly and does not yet carry
+the base's default expressions to the correct object-layout offset. Base-
+default materialization and the broader Phase 3 constructor matrix remain
+open. Full workspace tests pass; the known lexer unit-test naming warning
+remains unchanged. No specification, ADR, or adopted source changed. Phase
+accounting remains exactly **1 of 9 complete**; Phase 2 remains active and
+Phase 3 has not passed its exit gate.
+
+### 0.109 Phase 3 non-literal class default expressions — 2026-09-15
+
+`[CLS-2]` permits omitted class fields to be filled from their defaults. After
+D-138, the implementation still carried only literal defaults, so a valid
+default expression such as:
+
+```ember
+fn default_value() -> i32:
+    return 3
+
+class Defaults:
+    value: i32 = default_value()
+```
+
+remained rejected or unavailable whenever construction omitted `value`. This
+was a compiler implementation defect, recorded as D-139, not a specification
+ambiguity.
+
+The current implementation preserves class field defaults as source
+expressions and checks them at the construction site against the declared
+field type. This deliberately reuses ordinary expression checking, coercion,
+source-order lowering, and ownership behavior rather than creating a separate
+default-expression evaluator. HIR still carries checked default expressions
+through `ClassNew`; MIR stores them after allocation and before a user-defined
+`init` body. A constructor assignment to a defaulted field remains an ordinary
+overwrite, so `[OWN-5]` drop-old-before-store-new ordering stays intact.
+
+`tests/run-pass/class_construct_nonliteral_defaults.em` covers a function-call
+default read inside `init`, an overwrite after that read, and an omitted
+memberwise field with the same non-literal default in debug, release, and
+shipping. The old compile-fail fixture for non-literal class defaults was
+removed because that program is now accepted. Inherited/defaulted derived
+construction remains fail-closed: the base `super.init` path still invokes
+the base body directly and does not yet materialize base defaults at the
+correct object-layout offset. No specification, ADR, or owner decision changed.
+Phase accounting remains exactly **1 of 9 complete**; Phase 2 remains active
+and Phase 3 has not passed its exit gate.

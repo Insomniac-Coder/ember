@@ -4667,8 +4667,8 @@ impl<'a> Builder<'a> {
     /// initialization analyses.
     ///
     /// The memberwise path is still limited to a non-inheriting class without
-    /// custom `init` and supports the literal-default subset type checking
-    /// can materialize at the call site. The supported custom-init path also
+    /// custom `init` and supports defaults that type checking has already
+    /// materialized at the call site. The supported custom-init path also
     /// requires a no-default inheritance chain; derived constructors invoke
     /// their direct base through the dedicated `super.init` lowering. Type
     /// checking admits direct field assignment, `pass`, and branch/loop paths.
@@ -4700,7 +4700,7 @@ impl<'a> Builder<'a> {
         self.current = allocated;
 
         if let Some(init) = init {
-            // `[CLS-2]` — literal field defaults are materialized immediately
+            // `[CLS-2]` — field defaults are materialized immediately
             // after allocation and before the user constructor body runs.
             // `lower_into` is the fresh-slot path, so these stores do not drop
             // uninitialized bytes.  The constructor's own explicit writes are

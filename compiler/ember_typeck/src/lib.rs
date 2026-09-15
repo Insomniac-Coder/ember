@@ -548,10 +548,10 @@ struct Checker<'a> {
     /// while constructor fields still have the definite-initialization
     /// lattice and its special first-write rule.
     class_method_receiver: Option<(ClassId, LocalId)>,
-    /// Literal defaults retained for the narrow synthesized class constructor
-    /// path. The full `[STR-2]` default-expression evaluator is still a later
-    /// dependency; non-literal class defaults remain fail-closed.
-    class_default_literals: HashMap<ClassId, Vec<Option<ast::Literal>>>,
+    /// Source defaults retained for synthesized class construction paths.
+    /// They are checked at the construction site so ordinary expression
+    /// typing, coercion, and source-order lowering remain the only evaluator.
+    class_default_exprs: HashMap<ClassId, Vec<Option<ast::Expr>>>,
     /// A field expression is a place, not a read, while the assignment target
     /// is being synthesized. This prevents constructor writes from tripping
     /// the read-before-initialization check on their own left-hand side.
@@ -681,7 +681,7 @@ impl<'a> Checker<'a> {
             unsafe_cells: HashMap::new(),
             class_init: None,
             class_method_receiver: None,
-            class_default_literals: HashMap::new(),
+            class_default_exprs: HashMap::new(),
             in_assignment_target: false,
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
@@ -2038,16 +2038,11 @@ impl<'a> Checker<'a> {
                     let has_drop = decl.members.iter().any(|member| {
                         matches!(&member.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
                     });
-                    let default_literals = decl
+                    let default_exprs = decl
                         .members
                         .iter()
                         .filter_map(|member| match &member.kind {
-                            ast::MemberKind::Field(field) => Some(
-                                field.default.as_ref().and_then(|expr| match &expr.kind {
-                                    ast::ExprKind::Lit(literal) => Some(literal.clone()),
-                                    _ => None,
-                                }),
-                            ),
+                            ast::MemberKind::Field(field) => Some(field.default.clone()),
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -2070,7 +2065,7 @@ impl<'a> Checker<'a> {
                     def.fields = fields;
                     def.base = base;
                     def.has_drop = has_drop;
-                    self.class_default_literals.insert(id, default_literals);
+                    self.class_default_exprs.insert(id, default_exprs);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
@@ -5606,10 +5601,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let has_base = self.types.class_def(*id).base.is_some();
                     while let Some(class_id) = current {
                         let def = self.types.class_def(class_id);
-                        let literal_defaults = self.class_default_literals.get(&class_id);
+                        let default_exprs = self.class_default_exprs.get(&class_id);
                         let has_unsupported_default = def.fields.iter().enumerate().any(|(index, field)| {
                             field.has_default
-                                && literal_defaults
+                                && default_exprs
                                     .and_then(|defaults| defaults.get(index))
                                     .and_then(Option::as_ref)
                                     .is_none()
@@ -15698,7 +15693,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             let slots = self.call_argument_slots(name, args, params);
             let values = self.check_bound_call_arguments(args, params, &slots);
-            let defaults = self.class_default_literals.get(&id).cloned();
+            let defaults = self.class_default_exprs.get(&id).cloned();
             let mut default_fields = Vec::with_capacity(fields.len());
             let mut invalid_default = false;
             for (index, field) in fields.iter().enumerate() {
@@ -15706,12 +15701,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     default_fields.push(None);
                     continue;
                 }
-                let Some(Some(literal)) = defaults.as_ref().and_then(|items| items.get(index)) else {
+                let Some(Some(default_expr)) = defaults.as_ref().and_then(|items| items.get(index)) else {
                     self.error(
                         codes::E1010,
                         field.span,
                         format!(
-                            "default expression for class field `{}` is not implemented yet in this phase",
+                            "default expression for class field `{}` is not available in this phase",
                             field.name
                         ),
                     );
@@ -15719,8 +15714,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     default_fields.push(None);
                     continue;
                 };
-                let default = self.synth_literal(literal, field.span);
-                default_fields.push(Some(self.coerce(default, field.ty)));
+                default_fields.push(Some(self.check_expr(default_expr, field.ty)));
             }
             if invalid_default {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -15750,7 +15744,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
-        let defaults = self.class_default_literals.get(&id).cloned();
+        let defaults = self.class_default_exprs.get(&id).cloned();
         // `[CLS-3]` — a memberwise class constructor follows the same
         // positional/named field binding as a struct constructor. Keep the
         // user-defined `init` path separate: its parameter names and defaults
@@ -15809,20 +15803,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 invalid = true;
                 continue;
             }
-            let Some(Some(literal)) = defaults.as_ref().and_then(|defaults| defaults.get(index)) else {
+            let Some(Some(default_expr)) = defaults.as_ref().and_then(|defaults| defaults.get(index)) else {
                 self.error(
                     codes::E1010,
                     field.span,
                     format!(
-                        "default expression for class field `{}` is not implemented yet in this phase",
+                        "default expression for class field `{}` is not available in this phase",
                         field.name
                     ),
                 );
                 invalid = true;
                 continue;
             };
-            let default = self.synth_literal(literal, field.span);
-            values.push(self.coerce(default, field.ty));
+            values.push(self.check_expr(default_expr, field.ty));
         }
         if invalid {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };

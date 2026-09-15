@@ -49,7 +49,7 @@ pub struct Directive {
 
 /// `@name(args)` (Part III §7). `[ATT-1]` — an unknown attribute in an
 /// unregistered namespace is an error, checked after parsing.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Attribute {
     pub id: NodeId,
     /// `derive`, or a namespaced `ragev.field`.
@@ -58,7 +58,7 @@ pub struct Attribute {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum AttrArg {
     Expr(Expr),
     Named { name: Ident, value: Expr },
@@ -210,7 +210,7 @@ pub enum Mode {
     Owned,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Param {
     pub id: NodeId,
     pub mode: Mode,
@@ -219,7 +219,7 @@ pub struct Param {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ParamKind {
     /// `self`, `mut self`, `owned self`, or `self: Box[Self]`.
     Receiver { ty: Option<TypeExpr> },
@@ -392,7 +392,7 @@ pub struct FieldDecl {
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypeExpr {
     pub id: NodeId,
     pub kind: TypeKind,
@@ -402,14 +402,14 @@ pub struct TypeExpr {
 /// One parameter in a written callable type such as `fn(mut T) -> R`.
 /// Callable parameter modes deliberately reuse `[FN-1]`'s three modes rather
 /// than introducing a parallel callable ownership vocabulary.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CallableTypeParam {
     pub mode: Mode,
     pub ty: TypeExpr,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TypeKind {
     /// `std.math.Vec3`, `Array[T]`, `Iterator[Item = i32]`.
     Path { segments: Vec<Ident>, args: Vec<GenericArg> },
@@ -438,7 +438,7 @@ pub enum TypeKind {
     Infer,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum GenericArg {
     Type(TypeExpr),
     /// A const-generic argument.
@@ -451,14 +451,14 @@ pub enum GenericArg {
 // Statements
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Block {
     pub id: NodeId,
     pub stmts: Vec<Stmt>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Stmt {
     pub id: NodeId,
     /// `[ATT-2]` — one of `@simd`, `@parallel`, `@unroll`, `@allow`, and only
@@ -468,7 +468,7 @@ pub struct Stmt {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum StmtKind {
     /// `x: T = e` — always a declaration (`[GRM-4]`). `init` may be absent.
     Decl { pattern: Pattern, ty: Option<TypeExpr>, init: Option<Expr> },
@@ -489,7 +489,7 @@ pub enum StmtKind {
     Comptime(Block),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IfStmt {
     pub cond: Condition,
     pub then_block: Block,
@@ -497,27 +497,27 @@ pub struct IfStmt {
     pub else_block: Option<Box<ElseBranch>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ElseBranch {
     Block(Block),
     If(IfStmt),
 }
 
 /// `if cond:` or the pattern form `if Some(x) = opt:`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Condition {
     Expr(Expr),
     Pattern { pattern: Pattern, value: Expr },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WithItem {
     pub pattern: Option<Pattern>,
     pub value: Expr,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MatchArm {
     pub id: NodeId,
     pub pattern: Pattern,
@@ -528,7 +528,7 @@ pub struct MatchArm {
 
 /// `[GRM-10]` — statement arms use `:` and a block, expression arms use `=>`.
 /// Mixing the two in one `match` is `E0103`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MatchArmBody {
     Block(Block),
     Expr(Expr),
@@ -538,14 +538,14 @@ pub enum MatchArmBody {
 // Expressions
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub id: NodeId,
     pub kind: ExprKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Lit(Literal),
     /// A bare name or a `::`/`.`-qualified path.
@@ -602,7 +602,7 @@ pub enum ExprKind {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Jump {
     Return(Option<Box<Expr>>),
     Break { label: Option<Ident> },
@@ -626,7 +626,7 @@ impl Jump {
 /// expression (`ref`, `*`, `dyn`, `fn`, `extern`, `void`, `!`); everything
 /// else is parsed as an expression and reinterpreted later if the node turns
 /// out to be an instantiation (`[GRM-8b]`).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TypeOrExpr {
     Type(TypeExpr),
     Expr(Expr),
@@ -646,13 +646,13 @@ impl TypeOrExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum FStringPart {
     Text(String),
     Expr { expr: Box<Expr>, format_spec: Option<String> },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Arg {
     /// `f(x=1)` — a named argument (`[TYP-25]`).
     pub name: Option<Ident>,
@@ -660,7 +660,7 @@ pub struct Arg {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Lambda {
     /// `owned fn(…)` captures by move/copy/retain and may escape (`[CLO-1]`).
     pub is_owned: bool,
@@ -669,7 +669,7 @@ pub struct Lambda {
     pub body: LambdaBody,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LambdaBody {
     Expr(Box<Expr>),
     Block(Block),
@@ -786,14 +786,14 @@ pub enum LogicalOp {
 // Patterns
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pattern {
     pub id: NodeId,
     pub kind: PatternKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PatternKind {
     /// `_`
     Wild,
@@ -811,7 +811,7 @@ pub enum PatternKind {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FieldPattern {
     pub name: Option<Ident>,
     pub pattern: Pattern,

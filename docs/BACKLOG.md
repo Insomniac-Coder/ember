@@ -106,22 +106,21 @@ conformance matrix remain open.
 | **ARCH-096-1** | Implement 0.9.6's canonical semantic-fact architecture | 2/3 | **Started 2026-09-13; verified boundaries landed in `66d0d43`, `c913fbd`, `90059c8`, `af7c525`, `9ade1d0`, `7bcca7f`, `6ad9834`, `6e37063`, `5332572`, `c4fccdc`, `523c030`, and `7291248`.** `TypeIdentity` and `LayoutDescriptor` name the existing canonical representations; `BorrowCapability`, `AccessContract`, storage/provenance, permission, representation, ownership, checking, unsafe-authority, synchronization, validity, escape, and shared `InitializationState` facts exist, and Arena loans carry distinct provenance/storage facts. Definite initialization retains one verified `InitializationFacts` fixpoint, and the C backend accepts only an exact `VerifiedMir` body/type pairing. The region solver retains compile-time-only per-field slots, field-sensitive NLL, conservative fixed-array provenance, and runtime erasure. It now uses one point-sensitive value/provenance fixpoint so `[LT-21]` assignment replaces a field fact while CFG joins merge alternatives. Direct bodies infer exact parameter-field access and result-field provenance summaries; canonical metadata is installed on MIR, deterministically fingerprinted, consumed by callers, independently rederived, and rejected before code generation when missing, corrupt, or semantically stale. `9ade1d0` serializes that canonical metadata into validated `EMIF` artifacts and derives BLAKE3 transitive dependency/cache identities. `5332572` additionally makes artifact decoding recompute and validate the serialized cache key before any decoded contract is consumed. `c4fccdc` rejects an empty explicit `@borrows` vector at EMIF contract validation, and `523c030` rejects empty or malformed source `@borrows` arguments, preserving `[LT-1a]`'s one-or-more parameter-name invariant at both the source and artifact boundaries. `7291248` routes the loan-side RefCell guard consumer through canonical `BorrowCapability.reference_kind`; the place-based guard classifier remains only for prospective accesses, with RefCell regression behavior unchanged. `7bcca7f` scopes the callable section to `[MOD-2]` import-visible `pub`/`pub(package)` bodies, preserves private MIR facts locally, invalidates schema-1 cache records safely, and proves private vs package/public summary changes affect cache identity correctly without leaking metadata into C. `6ad9834` adds schema-4 source declaration contracts for visible top-level functions, including generic bounds and declaration-only generic records, plus exact direct parameter modes, ABI, unsafe status, `@borrows`, and resolved canonical type spelling. `6e37063` advances EMIF to schema 5 and adds source declaration contracts for every method form currently lowered: visible struct/enum members, generic struct members, interface members, and extensions. Generic owners retain canonical symbolic receiver identity and owner binders before method binders; concrete direct bodies attach independently verified metadata while generic/interface declarations have no fabricated summary. Schema 4 invalidates before use, and a private member change remains local. Class-member lowering, layouts, effects, inline eligibility, real item/generic reuse, non-direct dispatch, remaining enum/escape matrices, `OwnershipGraph`, `EffectSet`, complete borrow/ownership producer-consumer migration, and the equivalence matrix remain. Preserve all accepted/rejected 0.9.5 behavior and the three distinct write orderings; do not create placeholder facts with no real producer and consumer |
 | ~~**VER-096-1**~~ | ~~Accept the `#! language "0.9.6"` selector~~ | — | **done 2026-09-13.** The parser accepts the exact `0.9`, `0.9.5`, and `0.9.6` contracts, retains every older supported selector, and rejects an unknown `0.9.7` with E0006. This is selector recognition only; the current H6 target remains frozen and non-normative until its adoption gates and explicit owner action complete. The later 0.9.7 selector is covered by the H1 implementation checkpoint, not retroactively folded into this historical task |
 
-`OBJ-RT-1` current checkpoint also includes literal-default memberwise
-construction for non-inheriting classes: omitted fields are materialized only
-when their defaults are literal values that reuse the existing literal typing
-and coercion machinery. Non-literal defaults and defaulted derived construction
-remain outstanding and are intentionally fail-closed. Explicit derived
-constructors now preserve inherited initialization through the direct-base
-`super.init(...)` slice described above.
+`OBJ-RT-1` current checkpoint also includes defaulted memberwise construction
+for non-inheriting classes: omitted fields are materialized from the source
+default expression and checked at the construction site using ordinary
+expression typing and coercion. Defaulted derived construction remains
+outstanding and intentionally fail-closed. Explicit derived constructors now
+preserve inherited initialization through the direct-base `super.init(...)`
+slice described above.
 
-`OBJ-RT-1` continuation: custom `init` now accepts literal defaults on a
-non-inheriting class. HIR carries the literal values, MIR materializes them
+`OBJ-RT-1` continuation: custom `init` now accepts default expressions on a
+non-inheriting class. HIR carries the checked defaults, MIR materializes them
 after allocation and before the constructor body, and definite-initialization
 checking treats them as already live. An explicit assignment to such a field
 uses ordinary overwrite lowering, preserving `[OWN-5]` drop-before-store
-ordering. Non-literal defaults and inherited/defaulted derived construction
-remain fail-closed until the expression evaluator and base-constructor
-materialization path can carry the same facts safely.
+ordering. Inherited/defaulted derived construction remains fail-closed until
+the base-constructor materialization path can carry the same facts safely.
 
 `OBJ-RT-1` continuation: inherited source-destructor chaining is now emitted
 for concrete single-inheritance classes. Release invokes the most-derived
