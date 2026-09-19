@@ -6965,3 +6965,16 @@ three profiles pass, and its generated C passes strict C11. This fixes the
 last borrow-rule coverage gap; it does not make an ABI optimization observable
 to Ember source or change the adopted specification. Phase 2 remains active
 because its other rule-family and diagnostic exit criteria are still open.
+
+### 0.140 Phase 2 lifetime-coverage audit — 2026-09-19
+
+The current coverage ledger had also left `[LT-5]` and `[LT-7]` marked missing.
+That was stale: `borrows_travel_with_the_reference.em` and its run-pass
+companions directly exercise NLL travel/liveness, while the H1 late-bound
+matrix exercises callback-local regions, escape rejection, nested boundaries,
+independent invocations, static/owned results, and an imported callable
+consumer. The current lifetime count is therefore **8/10**. The two remaining
+rules, `[LT-1b]` and `[LT-2a]`, are the one deferred `L3014` feature and depend
+on `[MAN-3]` manifest lint configuration; do not default-enable an expressly
+opt-in lint merely to close the count. This is bookkeeping correction only:
+no compiler or specification behavior changed.

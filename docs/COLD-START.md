@@ -252,8 +252,10 @@ left is coverage:
     BRW   9/9    complete. BRW-8 is pinned by all-profile generated-C evidence
                  for small `Copy` parameters, and BRW-9 by dangling-local
                  reference rejection.
-    LT    6/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
-                 LT-2a, LT-5, LT-7 (callback regions)
+    LT    8/10   missing LT-1b and LT-2a: both require the opt-in L3014 lint,
+                 but the compiler has no manifest `[lints]` configuration yet.
+                 LT-5 has direct travel/liveness probes and LT-7 has the
+                 late-bound callback-region conformance matrix.
     DRP   4/6    missing DRP-4 (needs effects, Phase 4),
                  DRP-6 (Box/handle/Shared — Phase 3). DRP-5 has cases since D-030
                  was fixed (drop-body moves rejected)
