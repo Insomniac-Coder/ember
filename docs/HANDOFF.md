@@ -290,13 +290,13 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_3**, with 0.9.7_Hardened_2 named as its immutable immediate predecessor by H3; the H2 artifact is not present in this checkout. No 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls, direct borrowed class and non-generic struct adapters, and the first owned carrier: one direct non-generic struct can move into `Box[dyn I]`, dispatch shared methods, run concrete drop glue exactly once, and free by vtable size/alignment. H3 remains a frozen development target, not the adopted repository-normative source |
-| Latest continuation checkpoint | `cad78de` adds owned `Box[dyn I]` for direct non-generic structs; `080e30f` supplies the borrowed struct adapters it reuses. Both preserve checked layout/implementation metadata through HIR, MIR verification, and C emission. Class/generic payloads, mutable dyn-box dispatch, enums/scalars, and multi-interface composition remain open |
+| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls and owned `Box[dyn I]` for direct structs, including instantiated source generic structs with explicit interface methods. They support borrowed and box-carried dispatch, concrete drop glue, and checked layout/implementation metadata through HIR, MIR verification, and C emission. H3 remains a frozen development target, not the adopted repository-normative source |
+| Latest continuation checkpoint | `e511acc` adds mutable dispatch through direct struct interface boxes; the next checkpoint extends the same adapter boundary to instantiated generic source structs. Generic-class payloads, enums/scalars, multi-interface composition, and generic implementations relying on interface default bodies remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
-| Recent commits | `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · `54bdcad` borrowed class-to-interface adapters · `9f18789` dyn formation rejects owned receivers · `28d6f53` canonical dynamic vtable layouts · earlier history remains recorded below |
-| Working tree | `main` is clean at `cad78de` before this handoff-only refresh and is two commits ahead of `origin/main`; always re-run `git status` and `git log -1` because this row is not live state |
-| `cargo build --workspace --locked` | **0 warnings** in debug (2026-09-19) |
-| `cargo test --workspace --locked` | **222 Rust tests, all passing**, 0 failures (2026-09-19). The test build retains one pre-existing non-snake-case test-name warning. Added conformance programs do not change this Rust count because one integration test walks the directory |
+| Recent commits | `e511acc` mutable struct interface boxes · `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · `54bdcad` borrowed class-to-interface adapters · earlier history remains recorded below |
+| Working tree | `main` was clean at `e511acc` before the generic-struct continuation below; always re-run `git status` and `git log -1` because this row is not live state |
+| `cargo build --workspace --locked` | **0 warnings** in debug (2026-09-20) |
+| `cargo test --workspace --locked` | **222 Rust tests, all passing**, 0 failures (2026-09-20). The test build retains one pre-existing non-snake-case test-name warning. Added conformance programs do not change this Rust count because one integration test walks the directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
 | Conformance | 136 top-level rule directories, 504 `.em` files including support modules; the complete directory runner is green in debug, release, and shipping (2026-09-19) |
 | Ledgers | 125 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H3 remains a target and is not adopted |
@@ -7063,3 +7063,29 @@ payloads, multiple interfaces, enums/scalars, and other owned dynamic-storage
 work remain separate slices. The adopted specification, frozen target, ADRs,
 and phase accounting are unchanged: **1 of 9 complete**, Phase 2 active, and
 Phase 3 has not passed its exit gate.
+
+### 0.144 `[TYP-22]` instantiated generic struct interface adapters — 2026-09-20
+
+`GenericStruct` now preserves its declared `implements` entries. When a source
+generic struct is first instantiated, the checker resolves those entries in the
+declaration's module, records the concrete implementation, and runs the same
+conformance check used for direct structs after its concrete methods exist.
+The existing dynamic-adapter path can consequently carry that instantiation as
+either `ref dyn I` or `Box[dyn I]`; the MIR verifier recognizes instantiated
+source structs while continuing to reject compiler-private generic storage.
+
+`dyn_interface_box_generic_struct.em` is the all-profile regression probe. It
+uses `Payload[i32] implements Render`, proves a borrowed coercion and a box
+move each dispatch to `42`, and pins the generated `Payload_i32` vtable.
+`cargo test -p ember_typeck -p ember_mir --locked` and the 16-test-filtered
+conformance run both pass; the latter completed in 105 seconds. Strict C11
+verification remains unavailable on this Windows checkout because neither
+`clang` nor `clang-cl` is installed.
+
+**Deliberate boundary:** this is an explicit-method slice. A generic
+implementation that omits a member and relies on an interface default body
+needs default-body registration after instantiation, which is separate work.
+Generic-class payloads, enums/scalars, multiple interfaces, and other owned
+dynamic-storage cases remain separate slices. The adopted specification,
+frozen target, ADRs, and phase accounting are unchanged: **1 of 9 complete**,
+Phase 2 active, and Phase 3 has not passed its exit gate.

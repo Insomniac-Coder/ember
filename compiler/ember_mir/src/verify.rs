@@ -970,8 +970,7 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
             }
             let supported_concrete = match types.kind(*concrete) {
                 TyKind::Class(_) => true,
-                TyKind::Struct(id) => types.struct_def(*id).origin.is_none(),
-                _ => false,
+                _ => is_source_struct_payload(types, *concrete),
             };
             if source_inner != concrete || !supported_concrete {
                 fail(format!("{at} concrete metadata disagrees with its source type"));
@@ -1036,13 +1035,12 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
             fail(format!("{at} metadata disagrees with its destination type"));
             continue;
         }
-        let supported_concrete = matches!(types.kind(*concrete), TyKind::Struct(id)
-            if types.struct_def(*id).origin.is_none());
+        let supported_concrete = is_source_struct_payload(types, *concrete);
         if !supported_concrete
             || !matches!(args.as_slice(), [Operand::Move(source)]
                 if place_ty(body, types, source) == *concrete)
         {
-            fail(format!("{at} must move one concrete non-generic struct payload"));
+            fail(format!("{at} must move one concrete struct payload"));
             continue;
         }
         if layout.len() != implementations.len() {
@@ -1067,6 +1065,12 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
         }
     }
     violations
+}
+
+fn is_source_struct_payload(types: &TypeTable, ty: Ty) -> bool {
+    matches!(types.kind(ty), TyKind::Struct(id)
+        if types.struct_def(*id).origin.is_none()
+            || types.struct_def(*id).declaring_module != usize::MAX)
 }
 
 /// Where a place lands, following its projections. A projection that does not

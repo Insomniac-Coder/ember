@@ -286,6 +286,9 @@ struct GenericStruct {
     /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
     /// `Buffer[T]` is read-only outside `Buffer`'s module for every `T`.
     declaring_module: usize,
+    /// The interfaces each concrete instantiation implements. They are kept
+    /// unresolved until interfaces have been collected globally.
+    implements: Vec<ast::TypeExpr>,
     /// `[TYP-16]` — the methods declared in the body, resolved once with the
     /// type parameters left opaque. An instantiation substitutes them, the
     /// same way it substitutes the fields.
@@ -2054,6 +2057,7 @@ impl<'a> Checker<'a> {
                     generic_params,
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
+                    implements: decl.implements.clone(),
                     methods,
                 },
             );
@@ -2607,54 +2611,52 @@ impl<'a> Checker<'a> {
     /// supertrait it names (`[IFC-3]`).
     fn check_implementations(&mut self) {
         for (ty, interface, span) in self.implemented.clone() {
-            let Some(def) = self.interfaces.get(&interface) else { continue };
-            let required = def.methods.clone();
-            let supertraits = def.supertraits.clone();
+            self.check_implementation(ty, interface, span);
+        }
+    }
 
-            for (method, declaration, receiver, _) in required {
-                let implementation = if receiver.is_some() {
-                    self.methods.get(&(ty, method)).map(|entry| (entry.def, Some(entry.receiver)))
-                } else {
-                    self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
-                };
-                let shown = self.types.display(ty);
-                let Some((implementation, actual_receiver)) = implementation else {
-                    self.error(
-                        codes::E2040,
-                        span,
-                        format!("`{shown}` implements `{interface}` but does not define `{method}`"),
-                    );
-                    continue;
-                };
-                if !self.implementation_signature_matches(
-                    ty,
-                    declaration,
-                    receiver,
-                    implementation,
-                    actual_receiver,
-                ) {
-                    self.error(
-                        codes::E2040,
-                        span,
-                        format!(
-                            "`{shown}.{method}` does not match the signature required by `{interface}`"
-                        ),
-                    );
-                }
-            }
-            for parent in supertraits {
-                if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == parent) {
-                    continue;
-                }
-                let shown = self.types.display(ty);
+    fn check_implementation(&mut self, ty: Ty, interface: Symbol, span: Span) {
+        let Some(def) = self.interfaces.get(&interface) else { return };
+        let required = def.methods.clone();
+        let supertraits = def.supertraits.clone();
+
+        for (method, declaration, receiver, _) in required {
+            let implementation = if receiver.is_some() {
+                self.methods.get(&(ty, method)).map(|entry| (entry.def, Some(entry.receiver)))
+            } else {
+                self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
+            };
+            let shown = self.types.display(ty);
+            let Some((implementation, actual_receiver)) = implementation else {
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`{shown}` implements `{interface}` but does not define `{method}`"),
+                );
+                continue;
+            };
+            if !self.implementation_signature_matches(
+                ty, declaration, receiver, implementation, actual_receiver,
+            ) {
                 self.error(
                     codes::E2040,
                     span,
                     format!(
-                        "`{interface}` requires `{parent}`, which `{shown}` does not implement"
+                        "`{shown}.{method}` does not match the signature required by `{interface}`"
                     ),
                 );
             }
+        }
+        for parent in supertraits {
+            if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == parent) {
+                continue;
+            }
+            let shown = self.types.display(ty);
+            self.error(
+                codes::E2040,
+                span,
+                format!("`{interface}` requires `{parent}`, which `{shown}` does not implement"),
+            );
         }
     }
 
@@ -3069,7 +3071,9 @@ impl<'a> Checker<'a> {
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
         match self.types.kind(concrete) {
             TyKind::Class(_) => {}
-            TyKind::Struct(id) if self.types.struct_def(*id).origin.is_none() => {}
+            TyKind::Struct(id)
+                if self.types.struct_def(*id).origin.is_none()
+                    || self.types.struct_def(*id).declaring_module != usize::MAX => {}
             _ => return None,
         }
         if !self
@@ -4548,6 +4552,13 @@ impl<'a> Checker<'a> {
                     source: method.source,
                 });
             }
+        }
+        let implemented_at = self.implemented.len();
+        let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
+        self.collect_implements(ty, &decl.implements, &[], span);
+        self.current_module = previous_module;
+        for (implemented_ty, interface, interface_span) in self.implemented[implemented_at..].to_vec() {
+            self.check_implementation(implemented_ty, interface, interface_span);
         }
         ty
     }
@@ -9900,13 +9911,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if let Some((inner, interface)) = dyn_target {
                 let concrete = value.ty;
-                let supported = matches!(
-                    self.types.kind(concrete),
-                    TyKind::Struct(id) if self.types.struct_def(*id).origin.is_none()
-                );
-                let Some(implementations) = supported
-                    .then(|| self.dyn_concrete_adapter(concrete, interface))
-                    .flatten()
+                let Some(implementations) = self.dyn_concrete_adapter(concrete, interface)
                 else {
                     self.error(
                         codes::E2020,
