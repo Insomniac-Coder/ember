@@ -6953,5 +6953,15 @@ the smallest safe-reference failure: a returned `ref i32` into a callee-local
 must be rejected with `E3060` because the local storage ends with the callee
 frame. The case runs under debug, release, and shipping. This is conformance
 coverage for already implemented lifetime machinery, not a compiler defect or
-a change to the adopted specification. Phase 2 remains active; `[BRW-8]` is
-the remaining borrow-rule coverage gap in the current matrix.
+a change to the adopted specification. `[BRW-8]` was the one remaining
+borrow-rule coverage gap at this checkpoint; §0.139 closes it.
+
+### 0.139 `[BRW-8]` small-`Copy` ABI conformance — 2026-09-19
+
+`tests/conformance/BRW-8/accept_small_copy_parameter_by_value.em` records the
+backend's permitted `[BRW-8]` ABI choice: two `i32` parameters are emitted as
+C values, never as shared-borrow pointers. The source result is `42`, all
+three profiles pass, and its generated C passes strict C11. This fixes the
+last borrow-rule coverage gap; it does not make an ABI optimization observable
+to Ember source or change the adopted specification. Phase 2 remains active
+because its other rule-family and diagnostic exit criteria are still open.

@@ -249,8 +249,8 @@ left is coverage:
 
     OWN   7/8    missing OWN-8 (Clone, @derive(Clone)) — an unbuilt feature,
                  not a missing test; OWN-6 is complete at MEM-API-1
-    BRW   8/9    missing BRW-8 (an ABI decision, "never observable" — assert on
-                 emitted C). BRW-9 is covered by the all-profile dangling-local
+    BRW   9/9    complete. BRW-8 is pinned by all-profile generated-C evidence
+                 for small `Copy` parameters, and BRW-9 by dangling-local
                  reference rejection.
     LT    6/10   missing LT-1b (L3014, an opt-in lint with no opt-in mechanism),
                  LT-2a, LT-5, LT-7 (callback regions)
