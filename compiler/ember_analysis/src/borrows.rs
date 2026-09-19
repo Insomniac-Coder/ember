@@ -589,6 +589,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
             ..
         } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
+        FuncRef::DynBoxNew { .. } => Elision::Nothing,
         // A virtual method has no direct symbol at this stage. Preserve the
         // conservative call contract until a class-specific summary exists.
         FuncRef::Virtual { .. } => Elision::Everything,

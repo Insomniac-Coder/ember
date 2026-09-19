@@ -151,6 +151,14 @@ fn collect_body_function_symbols(
                         collect_operand_function_symbols(operand, out);
                     }
                     ember_mir::FuncRef::Builtin { .. } => {}
+                    ember_mir::FuncRef::DynBoxNew { implementations, .. } => {
+                        out.extend(
+                            implementations
+                                .iter()
+                                .flatten()
+                                .map(|implementation| implementation.symbol.clone()),
+                        );
+                    }
                     ember_mir::FuncRef::Virtual { .. } => {}
                     ember_mir::FuncRef::Interface { .. } => {}
                 }

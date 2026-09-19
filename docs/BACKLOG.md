@@ -427,15 +427,20 @@ forwarding, and dispatch to an ordinary interface default body. This remains a
 deliberately incomplete dynamic-object boundary: `Box[dyn I]`, other owned
 dynamic storage, payload drop glue, multi-interface composition, generic
 classes, independent-package table materialization, and the full Phase 3
-matrix remain open. The `drop` slot in these borrowed-only tables is `NULL`;
-no borrowed carrier invokes it, and an owned-dynamic implementation must
-provide its own proven ownership/drop path rather than reusing that fact.
+matrix remain open. Class-only borrowed tables keep a `NULL` drop slot because
+no borrowed carrier invokes it.
 
 The following narrow increment extends the same borrowed carrier and verified
 adapter metadata to direct, non-generic structs. It preserves structs' existing
 by-value shared-receiver ABI and pointer-based mutable-receiver ABI, with no
 allocation or ownership transfer. Generic implementers, enums/scalars,
 `Box[dyn I]`, and dynamic drop glue remain separate work.
+
+The first owned-dynamic increment now supports `Box[dyn I]` for one direct,
+non-generic struct, including shared dispatch and concrete drop-before-free.
+The struct adapter's drop slot is shared safely with borrowed carriers, which
+never call it. Class/generic payloads, mutable dyn-box receivers, enums/scalars,
+and multi-interface composition remain open.
 
 ## Build order
 

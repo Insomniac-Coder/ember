@@ -267,6 +267,15 @@ pub enum ExprKind {
         implementations: Vec<Option<InterfaceAdapterSlot>>,
         expr: Box<Expr>,
     },
+    /// `[TYP-22]` — allocate one concrete value behind an owning
+    /// `Box[dyn I]`, retaining the checked dispatch/drop adapter metadata.
+    DynBoxNew {
+        concrete: Ty,
+        interface: Symbol,
+        layout: Vec<Option<InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterSlot>>,
+        value: Box<Expr>,
+    },
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
@@ -1089,6 +1098,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         }
         ExprKind::InterfaceUpcast { interface, expr: inner, .. } => {
             format!("@dyn {interface}({})", dump_expr(inner, function, types))
+        }
+        ExprKind::DynBoxNew { interface, value, .. } => {
+            format!("Box[dyn {interface}]({})", dump_expr(value, function, types))
         }
         ExprKind::EraseRange(inner) => {
             format!("(erase {})", dump_expr(inner, function, types))

@@ -1004,6 +1004,67 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                 }
             }
         }
+
+        let Terminator::Call {
+            func:
+                FuncRef::DynBoxNew {
+                    concrete,
+                    boxed,
+                    interface,
+                    layout,
+                    implementations,
+                },
+            args,
+            dest,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        let at = format!("bb{block_index}: dynamic interface box");
+        let valid_box = match types.kind(*boxed) {
+            TyKind::Struct(id) => match &types.struct_def(*id).origin {
+                Some((name, box_args)) if name.is("Box") && box_args.len() == 1 => {
+                    matches!(types.kind(box_args[0]), TyKind::Dyn { interfaces }
+                        if interfaces.len() == 1 && interfaces[0] == *interface)
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if place_ty(body, types, dest) != *boxed || !valid_box {
+            fail(format!("{at} metadata disagrees with its destination type"));
+            continue;
+        }
+        let supported_concrete = matches!(types.kind(*concrete), TyKind::Struct(id)
+            if types.struct_def(*id).origin.is_none());
+        if !supported_concrete
+            || !matches!(args.as_slice(), [Operand::Move(source)]
+                if place_ty(body, types, source) == *concrete)
+        {
+            fail(format!("{at} must move one concrete non-generic struct payload"));
+            continue;
+        }
+        if layout.len() != implementations.len() {
+            fail(format!("{at} has mismatched table-layout and adapter lengths"));
+            continue;
+        }
+        for (slot, (layout, implementation)) in layout.iter().zip(implementations).enumerate() {
+            match (layout, implementation) {
+                (None, None) => {}
+                (Some(_), Some(implementation))
+                    if implementation.receiver != ember_hir::Mode::Owned => {}
+                (None, Some(_)) => {
+                    fail(format!("{at} supplies an adapter for non-callable slot {slot}"));
+                }
+                (Some(_), None) => {
+                    fail(format!("{at} omits an adapter for callable slot {slot}"));
+                }
+                (Some(_), Some(_)) => {
+                    fail(format!("{at} supplies an owned receiver for slot {slot}"));
+                }
+            }
+        }
     }
     violations
 }

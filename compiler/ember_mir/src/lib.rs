@@ -1121,6 +1121,15 @@ pub enum FuncRef {
         ret: Ty,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
     },
+    /// `[TYP-22]` — allocate a concrete payload and return its owning
+    /// two-word `Box[dyn I]` carrier.
+    DynBoxNew {
+        concrete: Ty,
+        boxed: Ty,
+        interface: ember_span::Symbol,
+        layout: Vec<Option<ember_hir::InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterMethod>>,
+    },
     /// `[CLO-3]`, `[FN-6b]` — a call through a value of function type. The
     /// operand holds the callee; `latebound` is the expected callable-boundary
     /// fact and is erased before code generation.
@@ -1398,6 +1407,9 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                 }
                 FuncRef::Interface { interface, slot, .. } => {
                     ("@dyn ", format!("{interface}::slot{slot}"))
+                }
+                FuncRef::DynBoxNew { interface, .. } => {
+                    ("", format!("Box[dyn {interface}]"))
                 }
                 FuncRef::Indirect { operand, latebound } => (
                     if *latebound { "@latebound " } else { "" },

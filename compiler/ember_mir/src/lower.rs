@@ -1663,6 +1663,40 @@ impl<'a> Builder<'a> {
     fn lower_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
+            hir::ExprKind::DynBoxNew {
+                concrete,
+                interface,
+                layout,
+                implementations,
+                value,
+            } => {
+                let value = self.lower_operand(value);
+                let implementations = implementations
+                    .iter()
+                    .map(|implementation| {
+                        implementation.as_ref().map(|implementation| {
+                            crate::InterfaceAdapterMethod {
+                                symbol: self.program.function(implementation.implementation).symbol.clone(),
+                                receiver: implementation.receiver,
+                            }
+                        })
+                    })
+                    .collect();
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::DynBoxNew {
+                        concrete: *concrete,
+                        boxed: expr.ty,
+                        interface: *interface,
+                        layout: layout.clone(),
+                        implementations,
+                    },
+                    args: vec![value],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Call { callee, arg_eval_order, args, latebound } => {
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();

@@ -91,8 +91,13 @@ The following borrowed-materialization increment also admits direct,
 non-generic struct implementers. Shared struct receivers are adapted from
 erased storage to the existing by-value `self` ABI, while mutable receivers
 retain the ordinary inout pointer ABI. Read `HANDOFF.md` §0.141 before
-extending it. `Box[dyn I]`, generic implementers, and owned drop glue remain
-open.
+extending it.
+
+The current owned increment adds `Box[dyn I]` for one direct, non-generic
+struct. It owns one runtime allocation, dispatches through the same checked
+table, and runs concrete drop glue before freeing by table size/alignment.
+Read `HANDOFF.md` §0.142 before extending it. Class and generic payloads,
+mutable dyn-box receivers, enums/scalars, and multiple interfaces remain open.
 
 **Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
 implemented and recorded as D-155. `E2228`/`B15` now covers direct callable

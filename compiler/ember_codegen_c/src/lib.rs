@@ -544,7 +544,6 @@ impl Emitter<'_> {
                             })
                         })
                         .collect::<Vec<_>>();
-                    self.register_interface_layout(interface.to_string(), layout.clone());
                     let implementations = implementations
                         .iter()
                         .map(|implementation| {
@@ -554,27 +553,74 @@ impl Emitter<'_> {
                             })
                         })
                         .collect();
-                    let concrete_name = self.interface_adapter_concrete_name(*concrete);
-                    let adapter = InterfaceAdapter {
-                        concrete: *concrete,
-                        interface: interface.to_string(),
+                    self.register_interface_adapter(
+                        *concrete,
+                        interface.to_string(),
                         layout,
                         implementations,
-                    };
-                    let key = (adapter.interface.clone(), concrete_name);
-                    match self.interface_adapters.entry(key) {
-                        std::collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(adapter);
-                        }
-                        std::collections::btree_map::Entry::Occupied(entry) => {
-                            assert_eq!(
-                                entry.get(),
-                                &adapter,
-                                "one concrete/interface coercion must carry one canonical adapter"
-                            );
-                        }
-                    }
+                    );
                 }
+                if let Terminator::Call {
+                    func:
+                        FuncRef::DynBoxNew {
+                            concrete,
+                            interface,
+                            layout,
+                            implementations,
+                            ..
+                        },
+                    ..
+                } = &block.terminator
+                {
+                    self.register_interface_adapter(
+                        *concrete,
+                        interface.to_string(),
+                        layout
+                            .iter()
+                            .map(|slot| {
+                                slot.as_ref().map(|slot| InterfaceMethod {
+                                    params: slot.params.clone(),
+                                    ret: slot.ret,
+                                })
+                            })
+                            .collect(),
+                        implementations
+                            .iter()
+                            .map(|implementation| {
+                                implementation.as_ref().map(|implementation| {
+                                    InterfaceAdapterMethod {
+                                        symbol: implementation.symbol.clone(),
+                                        receiver: implementation.receiver,
+                                    }
+                                })
+                            })
+                            .collect(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn register_interface_adapter(
+        &mut self,
+        concrete: Ty,
+        interface: String,
+        layout: Vec<Option<InterfaceMethod>>,
+        implementations: Vec<Option<InterfaceAdapterMethod>>,
+    ) {
+        self.register_interface_layout(interface.clone(), layout.clone());
+        let key = (interface.clone(), self.interface_adapter_concrete_name(concrete));
+        let adapter = InterfaceAdapter { concrete, interface, layout, implementations };
+        match self.interface_adapters.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(adapter);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                assert_eq!(
+                    entry.get(),
+                    &adapter,
+                    "one concrete/interface coercion must carry one canonical adapter"
+                );
             }
         }
     }
@@ -584,10 +630,22 @@ impl Emitter<'_> {
     /// `{drop, size, align, method0, ...}` shape; method slots use an erased
     /// `void*` receiver and the statically known interface argument types.
     fn emit_interface_vtable_types(&mut self) {
-        if self.interface_layouts.is_empty() {
+        let has_dyn_box = self.types.structs().any(|(id, _)| {
+            self.box_inner_id(id)
+                .is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }))
+        });
+        if self.interface_layouts.is_empty() && !has_dyn_box {
             return;
         }
         self.line("/* dynamic interface vtable types */");
+        if has_dyn_box {
+            let header = ember_branding::mangled("dyn_vtable_header");
+            self.line(&format!("struct {header} {{"));
+            self.line("    void (*drop)(void*);");
+            self.line("    size_t size;");
+            self.line("    size_t align;");
+            self.line("};");
+        }
         for (interface, methods) in self.interface_layouts.clone() {
             let table = ember_branding::vtable(&format!("dyn_{interface}"));
             self.line(&format!("struct {table} {{"));
@@ -664,6 +722,23 @@ impl Emitter<'_> {
                     (concrete.clone(), concrete, false)
                 }
             };
+            let drop = if matches!(self.types.kind(adapter.concrete), TyKind::Struct(_)) {
+                let name = format!("{table}_drop");
+                let mut lines = Vec::new();
+                self.drop_lines(
+                    &format!("(*({}*)_0)", self.c_type(adapter.concrete)),
+                    adapter.concrete,
+                    &mut lines,
+                );
+                self.line(&format!("static void {name}(void* _0) {{"));
+                for line in lines {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+                name
+            } else {
+                "NULL".to_string()
+            };
             for (slot, (signature, implementation)) in adapter
                 .layout
                 .iter()
@@ -711,7 +786,7 @@ impl Emitter<'_> {
                 self.line("}");
             }
             self.line(&format!("static const struct {table_type} {table} = {{"));
-            self.line("    NULL,");
+            self.line(&format!("    {drop},"));
             self.line(&format!("    sizeof({payload_ty}),"));
             self.line(&format!("    _Alignof({payload_ty}),"));
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
@@ -981,6 +1056,9 @@ impl Emitter<'_> {
                 // and ownership machinery can follow auto-deref; the backend
                 // erases that wrapper rather than emitting a second struct.
                 if let Some(inner) = self.box_inner_id(id) {
+                    if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                        return Definition::Alias(self.c_type(inner));
+                    }
                     return Definition::Alias(format!("{}*", self.c_type(inner)));
                 }
                 Definition::Struct(
@@ -1146,6 +1224,19 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                if let Some(inner) = self.box_inner_id(*id)
+                    && let TyKind::Dyn { interfaces } = self.types.kind(inner)
+                    && interfaces.len() == 1
+                {
+                    let table = ember_branding::mangled("dyn_vtable_header");
+                    out.push(format!(
+                        "((const struct {table}*){access}.vtable)->drop({access}.data);"
+                    ));
+                    out.push(format!(
+                        "{RT}free({access}.data, ((const struct {table}*){access}.vtable)->size, ((const struct {table}*){access}.vtable)->align);"
+                    ));
+                    return;
+                }
                 // IX.1 / `[DRP-6]` — the compiler-known Box owns the value
                 // behind its private pointer. Its drop order is observable:
                 // destroy `T` first, then release exactly that allocation.
@@ -2055,6 +2146,15 @@ impl Emitter<'_> {
                 };
                 format!(
                     "(((const struct {table}*)({receiver}.vtable))->slot{slot})({args})"
+                )
+            }
+            FuncRef::DynBoxNew { concrete, boxed, interface, .. } => {
+                let concrete_c = self.c_type(*concrete);
+                let table = self.interface_adapter_table(*concrete, interface.as_str());
+                format!(
+                    "({}){{ .data = {RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), &{}), .vtable = &{table} }}",
+                    self.c_type(*boxed),
+                    rendered[0]
                 )
             }
             // `[CLO-3]` — a call through a value. In C a function value is

@@ -7004,3 +7004,20 @@ consistency, and `git diff --check` pass. `cargo fmt --check` remains unusable
 as a gate because the pre-existing tree is not rustfmt-clean. The adopted
 specification, frozen target, diagnostics, and phase count are unchanged:
 exactly **1 of 9 phases complete**, with Phase 2 still active.
+
+### 0.142 `[TYP-22]` owned struct interface box — 2026-09-19
+
+The next thin dynamic-interface slice implements `Box[dyn I]` for one direct,
+non-generic struct implementer. Construction moves the concrete value into one
+runtime allocation and records its checked adapter table in the two-word dyn
+carrier. Calls use the existing interface slot path; drop invokes the concrete
+struct glue exactly once, then frees the payload with the table's size and
+alignment. MIR verification rejects malformed payload, destination, interface,
+slot, or receiver metadata before C emission.
+
+`tests/run-pass/dyn_interface_box_struct.em` runs in every profile, prints `42`
+from dispatch and again from the destructor, and pins allocation plus drop-before-
+free order in generated C. Class payloads, generic implementers, mutable dyn-box
+receivers, multiple interfaces, and enums/scalars remain separate slices. Full
+workspace and repository-gate validation passes; phase accounting remains
+**1 of 9 complete**, with Phase 2 still active.

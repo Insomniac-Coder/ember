@@ -3110,7 +3110,10 @@ impl<'a> Checker<'a> {
         receiver_ty: Ty,
         name: Symbol,
     ) -> Option<(Symbol, DefId, Mode, usize, Option<Symbol>)> {
-        let TyKind::Ref { inner, .. } = *self.types.kind(receiver_ty) else { return None };
+        let inner = match *self.types.kind(receiver_ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => self.box_inner(receiver_ty)?,
+        };
         let TyKind::Dyn { interfaces } = self.types.kind(inner).clone() else { return None };
 
         let mut candidates = Vec::new();
@@ -4568,16 +4571,42 @@ impl<'a> Checker<'a> {
             return ty;
         }
         let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
-        let id = self.types.add_struct(StructDef {
-            name,
-            fields: vec![FieldDef {
+        let fields = if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+            let opaque = self.types.intern(TyKind::Ptr {
+                mutable: true,
+                inner: self.common.void,
+            });
+            vec![
+                FieldDef {
+                    name: Symbol::intern("data"),
+                    ty: opaque,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+                FieldDef {
+                    name: Symbol::intern("vtable"),
+                    ty: opaque,
+                    span: Span::DUMMY,
+                    has_default: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                },
+            ]
+        } else {
+            vec![FieldDef {
                 name: Symbol::intern("value"),
                 ty: pointer,
                 span: Span::DUMMY,
                 has_default: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
-            }],
+            }]
+        };
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields,
             span: Span::DUMMY,
             derives_copy: false,
             has_drop: true,
@@ -9854,12 +9883,54 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             let expected_inner = expected.and_then(|ty| self.box_inner(ty));
             let hint = explicit.first().copied().or(expected_inner);
-            let value = match hint {
-                Some(inner) => self.check_expr(&args[0].value, inner),
-                None => self.synth_committed(&args[0].value),
+            let dyn_target = hint.and_then(|inner| match self.types.kind(inner) {
+                TyKind::Dyn { interfaces } if interfaces.len() == 1 => Some((inner, interfaces[0])),
+                _ => None,
+            });
+            let value = if dyn_target.is_some() {
+                self.synth_committed(&args[0].value)
+            } else {
+                match hint {
+                    Some(inner) => self.check_expr(&args[0].value, inner),
+                    None => self.synth_committed(&args[0].value),
+                }
             };
             if value.ty == self.common.error {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if let Some((inner, interface)) = dyn_target {
+                let concrete = value.ty;
+                let supported = matches!(
+                    self.types.kind(concrete),
+                    TyKind::Struct(id) if self.types.struct_def(*id).origin.is_none()
+                );
+                let Some(implementations) = supported
+                    .then(|| self.dyn_concrete_adapter(concrete, interface))
+                    .flatten()
+                else {
+                    self.error(
+                        codes::E2020,
+                        value.span,
+                        format!(
+                            "expected `{}`, found `{}`",
+                            self.types.display(inner),
+                            self.types.display(concrete)
+                        ),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                let boxed = self.box_of(inner);
+                return Expr {
+                    ty: boxed,
+                    kind: ExprKind::DynBoxNew {
+                        concrete,
+                        interface,
+                        layout: self.dyn_vtable_layout(interface),
+                        implementations,
+                        value: Box::new(value),
+                    },
+                    span,
+                };
             }
             let inner = value.ty;
             // `[TYP-15]` is region-based: forming `Box[str]` is legal, and
@@ -12195,7 +12266,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
         // does not duplicate the payload's method surface.
-        if self.box_inner(receiver.ty).is_some() {
+        let dyn_box = self
+            .box_inner(receiver.ty)
+            .is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        if self.box_inner(receiver.ty).is_some() && !dyn_box {
             if name.name.is("get") {
                 if !explicit.is_empty() {
                     self.error(
@@ -13453,6 +13527,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::ArrayRepeat { value, .. } => {
                 self.collect_mutated_capture_fields_expr(value, environment, fields);
             }
+            ExprKind::DynBoxNew { value, .. } => {
+                self.collect_mutated_capture_fields_expr(value, environment, fields);
+            }
             ExprKind::Match { scrutinee, arms } => {
                 self.collect_mutated_capture_fields_expr(scrutinee, environment, fields);
                 for arm in arms {
@@ -13610,6 +13687,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .iter()
                 .any(|field| self.closure_expr_moves_capture(field, environment, true)),
             ExprKind::ArrayRepeat { value, .. } => {
+                self.closure_expr_moves_capture(value, environment, true)
+            }
+            ExprKind::DynBoxNew { value, .. } => {
                 self.closure_expr_moves_capture(value, environment, true)
             }
             ExprKind::Match { scrutinee, arms } => {
