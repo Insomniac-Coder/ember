@@ -6945,3 +6945,13 @@ supertraits explicitly.
 The adopted specification, frozen target, ADRs, and phase accounting remain
 unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed its
 exit gate.
+
+### 0.138 `[BRW-9]` dangling-reference conformance — 2026-09-19
+
+`tests/conformance/BRW-9/reject_returning_a_reference_to_a_local.em` now pins
+the smallest safe-reference failure: a returned `ref i32` into a callee-local
+must be rejected with `E3060` because the local storage ends with the callee
+frame. The case runs under debug, release, and shipping. This is conformance
+coverage for already implemented lifetime machinery, not a compiler defect or
+a change to the adopted specification. Phase 2 remains active; `[BRW-8]` is
+the remaining borrow-rule coverage gap in the current matrix.
