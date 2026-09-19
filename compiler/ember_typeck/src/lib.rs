@@ -12328,15 +12328,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     format!("`{}` is offered by both `{interface}` and `{other}`", name.name),
                 );
             }
-            if receiver_mode == Mode::Mut
-                && !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. })
-            {
-                self.error(
-                    codes::E2140,
-                    span,
-                    "a `mut self` interface method needs `ref mut dyn` access",
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            if receiver_mode == Mode::Mut {
+                if dyn_box {
+                    let borrowed = self.pass_receiver(receiver, receiver_mode, recv.span);
+                    let TyKind::Ref { mutable: true, inner } = self.types.kind(borrowed.ty) else {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    };
+                    receiver = Expr {
+                        ty: *inner,
+                        kind: ExprKind::Deref(Box::new(borrowed)),
+                        span: recv.span,
+                    };
+                } else if !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. }) {
+                    self.error(
+                        codes::E2140,
+                        span,
+                        "a `mut self` interface method needs `ref mut dyn` access",
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
             }
             let signature = self.signatures[def.0 as usize].clone();
             if args.len() != signature.params.len() {

@@ -7037,3 +7037,29 @@ probe mutable method dispatch through a mutable `Box[dyn I]`. Confirm the
 source-level implicit-borrow spelling against frozen H3 before changing method
 resolution, then leave class/generic payloads and multi-interface composition
 for later slices.
+
+### 0.143 `[TYP-22]` mutable struct interface box dispatch — 2026-09-19
+
+Frozen H3 IV.11 confirms the source spelling: a `Box` auto-dereferences once,
+then `mut self` takes a mutable borrow. The direct non-generic struct carrier
+therefore now accepts `boxed.bump()` for a local `Box[dyn Render]`; callers do
+not write an explicit `ref mut` around the box.
+
+The dynamic-call checker reuses the ordinary mutable-receiver adjustment and
+immediately dereferences that checked borrow back to the existing two-word box
+carrier. MIR and C lowering therefore retain the checked mutable owner place
+while the already-established vtable ABI still receives `{ data, vtable }`.
+No allocation, retain, transfer, or new adapter form is introduced.
+
+`tests/run-pass/dyn_interface_box_struct_mut.em` constructs `Box(Payload(41))`,
+calls `boxed.bump()`, then prints `42` through shared dispatch in debug,
+release, and shipping. Its generated-C assertion pins the mutable struct
+adapter call. The direct debug/release/shipping probes pass. Strict C11
+verification remains unavailable on this Windows checkout because neither
+`clang` nor `clang-cl` is installed.
+
+The boundary remains direct, non-generic structs only. Class and generic
+payloads, multiple interfaces, enums/scalars, and other owned dynamic-storage
+work remain separate slices. The adopted specification, frozen target, ADRs,
+and phase accounting are unchanged: **1 of 9 complete**, Phase 2 active, and
+Phase 3 has not passed its exit gate.
