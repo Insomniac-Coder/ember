@@ -75,13 +75,11 @@ five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
 
-**Current continuation (2026-09-19):** D-157 carries complete dynamic-interface
-vtable layouts from type checking through C emission, so inherited slots keep
-their declaration-derived ABI when a module calls only a later member. The MIR
-verifier rejects mismatched dynamic call metadata before code generation. Read
-`HANDOFF.md` §0.135 for the red probe, the explicit sized-only-default boundary,
-and the remaining dyn work. The frozen H3 target and adopted specification are
-unchanged.
+**Current continuation (2026-09-19):** D-158 rejects `owned self` interface
+methods while forming `dyn I`, as `[CLO-6a]` requires, rather than deferring an
+impossible move through `ref dyn` to a later call. Read `HANDOFF.md` §0.136 for
+the red probe, D-157's layout context, and the remaining dyn work. The frozen
+H3 target and adopted specification are unchanged.
 
 **Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
 implemented and recorded as D-155. `E2228`/`B15` now covers direct callable

@@ -408,6 +408,11 @@ cross-module table definitions, owned dyn storage, and the representation of
 non-callable sized-only defaults remain the next separate design/implementation
 boundaries.
 
+D-158 also moves the `owned self` exclusion to dyn formation. This applies the
+existing `[CLO-6a]` v1 rule rather than leaving a source type representable and
+rejecting only a later impossible move through `ref dyn`. Concrete table and
+object materialization remain separate Phase 3 work.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

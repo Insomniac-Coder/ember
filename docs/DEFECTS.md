@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-19 — owned interface receivers were accepted as dyn-compatible
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-158 | **`dyn I` formation accepted an interface method with `owned self`.** The later method-call path rejected it only through `ref dyn`, leaving the interface incorrectly dyn-compatible and inviting an impossible move from a borrowed fat pointer. `[CLO-6a]` explicitly excludes `CallableOnce` for this reason. | `[TYP-22]`, `[CLO-6a]` | **fixed** | The formation check now rejects any owned receiver with `E2050`, alongside receiver-less, generic, and by-value-`Self` members. `tests/conformance/TYP-22/reject_dyn_interface_with_owned_receiver.em` was accepted before the fix and now requires the formation error in debug, release, and shipping. This applies the existing v1 dyn boundary; no specification, ADR, owner decision, or version changed. |
+
 ## 2026-09-19 — dynamic vtable layouts lost inherited slot signatures
 
 | # | Defect | Rule | Status | Fixed in |

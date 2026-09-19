@@ -6875,3 +6875,19 @@ repository gates, runtime-generation checks/tests, Appendix A consistency,
 and `git diff --check` pass; these gates are baseline-aware and do not claim
 complete specification conformance. The inherited-layout probe also passes
 strict C11 `-pedantic -Wall -Wextra -Werror -fsyntax-only` compilation.
+
+### 0.136 `[TYP-22]` owned-receiver dyn formation rejection — 2026-09-19
+
+D-158 closes the remaining ownership hole in the dyn-formation predicate.
+`interface Consume: fn consume(owned self)` was accepted as `ref dyn Consume`
+and rejected only if a later call attempted to move through the fat-pointer
+borrow. `[CLO-6a]` already states why v1 does not admit that receiver through a
+vtable: `CallableOnce` consumes its concrete receiver and is not dyn-compatible.
+
+The type checker now reports `E2050` while forming `dyn Consume`, with the
+method and owned-receiver clause named. The three-profile TYP-22 conformance
+case was red before the fix. This completes no new object-materialization
+feature; it makes the existing formation boundary reject consistently before
+HIR or MIR can represent an impossible dynamic call. The adopted specification,
+target, ADRs, and phase accounting are unchanged: **1 of 9 complete**, Phase 2
+active, and Phase 3 has not passed its exit gate.

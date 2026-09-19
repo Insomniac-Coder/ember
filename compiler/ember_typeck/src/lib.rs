@@ -2975,6 +2975,13 @@ impl<'a> Checker<'a> {
             if receiver.is_none() {
                 return Some(format!("method `{method}` has no receiver"));
             }
+            // `[CLO-6a]` — an owned receiver consumes the concrete value and
+            // therefore has no v1 `dyn` vtable ABI. Reject this when `dyn I`
+            // is formed rather than allowing a later call to invent a move
+            // from the borrowed fat-pointer carrier.
+            if *receiver == Some(Mode::Owned) {
+                return Some(format!("method `{method}` has an owned receiver"));
+            }
             let signature = &self.signatures[declaration.0 as usize];
             if !signature.generics.is_empty() {
                 return Some(format!("method `{method}` is generic"));
