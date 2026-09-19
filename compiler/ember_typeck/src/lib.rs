@@ -12105,6 +12105,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let Some((interface, def, receiver_mode, slot, ambiguity)) =
             self.dyn_method(receiver.ty, name.name)
         {
+            // `[TYP-22]` lets a sized-only default coexist with a dyn
+            // interface; it does not make the erased receiver sized. Use
+            // the declaration identity, including for inherited methods,
+            // rather than guessing availability from the result type.
+            if self.interfaces.values().any(|i| i.dyn_sized_defaults.contains(&def)) {
+                self.error(
+                    codes::E2020,
+                    name.span,
+                    format!("`{}` requires `Self: Sized` and cannot be called through `ref dyn`", name.name),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             if !explicit.is_empty() {
                 self.error(
                     codes::E2020,

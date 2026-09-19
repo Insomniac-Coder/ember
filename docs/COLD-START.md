@@ -75,7 +75,15 @@ five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
 
-**Current continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
+**Current continuation (2026-09-19):** D-156 rejects calls to
+`where Self: Sized` defaults through `ref dyn`, including inherited defaults.
+Interface formation and calls to ordinary members remain accepted. Read
+`HANDOFF.md` §0.134 for the reproducer, verification, and remaining dyn work.
+The owner requested a halt after this fix; do not start the next task without
+a resume instruction. The frozen H3 target and adopted specification are
+unchanged.
+
+**Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
 implemented and recorded as D-155. `E2228`/`B15` now covers direct callable
 assignment, generic callable parameters, and `std.borrow.with_views*_mut`,
 with an exact UI snapshot, error page, and compiling repair. The full workspace

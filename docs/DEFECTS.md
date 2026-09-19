@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-19 — sized-only defaults were callable through dyn
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-156 | **Dynamic interface calls ignored `where Self: Sized` on default methods.** `x.clone()` with `x: ref dyn Factory` was accepted even though `clone` returned `Self` and required a sized receiver. The unresolved result reached generated C as `void*`. The same omission admitted an inherited sized-only default returning `i32`, so checking only for a `Self` result would not fix the boundary. | `[TYP-22]` | **fixed** | Dynamic call checking reuses the declaration's existing sized-default metadata and rejects the call with `E2020` before producing HIR. Both direct and inherited minimal probes were accepted before the change; `tests/conformance/TYP-22/reject_dyn_sized_default_call.em` and `reject_dyn_inherited_sized_default_call.em` require rejection in debug, release, and shipping. The compile-pass counterpart retains interface formation and an ordinary callable member alongside the sized-only default. The specification already distinguishes an unsized `dyn` receiver from the sized-only default; no specification, ADR, owner decision, or version changed. |
+
 ## 2026-09-15 — callable mode mismatches used the generic type error
 
 | # | Defect | Rule | Status | Fixed in |

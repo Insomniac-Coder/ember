@@ -4,9 +4,10 @@
 interface Factory:
     fn clone(self) -> Self where Self: Sized:
         pass
+    fn draw(self) -> i32
 
-fn take(x: ref dyn Factory):
-    pass
+fn take(x: ref dyn Factory) -> i32:
+    return x.draw()
 
 fn main():
     pass

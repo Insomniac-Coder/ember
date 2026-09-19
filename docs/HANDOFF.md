@@ -6808,3 +6808,35 @@ The implementation is compiler-only; no adopted specification text, ADR,
 owner decision, diagnostic identity, or language version changed. Phase
 accounting remains exactly **1 of 9 complete**; Phase 2 remains active and
 Phase 3 has not passed its exit gate.
+
+### 0.134 `[TYP-22]` sized-only default call rejection — 2026-09-19
+
+Resumed from clean, pushed `main` at `304da46`. An adversarial probe of the
+new dynamic-call boundary found D-156: `ref dyn Factory` could call a default
+`clone() -> Self where Self: Sized`, and the unresolved `Self` leaked into C
+as `void*`. An inherited sized-only default returning `i32` was also accepted.
+Formation of a dyn-compatible interface containing a sized-only default is
+permitted; invocation of that member on an unsized receiver is not.
+
+Call checking now consumes the existing sized-default declaration metadata,
+including inherited declarations, before creating an `InterfaceCall`. It
+reports `E2020` at the method name. Three-profile negative conformance cases
+cover both probes; the positive fixture still forms the interface and calls
+an ordinary member alongside its sized-only default. A separate compile-pass
+probe pins the explicit mutable-argument pointer ABI and named-argument
+binding. This fixes the compiler, not the specification.
+
+This is not concrete dyn-object construction or an ABI-layout completion.
+Canonical full-table layout, concrete coercions/adapters, owned dyn storage,
+and the full interface matrix remain open. Phase accounting is unchanged:
+**1 of 9 complete**, Phase 2 active, Phase 3 exit gate not yet passed.
+
+Validation at this checkpoint: `cargo test --workspace --locked` passes
+(218 Rust tests, including the directory-walking conformance runner), and
+`cargo build --workspace --locked` is warning-free. The test build retains
+the pre-existing lexer test-name warning. All six repository gates, runtime
+generation checks/tests, Appendix A consistency, and `git diff --check` pass;
+these are baseline-aware gates, not claims of complete spec conformance.
+Both positive dyn probes also compile with Clang's strict C11
+`-pedantic -Wall -Wextra -Werror -fsyntax-only` checks. The owner requested a
+halt after this fix; the next implementation task awaits an explicit resume.

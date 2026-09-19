@@ -393,6 +393,13 @@ diagnostic identity, or language version changed. Interface-object creation,
 concrete adapters, `Box[dyn I]` ownership, and the complete Phase 3 matrix
 remain open.
 
+D-156 hardens this boundary: `where Self: Sized` defaults remain compatible
+with interface formation but cannot be called through `ref dyn`, including
+when inherited and when their return type is not `Self`. Negative cases run
+in all profiles; ordinary member calls and explicit mutable/named arguments
+remain covered. Canonical full-table layout still belongs to the concrete
+vtable-materialization work, not to this call-site-shape milestone.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write
