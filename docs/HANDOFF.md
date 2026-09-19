@@ -1,6 +1,6 @@
 # Ember — handoff
 
-## 0. Current state — the authoritative snapshot (updated 2026-09-15)
+## 0. Current state — the authoritative snapshot (updated 2026-09-19)
 
 **Written as a migration hand-off. Everything in this section was verified
 against the repository at the time of writing, not copied from a previous
@@ -290,15 +290,15 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_3**, with 0.9.7_Hardened_2 named as its immutable immediate predecessor by H3; the H2 artifact is not present in this checkout. No 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | The current checkout contains the D-117 through D-140 closure, the H6-target callable-mode slice, owner-approved 0.9.7 H1 `@latebound` callable boundaries, the complete shared/mutable helper-arity matrix, a real imported latebound callable consumer through the EMIF artifact boundary, cache/borrow-contract hardening, generated runtime C outputs, ownership UI coverage, supported class construction/defaults, virtual/override dispatch, canonical `dyn I` formation and call lowering, and direct single-interface borrowed class materialization (`ref C -> ref dyn I` and `ref mut C -> ref mut dyn I`) through deterministic C adapters. H3 remains a frozen development target, not the adopted repository-normative source |
-| Latest continuation checkpoint | `54bdcad` materializes direct borrowed class-to-interface adapters, preserves canonical table/receiver facts through HIR and MIR, verifies those facts before C generation, and covers shared/mutable/inherited/default/argument-mode cases; owned storage and multi-interface composition remain open |
+| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls, direct borrowed class and non-generic struct adapters, and the first owned carrier: one direct non-generic struct can move into `Box[dyn I]`, dispatch shared methods, run concrete drop glue exactly once, and free by vtable size/alignment. H3 remains a frozen development target, not the adopted repository-normative source |
+| Latest continuation checkpoint | `cad78de` adds owned `Box[dyn I]` for direct non-generic structs; `080e30f` supplies the borrowed struct adapters it reuses. Both preserve checked layout/implementation metadata through HIR, MIR verification, and C emission. Class/generic payloads, mutable dyn-box dispatch, enums/scalars, and multi-interface composition remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
-| Recent commits | `54bdcad` direct borrowed class-to-interface adapters · `9f18789` dyn formation rejects owned receivers · `28d6f53` canonical dynamic vtable layouts · `83ec612` sized-only defaults rejected through dyn receivers · `304da46` dynamic interface call lowering · `7938745` dyn interface type formation · `d27d4b1` inherent-extension virtual dispatch and H3 target intake · earlier history remains recorded below, including `d941511` generated runtime outputs · `825eac5` Hash/Hasher and custom ArenaMap keys · `d2ec959` Arena core/H9 provenance · `6c77723` RefCell/D-041/RIDX-1 · `365122d` Cell[T] · `8459a1f` D-035 |
-| Working tree | Expected clean after the current verified implementation and synchronized documentation checkpoint; always run `git status` and `git log -1` rather than treating this row as live state |
-| `cargo build` | **0 warnings** in debug/release (2026-09-14) |
-| `cargo test --workspace` | **210 tests, all passing**, 0 failures (2026-09-14). The test build has one pre-existing non-snake-case test-name warning; debug and release `cargo build` are warning-free. The Rust count moves for unit/integration tests but not for an added conformance directory, because one `#[test]` walks the tree |
+| Recent commits | `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · `54bdcad` borrowed class-to-interface adapters · `9f18789` dyn formation rejects owned receivers · `28d6f53` canonical dynamic vtable layouts · earlier history remains recorded below |
+| Working tree | `main` is clean at `cad78de` before this handoff-only refresh and is two commits ahead of `origin/main`; always re-run `git status` and `git log -1` because this row is not live state |
+| `cargo build --workspace --locked` | **0 warnings** in debug (2026-09-19) |
+| `cargo test --workspace --locked` | **222 Rust tests, all passing**, 0 failures (2026-09-19). The test build retains one pre-existing non-snake-case test-name warning. Added conformance programs do not change this Rust count because one integration test walks the directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 133 top-level rule directories, 479 `.em` files including support modules; the focused and full conformance runner is green after source `@borrows` contract-shape coverage was added (2026-09-14) |
+| Conformance | 136 top-level rule directories, 504 `.em` files including support modules; the complete directory runner is green in debug, release, and shipping (2026-09-19) |
 | Ledgers | 125 defects, **none open**. **3 open deviations** (D1, D3, D4); D2 is closed by current checkpoint. ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred editorial. ODR-015's implementation is now evidenced in the current worktree; H3 remains a target and is not adopted |
 | Gates | **all green** (six, run individually below) |
 
@@ -7021,3 +7021,19 @@ free order in generated C. Class payloads, generic implementers, mutable dyn-box
 receivers, multiple interfaces, and enums/scalars remain separate slices. Full
 workspace and repository-gate validation passes; phase accounting remains
 **1 of 9 complete**, with Phase 2 still active.
+
+The implementation is commit `cad78de`, immediately after borrowed-struct
+checkpoint `080e30f`; `main` was clean and two commits ahead of `origin/main`
+before this documentation-only refresh. The full workspace test run contains
+222 passing Rust tests, the 136-directory/504-program conformance tree is green,
+the debug workspace build is warning-free, strict C11 accepts the new output,
+and every CI document/runtime gate passes. A full-suite probe also caught and
+fixed the unused-`Box[dyn I]`-parameter case: owned drop glue uses a common
+compiler-emitted vtable header rather than assuming a method call registered an
+interface-specific table type.
+
+**Next bounded task:** keep the same direct, non-generic struct boundary and
+probe mutable method dispatch through a mutable `Box[dyn I]`. Confirm the
+source-level implicit-borrow spelling against frozen H3 before changing method
+resolution, then leave class/generic payloads and multi-interface composition
+for later slices.
