@@ -6840,3 +6840,38 @@ these are baseline-aware gates, not claims of complete spec conformance.
 Both positive dyn probes also compile with Clang's strict C11
 `-pedantic -Wall -Wextra -Werror -fsyntax-only` checks. The owner requested a
 halt after this fix; the next implementation task awaits an explicit resume.
+
+### 0.135 `[TYP-22]` canonical dynamic vtable layouts — 2026-09-19
+
+After the explicit resume, a red generated-C probe found D-157: calling only
+`Child.child()` for `interface Child: Parent` made the backend guess the
+unobserved `Parent.parent()` slot as `void (*)(void*)`. `[TYP-22]` requires one
+declaration-order vtable layout, so a table whose field type varies with the
+call sites in one compilation unit is a compiler defect.
+
+`InterfaceCall` now carries the complete declaration-derived layout from type
+checking to MIR, and MIR carries it to C emission. Type checking represents
+ordinary parameter modes using the same C ABI types as lowering; inherited
+members therefore remain typed even when no source call names them. The C
+backend emits every slot from that layout and asserts that repeated calls of
+one interface agree. The MIR verifier independently checks that a dynamic call
+selects a callable slot whose signature equals its call metadata, preventing a
+bad function-pointer boundary from reaching C.
+
+`tests/compile-pass/dyn_interface_inherited_vtable_layout.em` was red before
+the correction and now pins two `int32_t (*)(void*)` slots plus strict C11
+parsing. Sized-only defaults retain a non-callable placeholder in this
+compiler-only layout because D-156 rejects calls through `dyn`; whether and how
+concrete tables represent those defaults is deliberately left to the later
+vtable-materialization work, not inferred here. Concrete coercions/adapters,
+owned dyn storage, and the full Phase 3 interface matrix remain open. Phase
+accounting remains **1 of 9 complete**; Phase 2 is active and Phase 3 has not
+passed its exit gate.
+
+Validation at this checkpoint: `cargo test --workspace --locked` passes
+**219** Rust tests, and `cargo build --workspace --locked` is warning-free.
+The test build retains the pre-existing lexer test-name warning. All six
+repository gates, runtime-generation checks/tests, Appendix A consistency,
+and `git diff --check` pass; these gates are baseline-aware and do not claim
+complete specification conformance. The inherited-layout probe also passes
+strict C11 `-pedantic -Wall -Wextra -Werror -fsyntax-only` compilation.

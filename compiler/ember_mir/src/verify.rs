@@ -111,6 +111,25 @@ impl Verifier<'_> {
         }
     }
 
+    /// A dynamic call carries the complete declaration-derived table layout.
+    /// Check the selected signature here rather than letting a malformed MIR
+    /// body reach C emission, where a mismatched function-pointer cast would
+    /// be undefined behaviour rather than a recoverable compiler failure.
+    fn interface_call(&mut self, func: &FuncRef, at: &str) {
+        let FuncRef::Interface { slot, params, ret, layout, .. } = func else {
+            return;
+        };
+        let Some(signature) = layout.get(*slot).and_then(|signature| signature.as_ref()) else {
+            self.fail(format!("{at}: dynamic interface call targets non-callable slot {slot}"));
+            return;
+        };
+        if signature.params != *params || signature.ret != *ret {
+            self.fail(format!(
+                "{at}: dynamic interface call signature disagrees with its table slot {slot}"
+            ));
+        }
+    }
+
     /// Verify `[MIR-3]` for the dynamic exclusivity brackets introduced by
     /// Phase 3 lowering.
     ///
@@ -283,11 +302,12 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                 v.target(*otherwise, &at);
             }
             Terminator::Call {
-                args, dest, next, ..
+                func, args, dest, next,
             } => {
                 for a in args {
                     v.operand(a, &at);
                 }
+                v.interface_call(func, &at);
                 v.place(dest, &at);
                 v.target(*next, &at);
             }
@@ -535,6 +555,40 @@ mod tests {
                 .iter()
                 .any(|violation| violation.message.contains("parameter-mode metadata")),
             "missing parameter-mode metadata crossed verification: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_interface_calls_must_target_their_declared_table_slot() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let (_, common) = TypeTable::new();
+        let mut body = body_with(Vec::new(), span);
+        body.blocks[0].terminator = Terminator::Call {
+            func: FuncRef::Interface {
+                interface: ember_span::Symbol::intern("Drawable"),
+                slot: 1,
+                params: Vec::new(),
+                ret: common.i32,
+                layout: vec![Some(ember_hir::InterfaceSlot {
+                    params: Vec::new(),
+                    ret: common.i32,
+                })],
+            },
+            args: Vec::new(),
+            dest: Place::local(LocalId(0)),
+            next: BasicBlockId(1),
+        };
+        body.blocks.push(BasicBlock {
+            stmts: Vec::new(),
+            terminator: Terminator::Return,
+            terminator_span: span,
+        });
+        let violations = verify(&body);
+        assert!(
+            violations.iter().any(|violation| violation
+                .message
+                .contains("targets non-callable slot 1")),
+            "missing dynamic-table violation: {violations:?}"
         );
     }
 

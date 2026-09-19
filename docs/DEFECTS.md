@@ -52,6 +52,12 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-19 — dynamic vtable layouts lost inherited slot signatures
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-157 | **The C backend reconstructed a dynamic interface table from only the slots called in one module.** For `interface Child: Parent`, a program that called only `Child.child()` emitted the inherited `slot0` as `void (*)(void*)` instead of `Parent.parent()`'s `i32 (*)(void*)`. A later concrete table or cross-module caller would therefore disagree about the same `Child` vtable layout. | `[TYP-22]`, `[CG-C-1]` | **fixed** | Type checking now carries the complete declaration-order layout — including inherited ABI signatures — through HIR and MIR. C emission uses that canonical layout, and the MIR verifier rejects a call whose selected slot/signature disagrees with it before code generation. `tests/compile-pass/dyn_interface_inherited_vtable_layout.em` was red before the fix and pins both inherited and declared C slots; `ember_mir` has a direct malformed-layout verifier test. `Self: Sized` defaults retain only an explicitly non-callable placeholder: D-156 rejects their calls, while their eventual concrete-table materialization remains out of scope. No specification, ADR, owner decision, or version changed. |
+
 ## 2026-09-19 — sized-only defaults were callable through dyn
 
 | # | Defect | Rule | Status | Fixed in |

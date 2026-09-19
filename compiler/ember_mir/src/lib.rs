@@ -1089,10 +1089,18 @@ pub enum FuncRef {
     Virtual { owner: ember_types::ClassId, slot: usize },
     /// `[TYP-22]` — a call through a `ref dyn I` carrier. The receiver is
     /// represented by the first operand; the remaining operands use the
-    /// interface declaration's parameter types. `params`/`ret` are carried
-    /// here so the C backend can emit a correctly typed per-interface table
-    /// without reaching back into type-checker-only interface definitions.
-    Interface { interface: ember_span::Symbol, slot: usize, params: Vec<Ty>, ret: Ty },
+    /// interface declaration's parameter types. `layout` carries every slot
+    /// so the C backend can emit the canonical table shape without reaching
+    /// back into type-checker-only interface definitions. A `None` slot is a
+    /// `Self: Sized` default: its ordinal is retained, but it has no dyn-call
+    /// ABI at this boundary.
+    Interface {
+        interface: ember_span::Symbol,
+        slot: usize,
+        params: Vec<Ty>,
+        ret: Ty,
+        layout: Vec<Option<ember_hir::InterfaceSlot>>,
+    },
     /// `[CLO-3]`, `[FN-6b]` — a call through a value of function type. The
     /// operand holds the callee; `latebound` is the expected callable-boundary
     /// fact and is erased before code generation.

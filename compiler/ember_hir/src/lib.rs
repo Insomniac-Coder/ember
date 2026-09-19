@@ -193,6 +193,15 @@ pub struct Expr {
     pub span: Span,
 }
 
+/// One ABI-visible slot in a `[TYP-22]` dynamic interface table. The HIR
+/// retains this declaration-derived fact because interface declarations do
+/// not otherwise cross the type checking to MIR boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfaceSlot {
+    pub params: Vec<Ty>,
+    pub ret: Ty,
+}
+
 #[derive(Debug)]
 pub enum ExprKind {
     /// An integer literal, already narrowed to `ty`.
@@ -226,6 +235,10 @@ pub enum ExprKind {
     InterfaceCall {
         interface: Symbol,
         slot: usize,
+        /// Every declared slot in the selected interface table. A sized-only
+        /// default is not callable through `dyn`, so it keeps its stable slot
+        /// number but has no erased callable signature at this boundary.
+        layout: Vec<Option<InterfaceSlot>>,
         receiver: Box<Expr>,
         args: Vec<Expr>,
         modes: Vec<Mode>,

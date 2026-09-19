@@ -400,6 +400,14 @@ in all profiles; ordinary member calls and explicit mutable/named arguments
 remain covered. Canonical full-table layout still belongs to the concrete
 vtable-materialization work, not to this call-site-shape milestone.
 
+D-157 now carries the full declaration-order interface layout through
+HIR/MIR so that an inherited slot has the same ABI type even when the current
+module calls only a later slot. It is deliberately not concrete table
+materialization: object-to-interface coercion, implementation adapters,
+cross-module table definitions, owned dyn storage, and the representation of
+non-callable sized-only defaults remain the next separate design/implementation
+boundaries.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

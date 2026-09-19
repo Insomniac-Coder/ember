@@ -1718,6 +1718,7 @@ impl<'a> Builder<'a> {
             hir::ExprKind::InterfaceCall {
                 interface,
                 slot,
+                layout,
                 receiver,
                 arg_eval_order,
                 args,
@@ -1751,7 +1752,11 @@ impl<'a> Builder<'a> {
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
-                let params = args.iter().map(|arg| arg.ty).collect();
+                let params = layout
+                    .get(*slot)
+                    .and_then(|signature| signature.as_ref())
+                    .map(|signature| signature.params.clone())
+                    .expect("a checked interface call always targets a dyn-callable slot");
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Interface {
@@ -1759,6 +1764,7 @@ impl<'a> Builder<'a> {
                         slot: *slot,
                         params,
                         ret: expr.ty,
+                        layout: layout.clone(),
                     },
                     args: lowered_args,
                     dest: place,

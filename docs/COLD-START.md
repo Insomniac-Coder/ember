@@ -75,12 +75,12 @@ five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
 
-**Current continuation (2026-09-19):** D-156 rejects calls to
-`where Self: Sized` defaults through `ref dyn`, including inherited defaults.
-Interface formation and calls to ordinary members remain accepted. Read
-`HANDOFF.md` §0.134 for the reproducer, verification, and remaining dyn work.
-The owner requested a halt after this fix; do not start the next task without
-a resume instruction. The frozen H3 target and adopted specification are
+**Current continuation (2026-09-19):** D-157 carries complete dynamic-interface
+vtable layouts from type checking through C emission, so inherited slots keep
+their declaration-derived ABI when a module calls only a later member. The MIR
+verifier rejects mismatched dynamic call metadata before code generation. Read
+`HANDOFF.md` §0.135 for the red probe, the explicit sized-only-default boundary,
+and the remaining dyn work. The frozen H3 target and adopted specification are
 unchanged.
 
 **Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is

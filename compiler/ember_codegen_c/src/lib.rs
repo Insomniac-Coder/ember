@@ -91,7 +91,7 @@ pub fn emit(
         usize_ty,
         virtual_tables: BTreeMap::new(),
         virtual_signatures: BTreeMap::new(),
-        interface_signatures: BTreeMap::new(),
+        interface_layouts: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main);
     Output {
@@ -167,11 +167,10 @@ struct Emitter<'a> {
     virtual_tables: BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
     /// The signature established by the first declaration in each hierarchy.
     virtual_signatures: BTreeMap<(ClassId, usize), VirtualMethod>,
-    /// `[TYP-22]` — signatures observed at dynamic-interface call sites,
-    /// keyed by interface name and vtable slot. Interface declarations are
-    /// type-checker data rather than TypeTable entries, so MIR carries the
-    /// exact erased call signature across this backend boundary.
-    interface_signatures: BTreeMap<(String, usize), InterfaceMethod>,
+    /// `[TYP-22]` — full declaration-order layouts observed at dynamic
+    /// interface call sites. Interface declarations are type-checker data,
+    /// so MIR carries this exact erased ABI fact across the backend boundary.
+    interface_layouts: BTreeMap<String, Vec<Option<InterfaceMethod>>>,
 }
 
 #[derive(Clone)]
@@ -182,7 +181,7 @@ struct VirtualMethod {
     ret: Ty,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct InterfaceMethod {
     params: Vec<Ty>,
     ret: Ty,
@@ -460,12 +459,28 @@ impl Emitter<'_> {
     fn collect_interface_methods(&mut self, bodies: &[Body]) {
         for body in bodies {
             for block in &body.blocks {
-                let Terminator::Call { func: FuncRef::Interface { interface, slot, params, ret }, .. } = &block.terminator else {
+                let Terminator::Call { func: FuncRef::Interface { interface, layout, .. }, .. } = &block.terminator else {
                     continue;
                 };
-                self.interface_signatures
-                    .entry((interface.to_string(), *slot))
-                    .or_insert_with(|| InterfaceMethod { params: params.clone(), ret: *ret });
+                let layout = layout
+                    .iter()
+                    .map(|slot| slot.as_ref().map(|slot| InterfaceMethod {
+                        params: slot.params.clone(),
+                        ret: slot.ret,
+                    }))
+                    .collect();
+                match self.interface_layouts.entry(interface.to_string()) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(layout);
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry) => {
+                        assert_eq!(
+                            entry.get(),
+                            &layout,
+                            "one interface identity must carry one canonical vtable layout"
+                        );
+                    }
+                }
             }
         }
     }
@@ -475,28 +490,18 @@ impl Emitter<'_> {
     /// `{drop, size, align, method0, ...}` shape; method slots use an erased
     /// `void*` receiver and the statically known interface argument types.
     fn emit_interface_vtable_types(&mut self) {
-        let mut grouped: BTreeMap<String, Vec<(usize, InterfaceMethod)>> = BTreeMap::new();
-        for ((interface, slot), method) in &self.interface_signatures {
-            grouped
-                .entry(interface.clone())
-                .or_default()
-                .push((*slot, method.clone()));
-        }
-        if grouped.is_empty() {
+        if self.interface_layouts.is_empty() {
             return;
         }
         self.line("/* dynamic interface vtable types */");
-        for (interface, mut methods) in grouped {
-            methods.sort_by_key(|(slot, _)| *slot);
+        for (interface, methods) in self.interface_layouts.clone() {
             let table = ember_branding::vtable(&format!("dyn_{interface}"));
             self.line(&format!("struct {table} {{"));
             self.line("    void (*drop)(void*);");
             self.line("    size_t size;");
             self.line("    size_t align;");
-            let max_slot = methods.last().map_or(0, |(slot, _)| *slot);
-            let by_slot: BTreeMap<usize, InterfaceMethod> = methods.into_iter().collect();
-            for slot in 0..=max_slot {
-                let Some(method) = by_slot.get(&slot) else {
+            for (slot, method) in methods.into_iter().enumerate() {
+                let Some(method) = method else {
                     self.line(&format!("    void (*slot{slot})(void*);"));
                     continue;
                 };

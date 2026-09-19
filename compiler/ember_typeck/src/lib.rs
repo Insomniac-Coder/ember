@@ -3018,6 +3018,39 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The full declaration-order table shape for one `dyn` interface. This
+    /// crosses the HIR/MIR boundary because C emission cannot recover
+    /// interface declarations from `TypeTable`. `Self: Sized` defaults keep
+    /// their ordinal but deliberately expose no callable erased signature:
+    /// D-156 rejects them before a dynamic call is formed.
+    fn dyn_vtable_layout(&mut self, interface: Symbol) -> Vec<Option<hir::InterfaceSlot>> {
+        let mut methods = Vec::new();
+        self.dyn_methods_in_order(interface, &mut methods, &mut HashSet::new());
+        methods
+            .into_iter()
+            .map(|(_, declaration, _)| {
+                if self.interfaces.values().any(|def| def.dyn_sized_defaults.contains(&declaration)) {
+                    return None;
+                }
+                let signature = self.signatures[declaration.0 as usize].clone();
+                let params = signature
+                    .params
+                    .iter()
+                    .map(|(_, ty, mode, _)| {
+                        if *mode == Mode::Mut
+                            && !matches!(self.types.kind(*ty), TyKind::Span { mutable: true, .. })
+                        {
+                            self.types.intern(TyKind::Ref { mutable: true, inner: *ty })
+                        } else {
+                            *ty
+                        }
+                    })
+                    .collect();
+                Some(hir::InterfaceSlot { params, ret: signature.ret })
+            })
+            .collect()
+    }
+
     /// Resolve a method call whose receiver is `ref dyn I` (or a compatible
     /// multi-bound form). Inherent and concrete-interface calls continue to
     /// use the ordinary method path; this helper is only the dynamic-vtable
@@ -12166,11 +12199,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let slots = self.call_argument_slots(name.name, args, &signature.params);
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
+            let layout = self.dyn_vtable_layout(interface);
             return Expr {
                 ty: signature.ret,
                 kind: ExprKind::InterfaceCall {
                     interface,
                     slot,
+                    layout,
                     receiver: Box::new(receiver),
                     args: checked,
                     modes,
