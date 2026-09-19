@@ -4586,7 +4586,7 @@ impl<'a> Builder<'a> {
                 Rvalue::Cast { kind, operand, to: *to }
             }
             hir::ExprKind::InterfaceUpcast {
-                class,
+                concrete,
                 interface,
                 layout,
                 implementations,
@@ -4606,7 +4606,7 @@ impl<'a> Builder<'a> {
                     .collect();
                 Rvalue::Cast {
                     kind: CastKind::InterfaceUpcast {
-                        class: *class,
+                        concrete: *concrete,
                         interface: *interface,
                         layout: layout.clone(),
                         implementations,

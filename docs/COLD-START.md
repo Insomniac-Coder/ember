@@ -87,6 +87,13 @@ owned dynamic storage: `Box[dyn I]`, multi-interface composition, generic and
 cross-package materialization, and dynamic payload drop glue remain open. The
 frozen H3 target and adopted specification are unchanged.
 
+The following borrowed-materialization increment also admits direct,
+non-generic struct implementers. Shared struct receivers are adapted from
+erased storage to the existing by-value `self` ABI, while mutable receivers
+retain the ordinary inout pointer ABI. Read `HANDOFF.md` §0.141 before
+extending it. `Box[dyn I]`, generic implementers, and owned drop glue remain
+open.
+
 **Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
 implemented and recorded as D-155. `E2228`/`B15` now covers direct callable
 assignment, generic callable parameters, and `std.borrow.with_views*_mut`,

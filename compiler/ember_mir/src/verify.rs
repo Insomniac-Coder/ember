@@ -912,7 +912,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
 /// The type checker is authoritative for conformance and the declaration
 /// layout. This verifier protects the HIR/MIR/codegen boundary against a
 /// malformed lowering by checking the facts that must be visible in MIR:
-/// direct class source, matching borrow mutability, one matching target
+/// supported concrete source, matching borrow mutability, one matching target
 /// interface, matched adapter/layout slots, and no move-only receiver.
 pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation> {
     let mut violations = Vec::new();
@@ -931,7 +931,7 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                     Rvalue::Cast {
                         kind:
                             crate::CastKind::InterfaceUpcast {
-                                class,
+                                concrete,
                                 interface,
                                 layout,
                                 implementations,
@@ -961,15 +961,20 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                 TyKind::Ref { mutable: target_mutable, inner: target_inner }) =
                 (types.kind(source), types.kind(destination))
             else {
-                fail(format!("{at} must convert `ref Class` to `ref dyn Interface`"));
+                fail(format!("{at} must convert a concrete borrow to `ref dyn Interface`"));
                 continue;
             };
             if source_mutable != target_mutable {
                 fail(format!("{at} changes borrow mutability"));
                 continue;
             }
-            if !matches!(types.kind(*source_inner), TyKind::Class(found) if found == class) {
-                fail(format!("{at} class metadata disagrees with its source type"));
+            let supported_concrete = match types.kind(*concrete) {
+                TyKind::Class(_) => true,
+                TyKind::Struct(id) => types.struct_def(*id).origin.is_none(),
+                _ => false,
+            };
+            if source_inner != concrete || !supported_concrete {
+                fail(format!("{at} concrete metadata disagrees with its source type"));
                 continue;
             }
             if !matches!(types.kind(*target_inner), TyKind::Dyn { interfaces }
@@ -1321,7 +1326,11 @@ mod interface_upcast_invariant_tests {
                         place: Place::local(LocalId(0)),
                         rvalue: Rvalue::Cast {
                             kind: crate::CastKind::InterfaceUpcast {
-                                class: metadata,
+                                concrete: if class_metadata_matches_source {
+                                    class_ty
+                                } else {
+                                    types.intern(TyKind::Class(metadata))
+                                },
                                 interface,
                                 layout: vec![Some(ember_hir::InterfaceSlot {
                                     params: Vec::new(),
@@ -1370,7 +1379,7 @@ mod interface_upcast_invariant_tests {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.message.contains("class metadata disagrees")),
+                .any(|violation| violation.message.contains("concrete metadata disagrees")),
             "missing class/source mismatch violation: {violations:?}"
         );
     }

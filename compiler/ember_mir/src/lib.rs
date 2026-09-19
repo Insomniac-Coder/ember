@@ -6,7 +6,7 @@
 //! backend against HIR would mean writing it twice.
 
 use ember_span::{Span, Symbol};
-use ember_types::{ClassId, EnumId, StructId, Ty};
+use ember_types::{EnumId, StructId, Ty};
 
 pub mod lower;
 pub mod verify;
@@ -888,7 +888,7 @@ pub enum AggregateKind {
 
 /// One concrete implementation used by a compiler-generated dynamic-interface
 /// adapter. The erased interface signature stays on the table layout; this
-/// value is the class-specific callable identity.
+/// value is the concrete callable identity.
 #[derive(Clone, Debug)]
 pub struct InterfaceAdapterMethod {
     pub symbol: String,
@@ -911,13 +911,13 @@ pub enum CastKind {
     /// pointer adjustment and MUST NOT retain the object: the scratch handle
     /// is not an owning source local.
     ClassUpcastBorrowed,
-    /// `[TYP-22]` — turn `ref Class` or `ref mut Class` into the fixed
-    /// `{data*, vtable*}` carrier for one checked class/interface
+    /// `[TYP-22]` — turn a concrete borrow into the fixed `{data*, vtable*}`
+    /// carrier for one checked type/interface
     /// implementation. This is not a numeric conversion: the backend must
     /// emit the corresponding concrete adapter table and preserve the source
     /// borrow without a retain or transfer.
     InterfaceUpcast {
-        class: ClassId,
+        concrete: Ty,
         interface: Symbol,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterMethod>>,

@@ -172,10 +172,8 @@ struct Emitter<'a> {
     /// interface call sites. Interface declarations are type-checker data,
     /// so MIR carries this exact erased ABI fact across the backend boundary.
     interface_layouts: BTreeMap<String, Vec<Option<InterfaceMethod>>>,
-    /// Concrete class/interface implementations observed at a checked
-    /// `ref Class -> ref dyn I` / `ref mut Class -> ref mut dyn I` coercion.
-    /// These are compiler-owned adapter tables, not source-level class
-    /// virtual tables.
+    /// Concrete implementations observed at a checked borrowed coercion.
+    /// These are compiler-owned adapter tables, not source-level virtual tables.
     interface_adapters: BTreeMap<(String, String), InterfaceAdapter>,
 }
 
@@ -201,7 +199,7 @@ struct InterfaceAdapterMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct InterfaceAdapter {
-    class: ClassId,
+    concrete: Ty,
     interface: String,
     layout: Vec<Option<InterfaceMethod>>,
     implementations: Vec<Option<InterfaceAdapterMethod>>,
@@ -513,7 +511,7 @@ impl Emitter<'_> {
     }
 
     /// Gather the concrete adapter tables from the explicit MIR cast rather
-    /// than rediscovering class/interface conformance in the backend. The
+    /// than rediscovering type/interface conformance in the backend. The
     /// type checker is the authority for both facts, and MIR preserves them
     /// across the code-generation boundary.
     fn collect_interface_adapters(&mut self, bodies: &[Body]) {
@@ -525,7 +523,7 @@ impl Emitter<'_> {
                             Rvalue::Cast {
                                 kind:
                                     CastKind::InterfaceUpcast {
-                                        class,
+                                        concrete,
                                         interface,
                                         layout,
                                         implementations,
@@ -556,14 +554,14 @@ impl Emitter<'_> {
                             })
                         })
                         .collect();
-                    let class_name = self.types.class_def(*class).name.to_string();
+                    let concrete_name = self.interface_adapter_concrete_name(*concrete);
                     let adapter = InterfaceAdapter {
-                        class: *class,
+                        concrete: *concrete,
                         interface: interface.to_string(),
                         layout,
                         implementations,
                     };
-                    let key = (adapter.interface.clone(), class_name);
+                    let key = (adapter.interface.clone(), concrete_name);
                     match self.interface_adapters.entry(key) {
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(adapter);
@@ -572,7 +570,7 @@ impl Emitter<'_> {
                             assert_eq!(
                                 entry.get(),
                                 &adapter,
-                                "one class/interface coercion must carry one canonical adapter"
+                                "one concrete/interface coercion must carry one canonical adapter"
                             );
                         }
                     }
@@ -618,20 +616,27 @@ impl Emitter<'_> {
         self.line("");
     }
 
-    fn interface_adapter_table(&self, class: ClassId, interface: &str) -> String {
-        let class = self.types.class_def(class).name.to_string();
-        ember_branding::vtable(&format!("dyn_{interface}_{class}"))
+    fn interface_adapter_table(&self, concrete: Ty, interface: &str) -> String {
+        ember_branding::vtable(&format!(
+            "dyn_{interface}_{}",
+            self.interface_adapter_concrete_name(concrete)
+        ))
+    }
+
+    fn interface_adapter_concrete_name(&self, concrete: Ty) -> String {
+        match self.types.kind(concrete) {
+            TyKind::Class(id) => self.types.class_def(*id).name.to_string(),
+            TyKind::Struct(id) => self.types.struct_def(*id).name.to_string(),
+            _ => unreachable!("only concrete class and struct adapters reach C emission"),
+        }
     }
 
     fn interface_vtable_type(interface: &str) -> String {
         ember_branding::vtable(&format!("dyn_{interface}"))
     }
 
-    /// Emit one C adapter per concrete class/interface slot. The adapter is
-    /// where an erased `void*` receiver becomes the class handle expected by
-    /// the checked implementation; a `mut self` method receives a temporary
-    /// handle slot so it retains its ordinary inout ABI without retaining or
-    /// re-seating the source handle.
+    /// Emit one C adapter per concrete/interface slot. Class receivers need
+    /// their handle ABI; struct receivers use their ordinary value/inout ABI.
     fn emit_interface_adapters(&mut self) {
         let adapters = self.interface_adapters.values().cloned().collect::<Vec<_>>();
         if adapters.is_empty() {
@@ -644,11 +649,21 @@ impl Emitter<'_> {
                 adapter.implementations.len(),
                 "every dynamic adapter has one entry per table slot"
             );
-            let table = self.interface_adapter_table(adapter.class, &adapter.interface);
+            let table = self.interface_adapter_table(adapter.concrete, &adapter.interface);
             let table_type = Self::interface_vtable_type(&adapter.interface);
-            let class = self.types.class_def(adapter.class).name.to_string();
-            let object = ember_branding::object_struct(&class);
-            let class_ty = format!("struct {object}*");
+            let (payload_ty, receiver_ty, class_handle) = match self.types.kind(adapter.concrete) {
+                TyKind::Class(class) => {
+                    let object = ember_branding::object_struct(
+                        &self.types.class_def(*class).name.to_string(),
+                    );
+                    let object = format!("struct {object}");
+                    (object.clone(), format!("{object}*"), true)
+                }
+                _ => {
+                    let concrete = self.c_type(adapter.concrete);
+                    (concrete.clone(), concrete, false)
+                }
+            };
             for (slot, (signature, implementation)) in adapter
                 .layout
                 .iter()
@@ -673,11 +688,17 @@ impl Emitter<'_> {
                 self.line(&format!("static {} {name}({params}) {{", self.c_type(signature.ret)));
                 let mut args = Vec::with_capacity(signature.params.len() + 1);
                 match implementation.receiver {
-                    ParameterMode::Borrow => args.push(format!("({class_ty})_0")),
-                    ParameterMode::Mut => {
-                        self.line(&format!("    {class_ty} receiver = ({class_ty})_0;"));
+                    ParameterMode::Borrow if class_handle => {
+                        args.push(format!("({receiver_ty})_0"));
+                    }
+                    ParameterMode::Borrow => {
+                        args.push(format!("*({receiver_ty}*)_0"));
+                    }
+                    ParameterMode::Mut if class_handle => {
+                        self.line(&format!("    {receiver_ty} receiver = ({receiver_ty})_0;"));
                         args.push("&receiver".to_string());
                     }
+                    ParameterMode::Mut => args.push(format!("({receiver_ty}*)_0")),
                     ParameterMode::Owned => unreachable!("owned receivers cannot form a dyn adapter"),
                 }
                 args.extend((1..=signature.params.len()).map(|index| format!("_{index}")));
@@ -691,8 +712,8 @@ impl Emitter<'_> {
             }
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line("    NULL,");
-            self.line(&format!("    sizeof(struct {object}),"));
-            self.line(&format!("    _Alignof(struct {object}),"));
+            self.line(&format!("    sizeof({payload_ty}),"));
+            self.line(&format!("    _Alignof({payload_ty}),"));
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
                     format!("{table}_slot{slot}")
@@ -2698,9 +2719,14 @@ impl Emitter<'_> {
                 let value = self.operand(operand, body);
                 let ty = self.c_type(*to);
                 match kind {
-                    CastKind::InterfaceUpcast { class, interface, .. } => {
-                        let table = self.interface_adapter_table(*class, interface.as_str());
-                        format!("({ty}){{ .data = (void*)*({value}), .vtable = &{table} }}")
+                    CastKind::InterfaceUpcast { concrete, interface, .. } => {
+                        let table = self.interface_adapter_table(*concrete, interface.as_str());
+                        let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
+                            format!("*({value})")
+                        } else {
+                            value
+                        };
+                        format!("({ty}){{ .data = (void*)({data}), .vtable = &{table} }}")
                     }
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.

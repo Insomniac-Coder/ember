@@ -6978,3 +6978,29 @@ rules, `[LT-1b]` and `[LT-2a]`, are the one deferred `L3014` feature and depend
 on `[MAN-3]` manifest lint configuration; do not default-enable an expressly
 opt-in lint merely to close the count. This is bookkeeping correction only:
 no compiler or specification behavior changed.
+
+### 0.141 `[TYP-22]` borrowed struct-to-interface materialization — 2026-09-19
+
+The next thin dynamic-interface slice generalizes the existing checked
+borrowed adapter from classes to direct, non-generic struct implementers.
+Type checking still requires one declared implementation and one target
+interface; HIR/MIR now carry the concrete type rather than assuming a class.
+The MIR verifier accepts only a non-generic struct or class whose source borrow,
+mutability, target interface, table layout, and non-owned adapter slots agree.
+
+The C adapter keeps each source ABI intact: shared struct `self` is loaded from
+the erased storage and passed by value, while `mut self` receives that storage
+pointer directly. Class handle adaptation is unchanged. The all-profile
+`dyn_interface_struct_coercion.em` run-pass probe exercises both receiver modes,
+prints `42`, pins both generated adapters, and contains no retain. There is no
+allocation or ownership transfer. Generic implementers, enums/scalars,
+multi-interface composition, `Box[dyn I]`, and dynamic payload drop glue remain
+open.
+
+Full workspace tests pass after adding the missing positive companion for the
+preceding BRW-9 rejection-only directory. The workspace build is warning-free;
+all six repository gates, runtime generation checks/tests, Appendix A
+consistency, and `git diff --check` pass. `cargo fmt --check` remains unusable
+as a gate because the pre-existing tree is not rustfmt-clean. The adopted
+specification, frozen target, diagnostics, and phase count are unchanged:
+exactly **1 of 9 phases complete**, with Phase 2 still active.

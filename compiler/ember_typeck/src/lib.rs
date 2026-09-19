@@ -3058,20 +3058,24 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    /// The class-specific bodies that fill one declaration-derived dynamic
+    /// The concrete bodies that fill one declaration-derived dynamic
     /// interface table. Conformance has already checked these signatures; the
     /// table adapter keeps their concrete receiver ABI behind the `void*`
     /// receiver required by `[TYP-22]`.
-    fn dyn_class_adapter(
+    fn dyn_concrete_adapter(
         &self,
-        class: ClassId,
+        concrete: Ty,
         interface: Symbol,
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
-        let class_ty = self.class_ty(class)?;
+        match self.types.kind(concrete) {
+            TyKind::Class(_) => {}
+            TyKind::Struct(id) if self.types.struct_def(*id).origin.is_none() => {}
+            _ => return None,
+        }
         if !self
             .implemented
             .iter()
-            .any(|(ty, implemented, _)| *ty == class_ty && *implemented == interface)
+            .any(|(ty, implemented, _)| *ty == concrete && *implemented == interface)
         {
             return None;
         }
@@ -3088,7 +3092,7 @@ impl<'a> Checker<'a> {
                 {
                     return Some(None);
                 }
-                let entry = self.methods.get(&(class_ty, name))?;
+                let entry = self.methods.get(&(concrete, name))?;
                 Some(Some(hir::InterfaceAdapterSlot {
                     implementation: entry.def,
                     receiver: entry.receiver,
@@ -8458,10 +8462,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
-        // `[TYP-22]` — a class with a checked implementation can be borrowed
+        // `[TYP-22]` — a type with a checked implementation can be borrowed
         // as a single-interface `dyn` carrier. The upcast retains the
         // declaration-derived layout and concrete method bodies for lowering;
-        // it neither retains nor transfers the class handle. Multi-bound
+        // it neither retains nor transfers ownership. Multi-bound
         // table composition remains the separate materialization slice.
         let source_kind = self.types.kind(expr.ty).clone();
         let expected_kind = self.types.kind(expected).clone();
@@ -8470,18 +8474,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             TyKind::Ref { mutable: target_mutable, inner: target },
         ) = (source_kind, expected_kind)
             && source_mutable == target_mutable
-            && let TyKind::Class(class) = *self.types.kind(source)
             && let TyKind::Dyn { interfaces } = self.types.kind(target).clone()
             && interfaces.len() == 1
             && let interface = interfaces[0]
-            && let Some(implementations) = self.dyn_class_adapter(class, interface)
+            && let Some(implementations) = self.dyn_concrete_adapter(source, interface)
         {
             let span = expr.span;
             let layout = self.dyn_vtable_layout(interface);
             return Expr {
                 ty: expected,
                 kind: ExprKind::InterfaceUpcast {
-                    class,
+                    concrete: source,
                     interface,
                     layout,
                     implementations,

@@ -431,6 +431,12 @@ matrix remain open. The `drop` slot in these borrowed-only tables is `NULL`;
 no borrowed carrier invokes it, and an owned-dynamic implementation must
 provide its own proven ownership/drop path rather than reusing that fact.
 
+The following narrow increment extends the same borrowed carrier and verified
+adapter metadata to direct, non-generic structs. It preserves structs' existing
+by-value shared-receiver ABI and pointer-based mutable-receiver ABI, with no
+allocation or ownership transfer. Generic implementers, enums/scalars,
+`Box[dyn I]`, and dynamic drop glue remain separate work.
+
 ## Build order
 
 1. **LIB-1, LIB-2, LIB-3, LIB-4, LIB-5** — nothing else is pleasant to write

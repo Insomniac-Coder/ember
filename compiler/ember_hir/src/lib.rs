@@ -204,7 +204,7 @@ pub struct InterfaceSlot {
 
 /// One concrete method supplied to an erased `[TYP-22]` interface table.
 /// The interface declaration establishes the erased slot signature; this
-/// records only the class-specific body and receiver mode that its adapter
+/// records only the concrete body and receiver mode that its adapter
 /// must call.
 #[derive(Clone, Debug)]
 pub struct InterfaceAdapterSlot {
@@ -256,12 +256,12 @@ pub enum ExprKind {
         /// positional case. The receiver is evaluated before this list.
         arg_eval_order: Option<Vec<usize>>,
     },
-    /// `[TYP-22]` — borrow a concrete class handle as `ref dyn I` or
+    /// `[TYP-22]` — borrow a concrete implementer as `ref dyn I` or
     /// `ref mut dyn I`. This is distinct from an ordinary cast because
     /// lowering must retain the checked implementation table that turns the
     /// concrete receiver ABI into the interface's erased `void*` slot ABI.
     InterfaceUpcast {
-        class: ClassId,
+        concrete: Ty,
         interface: Symbol,
         layout: Vec<Option<InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterSlot>>,
