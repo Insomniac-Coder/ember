@@ -4585,6 +4585,36 @@ impl<'a> Builder<'a> {
                 };
                 Rvalue::Cast { kind, operand, to: *to }
             }
+            hir::ExprKind::InterfaceUpcast {
+                class,
+                interface,
+                layout,
+                implementations,
+                expr: inner,
+            } => {
+                let operand = self.lower_operand(inner);
+                let implementations = implementations
+                    .iter()
+                    .map(|implementation| {
+                        implementation.as_ref().map(|implementation| {
+                            crate::InterfaceAdapterMethod {
+                                symbol: self.program.function(implementation.implementation).symbol.clone(),
+                                receiver: implementation.receiver,
+                            }
+                        })
+                    })
+                    .collect();
+                Rvalue::Cast {
+                    kind: CastKind::InterfaceUpcast {
+                        class: *class,
+                        interface: *interface,
+                        layout: layout.clone(),
+                        implementations,
+                    },
+                    operand,
+                    to: expr.ty,
+                }
+            }
             // `[FN-6]` — a named function as a value: its symbol.
             hir::ExprKind::FnValue(def) => {
                 Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))

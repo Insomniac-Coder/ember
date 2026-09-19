@@ -410,8 +410,26 @@ boundaries.
 
 D-158 also moves the `owned self` exclusion to dyn formation. This applies the
 existing `[CLO-6a]` v1 rule rather than leaving a source type representable and
-rejecting only a later impossible move through `ref dyn`. Concrete table and
-object materialization remain separate Phase 3 work.
+rejecting only a later impossible move through `ref dyn`.
+
+The next H3-target implementation increment supplies concrete materialization
+for the narrow borrowed case: a directly declared `class C implements I` now
+coerces as `ref C -> ref dyn I` or `ref mut C -> ref mut dyn I`. HIR/MIR retain
+the checked implementation identity, parameter mode, and canonical
+declaration-order layout; C emits one deterministic adapter table per
+`(I, C)`. The adapters translate the erased receiver to the ordinary concrete
+class ABI and add no retain or transfer. The final MIR verifier independently
+refuses malformed class/source, mutability, target-interface, slot-parity, or
+owned-receiver metadata. Shared, mutable, and inherited-slot run-pass cases
+execute in all profiles and compile as strict C11; companions pin the
+non-callable `Self: Sized` table placeholder, ordinary mutable-argument ABI
+forwarding, and dispatch to an ordinary interface default body. This remains a
+deliberately incomplete dynamic-object boundary: `Box[dyn I]`, other owned
+dynamic storage, payload drop glue, multi-interface composition, generic
+classes, independent-package table materialization, and the full Phase 3
+matrix remain open. The `drop` slot in these borrowed-only tables is `NULL`;
+no borrowed carrier invokes it, and an owned-dynamic implementation must
+provide its own proven ownership/drop path rather than reusing that fact.
 
 ## Build order
 

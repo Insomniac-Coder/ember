@@ -75,11 +75,17 @@ five-way sort, the four-document write path, probe-first, test discipline,
 claim discipline, escalation, scope reporting, and the pre-commit checklist.
 Read it before starting a task, not after.
 
-**Current continuation (2026-09-19):** D-158 rejects `owned self` interface
-methods while forming `dyn I`, as `[CLO-6a]` requires, rather than deferring an
-impossible move through `ref dyn` to a later call. Read `HANDOFF.md` §0.136 for
-the red probe, D-157's layout context, and the remaining dyn work. The frozen
-H3 target and adopted specification are unchanged.
+**Current continuation (2026-09-19):** the direct borrowed class-to-interface
+materialization slice is in the current checkpoint. `ref C -> ref dyn I` and
+`ref mut C -> ref mut dyn I` now carry one checked class/interface relation and
+the complete table layout from type checking through MIR into deterministic C
+adapters; shared, mutable, and inherited-slot run-pass cases are covered.
+The same checkpoint also covers `Self: Sized` slot preservation, ordinary
+default-method dispatch, and adapter argument-mode forwarding.
+Read `HANDOFF.md` §0.137 before extending it. This is deliberately **not**
+owned dynamic storage: `Box[dyn I]`, multi-interface composition, generic and
+cross-package materialization, and dynamic payload drop glue remain open. The
+frozen H3 target and adopted specification are unchanged.
 
 **Previous continuation (2026-09-15):** the H3 callable-mode diagnostic slice is
 implemented and recorded as D-155. `E2228`/`B15` now covers direct callable

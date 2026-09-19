@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
     AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FuncRef, LocalKind, Operand, Place,
-    Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
+    ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
@@ -92,6 +92,7 @@ pub fn emit(
         virtual_tables: BTreeMap::new(),
         virtual_signatures: BTreeMap::new(),
         interface_layouts: BTreeMap::new(),
+        interface_adapters: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main);
     Output {
@@ -171,6 +172,11 @@ struct Emitter<'a> {
     /// interface call sites. Interface declarations are type-checker data,
     /// so MIR carries this exact erased ABI fact across the backend boundary.
     interface_layouts: BTreeMap<String, Vec<Option<InterfaceMethod>>>,
+    /// Concrete class/interface implementations observed at a checked
+    /// `ref Class -> ref dyn I` / `ref mut Class -> ref mut dyn I` coercion.
+    /// These are compiler-owned adapter tables, not source-level class
+    /// virtual tables.
+    interface_adapters: BTreeMap<(String, String), InterfaceAdapter>,
 }
 
 #[derive(Clone)]
@@ -185,6 +191,20 @@ struct VirtualMethod {
 struct InterfaceMethod {
     params: Vec<Ty>,
     ret: Ty,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InterfaceAdapterMethod {
+    symbol: String,
+    receiver: ParameterMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InterfaceAdapter {
+    class: ClassId,
+    interface: String,
+    layout: Vec<Option<InterfaceMethod>>,
+    implementations: Vec<Option<InterfaceAdapterMethod>>,
 }
 
 /// Where a projection walk has reached: a type, plus the variant a
@@ -238,8 +258,10 @@ impl Emitter<'_> {
         self.emit_type_declarations();
         self.collect_virtual_methods(bodies);
         self.collect_interface_methods(bodies);
+        self.collect_interface_adapters(bodies);
         self.emit_interface_vtable_types();
         self.emit_prototypes(bodies);
+        self.emit_interface_adapters();
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
         self.emit_class_field_drop_glue();
@@ -452,10 +474,7 @@ impl Emitter<'_> {
         self.virtual_tables = layouts;
     }
 
-    /// Collect the dynamic-interface call signatures carried by MIR. This
-    /// slice emits the typed vtable *shape* and call expression; concrete
-    /// object-to-interface coercion and vtable materialisation remain a later
-    /// Phase 3 slice, so no guessed implementation table is emitted here.
+    /// Collect the dynamic-interface call signatures carried by MIR.
     fn collect_interface_methods(&mut self, bodies: &[Body]) {
         for body in bodies {
             for block in &body.blocks {
@@ -469,16 +488,93 @@ impl Emitter<'_> {
                         ret: slot.ret,
                     }))
                     .collect();
-                match self.interface_layouts.entry(interface.to_string()) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(layout);
-                    }
-                    std::collections::btree_map::Entry::Occupied(entry) => {
-                        assert_eq!(
-                            entry.get(),
-                            &layout,
-                            "one interface identity must carry one canonical vtable layout"
-                        );
+                self.register_interface_layout(interface.to_string(), layout);
+            }
+        }
+    }
+
+    fn register_interface_layout(
+        &mut self,
+        interface: String,
+        layout: Vec<Option<InterfaceMethod>>,
+    ) {
+        match self.interface_layouts.entry(interface) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(layout);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                assert_eq!(
+                    entry.get(),
+                    &layout,
+                    "one interface identity must carry one canonical vtable layout"
+                );
+            }
+        }
+    }
+
+    /// Gather the concrete adapter tables from the explicit MIR cast rather
+    /// than rediscovering class/interface conformance in the backend. The
+    /// type checker is the authority for both facts, and MIR preserves them
+    /// across the code-generation boundary.
+    fn collect_interface_adapters(&mut self, bodies: &[Body]) {
+        for body in bodies {
+            for block in &body.blocks {
+                for statement in &block.stmts {
+                    let StmtKind::Assign {
+                        rvalue:
+                            Rvalue::Cast {
+                                kind:
+                                    CastKind::InterfaceUpcast {
+                                        class,
+                                        interface,
+                                        layout,
+                                        implementations,
+                                    },
+                                ..
+                            },
+                        ..
+                    } = &statement.kind
+                    else {
+                        continue;
+                    };
+                    let layout = layout
+                        .iter()
+                        .map(|slot| {
+                            slot.as_ref().map(|slot| InterfaceMethod {
+                                params: slot.params.clone(),
+                                ret: slot.ret,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    self.register_interface_layout(interface.to_string(), layout.clone());
+                    let implementations = implementations
+                        .iter()
+                        .map(|implementation| {
+                            implementation.as_ref().map(|implementation| InterfaceAdapterMethod {
+                                symbol: implementation.symbol.clone(),
+                                receiver: implementation.receiver,
+                            })
+                        })
+                        .collect();
+                    let class_name = self.types.class_def(*class).name.to_string();
+                    let adapter = InterfaceAdapter {
+                        class: *class,
+                        interface: interface.to_string(),
+                        layout,
+                        implementations,
+                    };
+                    let key = (adapter.interface.clone(), class_name);
+                    match self.interface_adapters.entry(key) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(adapter);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            assert_eq!(
+                                entry.get(),
+                                &adapter,
+                                "one class/interface coercion must carry one canonical adapter"
+                            );
+                        }
                     }
                 }
             }
@@ -516,6 +612,94 @@ impl Emitter<'_> {
                     format!("void*, {}", params.join(", "))
                 };
                 self.line(&format!("    {} (*slot{slot})({params});", self.c_type(method.ret)));
+            }
+            self.line("};");
+        }
+        self.line("");
+    }
+
+    fn interface_adapter_table(&self, class: ClassId, interface: &str) -> String {
+        let class = self.types.class_def(class).name.to_string();
+        ember_branding::vtable(&format!("dyn_{interface}_{class}"))
+    }
+
+    fn interface_vtable_type(interface: &str) -> String {
+        ember_branding::vtable(&format!("dyn_{interface}"))
+    }
+
+    /// Emit one C adapter per concrete class/interface slot. The adapter is
+    /// where an erased `void*` receiver becomes the class handle expected by
+    /// the checked implementation; a `mut self` method receives a temporary
+    /// handle slot so it retains its ordinary inout ABI without retaining or
+    /// re-seating the source handle.
+    fn emit_interface_adapters(&mut self) {
+        let adapters = self.interface_adapters.values().cloned().collect::<Vec<_>>();
+        if adapters.is_empty() {
+            return;
+        }
+        self.line("/* concrete dynamic interface adapters */");
+        for adapter in &adapters {
+            assert_eq!(
+                adapter.layout.len(),
+                adapter.implementations.len(),
+                "every dynamic adapter has one entry per table slot"
+            );
+            let table = self.interface_adapter_table(adapter.class, &adapter.interface);
+            let table_type = Self::interface_vtable_type(&adapter.interface);
+            let class = self.types.class_def(adapter.class).name.to_string();
+            let object = ember_branding::object_struct(&class);
+            let class_ty = format!("struct {object}*");
+            for (slot, (signature, implementation)) in adapter
+                .layout
+                .iter()
+                .zip(&adapter.implementations)
+                .enumerate()
+            {
+                let (Some(signature), Some(implementation)) = (signature, implementation) else {
+                    continue;
+                };
+                let name = format!("{table}_slot{slot}");
+                let params = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| format!("{} _{}", self.c_type(*ty), index + 1))
+                    .collect::<Vec<_>>();
+                let params = if params.is_empty() {
+                    "void* _0".to_string()
+                } else {
+                    format!("void* _0, {}", params.join(", "))
+                };
+                self.line(&format!("static {} {name}({params}) {{", self.c_type(signature.ret)));
+                let mut args = Vec::with_capacity(signature.params.len() + 1);
+                match implementation.receiver {
+                    ParameterMode::Borrow => args.push(format!("({class_ty})_0")),
+                    ParameterMode::Mut => {
+                        self.line(&format!("    {class_ty} receiver = ({class_ty})_0;"));
+                        args.push("&receiver".to_string());
+                    }
+                    ParameterMode::Owned => unreachable!("owned receivers cannot form a dyn adapter"),
+                }
+                args.extend((1..=signature.params.len()).map(|index| format!("_{index}")));
+                let args = args.join(", ");
+                if self.is_void(signature.ret) {
+                    self.line(&format!("    {}({args});", implementation.symbol));
+                } else {
+                    self.line(&format!("    return {}({args});", implementation.symbol));
+                }
+                self.line("}");
+            }
+            self.line(&format!("static const struct {table_type} {table} = {{"));
+            self.line("    NULL,");
+            self.line(&format!("    sizeof(struct {object}),"));
+            self.line(&format!("    _Alignof(struct {object}),"));
+            for (slot, implementation) in adapter.implementations.iter().enumerate() {
+                let value = if implementation.is_some() {
+                    format!("{table}_slot{slot}")
+                } else {
+                    "NULL".to_string()
+                };
+                self.line(&format!("    {value},"));
             }
             self.line("};");
         }
@@ -2514,6 +2698,10 @@ impl Emitter<'_> {
                 let value = self.operand(operand, body);
                 let ty = self.c_type(*to);
                 match kind {
+                    CastKind::InterfaceUpcast { class, interface, .. } => {
+                        let table = self.interface_adapter_table(*class, interface.as_str());
+                        format!("({ty}){{ .data = (void*)*({value}), .vtable = &{table} }}")
+                    }
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.
                     CastKind::Widen
@@ -2559,7 +2747,25 @@ impl Emitter<'_> {
                     _ => read,
                 }
             }
-            Rvalue::Ref { place, .. } => format!("&{}", self.place_in(place, body)),
+            Rvalue::Ref { place, .. } => {
+                let address = format!("&{}", self.place_in(place, body));
+                // A shared Ember borrow of a class handle is a read-only
+                // handle borrow, not a C `const` object pointer.  The natural
+                // C spelling has one extra pointer level (`&handle`), where
+                // adding `const` at the outer type is not assignable from the
+                // mutable local slot. The explicit cast preserves Ember's
+                // checked shared-borrow boundary without leaking a C warning
+                // into `[CG-C-1]` output.
+                if matches!(
+                    self.types.kind(target),
+                    TyKind::Ref { mutable: false, inner }
+                        if matches!(self.types.kind(*inner), TyKind::Class(_))
+                ) {
+                    format!("(({}){address})", self.c_type(target))
+                } else {
+                    address
+                }
+            }
             // `[value; count]` is emitted as a loop by `emit_stmt`; it is
             // built only ever as the right-hand side of an assignment.
             Rvalue::Repeat { .. } => {

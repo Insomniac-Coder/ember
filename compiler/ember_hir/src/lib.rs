@@ -202,6 +202,16 @@ pub struct InterfaceSlot {
     pub ret: Ty,
 }
 
+/// One concrete method supplied to an erased `[TYP-22]` interface table.
+/// The interface declaration establishes the erased slot signature; this
+/// records only the class-specific body and receiver mode that its adapter
+/// must call.
+#[derive(Clone, Debug)]
+pub struct InterfaceAdapterSlot {
+    pub implementation: DefId,
+    pub receiver: Mode,
+}
+
 #[derive(Debug)]
 pub enum ExprKind {
     /// An integer literal, already narrowed to `ty`.
@@ -245,6 +255,17 @@ pub enum ExprKind {
         /// Source-order slots for named arguments; `None` is the common
         /// positional case. The receiver is evaluated before this list.
         arg_eval_order: Option<Vec<usize>>,
+    },
+    /// `[TYP-22]` — borrow a concrete class handle as `ref dyn I` or
+    /// `ref mut dyn I`. This is distinct from an ordinary cast because
+    /// lowering must retain the checked implementation table that turns the
+    /// concrete receiver ABI into the interface's erased `void*` slot ABI.
+    InterfaceUpcast {
+        class: ClassId,
+        interface: Symbol,
+        layout: Vec<Option<InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterSlot>>,
+        expr: Box<Expr>,
     },
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
@@ -1065,6 +1086,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         }
         ExprKind::Cast { expr: inner, to } => {
             format!("({} as {})", dump_expr(inner, function, types), types.display(*to))
+        }
+        ExprKind::InterfaceUpcast { interface, expr: inner, .. } => {
+            format!("@dyn {interface}({})", dump_expr(inner, function, types))
         }
         ExprKind::EraseRange(inner) => {
             format!("(erase {})", dump_expr(inner, function, types))

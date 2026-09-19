@@ -1431,6 +1431,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // rather than at lowering because it must hold of the MIR the borrow
         // checker actually ran on.
         ember_mir::verify::verify_views_all(&bodies, &types);
+        ember_mir::verify::verify_interface_upcasts_all(&bodies, &types);
     }
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));

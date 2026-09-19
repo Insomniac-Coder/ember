@@ -6891,3 +6891,57 @@ feature; it makes the existing formation boundary reject consistently before
 HIR or MIR can represent an impossible dynamic call. The adopted specification,
 target, ADRs, and phase accounting are unchanged: **1 of 9 complete**, Phase 2
 active, and Phase 3 has not passed its exit gate.
+
+### 0.137 `[TYP-22]` direct borrowed class-to-interface materialization — 2026-09-19
+
+The next bounded Phase 3 increment makes the already-checked dynamic-call
+boundary constructible from a concrete class for the first time. Before this
+increment, a minimal `Pixel implements Render` program failed at
+`render_it(ref pixel)` with `E2020`: the compiler had a `ref dyn Render` call
+carrier and its declaration-derived table layout, but no coercion from a
+borrowed class or compiler-generated concrete adapter table. This is an
+implementation increment against the frozen H3 target, not a defect in the
+adopted specification and not a new language decision.
+
+For one direct `class C implements I` relation, type checking now turns both
+`ref C -> ref dyn I` and `ref mut C -> ref mut dyn I` into an explicit HIR/MIR
+interface-upcast operation. The operation retains the checked implementation
+identities, receiver modes, and complete declaration-order interface layout;
+the C backend materializes a deterministic per-`(I, C)` table and compiler
+adapter functions that translate erased `void*` data back to the concrete
+class ABI. The final MIR boundary independently verifies the direct class
+source, unchanged borrow mutability, single matching target interface,
+slot/adapter parity, and absence of an owned receiver before C sees it.
+Borrowed conversion performs no retain or transfer. The mutable adapter uses a
+temporary concrete handle slot, preserving the ordinary `mut self` inout ABI
+and its existing access checks.
+
+`tests/run-pass/dyn_interface_class_coercion.em`,
+`dyn_interface_class_mut_coercion.em`, and
+`dyn_interface_class_inherited_coercion.em` cover shared dispatch, mutable
+dispatch, and the inherited-prefix table respectively; the
+`dyn_interface_class_sized_default_coercion.em` companion proves a non-callable
+`Self: Sized` placeholder retains its ordinal while the callable slot remains
+correct; and `dyn_interface_class_argument_modes.em` proves exact ordinary
+argument-mode ABI forwarding through an adapter. Finally,
+`dyn_interface_class_default_method_coercion.em` proves an ordinary,
+non-`Self: Sized` interface default body dispatches through that same adapter.
+All run in debug, release, and shipping. Their generated-C assertions pin the
+concrete adapter shape and the absence of a hidden retain. Each focused
+program prints `42` and compiles under strict C11
+`-pedantic -Wall -Wextra -Werror -fsyntax-only`.
+
+**Deliberate boundary:** this increment supports direct, single-interface,
+borrowed class coercions only. It does not implement `Box[dyn I]` or other
+owned dynamic storage, multi-interface table composition, generic-class
+materialization, independent-package table definitions, or a general dynamic
+drop path. The borrowed carrier never calls the table's `drop` field; current
+concrete borrowed tables therefore use `NULL` there. A future owned-dynamic
+slice must establish ownership transfer and concrete payload drop glue rather
+than treating this borrowed adapter as sufficient. `[IFC-3]` remains unchanged:
+a class implementing an interface with supertraits must list those
+supertraits explicitly.
+
+The adopted specification, frozen target, ADRs, and phase accounting remain
+unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed its
+exit gate.

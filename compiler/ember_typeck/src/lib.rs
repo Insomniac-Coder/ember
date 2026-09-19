@@ -3058,6 +3058,45 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
+    /// The class-specific bodies that fill one declaration-derived dynamic
+    /// interface table. Conformance has already checked these signatures; the
+    /// table adapter keeps their concrete receiver ABI behind the `void*`
+    /// receiver required by `[TYP-22]`.
+    fn dyn_class_adapter(
+        &self,
+        class: ClassId,
+        interface: Symbol,
+    ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
+        let class_ty = self.class_ty(class)?;
+        if !self
+            .implemented
+            .iter()
+            .any(|(ty, implemented, _)| *ty == class_ty && *implemented == interface)
+        {
+            return None;
+        }
+
+        let mut methods = Vec::new();
+        self.dyn_methods_in_order(interface, &mut methods, &mut HashSet::new());
+        methods
+            .into_iter()
+            .map(|(name, declaration, _)| {
+                if self
+                    .interfaces
+                    .values()
+                    .any(|def| def.dyn_sized_defaults.contains(&declaration))
+                {
+                    return Some(None);
+                }
+                let entry = self.methods.get(&(class_ty, name))?;
+                Some(Some(hir::InterfaceAdapterSlot {
+                    implementation: entry.def,
+                    receiver: entry.receiver,
+                }))
+            })
+            .collect()
+    }
+
     /// Resolve a method call whose receiver is `ref dyn I` (or a compatible
     /// multi-bound form). Inherent and concrete-interface calls continue to
     /// use the ordinary method path; this helper is only the dynamic-vtable
@@ -8419,6 +8458,38 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
+        // `[TYP-22]` — a class with a checked implementation can be borrowed
+        // as a single-interface `dyn` carrier. The upcast retains the
+        // declaration-derived layout and concrete method bodies for lowering;
+        // it neither retains nor transfers the class handle. Multi-bound
+        // table composition remains the separate materialization slice.
+        let source_kind = self.types.kind(expr.ty).clone();
+        let expected_kind = self.types.kind(expected).clone();
+        if let (
+            TyKind::Ref { mutable: source_mutable, inner: source },
+            TyKind::Ref { mutable: target_mutable, inner: target },
+        ) = (source_kind, expected_kind)
+            && source_mutable == target_mutable
+            && let TyKind::Class(class) = *self.types.kind(source)
+            && let TyKind::Dyn { interfaces } = self.types.kind(target).clone()
+            && interfaces.len() == 1
+            && let interface = interfaces[0]
+            && let Some(implementations) = self.dyn_class_adapter(class, interface)
+        {
+            let span = expr.span;
+            let layout = self.dyn_vtable_layout(interface);
+            return Expr {
+                ty: expected,
+                kind: ExprKind::InterfaceUpcast {
+                    class,
+                    interface,
+                    layout,
+                    implementations,
+                    expr: Box::new(expr),
+                },
+                span,
+            };
+        }
         // `[FN-6b]` — the boundary owns the late-bound fact. An ordinary
         // function value may therefore be supplied to an expected
         // `@latebound fn(...)` type without changing the function value's
@@ -13401,6 +13472,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             | ExprKind::Deref(base)
             | ExprKind::Ref { place: base, .. }
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::EraseRange(base) => {
                 self.collect_mutated_capture_fields_expr(base, environment, fields);
@@ -13577,6 +13649,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Field { base, .. }
             | ExprKind::Deref(base)
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::EraseRange(base) => self.closure_expr_moves_capture(base, environment, false),
             ExprKind::Index { base, index } => {
@@ -13626,6 +13699,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Deref(base)
             | ExprKind::Ref { place: base, .. }
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::EraseRange(base) => Self::closure_capture_field_index(base, environment),
             ExprKind::Index { base, .. } => Self::closure_capture_field_index(base, environment),

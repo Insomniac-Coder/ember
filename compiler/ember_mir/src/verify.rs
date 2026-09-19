@@ -838,7 +838,12 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 // inherited `mut self` method. Unlike numeric and owning
                 // class casts, it does not manufacture a view without a
                 // source loan.
-                Rvalue::Cast { kind: crate::CastKind::ClassUpcastBorrowed, .. } => None,
+                Rvalue::Cast {
+                    kind:
+                        crate::CastKind::ClassUpcastBorrowed
+                        | crate::CastKind::InterfaceUpcast { .. },
+                    ..
+                } => None,
                 Rvalue::Cast { .. } => Some("a cast"),
                 Rvalue::BinaryOp { .. } => Some("an arithmetic operation"),
                 Rvalue::UnaryOp { .. } => Some("a unary operation"),
@@ -892,6 +897,106 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                      reference — the borrow the view is built from must be explicit \
                      in the IR, or `collect_loans` cannot see it (see D-022)"
                 ));
+            }
+        }
+    }
+    violations
+}
+
+/// `[TYP-22]` — an interface upcast is the one cast that transports an
+/// existing borrow into the erased `{data*, vtable*}` carrier.  It must remain
+/// structurally narrow: accepting an arbitrary cast here would recreate
+/// D-022's failure mode, where a lifetime-carrying value reached later phases
+/// without a source loan the analyses could see.
+///
+/// The type checker is authoritative for conformance and the declaration
+/// layout. This verifier protects the HIR/MIR/codegen boundary against a
+/// malformed lowering by checking the facts that must be visible in MIR:
+/// direct class source, matching borrow mutability, one matching target
+/// interface, matched adapter/layout slots, and no move-only receiver.
+pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let mut fail = |message: String| {
+        violations.push(Violation {
+            body: body.symbol.to_string(),
+            message,
+        });
+    };
+
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for statement in &block.stmts {
+            let StmtKind::Assign {
+                place,
+                rvalue:
+                    Rvalue::Cast {
+                        kind:
+                            crate::CastKind::InterfaceUpcast {
+                                class,
+                                interface,
+                                layout,
+                                implementations,
+                            },
+                        operand,
+                        to,
+                    },
+            } = &statement.kind
+            else {
+                continue;
+            };
+
+            let at = format!("bb{block_index}: dynamic interface upcast");
+            let destination = place_ty(body, types, place);
+            if *to != destination {
+                fail(format!("{at} cast type disagrees with its destination place"));
+                continue;
+            }
+            let source = match operand {
+                Operand::Copy(source) | Operand::Move(source) => place_ty(body, types, source),
+                Operand::Const(_) => {
+                    fail(format!("{at} must preserve a borrowed class place, not a constant"));
+                    continue;
+                }
+            };
+            let (TyKind::Ref { mutable: source_mutable, inner: source_inner },
+                TyKind::Ref { mutable: target_mutable, inner: target_inner }) =
+                (types.kind(source), types.kind(destination))
+            else {
+                fail(format!("{at} must convert `ref Class` to `ref dyn Interface`"));
+                continue;
+            };
+            if source_mutable != target_mutable {
+                fail(format!("{at} changes borrow mutability"));
+                continue;
+            }
+            if !matches!(types.kind(*source_inner), TyKind::Class(found) if found == class) {
+                fail(format!("{at} class metadata disagrees with its source type"));
+                continue;
+            }
+            if !matches!(types.kind(*target_inner), TyKind::Dyn { interfaces }
+                if interfaces.len() == 1 && interfaces[0] == *interface)
+            {
+                fail(format!("{at} interface metadata disagrees with its target type"));
+                continue;
+            }
+            if layout.len() != implementations.len() {
+                fail(format!("{at} has mismatched table-layout and adapter lengths"));
+                continue;
+            }
+            for (slot, (layout, implementation)) in layout.iter().zip(implementations).enumerate() {
+                match (layout, implementation) {
+                    (None, None) => {}
+                    (Some(_), Some(implementation))
+                        if implementation.receiver != ember_hir::Mode::Owned => {}
+                    (None, Some(_)) => {
+                        fail(format!("{at} supplies an adapter for non-callable slot {slot}"));
+                    }
+                    (Some(_), None) => {
+                        fail(format!("{at} omits an adapter for callable slot {slot}"));
+                    }
+                    (Some(_), Some(_)) => {
+                        fail(format!("{at} supplies an owned receiver for slot {slot}"));
+                    }
+                }
             }
         }
     }
@@ -956,6 +1061,25 @@ pub fn verify_views_all(bodies: &[Body], types: &TypeTable) {
     );
 }
 
+/// Run the dynamic-interface-upcast boundary verifier over every lowered
+/// body. Like [`verify_views_all`], violations are compiler bugs, not source
+/// diagnostics: safe source should never be blamed for malformed MIR.
+pub fn verify_interface_upcasts_all(bodies: &[Body], types: &TypeTable) {
+    let violations: Vec<Violation> = bodies
+        .iter()
+        .flat_map(|body| verify_interface_upcasts(body, types))
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "MIR dynamic-interface-upcast verification failed:\n{}",
+        violations
+            .iter()
+            .map(|violation| format!("  {}: {}", violation.body, violation.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 /// `[MIR-REG-1]` / `[VERIFY-3]` — the artifact crossing the final MIR
 /// boundary must carry callable-region metadata whose deterministic identity
 /// still matches its contents. Semantic agreement with field accesses is
@@ -987,6 +1111,11 @@ pub fn for_codegen<'a>(
 ) -> Result<VerifiedMir<'a>, Vec<Violation>> {
     let mut violations: Vec<Violation> = bodies.iter().flat_map(verify).collect();
     violations.extend(bodies.iter().flat_map(|body| verify_views(body, types)));
+    violations.extend(
+        bodies
+            .iter()
+            .flat_map(|body| verify_interface_upcasts(body, types)),
+    );
     violations.extend(bodies.iter().flat_map(verify_callable_region_metadata));
     if violations.is_empty() {
         Ok(VerifiedMir { bodies, types })
@@ -1123,5 +1252,138 @@ mod view_invariant_tests {
 
     fn body_ty_placeholder() -> Ty {
         TypeTable::new().1.i32
+    }
+}
+
+#[cfg(test)]
+mod interface_upcast_invariant_tests {
+    use super::*;
+    use crate::{BasicBlock, InterfaceAdapterMethod, LocalDecl, LocalKind, Stmt};
+    use ember_span::{Span, Symbol};
+    use ember_types::{ClassDef, ClassOpenness, TyKind, TypeTable};
+
+    fn upcast_body(
+        class_metadata_matches_source: bool,
+        receiver: ember_hir::Mode,
+    ) -> (Body, TypeTable) {
+        let (mut types, common) = TypeTable::new();
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let interface = Symbol::intern("Render");
+        let class = types.add_class(ClassDef {
+            name: Symbol::intern("Pixel"),
+            fields: Vec::new(),
+            span,
+            openness: ClassOpenness::Final,
+            base: None,
+            has_drop: false,
+            origin: None,
+            declaring_module: 0,
+        });
+        let class_ty = types.intern(TyKind::Class(class));
+        let source = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: class_ty,
+        });
+        let erased = types.intern(TyKind::Dyn {
+            interfaces: vec![interface],
+        });
+        let target = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: erased,
+        });
+        let metadata = if class_metadata_matches_source {
+            class
+        } else {
+            ember_types::ClassId(class.0 + 1)
+        };
+        let body = Body {
+            name: "upcast".to_string(),
+            symbol: ember_branding::mangled("upcast"),
+            is_unsafe: false,
+            abi: None,
+            locals: vec![
+                LocalDecl {
+                    ty: target,
+                    name: None,
+                    kind: LocalKind::Return,
+                    span: Span::DUMMY,
+                },
+                LocalDecl {
+                    ty: source,
+                    name: None,
+                    kind: LocalKind::Temp,
+                    span: Span::DUMMY,
+                },
+            ],
+            blocks: vec![BasicBlock {
+                stmts: vec![Stmt::new(
+                    StmtKind::Assign {
+                        place: Place::local(LocalId(0)),
+                        rvalue: Rvalue::Cast {
+                            kind: crate::CastKind::InterfaceUpcast {
+                                class: metadata,
+                                interface,
+                                layout: vec![Some(ember_hir::InterfaceSlot {
+                                    params: Vec::new(),
+                                    ret: common.i32,
+                                })],
+                                implementations: vec![Some(InterfaceAdapterMethod {
+                                    symbol: ember_branding::mangled("Pixel_render"),
+                                    receiver,
+                                })],
+                            },
+                            operand: Operand::Copy(Place::local(LocalId(1))),
+                            to: target,
+                        },
+                    },
+                    span,
+                )],
+                terminator: Terminator::Return,
+                terminator_span: span,
+            }],
+            arg_count: 0,
+            param_modes: Vec::new(),
+            span: Span::DUMMY,
+            borrows: None,
+            borrowed_params: Vec::new(),
+            for_iterators: Vec::new(),
+            callable_regions: None,
+            closure_environment: None,
+            closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
+            elided_accesses: Vec::new(),
+        };
+        (body, types)
+    }
+
+    #[test]
+    fn checked_class_to_interface_upcast_is_accepted() {
+        let (body, types) = upcast_body(true, ember_hir::Mode::Borrow);
+        assert!(verify_interface_upcasts(&body, &types).is_empty());
+    }
+
+    #[test]
+    fn upcast_with_class_metadata_not_matching_its_borrow_is_refused() {
+        let (body, types) = upcast_body(false, ember_hir::Mode::Borrow);
+        let violations = verify_interface_upcasts(&body, &types);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("class metadata disagrees")),
+            "missing class/source mismatch violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn upcast_with_owned_receiver_is_refused() {
+        let (body, types) = upcast_body(true, ember_hir::Mode::Owned);
+        let violations = verify_interface_upcasts(&body, &types);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("owned receiver")),
+            "missing owned-receiver violation: {violations:?}"
+        );
     }
 }

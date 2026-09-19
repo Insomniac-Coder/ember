@@ -5,8 +5,8 @@
 //! lowers straight-line code. Codegen reads MIR, never HIR — writing the C
 //! backend against HIR would mean writing it twice.
 
-use ember_span::Span;
-use ember_types::{EnumId, StructId, Ty};
+use ember_span::{Span, Symbol};
+use ember_types::{ClassId, EnumId, StructId, Ty};
 
 pub mod lower;
 pub mod verify;
@@ -886,7 +886,16 @@ pub enum AggregateKind {
     Enum(EnumId, usize),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+/// One concrete implementation used by a compiler-generated dynamic-interface
+/// adapter. The erased interface signature stays on the table layout; this
+/// value is the class-specific callable identity.
+#[derive(Clone, Debug)]
+pub struct InterfaceAdapterMethod {
+    pub symbol: String,
+    pub receiver: ember_hir::Mode,
+}
+
+#[derive(Clone, Debug)]
 pub enum CastKind {
     /// `[TYP-6]` — truncation, float-to-int saturation, int-to-float rounding.
     Numeric,
@@ -902,6 +911,17 @@ pub enum CastKind {
     /// pointer adjustment and MUST NOT retain the object: the scratch handle
     /// is not an owning source local.
     ClassUpcastBorrowed,
+    /// `[TYP-22]` — turn `ref Class` or `ref mut Class` into the fixed
+    /// `{data*, vtable*}` carrier for one checked class/interface
+    /// implementation. This is not a numeric conversion: the backend must
+    /// emit the corresponding concrete adapter table and preserve the source
+    /// borrow without a retain or transfer.
+    InterfaceUpcast {
+        class: ClassId,
+        interface: Symbol,
+        layout: Vec<Option<ember_hir::InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterMethod>>,
+    },
 }
 
 pub use ember_hir::{BinOp, Builtin, UnOp};
