@@ -7767,3 +7767,31 @@ the error-page verifier, and `git diff --check` pass. No ODR is involved: the
 frozen target defines both the safe fix-it boundary and weak-owner behavior.
 Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
 active.
+
+### 0.179 Weak owner fields and complete cycle CI coverage — 2026-09-20
+
+The generated-C planner had a concrete Phase 3 defect in the `Weak` owner
+path. A source-valid `class Node: parent: Weak[Node]` ordered the pointee class
+before the by-value weak wrapper, so C rejected the field as an incomplete
+type. Commit `8cf9fad` recognizes the wrapper as pointer-only for dependency
+planning, leaving its class target as the existing C forward declaration.
+`weak_class_field.em` is the red-to-green all-profile probe: an empty weak
+self field compiles, upgrades to `None`, and retains normal weak release
+glue.
+
+The companion `Weak[Shared[Node]]` case exposed the same rule through a C
+alias: its wrapper used the `Shared` typedef before that typedef was emitted.
+Commit `458b1d5` gives that member the canonical `ember_obj_header*` ABI
+spelling, which is exactly the representation `Shared[T]` already uses. The
+existing deinitialising-upgrade conformance case now passes in debug, release,
+and shipping again.
+
+Commit `96adc19` completes the `[TST-4a]` accept-case invariant for all cycle
+diagnostic directories, not just the first `WK-5` failure: `WK-6` proves a
+weak self back-reference; `WK-7` proves a generic instantiated strong path
+closed by a weak back-reference. It also makes the cycle-inspector fixture path
+derive from Cargo's manifest directory, satisfying the branding gate. The
+exact full conformance suite passes locally in 155 seconds, and every document
+gate passes. These are compiler and coverage repairs defined by the frozen
+target; no ODR is required. Phase accounting remains **1 of 9 complete**;
+Phase 2 and Phase 3 remain active.
