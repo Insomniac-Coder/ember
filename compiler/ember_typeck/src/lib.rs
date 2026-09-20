@@ -192,6 +192,7 @@ pub fn check(
         main = main.or(program.main);
         functions.extend(program.functions);
     }
+    functions.extend(checker.take_derived_clone_bodies());
     // `[TYP-16]` — every instantiation reached while checking gets a real
     // body. One of those can reach another, so this drains until empty.
     functions.extend(checker.check_instantiations(modules));
@@ -491,6 +492,8 @@ struct Checker<'a> {
     /// no name in source, so they are collected here and appended to the
     /// program rather than found by walking the module again.
     lambdas: Vec<Function>,
+    /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
+    derived_clone_methods: Vec<(DefId, Ty, Span)>,
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
@@ -729,6 +732,7 @@ impl<'a> Checker<'a> {
             local_ranges: HashMap::new(),
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
+            derived_clone_methods: Vec::new(),
             captures: None,
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
@@ -2564,6 +2568,7 @@ impl<'a> Checker<'a> {
                         item_index,
                     );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Class(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
@@ -3506,6 +3511,41 @@ impl<'a> Checker<'a> {
         self.signatures.push(signature);
         self.associated.insert((ty, name), AssociatedEntry { def, from_interface });
         Some(def)
+    }
+
+    /// `[OWN-8]` — start with field types that have existing `Copy` semantics.
+    /// Recursing into move-only `Clone` fields is a separate slice; treating
+    /// them as bit copies here would violate ownership.
+    fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
+        if !has_derive(attrs, "Clone") {
+            return;
+        }
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return };
+        if let Some(field) = self.types.struct_def(id).fields.iter().find(|field| !self.types.is_copy(field.ty)) {
+            let shown = self.types.display(field.ty);
+            self.error(
+                codes::E2040,
+                field.span,
+                format!("field `{}` has type `{shown}`, which does not implement `Clone`", field.name),
+            );
+            return;
+        }
+        let signature = Signature {
+            params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
+            ret: ty,
+            generics: Vec::new(),
+            borrows: None,
+        };
+        if let Some(def) = self.register_method(
+            ty,
+            Symbol::intern("clone"),
+            signature,
+            Mode::Borrow,
+            None,
+            span,
+        ) {
+            self.derived_clone_methods.push((def, ty, span));
+        }
     }
 
     /// Record which interfaces a type implements, and check that every
@@ -6065,6 +6105,68 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         out.extend(self.check_default_bodies(module));
         out
+    }
+
+    fn take_derived_clone_bodies(&mut self) -> Vec<Function> {
+        std::mem::take(&mut self.derived_clone_methods)
+            .into_iter()
+            .filter_map(|(def, ty, span)| {
+                let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+                let fields = self.types.struct_def(id).fields.clone();
+                let self_local = LocalId(1);
+                let fields = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| Expr {
+                        ty: field.ty,
+                        kind: ExprKind::Field {
+                            base: Box::new(Expr {
+                                ty,
+                                kind: ExprKind::Local(self_local),
+                                span,
+                            }),
+                            index,
+                        },
+                        span,
+                    })
+                    .collect();
+                Some(Function {
+                    def,
+                    name: Symbol::intern("clone"),
+                    class_init: false,
+                    class_init_default_fields: Vec::new(),
+                    symbol: method_symbol(&self.types.display(ty), Symbol::intern("clone")),
+                    is_unsafe: false,
+                    abi: None,
+                    params: vec![Param { local: self_local, mode: Mode::Borrow }],
+                    locals: vec![
+                        LocalDecl { name: None, ty, span, for_iterator: false },
+                        LocalDecl {
+                            name: Some(Symbol::intern("self")),
+                            ty,
+                            span,
+                            for_iterator: false,
+                        },
+                    ],
+                    ret: ty,
+                    body: Block {
+                        stmts: vec![Stmt::Return(Some(Expr {
+                            ty,
+                            kind: ExprKind::StructLit { struct_id: id, fields },
+                            span,
+                        }))],
+                        span,
+                    },
+                    span,
+                    overflow: OverflowPolicy::default(),
+                    borrows: None,
+                    closure_environment: None,
+                    closure_captures_by_move: false,
+                    class_owner: None,
+                    class_virtual_slot: None,
+                })
+            })
+            .collect()
     }
 
     /// The bodies of the default methods `register_defaults` created: one copy

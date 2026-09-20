@@ -7139,3 +7139,17 @@ interfaces, and the remaining owned dynamic-storage matrix remain separate
 slices. The adopted specification, frozen target, ADRs, and phase accounting
 are unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed
 its exit gate.
+
+### 0.147 `[OWN-8]` derived Clone copy-field boundary — 2026-09-20
+
+`@derive(Clone)` now generates a real inherent `clone(self) -> Self` method
+for non-generic structs whose fields already have `Copy` semantics. The method
+is added to ordinary method lookup and lowers as a field-wise reconstructed
+value, so the original remains valid. The all-profile OWN-8 probe prints the
+original and clone as `42` and pins the generated method symbol. A non-Copy
+field is rejected rather than bitwise copied.
+
+This is deliberately the first safe derive slice, not complete `[OWN-8]`:
+recursive Clone calls, generic structs, standard-library Clone exposure, and
+the rest of the derive family remain open. Phase accounting therefore remains
+**1 of 9 complete**, with Phase 2 active.
