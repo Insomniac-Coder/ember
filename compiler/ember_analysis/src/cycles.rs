@@ -260,17 +260,18 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
         .map(|edge| {
             format!(
                 "{}.{}",
-                types.class_def(ClassId(edge.field_owner as u32)).name,
+                class_name(types, ClassId(edge.field_owner as u32)),
                 edge.field
             )
         })
-        .chain(std::iter::once(
-            types.class_def(ClassId(first.from as u32)).name.to_string(),
-        ))
+        .chain(std::iter::once(class_name(
+            types,
+            ClassId(first.from as u32),
+        )))
         .collect::<Vec<_>>()
         .join(" -> ");
-    let owner = types.class_def(ClassId(first.field_owner as u32)).name;
-    let target = types.class_def(ClassId(first.to as u32)).name;
+    let owner = class_name(types, ClassId(first.field_owner as u32));
+    let target = class_name(types, ClassId(first.to as u32));
     let mut diagnostic = Diagnostic::lint(
         codes::L3001,
         first.span,
@@ -283,13 +284,26 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
     ))
     .note("every edge in this statically visible cycle is strong; the cycle may leak at run time");
     for edge in cycle.iter().skip(1) {
-        let owner = types.class_def(ClassId(edge.field_owner as u32)).name;
+        let owner = class_name(types, ClassId(edge.field_owner as u32));
         diagnostic = diagnostic.secondary(
             edge.span,
             format!("strong edge `{owner}.{}` is part of this cycle", edge.field),
         );
     }
     sink.emit(diagnostic);
+}
+
+fn class_name(types: &TypeTable, class: ClassId) -> String {
+    let def = types.class_def(class);
+    let Some((name, arguments)) = &def.origin else {
+        return def.name.to_string();
+    };
+    let arguments = arguments
+        .iter()
+        .map(|argument| types.display(*argument))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name}[{arguments}]")
 }
 
 #[cfg(test)]
