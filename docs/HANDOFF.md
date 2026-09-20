@@ -7314,3 +7314,19 @@ Linux clang/GCC, Windows MSVC/clang-cl, and documentation validation. This
 work follows the existing class-generic grammar, monomorphization, and
 single-inheritance rules; no new semantics or owner decision was inferred.
 Phase accounting remains **1 of 9 complete**.
+
+### 0.159 Generic class virtual dispatch — 2026-09-20
+
+Generic class method recipes now retain their source dispatch declaration when
+they materialize a concrete class. Each materialized class registers its
+instance methods in declaration order and computes the inherited class-vtable
+layout before lowering method bodies. Consequently an `override` on
+`Derived[T](Base[T])` reuses `Base[T]`'s virtual slot and a `Base[bool]` handle
+to `Derived[bool]` reaches the derived implementation. The all-profile probe
+prints `42` and asserts both the concrete override adapter and the generated
+virtual slot call in C.
+
+CI run `35487571717` is green on Linux clang/GCC, Windows MSVC/clang-cl, and
+the specification gate. This is a direct implementation of `[CLS-4]` and
+`[DSP-2]`; no new class or generic semantics were inferred. Phase accounting
+remains **1 of 9 complete**.
