@@ -111,7 +111,7 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
     for body in bodies {
         for block in &body.blocks {
             for stmt in &block.stmts {
-                if !matches!(stmt.kind, StmtKind::BeginAccess { .. }) {
+                if !matches!(stmt.kind, StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }) {
                     continue;
                 }
                 let location = map.location(stmt.span);
@@ -1769,10 +1769,30 @@ impl Emitter<'_> {
                     "    {RT}access_{operation}({object}, {what}, {location});"
                 ));
             }
+            StmtKind::BeginAccessTransfer { place, mutable } => {
+                self.emit_line_directive(stmt.span);
+                let operation = if *mutable { "begin_write" } else { "begin_read" };
+                let object = self.access_object(place, body);
+                let what = c_string_literal(&body.symbol);
+                let location = self.location(stmt.span);
+                self.line(&format!(
+                    "    {RT}access_{operation}({object}, {what}, {location});"
+                ));
+            }
             StmtKind::EndAccess { place, mutable } => {
                 self.emit_line_directive(stmt.span);
                 let operation = if *mutable { "end_write" } else { "end_read" };
                 let object = self.access_object(place, body);
+                let what = c_string_literal(&body.symbol);
+                let location = self.location(stmt.span);
+                self.line(&format!(
+                    "    {RT}access_{operation}({object}, {what}, {location});"
+                ));
+            }
+            StmtKind::EndAccessTransfer { place, mutable } => {
+                self.emit_line_directive(stmt.span);
+                let operation = if *mutable { "end_write" } else { "end_read" };
+                let object = self.access_object_from_payload(place, body);
                 let what = c_string_literal(&body.symbol);
                 let location = self.location(stmt.span);
                 self.line(&format!(
@@ -1830,6 +1850,19 @@ impl Emitter<'_> {
             "(({}*){})",
             ember_branding::runtime("obj_header"),
             self.place_in(place, body)
+        )
+    }
+
+    /// A returned `Shared` payload reference carries a pointer to `T`, not an
+    /// object-header pointer. The header lives at the alignment-defined offset
+    /// used by `ember_obj_new_copy`, so the caller can close a transferred
+    /// runtime access without a hidden owner word in the reference ABI.
+    fn access_object_from_payload(&self, place: &Place, body: &Body) -> String {
+        let payload = self.place_in(place, body);
+        let payload_ty = self.c_type(self.place_ty(place, body));
+        format!(
+            "(({}*)((unsigned char*)&({payload}) - EMBER_OBJ_PAYLOAD_OFFSET(_Alignof({payload_ty}))))",
+            ember_branding::runtime("obj_header"),
         )
     }
 
@@ -3486,7 +3519,10 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                         read[flag.0 as usize] = true;
                     }
                 }
-                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                StmtKind::BeginAccess { place, .. }
+                | StmtKind::BeginAccessTransfer { place, .. }
+                | StmtKind::EndAccess { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. } => {
                     read_place(place, &mut read);
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}

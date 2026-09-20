@@ -54,7 +54,10 @@ pub fn check(body: &Body, sink: &mut Sink) {
                         read.insert(*flag);
                     }
                 }
-                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                StmtKind::BeginAccess { place, .. }
+                | StmtKind::BeginAccessTransfer { place, .. }
+                | StmtKind::EndAccess { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. } => {
                     mark_place_indices(place, &mut read);
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}

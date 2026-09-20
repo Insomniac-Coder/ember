@@ -15,7 +15,7 @@ pub mod unused;
 
 pub use borrows::{
     check_all as check_borrows_all, check_all_with_installed_callable_regions,
-    install_callable_regions_all, verify_callable_regions_all,
+    insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::elide_static_accesses_all;
 pub use definite_init::{

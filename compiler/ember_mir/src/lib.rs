@@ -956,10 +956,24 @@ pub enum StmtKind {
         place: Place,
         mutable: bool,
     },
+    /// Begin an access whose reference is returned to the caller. The caller
+    /// closes it through the returned payload; this preserves the exact
+    /// selected object when a callee returns one of several `Shared` owners.
+    BeginAccessTransfer {
+        place: Place,
+        mutable: bool,
+    },
     /// End the access opened by [`StmtKind::BeginAccess`].  These are explicit
     /// MIR operations rather than backend-only instrumentation so borrow,
     /// verifier, inspection, and code-generation phases see the same interval.
     EndAccess {
+        place: Place,
+        mutable: bool,
+    },
+    /// Close an access started in a callee through a returned payload place.
+    /// The C backend recovers the counted-object header from that payload's
+    /// alignment-defined offset.
+    EndAccessTransfer {
         place: Place,
         mutable: bool,
     },
@@ -1008,7 +1022,9 @@ impl StmtKind {
         match self {
             StmtKind::Assign { .. } => "an assignment",
             StmtKind::BeginAccess { .. } => "a begin-access operation",
+            StmtKind::BeginAccessTransfer { .. } => "a transferred begin-access operation",
             StmtKind::EndAccess { .. } => "an end-access operation",
+            StmtKind::EndAccessTransfer { .. } => "a transferred end-access operation",
             StmtKind::CheckedBinaryOp { .. } => "a checked arithmetic statement",
             StmtKind::StorageLive(_) => "a storage-live marker",
             StmtKind::StorageDead(_) => "a storage-dead marker",
@@ -1258,9 +1274,17 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
             let mode = if *mutable { "write" } else { "read" };
             format!("begin_access_{mode}({})", dump_place(place))
         }
+        StmtKind::BeginAccessTransfer { place, mutable } => {
+            let mode = if *mutable { "write" } else { "read" };
+            format!("begin_access_{mode}_transfer({})", dump_place(place))
+        }
         StmtKind::EndAccess { place, mutable } => {
             let mode = if *mutable { "write" } else { "read" };
             format!("end_access_{mode}({})", dump_place(place))
+        }
+        StmtKind::EndAccessTransfer { place, mutable } => {
+            let mode = if *mutable { "write" } else { "read" };
+            format!("end_access_{mode}_transfer({})", dump_place(place))
         }
         StmtKind::CheckedBinaryOp {
             dest,

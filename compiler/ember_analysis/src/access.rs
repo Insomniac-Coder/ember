@@ -80,8 +80,9 @@ fn matching_end(
     let mut nested = 0usize;
     for (index, statement) in block.stmts.iter().enumerate().skip(begin_index + 1) {
         match &statement.kind {
-            StmtKind::BeginAccess { .. } => nested += 1,
-            StmtKind::EndAccess { place: end_place, mutable: end_mutable } => {
+            StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. } => nested += 1,
+            StmtKind::EndAccess { place: end_place, mutable: end_mutable }
+            | StmtKind::EndAccessTransfer { place: end_place, mutable: end_mutable } => {
                 if nested != 0 {
                     nested -= 1;
                 } else if end_place == place && *end_mutable == mutable {
@@ -135,7 +136,9 @@ fn unique_handle(body: &Body, access_block: usize, root: ember_mir::LocalId) -> 
                 | StmtKind::StorageDead(_)
                 | StmtKind::Nop
                 | StmtKind::BeginAccess { .. }
+                | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }
+                | StmtKind::EndAccessTransfer { .. }
                 | StmtKind::Drop { .. } => {}
             }
         }

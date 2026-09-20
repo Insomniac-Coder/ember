@@ -15765,9 +15765,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    /// `[HEAP-4]` — `Shared[T].get() -> ref T`. Its receiver must be an owner
-    /// place so the returned reference has a concrete liveness root; `get_mut`
-    /// is added in the following exclusivity slice.
+    /// `[HEAP-4]`, `[HEAP-5]` — `Shared[T]` borrows its payload. The shared
+    /// form needs an owner place for a concrete liveness root; the mutable
+    /// form first takes the ordinary `mut self` borrow of that owner, then
+    /// returns a mutable borrow of the payload through it.
     fn synth_shared_method(
         &mut self,
         receiver: Expr,
@@ -15777,22 +15778,67 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if !name.name.is("get") {
-            self.error(
-                codes::E1010,
-                name.span,
-                format!("`Shared[{}]` has no method named `{}`", self.types.display(inner), name.name),
-            );
-            return error;
-        }
+        let mutable = match name.name.as_str() {
+            "get" => false,
+            "get_mut" => true,
+            _ => {
+                self.error(
+                    codes::E1010,
+                    name.span,
+                    format!(
+                        "`Shared[{}]` has no method named `{}`",
+                        self.types.display(inner),
+                        name.name
+                    ),
+                );
+                return error;
+            }
+        };
+        let method = if mutable { "get_mut" } else { "get" };
         if !args.is_empty() {
             self.error(
                 codes::E2020,
                 span,
-                format!("`get` takes 0 arguments, found {}", args.len()),
+                format!("`{method}` takes 0 arguments, found {}", args.len()),
             );
             return error;
         }
+        if mutable {
+            // A `mut` parameter is already a `ref mut Shared[T]` inside its
+            // callee. Borrow through that caller-owned reference directly:
+            // re-borrowing its dereferenced temporary would make a returned
+            // payload reference appear to derive from local storage instead
+            // of from the parameter. Ordinary local receivers still need the
+            // usual `mut self` adjustment.
+            let receiver = match &receiver.kind {
+                ExprKind::Deref(base)
+                    if matches!(self.types.kind(base.ty), TyKind::Ref { mutable: true, .. }) =>
+                {
+                    receiver
+                }
+                _ => {
+                    let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+                    let TyKind::Ref { mutable: true, inner: shared } =
+                        *self.types.kind(receiver.ty)
+                    else {
+                        return error;
+                    };
+                    Expr {
+                        ty: shared,
+                        kind: ExprKind::Deref(Box::new(receiver)),
+                        span,
+                    }
+                }
+            };
+            let payload = self.read_shared_through(receiver);
+            let ty = self.types.intern(TyKind::Ref { mutable: true, inner });
+            return Expr {
+                ty,
+                kind: ExprKind::Ref { place: Box::new(payload), mutable: true },
+                span,
+            };
+        }
+
         if !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,

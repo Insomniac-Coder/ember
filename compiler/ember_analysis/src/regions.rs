@@ -612,7 +612,9 @@ impl Regions {
                     state[slot.region] = ValueFact::default();
                 }
             }
-            StmtKind::BeginAccess { .. } | StmtKind::EndAccess { .. } | StmtKind::Drop { .. } | StmtKind::Nop => {}
+            StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }
+            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::Drop { .. } | StmtKind::Nop => {}
         }
     }
 
@@ -1017,7 +1019,9 @@ impl Regions {
                     StmtKind::StorageLive(_)
                     | StmtKind::StorageDead(_)
                     | StmtKind::BeginAccess { .. }
+                    | StmtKind::BeginAccessTransfer { .. }
                     | StmtKind::EndAccess { .. }
+                    | StmtKind::EndAccessTransfer { .. }
                     | StmtKind::Drop { .. }
                     | StmtKind::Nop => {}
                 }
@@ -1296,7 +1300,9 @@ impl Regions {
             {
                 self.read_place_liveness(place, live);
             }
-            StmtKind::BeginAccess { .. } | StmtKind::EndAccess { .. } | StmtKind::Drop { .. } | StmtKind::Nop => {}
+            StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }
+            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::Drop { .. } | StmtKind::Nop => {}
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
                 for slot in &self.local_regions[local.0 as usize] {
                     live.remove(&slot.region);

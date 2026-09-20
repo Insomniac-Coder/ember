@@ -33,10 +33,10 @@ use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    AggregateKind, Body, Builtin, CallableAccessSummary as CallAccessContract,
+    AggregateKind, BasicBlock, BasicBlockId, Body, Builtin, CallableAccessSummary as CallAccessContract,
     CallableRegionMetadata, FuncRef,
     LocalId, LocalKind, Operand, ParameterFieldAccess, ParameterMode, Place, Projection, RegionAccessKind,
-    ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, StmtKind,
+    ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, Stmt, StmtKind,
     Terminator,
 };
 use ember_span::Span;
@@ -45,7 +45,7 @@ use ember_types::{StructId, Ty, TyKind, TypeTable};
 use crate::facts::{
     AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
-use crate::regions::{CallRegionContract, CallResultContract, Elision, Origin, Point, Regions};
+use crate::regions::{CallRegionContract, CallResultContract, Elision, Origin, Point, RegionVid, Regions};
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
 #[derive(Clone, Debug)]
@@ -182,6 +182,647 @@ pub fn check_all_with_installed_callable_regions(
             sink,
         );
     }
+}
+
+/// `[HEAP-4]`, `[HEAP-5]`, `[RC-5]`, `[EXC-1]` — materialize the dynamic
+/// reader/writer interval of a reference returned by `Shared.get()` or
+/// `Shared.get_mut()`.
+///
+/// The type checker lowers the source operation to an ordinary `ref` of the
+/// private payload projection. That keeps the static borrow proof and owner
+/// liveness in the established machinery. This pass runs *after* that proof,
+/// finds those compiler-private projections, and brackets the exact NLL region
+/// with the existing runtime access operations on the owner handle. It is
+/// deliberately an analysis transform rather than a codegen shortcut so MIR
+/// verification, safety reporting, and C emission observe the same interval.
+pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    let signatures: HashMap<String, Elision> = bodies
+        .iter()
+        .map(|body| (body.symbol.clone(), elision_of(body, types)))
+        .collect();
+    let summaries = contracts_from_metadata(bodies, &signatures);
+    let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
+    let capture_contracts = closure_capture_contracts(bodies, &summaries);
+    let (returned_accesses, returning_accesses) = infer_shared_return_accesses(
+        bodies,
+        types,
+        &call_contract,
+        &capture_contracts,
+    );
+
+    bodies
+        .iter_mut()
+        .map(|body| {
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            let regions = Regions::infer_with_capture_borrow_paths(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+            );
+            insert_shared_accesses(
+                body,
+                types,
+                &regions,
+                &returned_accesses,
+                &returning_accesses,
+            )
+        })
+        .sum()
+}
+
+/// A dynamic `Shared.get()`/`Shared.get_mut()` interval that crosses a direct call. This is
+/// kept separate from callable-region metadata: it affects compiler-internal
+/// runtime instrumentation, not the public borrow/ABI contract.
+#[derive(Clone, PartialEq, Eq)]
+struct SharedReturnAccess {
+    argument: usize,
+    /// Whether the callee receives this source through the ordinary `mut`
+    /// parameter ABI (`ref mut T`) rather than directly by value.
+    argument_is_mut_ref: bool,
+    mutable: bool,
+    /// Projections from the caller's mutable argument place to the
+    /// `Shared[_]` owner. The empty path is the ordinary `mut owner:
+    /// Shared[T]` case.
+    owner_projection: Vec<Projection>,
+}
+
+/// Infer the direct-call transfer source for a returned `Shared.get()` or `Shared.get_mut()`
+/// reference. A wrapper can return another direct wrapper, so this closes to
+/// a fixpoint. Multiple possible owner sources deliberately receive no
+/// *singular* summary: the reference ABI has no hidden owner word, so the
+/// callee starts an exact per-owner transfer and the caller closes it from the
+/// returned payload instead. The ordinary region checker still validates the
+/// source program independently.
+fn infer_shared_return_accesses(
+    bodies: &[Body],
+    types: &TypeTable,
+    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    capture_contracts: &HashMap<StructId, CallAccessContract>,
+) -> (HashMap<String, SharedReturnAccess>, HashSet<String>) {
+    let mut summaries = HashMap::new();
+    let mut returning = HashSet::new();
+    for _ in 0..=bodies.len() {
+        let mut next = HashMap::new();
+        let mut next_returning = HashSet::new();
+        for body in bodies {
+            let capture_paths = capture_borrow_paths(body, capture_contracts);
+            let regions = Regions::infer_with_capture_borrow_paths(
+                body,
+                types,
+                call_contract,
+                &capture_paths,
+            );
+            let (summary, returns_shared_access) =
+                shared_return_access(body, types, &regions, &summaries, &returning);
+            if returns_shared_access {
+                next_returning.insert(body.symbol.clone());
+            }
+            if let Some(summary) = summary {
+                next.insert(body.symbol.clone(), summary);
+            }
+        }
+        if next == summaries && next_returning == returning {
+            return (summaries, returning);
+        }
+        summaries = next;
+        returning = next_returning;
+    }
+    (summaries, returning)
+}
+
+fn shared_return_access(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    summaries: &HashMap<String, SharedReturnAccess>,
+    returning: &HashSet<String>,
+) -> (Option<SharedReturnAccess>, bool) {
+    let mut candidates = Vec::new();
+    let mut returns_shared_access = false;
+
+    for (block, basic_block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic_block.stmts.iter().enumerate() {
+            let StmtKind::Assign {
+                rvalue: Rvalue::Ref { place, mutable },
+                ..
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            let Some(owner) = shared_owner_of_payload(body, types, place) else {
+                continue;
+            };
+            let point = Point { block, index };
+            let Some(region) = regions.loan_region(point) else {
+                continue;
+            };
+            if region_reaches_return(body, regions, region) {
+                returns_shared_access = true;
+                if let Some(candidate) = shared_return_owner_argument(body, &owner, *mutable) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+
+        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, dest, .. } =
+            &basic_block.terminator
+        else {
+            continue;
+        };
+        if !returning.contains(symbol.as_str()) {
+            continue;
+        }
+        let Some(region) = regions.local_region(dest.local) else {
+            continue;
+        };
+        if !region_reaches_return(body, regions, region) {
+            continue;
+        }
+        returns_shared_access = true;
+        let Some(summary) = summaries.get(symbol.as_str()) else {
+            continue;
+        };
+        let Some(argument) = args.get(summary.argument) else {
+            continue;
+        };
+        let Some(mut owner) =
+            shared_argument_source(body, types, argument, summary.argument_is_mut_ref)
+        else {
+            continue;
+        };
+        owner.projection.extend(summary.owner_projection.iter().cloned());
+        if is_shared_owner(body, types, &owner)
+            && let Some(candidate) = shared_return_owner_argument(body, &owner, summary.mutable)
+        {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates.dedup();
+    ((candidates.len() == 1).then(|| candidates.remove(0)), returns_shared_access)
+}
+
+fn shared_return_owner_argument(
+    body: &Body,
+    owner: &Place,
+    mutable: bool,
+) -> Option<SharedReturnAccess> {
+    if body.local(owner.local).kind != LocalKind::Arg {
+        return None;
+    }
+    let argument_is_mut_ref = matches!(owner.projection.first(), Some(Projection::Deref));
+    let owner_projection = if argument_is_mut_ref {
+        owner.projection[1..].to_vec()
+    } else {
+        owner.projection.clone()
+    };
+    Some(SharedReturnAccess {
+        argument: owner.local.0.checked_sub(1)? as usize,
+        argument_is_mut_ref,
+        mutable,
+        owner_projection,
+    })
+}
+
+fn region_reaches_return(body: &Body, regions: &Regions, region: RegionVid) -> bool {
+    body.blocks.iter().enumerate().any(|(block, candidate)| {
+        matches!(candidate.terminator, Terminator::Return)
+            && regions.contains(
+                region,
+                Point {
+                    block,
+                    index: candidate.stmts.len(),
+                },
+            )
+    })
+}
+
+/// Recover the source place of a temporary made for a `mut` argument. The
+/// lowerer gives every ordinary `mut` argument this shape; requiring exactly
+/// one definition keeps the runtime proof fail-closed across unusual MIR.
+fn mutable_ref_source(body: &Body, operand: &Operand) -> Option<Place> {
+    let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+        return None;
+    };
+    if !source.projection.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StmtKind::Assign {
+                place,
+                rvalue: Rvalue::Ref { place: borrowed, mutable: true },
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            if place.local != source.local || !place.projection.is_empty() {
+                continue;
+            }
+            if found.replace(borrowed.clone()).is_some() {
+                return None;
+            }
+        }
+    }
+    found
+}
+
+fn shared_argument_source(
+    body: &Body,
+    types: &TypeTable,
+    operand: &Operand,
+    argument_is_mut_ref: bool,
+) -> Option<Place> {
+    if argument_is_mut_ref {
+        return mutable_ref_source(body, operand);
+    }
+    let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+        return None;
+    };
+    is_shared_owner(body, types, place).then(|| place.clone())
+}
+
+#[derive(Clone)]
+struct SharedAccess {
+    created_at: Point,
+    owner: Place,
+    mutable: bool,
+    region: RegionVid,
+    span: Span,
+    start: SharedAccessStart,
+    end: SharedAccessEnd,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SharedAccessStart {
+    Normal,
+    Transfer,
+    None,
+}
+
+#[derive(Copy, Clone)]
+enum SharedAccessEnd {
+    Normal,
+    Transfer,
+}
+
+#[derive(Clone)]
+enum AccessEvent {
+    Begin { place: Place, mutable: bool, transfer: bool, span: Span },
+    End { place: Place, mutable: bool, transfer: bool, span: Span },
+}
+
+impl AccessEvent {
+    fn is_end(&self) -> bool {
+        matches!(self, Self::End { .. })
+    }
+
+    fn into_stmt(self) -> Stmt {
+        match self {
+            Self::Begin { place, mutable, transfer: false, span } => {
+                Stmt::new(StmtKind::BeginAccess { place, mutable }, span)
+            }
+            Self::Begin { place, mutable, transfer: true, span } => {
+                Stmt::new(StmtKind::BeginAccessTransfer { place, mutable }, span)
+            }
+            Self::End { place, mutable, transfer: false, span } => {
+                Stmt::new(StmtKind::EndAccess { place, mutable }, span)
+            }
+            Self::End { place, mutable, transfer: true, span } => {
+                Stmt::new(StmtKind::EndAccessTransfer { place, mutable }, span)
+            }
+        }
+    }
+}
+
+fn end_event(access: &SharedAccess) -> AccessEvent {
+    AccessEvent::End {
+        place: access.owner.clone(),
+        mutable: access.mutable,
+        transfer: matches!(access.end, SharedAccessEnd::Transfer),
+        span: access.span,
+    }
+}
+
+/// Add access brackets to one body without re-running the borrow checker.
+/// Direct calls that return a Shared payload reference begin the transferred
+/// reader/writer interval in their caller; ordinary local-reference shapes are
+/// bracketed in their defining body. Both use exact NLL end points, including
+/// branching CFG exits.
+fn insert_shared_accesses(
+    body: &mut Body,
+    types: &TypeTable,
+    regions: &Regions,
+    returned_accesses: &HashMap<String, SharedReturnAccess>,
+    returning_accesses: &HashSet<String>,
+) -> usize {
+    let original_blocks = body.blocks.len();
+    let mut accesses = Vec::new();
+    for (block, basic_block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic_block.stmts.iter().enumerate() {
+            let StmtKind::Assign {
+                rvalue: Rvalue::Ref { place, mutable },
+                ..
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            let Some(owner) = shared_owner_of_payload(body, types, place) else {
+                continue;
+            };
+            let created_at = Point { block, index };
+            let Some(region) = regions.loan_region(created_at) else {
+                continue;
+            };
+            let reaches_return = region_reaches_return(body, regions, region);
+            // Singular return sources start in the caller, where the ordinary
+            // owner place is available. A multi-source return begins in this
+            // callee and closes through the selected payload in its caller.
+            if reaches_return && returned_accesses.contains_key(body.symbol.as_str()) {
+                continue;
+            }
+            accesses.push(SharedAccess {
+                created_at,
+                owner,
+                mutable: *mutable,
+                region,
+                span: stmt.span,
+                start: if reaches_return {
+                    SharedAccessStart::Transfer
+                } else {
+                    SharedAccessStart::Normal
+                },
+                end: SharedAccessEnd::Normal,
+            });
+        }
+    }
+    for (_block, basic_block) in body.blocks.iter().take(original_blocks).enumerate() {
+        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, dest, next } =
+            &basic_block.terminator
+        else {
+            continue;
+        };
+        let Some(summary) = returned_accesses.get(symbol.as_str()) else {
+            continue;
+        };
+        let Some(argument) = args.get(summary.argument) else {
+            continue;
+        };
+        let Some(mut owner) =
+            shared_argument_source(body, types, argument, summary.argument_is_mut_ref)
+        else {
+            continue;
+        };
+        owner.projection.extend(summary.owner_projection.iter().cloned());
+        if !is_shared_owner(body, types, &owner) {
+            continue;
+        }
+        let Some(region) = regions.local_region(dest.local) else {
+            continue;
+        };
+        // This body itself returns the reference, so its caller owns the
+        // interval transfer. Opening it here would leak an access across this
+        // frame's return boundary.
+        if region_reaches_return(body, regions, region) {
+            continue;
+        }
+        accesses.push(SharedAccess {
+            created_at: Point { block: next.0 as usize, index: 0 },
+            owner,
+            mutable: summary.mutable,
+            region,
+            span: basic_block.terminator_span,
+            start: SharedAccessStart::Normal,
+            end: SharedAccessEnd::Normal,
+        });
+    }
+    // A callee with more than one possible Shared owner starts the exact
+    // access on its selected branch. Its caller cannot reconstruct that
+    // selection from the reference ABI, but it can close the interval through
+    // the returned payload's header at the reference's exact NLL end.
+    for (_block, basic_block) in body.blocks.iter().take(original_blocks).enumerate() {
+        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, dest, next, .. } =
+            &basic_block.terminator
+        else {
+            continue;
+        };
+        if returned_accesses.contains_key(symbol.as_str())
+            || !returning_accesses.contains(symbol.as_str())
+        {
+            continue;
+        }
+        let Some(region) = regions.local_region(dest.local) else {
+            continue;
+        };
+        if region_reaches_return(body, regions, region) {
+            continue;
+        }
+        let TyKind::Ref { mutable, .. } = *types.kind(place_ty(body, types, dest)) else {
+            continue;
+        };
+        let mut payload = dest.clone();
+        payload.projection.push(Projection::Deref);
+        accesses.push(SharedAccess {
+            created_at: Point { block: next.0 as usize, index: 0 },
+            owner: payload,
+            mutable,
+            region,
+            span: basic_block.terminator_span,
+            start: SharedAccessStart::None,
+            end: SharedAccessEnd::Transfer,
+        });
+    }
+    if accesses.is_empty() {
+        return 0;
+    }
+
+    let mut inline: HashMap<(usize, usize), Vec<AccessEvent>> = HashMap::new();
+    let mut edge_ends = HashMap::new();
+    for access in &accesses {
+        // An end at the same location as a new access has to execute first:
+        // that is the NLL reuse case (`first` dies before `second` starts).
+        if access.start != SharedAccessStart::None {
+            inline
+                .entry((access.created_at.block, access.created_at.index))
+                .or_default()
+                .push(AccessEvent::Begin {
+                    place: access.owner.clone(),
+                    mutable: access.mutable,
+                    transfer: access.start == SharedAccessStart::Transfer,
+                    span: access.span,
+                });
+        }
+
+        for block in 0..original_blocks {
+            let statement_count = body.blocks[block].stmts.len();
+            for index in 0..statement_count {
+                let point = Point { block, index };
+                if !access_active(access, regions, point) {
+                    continue;
+                }
+                let following = Point { block, index: index + 1 };
+                if !access_active(access, regions, following) {
+                    inline
+                        .entry((block, index + 1))
+                        .or_default()
+                        .push(end_event(access));
+                }
+            }
+
+            let terminal = Point { block, index: statement_count };
+            if !access_active(access, regions, terminal) {
+                continue;
+            }
+            let successors = access_successors(&body.blocks[block].terminator);
+            if successors.is_empty()
+                || successors.iter().all(|successor| {
+                    !access_active(access, regions, Point { block: successor.0 as usize, index: 0 })
+                })
+            {
+                if !(matches!(body.blocks[block].terminator, Terminator::Return)
+                    && access.start == SharedAccessStart::Transfer)
+                {
+                    inline
+                        .entry((block, statement_count))
+                        .or_default()
+                        .push(end_event(access));
+                }
+                continue;
+            }
+            for successor in successors {
+                if access_active(
+                    access,
+                    regions,
+                    Point { block: successor.0 as usize, index: 0 },
+                ) {
+                    continue;
+                }
+                append_edge_end(
+                    body,
+                    block,
+                    successor,
+                    end_event(access),
+                    &mut edge_ends,
+                );
+            }
+        }
+    }
+
+    for (block, basic_block) in body.blocks.iter_mut().take(original_blocks).enumerate() {
+        let original = std::mem::take(&mut basic_block.stmts);
+        let mut rewritten = Vec::with_capacity(original.len() + inline.len());
+        let original_len = original.len();
+        for (index, stmt) in original.into_iter().enumerate() {
+            if let Some(events) = inline.get(&(block, index)) {
+                for event in events.iter().filter(|event| event.is_end()) {
+                    rewritten.push(event.clone().into_stmt());
+                }
+                for event in events.iter().filter(|event| !event.is_end()) {
+                    rewritten.push(event.clone().into_stmt());
+                }
+            }
+            rewritten.push(stmt);
+        }
+        if let Some(events) = inline.get(&(block, original_len)) {
+            for event in events.iter().filter(|event| event.is_end()) {
+                rewritten.push(event.clone().into_stmt());
+            }
+            for event in events.iter().filter(|event| !event.is_end()) {
+                rewritten.push(event.clone().into_stmt());
+            }
+        }
+        basic_block.stmts = rewritten;
+    }
+    accesses.len()
+}
+
+fn shared_owner_of_payload(body: &Body, types: &TypeTable, payload: &Place) -> Option<Place> {
+    let (Projection::Field(0), Projection::Deref) =
+        (payload.projection.get(payload.projection.len().checked_sub(2)?)?, payload.projection.last()?)
+    else {
+        return None;
+    };
+    let mut owner = payload.clone();
+    owner.projection.truncate(owner.projection.len() - 2);
+    is_shared_owner(body, types, &owner).then_some(owner)
+}
+
+fn is_shared_owner(body: &Body, types: &TypeTable, owner: &Place) -> bool {
+    let TyKind::Struct(id) = types.kind(place_ty(body, types, owner)) else {
+        return false;
+    };
+    types.struct_def(*id)
+        .origin
+        .as_ref()
+        .is_some_and(|(name, args)| name.is("Shared") && args.len() == 1)
+}
+
+fn access_active(access: &SharedAccess, regions: &Regions, point: Point) -> bool {
+    point == access.created_at || regions.contains(access.region, point)
+}
+
+fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
+    match terminator {
+        Terminator::Goto(target) => vec![*target],
+        Terminator::SwitchInt { targets, otherwise, .. } => {
+            let mut result: Vec<_> = targets.iter().map(|(_, target)| *target).collect();
+            result.push(*otherwise);
+            result.sort();
+            result.dedup();
+            result
+        }
+        Terminator::Call { next, .. } | Terminator::Assert { next, .. } => vec![*next],
+        Terminator::Return | Terminator::Unreachable => Vec::new(),
+    }
+}
+
+fn append_edge_end(
+    body: &mut Body,
+    source: usize,
+    target: BasicBlockId,
+    event: AccessEvent,
+    edges: &mut HashMap<(usize, BasicBlockId), BasicBlockId>,
+) {
+    if let Some(existing) = edges.get(&(source, target)).copied() {
+        body.blocks[existing.0 as usize].stmts.push(event.into_stmt());
+        return;
+    }
+    let bridge = BasicBlockId(body.blocks.len() as u32);
+    body.blocks.push(BasicBlock {
+        stmts: vec![event.clone().into_stmt()],
+        terminator: Terminator::Goto(target),
+        terminator_span: match event {
+            AccessEvent::End { span, .. } => span,
+            AccessEvent::Begin { span, .. } => span,
+        },
+    });
+    let terminator = &mut body.blocks[source].terminator;
+    match terminator {
+        Terminator::Goto(next) => {
+            if *next == target {
+                *next = bridge;
+            }
+        }
+        Terminator::SwitchInt { targets, otherwise, .. } => {
+            for (_, next) in targets {
+                if *next == target {
+                    *next = bridge;
+                }
+            }
+            if *otherwise == target {
+                *otherwise = bridge;
+            }
+        }
+        Terminator::Call { next, .. } | Terminator::Assert { next, .. } => {
+            if *next == target {
+                *next = bridge;
+            }
+        }
+        Terminator::Return | Terminator::Unreachable => {}
+    }
+    edges.insert((source, target), bridge);
 }
 
 fn metadata_from_contract(contract: &CallRegionContract) -> CallableRegionMetadata {
@@ -1372,7 +2013,9 @@ fn check_body(
                 // they do not create static loans for the ordinary borrow
                 // checker to compare here.
                 StmtKind::BeginAccess { .. }
+                | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }
+                | StmtKind::EndAccessTransfer { .. }
                 | StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
                 | StmtKind::Nop => {}

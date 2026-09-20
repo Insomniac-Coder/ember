@@ -13,7 +13,7 @@
 //! `[MIR-5]` retain/release only on handles) are added by the phases that
 //! introduce the constructs they govern.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::{
     BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue,
@@ -133,20 +133,29 @@ impl Verifier<'_> {
     /// Verify `[MIR-3]` for the dynamic exclusivity brackets introduced by
     /// Phase 3 lowering.
     ///
-    /// Access state is a small stack because nested reborrows are legal, but
-    /// an `EndAccess` must close the most recently opened matching access.
-    /// The state is propagated through the reachable CFG; a join is valid only
-    /// when every predecessor arrives with the same stack.  This catches both
-    /// a missing close on one branch and an interval that is closed on only
-    /// some paths before a later merge.  It intentionally does not decide
+    /// Access state is a multiset: an exact NLL region can end independently
+    /// of a later-created region rooted at a different handle.  The runtime
+    /// tracks that same per-object state, so treating MIR intervals as a strict
+    /// lexical stack would reject valid aliasing code solely because its last
+    /// uses are non-LIFO.  Repeated identical brackets are counted so nested
+    /// reborrows still need a matching number of ends. The state is propagated
+    /// through the reachable CFG; a join is valid only when every predecessor
+    /// arrives with the same active multiset. This catches both a missing close
+    /// on one branch and an interval that is closed on only some paths before
+    /// a later merge. It intentionally does not decide
     /// whether an access *may* be elided: that requires `[EXC-3a]`'s safety
     /// side-table producer and reporting consumer, which are a separate
     /// implementation boundary.
     fn access_intervals(&mut self, body: &Body) {
         type Access = (Place, bool);
 
-        let mut incoming: Vec<Option<Vec<Access>>> = vec![None; body.blocks.len()];
-        let mut work = VecDeque::from([(BasicBlockId(0), Vec::<Access>::new())]);
+        // `(ordinary, transferred)`: a transferred access is deliberately
+        // left open at this body boundary and will be closed by the caller
+        // through the returned payload.
+        let mut incoming: Vec<Option<BTreeMap<Access, (usize, usize)>>> =
+            vec![None; body.blocks.len()];
+        let mut work =
+            VecDeque::from([(BasicBlockId(0), BTreeMap::<Access, (usize, usize)>::new())]);
 
         while let Some((block_id, mut state)) = work.pop_front() {
             let index = block_id.0 as usize;
@@ -158,7 +167,7 @@ impl Verifier<'_> {
 
             if let Some(previous) = &incoming[index] {
                 if previous != &state {
-                    self.fail(format!("bb{index} receives incompatible dynamic-access stacks: previous {previous:?}, incoming {state:?}"));
+                    self.fail(format!("bb{index} receives incompatible dynamic-access states: previous {previous:?}, incoming {state:?}"));
                 }
                 continue;
             }
@@ -167,18 +176,30 @@ impl Verifier<'_> {
             for stmt in &body.blocks[index].stmts {
                 match &stmt.kind {
                     StmtKind::BeginAccess { place, mutable } => {
-                        state.push((place.clone(), *mutable));
+                        state.entry((place.clone(), *mutable)).or_default().0 += 1;
+                    }
+                    StmtKind::BeginAccessTransfer { place, mutable } => {
+                        state.entry((place.clone(), *mutable)).or_default().1 += 1;
                     }
                     StmtKind::EndAccess { place, mutable } => {
                         let expected = (place.clone(), *mutable);
-                        match state.last() {
-                            Some(actual) if actual == &expected => {
-                                state.pop();
+                        match state.get_mut(&expected) {
+                            Some(counts) if counts.0 != 0 || counts.1 != 0 => {
+                                if counts.0 != 0 {
+                                    counts.0 -= 1;
+                                } else {
+                                    counts.1 -= 1;
+                                }
+                                if counts.0 == 0 && counts.1 == 0 {
+                                    state.remove(&expected);
+                                }
                             }
-                            Some(actual) => self.fail(format!("bb{index} ends dynamic access {expected:?}, but the innermost open access is {actual:?}")),
-                            None => self.fail(format!("bb{index} ends dynamic access {expected:?}, but no dynamic access is open")),
+                            None | Some(_) => self.fail(format!(
+                                "bb{index} ends dynamic access {expected:?}, but that access is not open"
+                            )),
                         }
                     }
+                    StmtKind::EndAccessTransfer { .. } => {}
                     _ => {}
                 }
             }
@@ -200,7 +221,7 @@ impl Verifier<'_> {
                 }
                 Terminator::Call { next, .. } | Terminator::Assert { next, .. } => enqueue(*next),
                 Terminator::Return | Terminator::Unreachable => {
-                    if !state.is_empty() {
+                    if state.values().any(|(ordinary, _)| *ordinary != 0) {
                         self.fail(format!(
                             "bb{index} terminates with dynamic accesses still open: {state:?}"
                         ));
@@ -263,7 +284,10 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.place(place, &at);
                     v.rvalue(rvalue, &at);
                 }
-                StmtKind::BeginAccess { place, .. } | StmtKind::EndAccess { place, .. } => {
+                StmtKind::BeginAccess { place, .. }
+                | StmtKind::BeginAccessTransfer { place, .. }
+                | StmtKind::EndAccess { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. } => {
                     v.place(place, &at);
                 }
                 StmtKind::CheckedBinaryOp {
@@ -440,7 +464,24 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_access_end_must_match_the_innermost_open_access() {
+    fn transferred_dynamic_access_may_cross_a_return_boundary() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let stmt = Stmt::new(
+            StmtKind::BeginAccessTransfer {
+                place: Place::local(LocalId(0)),
+                mutable: true,
+            },
+            span,
+        );
+        let violations = verify(&body_with(vec![stmt], span));
+        assert!(
+            violations.is_empty(),
+            "a caller must be able to close a returned access: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_accesses_may_end_in_exact_nll_order() {
         let span = Span::new(ember_span::FileId(0), 0, 1);
         let outer = Place::local(LocalId(0));
         let inner = outer.clone().field(0);
@@ -478,10 +519,8 @@ mod tests {
             span,
         ));
         assert!(
-            violations
-                .iter()
-                .any(|violation| violation.message.contains("innermost open access")),
-            "missing LIFO access violation: {violations:?}"
+            violations.is_empty(),
+            "independent NLL ends must be valid: {violations:?}"
         );
     }
 
@@ -534,7 +573,7 @@ mod tests {
         assert!(
             violations.iter().any(|violation| violation
                 .message
-                .contains("incompatible dynamic-access stacks")),
+                .contains("incompatible dynamic-access states")),
             "missing CFG-join access violation: {violations:?}"
         );
     }

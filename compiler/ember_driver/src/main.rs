@@ -134,7 +134,9 @@ fn collect_body_function_symbols(
                 | ember_mir::StmtKind::StorageDead(_)
                 | ember_mir::StmtKind::Drop { .. }
                 | ember_mir::StmtKind::BeginAccess { .. }
+                | ember_mir::StmtKind::BeginAccessTransfer { .. }
                 | ember_mir::StmtKind::EndAccess { .. }
+                | ember_mir::StmtKind::EndAccessTransfer { .. }
                 | ember_mir::StmtKind::Nop => {}
             }
         }
@@ -1446,6 +1448,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
+    // `[HEAP-5]` — borrow checking has established each mutable loan's exact
+    // NLL region. Materialize the matching runtime access interval only after
+    // that proof, so dynamic exclusivity follows the loan rather than a scope.
+    ember_analysis::insert_shared_accesses_all(&mut bodies, &types);
     // `[EXC-3]`/`[EXC-3a]` — remove only the access intervals for which the
     // MIR proof establishes a unique, unescaped class handle. All other
     // intervals remain explicit runtime checks.
