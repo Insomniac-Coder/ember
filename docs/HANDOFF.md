@@ -7234,3 +7234,14 @@ CI run `35484282604` is green across Linux clang/GCC, Windows MSVC/clang-cl,
 and the documentation gate. Phase accounting remains **1 of 9 complete**:
 Phase 2 still needs DRP, CELL/threading, and diagnostic exits; the class-box
 slice advances but does not close Phase 3.
+
+### 0.154 `[TYP-22]` mutable class dynamic-box dispatch — 2026-09-20
+
+A class-backed `Box[dyn I]` now has all-profile conformance evidence for a
+`mut self` interface member. `boxed.bump()` borrows the box carrier, dispatches
+through the checked mutable adapter, and the subsequent shared call observes
+the changed value. The generated C pins the mutable slot adapter and confirms
+that the class handle remains the sole allocation. CI run `35484731245` is
+green on all compiler/toolchain combinations. This is coverage of the existing
+class-box ownership boundary, not a claim that generic classes, multiple
+interfaces, enums, or scalars are supported.
