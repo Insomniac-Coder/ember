@@ -6,3 +6,6 @@
 struct Pair:
     left: Span[i32]
     right: Span[i32]
+
+fn main():
+    pass

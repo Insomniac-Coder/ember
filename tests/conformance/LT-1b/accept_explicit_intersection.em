@@ -5,3 +5,6 @@
 @borrows(a, b)
 fn pick(a: Span[i32], b: Span[i32]) -> Span[i32]:
     return a
+
+fn main():
+    pass
