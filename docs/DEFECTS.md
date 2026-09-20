@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-20 — generic-class interface extensions were not materialized
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-162 | **A generic interface extension such as `extend[T] Holder[T] implements Measure:` was sent through the ordinary extension pass after `T` had left scope.** It therefore reported `E1010` for its target and never registered either the extension methods or `Holder[i32]: Measure`; a conforming `ref Holder[i32]` consequently could not form `ref dyn Measure`. | `[TYP-16]`, `[TYP-17]`, `[IFC-1]`, `[TYP-22]` | **fixed** | Generic class extensions now retain their implemented interfaces, declaring module, source span, and resolved bounds as a recipe. A concrete class materialization structurally matches the target, admits the recipe only when its bounds hold, registers its members under the interface identity, and records/checks conformance before dynamic adapter formation. `generic_class_interface_extension.em` was rejected before the correction and now dispatches through `ref dyn Measure` in debug, release, and shipping; its imported-module companion proves resolution remains at the extension site. `generic_class_bounded_interface_extension.em` proves the bounded form, while `generic_class_bounded_interface_extension_unsatisfied.em` proves that an unsatisfied bound leaves the class constructible but without the conditional dynamic-interface conversion. The specification already determines the behavior, so no specification, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-20 — generic-class inherent extensions were not materialized
 
 | # | Defect | Rule | Status | Fixed in |

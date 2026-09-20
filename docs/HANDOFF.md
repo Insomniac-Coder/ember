@@ -7471,3 +7471,24 @@ as complete here. D-161 is an implementation defect under existing `[TYP-16]`,
 `[IFC-1]`, `[CLS-4]`, and `[DSP-2]`, not an ODR: no semantic choice is
 undefined. No specification, ADR, owner decision, or phase status changed.
 Phase accounting remains **1 of 9 complete**.
+
+### 0.167 Generic-class interface extensions — 2026-09-20
+
+Generic `extend` declarations now materialize their conditional interface
+implementations with the same concrete class that receives their methods.
+`extend[T] Holder[T] implements Measure:` therefore records the resolved
+`Measure` identity and gives each matching `Holder[T]` both its extension
+method and its checked conformance entry before a `ref dyn Measure` adapter is
+formed. The recipe preserves its declaring module, so imported interface names
+continue to resolve at the extension site rather than at the instantiation.
+
+Bounds are conditional rather than constructor restrictions: the explicit
+`extend[T: Display] Holder[T] implements Measure:` probe permits
+`Holder[Plain]` construction, but only `Holder[Pixel]` gains `Measure` after
+`Pixel: Display` is established. The positive generic and bounded probes run
+in debug, release, and shipping and pin their concrete dynamic-vtable symbols;
+the unsatisfied-bounds compile-fail case requires the established failed
+`ref dyn Measure` coercion. This closes D-162 under existing `[TYP-16]`,
+`[TYP-17]`, `[IFC-1]`, and `[TYP-22]`: the source rule already supplies the
+semantics, so no ODR, ADR, specification edit, or owner decision is involved.
+Phase accounting remains **1 of 9 complete**.
