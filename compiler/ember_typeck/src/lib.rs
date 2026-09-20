@@ -157,6 +157,7 @@ pub fn check(
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
         checker.collect_generic_structs(&loaded.module);
+        checker.collect_generic_classes(&loaded.module);
     }
     // Interfaces must be available before ordinary function signatures are
     // resolved: `ref dyn I` names an interface in the signature itself, not
@@ -299,6 +300,18 @@ struct GenericStruct {
     /// type parameters left opaque. An instantiation substitutes them, the
     /// same way it substitutes the fields.
     methods: Vec<GenericMethod>,
+}
+
+/// A construction-only generic class recipe. Each concrete argument list
+/// receives an ordinary `ClassDef`, so the existing class layout, ownership,
+/// and C emission paths remain the sole runtime implementation.
+#[derive(Clone)]
+struct GenericClass {
+    params: Vec<Symbol>,
+    fields: Vec<FieldDef>,
+    defaults: Vec<Option<ast::Expr>>,
+    openness: ClassOpenness,
+    declaring_module: usize,
 }
 
 /// One method of a generic struct: its shape in terms of the struct's type
@@ -575,6 +588,11 @@ struct Checker<'a> {
     instances: HashMap<Instance, DefId>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
+    /// Classes declared with type parameters, by qualified name. The initial
+    /// slice supports direct memberwise construction only; methods, bases and
+    /// interface implementations stay explicitly rejected until their
+    /// substitution paths are implemented.
+    generic_classes: HashMap<Symbol, GenericClass>,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -748,6 +766,7 @@ impl<'a> Checker<'a> {
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
+            generic_classes: HashMap::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
             refcells: HashMap::new(),
@@ -2117,6 +2136,69 @@ impl<'a> Checker<'a> {
                     derives_clone: has_derive(&item.attrs, "Clone"),
                     implements: decl.implements.clone(),
                     methods,
+                },
+            );
+        }
+    }
+
+    /// Register the direct, memberwise generic-class recipe before ordinary
+    /// signatures are read. Concrete instances are still ordinary classes;
+    /// the recipe only supplies parameter substitution for their fields.
+    fn collect_generic_classes(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            let ast::ItemKind::Class(decl) = &item.kind else { continue };
+            if decl.generics.is_empty() {
+                continue;
+            }
+            if decl.base.is_some()
+                || !decl.implements.is_empty()
+                || decl
+                    .members
+                    .iter()
+                    .any(|member| matches!(&member.kind, ast::MemberKind::Fn(_)))
+            {
+                self.error(
+                    codes::E1010,
+                    item.span,
+                    "generic classes currently support fields and memberwise construction only",
+                );
+                continue;
+            }
+            let name = self.qualified(decl.name.name);
+            let generic_params = self.declare_generics(&decl.generics);
+            let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
+            let fields = decl
+                .members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::Field(field) => Some(FieldDef {
+                        name: field.name.name,
+                        ty: self.resolve_type(&field.ty),
+                        span: member.span,
+                        has_default: field.default.is_some(),
+                        read_only_outside: member.read_only_outside,
+                        vis: field_vis(member.vis.kind),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let defaults = decl
+                .members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::Field(field) => Some(field.default.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.type_params.clear();
+            self.generic_classes.insert(
+                name,
+                GenericClass {
+                    params,
+                    fields,
+                    defaults,
+                    openness: class_openness(decl.openness),
+                    declaring_module: self.current_module,
                 },
             );
         }
@@ -3937,6 +4019,10 @@ impl<'a> Checker<'a> {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_struct(resolved_name, &decl, &resolved, span);
         }
+        if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
+            let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+            return self.instantiate_class(resolved_name, &decl, &resolved, span);
+        }
         let arity = if name.is("Option") {
             1
         } else if name.is("Result") {
@@ -4661,6 +4747,53 @@ impl<'a> Checker<'a> {
         self.synth_struct_literal(id, instance, args, span)
     }
 
+    fn synth_generic_class_constructor(
+        &mut self,
+        name: Symbol,
+        decl: &GenericClass,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Expr {
+        if explicit.len() > decl.params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!(
+                    "`{name}` takes {} type arguments, found {}",
+                    decl.params.len(),
+                    explicit.len()
+                ),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mut solved: Vec<Option<Ty>> = vec![None; decl.params.len()];
+        for (slot, ty) in explicit.iter().enumerate() {
+            solved[slot] = Some(*ty);
+        }
+        for (arg, field) in args.iter().zip(decl.fields.iter()) {
+            let value = self.synth_committed(&arg.value);
+            self.types.unify_with_fixed(field.ty, value.ty, &mut solved, explicit.len());
+        }
+        let mut substitution = Vec::with_capacity(decl.params.len());
+        for (index, param) in decl.params.iter().enumerate() {
+            let Some(ty) = solved[index] else {
+                self.error(
+                    codes::E2060,
+                    span,
+                    format!("cannot tell what `{param}` is here; write `{name}[...](...)`"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            substitution.push(ty);
+        }
+        let ty = self.instantiate_class(name, decl, &substitution, span);
+        let TyKind::Class(id) = *self.types.kind(ty) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        self.synth_class_constructor(id, name, args, &[], span)
+    }
+
     /// `[TYP-16]` — one struct per set of type arguments. `Pair[i32, f32]`
     /// and `Pair[f32, i32]` are different types with different layouts, built
     /// once each and named after the arguments.
@@ -4838,6 +4971,60 @@ impl<'a> Checker<'a> {
                 module: decl.declaring_module,
             });
         }
+        ty
+    }
+
+    /// Instantiate a direct generic class as an ordinary concrete class. This
+    /// deliberately shares the existing nominal class identity and runtime
+    /// representation; type arguments are a compile-time substitution only.
+    fn instantiate_class(
+        &mut self,
+        name: Symbol,
+        decl: &GenericClass,
+        args: &[Ty],
+        span: Span,
+    ) -> Ty {
+        if args.len() != decl.params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {} type arguments, found {}", decl.params.len(), args.len()),
+            );
+            return self.common.error;
+        }
+        let stem: Vec<String> =
+            args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        if let Some(&ty) = self.named_types.get(&instance) {
+            return ty;
+        }
+        let id = self.types.add_class(ClassDef {
+            name: instance,
+            fields: Vec::new(),
+            span,
+            openness: decl.openness,
+            base: None,
+            has_drop: false,
+            origin: Some((name, args.to_vec())),
+            declaring_module: decl.declaring_module,
+        });
+        let ty = self.types.intern(TyKind::Class(id));
+        self.class_ids.insert(instance, id);
+        self.named_types.insert(instance, ty);
+        let fields = decl
+            .fields
+            .iter()
+            .map(|field| FieldDef {
+                name: field.name,
+                ty: self.substitute_ty(field.ty, args),
+                span: field.span,
+                has_default: field.has_default,
+                read_only_outside: field.read_only_outside,
+                vis: field.vis,
+            })
+            .collect();
+        self.types.class_def_mut(id).fields = fields;
+        self.class_default_exprs.insert(id, decl.defaults.clone());
         ty
     }
 
@@ -10393,6 +10580,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let resolved_name = self.resolve_name(name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
             return self.synth_generic_struct_literal(resolved_name, &decl, args, &explicit, span);
+        }
+        if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
+            return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, span);
         }
 
         // `[UNS-5]`, `std.mem` — the raw memory primitives.
