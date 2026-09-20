@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
 use ember_branding::SOURCE_EXT;
@@ -279,6 +280,19 @@ fn ember(args: &[&str], root: &Path) -> Run {
     }
 }
 
+fn temporary_directory(label: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ember-{label}-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&path).expect("temporary directory is creatable");
+    path
+}
+
 #[test]
 fn dynamic_access_safety_side_table_is_written() {
     let root = workspace_root();
@@ -482,6 +496,41 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
         "JSON cycle inspection omitted graph facts:\n{}",
         json.stdout
     );
+}
+
+#[test]
+fn cycle_inspection_uses_a_package_directory_as_its_analysis_root() {
+    let root = workspace_root();
+    let package = temporary_directory("cycle-package-root");
+    let source = package.join("src");
+    std::fs::create_dir_all(&source).expect("package source directory is creatable");
+    std::fs::write(
+        package.join("ember.toml"),
+        "[package]\nname = \"cycle_root\"\nkind = \"bin\"\n",
+    )
+    .expect("package manifest is writable");
+    std::fs::write(source.join("main.em"), "import scene\n\nfn main():\n    return\n")
+        .expect("package root source is writable");
+    std::fs::write(
+        source.join("scene.em"),
+        "pub class Node:\n    next: Node\n",
+    )
+    .expect("imported module is writable");
+
+    let package_arg = package.to_string_lossy().into_owned();
+    let report = ember(&["inspect", "--cycle", &package_arg], &root);
+    assert_eq!(
+        report.exit, 0,
+        "package-root inspection failed:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stdout.contains("scene.Node.next -> scene.Node"),
+        "package-root inspection omitted the imported module's graph:\n{}",
+        report.stdout
+    );
+
+    std::fs::remove_dir_all(package).expect("temporary package directory is removable");
 }
 
 #[test]

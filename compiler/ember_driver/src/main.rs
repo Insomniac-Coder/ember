@@ -29,8 +29,8 @@ usage:
     ember explain <CODE>              describe a diagnostic code
     ember inspect --safety [options] <path>
                                       report emitted/elided safety checks
-    ember inspect --cycle [--json] <file.em>
-                                      report the static ownership graph
+    ember inspect --cycle [--json] <path>
+                                      report the static ownership graph for a package or source root
 
 options:
     --profile debug|release|shipping   default: debug
@@ -369,8 +369,9 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
 /// diagnostic-only declaration analysis, so lowering and code generation
 /// would not add evidence and could obscure the source ownership types.
 fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
+    let (entry, root_dir) = resolve_cycle_analysis_root(input)?;
     let mut map = SourceMap::new();
-    let file = map.load(input).map_err(|error| error.to_string())?;
+    let file = map.load(&entry).map_err(|error| error.to_string())?;
     let source = map.file(file).text.clone();
     let mut sink = Sink::new();
     let lexed = ember_lexer::lex(file, &source, &mut sink);
@@ -380,10 +381,6 @@ fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     }
 
-    let root_dir = input
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
     let lint_return_intersection = manifest_enables_l3014(&root_dir);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
@@ -410,9 +407,130 @@ fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
     if json {
         print_cycle_json(&inspection)?;
     } else {
-        print_cycle_report(input, &inspection);
+        print_cycle_report(&entry, &inspection);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[CLI-18]` — resolve the one explicit analysis root accepted by both cycle
+/// commands. A source file always keeps the existing standalone interpretation;
+/// it is never silently promoted to the package that may contain it.
+fn resolve_cycle_analysis_root(input: &Path) -> Result<(PathBuf, PathBuf), String> {
+    if input.is_file() {
+        if input.extension().and_then(|extension| extension.to_str())
+            != Some(ember_branding::SOURCE_EXT)
+        {
+            return Err(format!(
+                "cycle analysis root `{}` must be a package directory or a .{} source file",
+                input.display(),
+                ember_branding::SOURCE_EXT
+            ));
+        }
+        let module_root = input
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        return Ok((input.to_path_buf(), module_root));
+    }
+
+    if input.is_dir() {
+        let manifest = input.join(ember_branding::MANIFEST);
+        if !manifest.is_file() {
+            return Err(format!(
+                "cycle analysis root `{}` is not a package directory containing {}",
+                input.display(),
+                ember_branding::MANIFEST
+            ));
+        }
+        return package_entry_from_manifest(input, &manifest);
+    }
+
+    Err(format!(
+        "cycle analysis root `{}` must be an existing package directory or .{} source file",
+        input.display(),
+        ember_branding::SOURCE_EXT
+    ))
+}
+
+fn package_entry_from_manifest(
+    package_root: &Path,
+    manifest_path: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let manifest = std::fs::read_to_string(manifest_path).map_err(|error| {
+        format!(
+            "cannot read cycle analysis manifest `{}`: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let source_root = package_root.join("src");
+    let entry = manifest_string(&manifest, "build", "entry").map_or_else(
+        || {
+            let root_name = if manifest_string(&manifest, "package", "kind").as_deref()
+                == Some("lib")
+            {
+                "lib"
+            } else {
+                "main"
+            };
+            source_root.join(ember_branding::source_file(root_name))
+        },
+        |path| package_root.join(path),
+    );
+
+    if !entry.is_file() {
+        return Err(format!(
+            "cycle analysis package `{}` has no readable entry source `{}`",
+            package_root.display(),
+            entry.display()
+        ));
+    }
+    if entry.extension().and_then(|extension| extension.to_str())
+        != Some(ember_branding::SOURCE_EXT)
+    {
+        return Err(format!(
+            "cycle analysis package `{}` entry `{}` is not a .{} source file",
+            package_root.display(),
+            entry.display(),
+            ember_branding::SOURCE_EXT
+        ));
+    }
+    if !entry.starts_with(&source_root) {
+        return Err(format!(
+            "cycle analysis package `{}` entry `{}` is outside its src directory",
+            package_root.display(),
+            entry.display()
+        ));
+    }
+    Ok((entry, source_root))
+}
+
+/// Read the one quoted manifest scalar that root selection needs. Full manifest
+/// validation is outside cycle-root selection; this helper only distinguishes
+/// the established package root forms before loading a graph.
+fn manifest_string(manifest: &str, wanted_section: &str, wanted_key: &str) -> Option<String> {
+    let mut section = "";
+    for line in manifest.lines() {
+        let line = line.split_once('#').map_or(line, |(before, _)| before).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = name.trim();
+            continue;
+        }
+        if section != wanted_section {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != wanted_key {
+            continue;
+        }
+        let value = value.trim();
+        return value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .map(str::to_owned);
+    }
+    None
 }
 
 fn print_cycle_report(path: &Path, inspection: &ember_analysis::OwnershipInspection) {
