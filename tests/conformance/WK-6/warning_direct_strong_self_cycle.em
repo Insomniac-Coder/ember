@@ -7,3 +7,6 @@
 # the multi-class cycle shapes.
 class Node:
     next: Node
+
+fn main():
+    return

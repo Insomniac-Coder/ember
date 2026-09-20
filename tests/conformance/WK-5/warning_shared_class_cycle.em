@@ -10,3 +10,6 @@ class Parent:
 
 class Child:
     parent: Parent
+
+fn main():
+    return
