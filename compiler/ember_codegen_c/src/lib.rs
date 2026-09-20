@@ -1180,6 +1180,19 @@ impl Emitter<'_> {
                     }
                     return Definition::Alias(format!("{}*", self.c_type(inner)));
                 }
+                if let Some(inner) = self.weak_inner_id(id) {
+                    // `Shared[T]` itself is an alias for this same header
+                    // pointer. Spelling the wrapper member with the runtime
+                    // ABI type avoids a by-value dependency on an alias that
+                    // may be emitted after its `Weak[Shared[T]]` wrapper.
+                    let value = match self.types.kind(inner) {
+                        TyKind::Struct(inner) if self.shared_inner_id(*inner).is_some() => {
+                            format!("{RT}obj_header*")
+                        }
+                        _ => self.c_type(inner),
+                    };
+                    return Definition::Struct(vec![format!("{value} value")]);
+                }
                 if self.shared_inner_id(id).is_some() {
                     return Definition::Alias(format!("{}obj_header*", RT));
                 }
