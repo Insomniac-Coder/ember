@@ -6,6 +6,7 @@
 //! helpers.
 
 pub mod borrows;
+pub mod cycles;
 pub mod access;
 pub mod definite_init;
 pub mod drops;
@@ -18,6 +19,7 @@ pub use borrows::{
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::elide_static_accesses_all;
+pub use cycles::lint_strong_cycles;
 pub use definite_init::{
     analyze_all as analyze_definite_init_all, analyze_definite_init,
     check_all as check_definite_init_all,

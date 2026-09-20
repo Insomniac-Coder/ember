@@ -1381,6 +1381,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         lint_return_intersection,
     );
     let program = &checked.program;
+    // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
+    // lint over resolved types. It is diagnostic-only and therefore runs
+    // before any MIR transformation can obscure the declared strong edges.
+    if !sink.has_errors() {
+        ember_analysis::lint_strong_cycles(&types, &mut sink);
+    }
     if options.emit.as_deref() == Some("hir") {
         print!("{}", ember_hir::dump(program, &types));
         return Ok(finish(&sink, &map, options));
