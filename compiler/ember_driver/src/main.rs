@@ -1361,6 +1361,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    let lint_return_intersection = manifest_enables_l3014(&root_dir);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -1375,6 +1376,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &common,
         &mut sink,
         overflow_policy(options.profile),
+        lint_return_intersection,
     );
     let program = &checked.program;
     if options.emit.as_deref() == Some("hir") {
@@ -1559,6 +1561,31 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+fn manifest_enables_l3014(start: &Path) -> bool {
+    let mut directory = Some(start);
+    while let Some(candidate) = directory {
+        let path = candidate.join("ember.toml");
+        if path.is_file() {
+            let Ok(text) = std::fs::read_to_string(path) else { return false };
+            let mut in_lints = false;
+            for line in text.lines() {
+                let line = line.split('#').next().unwrap_or("").trim();
+                if line.starts_with('[') && line.ends_with(']') {
+                    in_lints = line == "[lints]";
+                } else if in_lints
+                    && let Some((key, value)) = line.split_once('=')
+                    && key.trim().eq_ignore_ascii_case("l3014")
+                {
+                    return matches!(value.trim().trim_matches('"'), "warn" | "deny");
+                }
+            }
+            return false;
+        }
+        directory = candidate.parent();
+    }
+    false
 }
 
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable

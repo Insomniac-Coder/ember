@@ -103,9 +103,11 @@ pub fn check(
     common: &CommonTypes,
     sink: &mut Sink,
     default_overflow: OverflowPolicy,
+    lint_return_intersection: bool,
 ) -> CheckOutput {
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
+    checker.lint_return_intersection = lint_return_intersection;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
@@ -706,6 +708,7 @@ struct Checker<'a> {
     /// The profile's `[TYP-8]` policy, used when a function has no
     /// `@overflow(...)` of its own.
     default_overflow: OverflowPolicy,
+    lint_return_intersection: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -783,6 +786,7 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             default_overflow: OverflowPolicy::default(),
+            lint_return_intersection: false,
         }
     }
 
@@ -2391,6 +2395,23 @@ impl<'a> Checker<'a> {
                         })
                         .unwrap_or(self.common.void);
                     let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
+                    if self.lint_return_intersection && borrows.is_none() && self.types.is_view(ret) {
+                        let names: Vec<_> = params
+                            .iter()
+                            .filter(|(_, ty, _, _)| self.types.is_view(*ty))
+                            .map(|(name, _, _, _)| name.to_string())
+                            .collect();
+                        if names.len() >= 2 {
+                            self.sink.emit(
+                                Diagnostic::lint(
+                                    codes::L3014,
+                                    item.span,
+                                    format!("return region is the intersection of {} parameters", names.len()),
+                                )
+                                .help(format!("write `@borrows({})` to state the intended provenance", names.join(", "))),
+                            );
+                        }
+                    }
                     self.type_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
