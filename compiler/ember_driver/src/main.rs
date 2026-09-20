@@ -27,6 +27,8 @@ usage:
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
     ember explain <CODE>              describe a diagnostic code
+    ember explain --cycle <path> <Class[.field]>
+                                      explain one ownership-cycle target
     ember inspect --safety [options] <path>
                                       report emitted/elided safety checks
     ember inspect --cycle [--json] <path>
@@ -260,6 +262,21 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             println!("ember {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
+        "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
+            let input = args
+                .get(2)
+                .ok_or("`ember explain --cycle` needs an analysis root path")?;
+            let target = args
+                .get(3)
+                .ok_or("`ember explain --cycle` needs a class or Class.field target")?;
+            if args.len() > 4 {
+                return Err(format!(
+                    "unexpected cycle explanation argument `{}`",
+                    args[4]
+                ));
+            }
+            explain_cycle(Path::new(input), target)
+        }
         "explain" => {
             let code = args
                 .get(1)
@@ -369,6 +386,27 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
 /// diagnostic-only declaration analysis, so lowering and code generation
 /// would not add evidence and could obscure the source ownership types.
 fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
+    cycle_analysis(input, |entry, _, inspection| {
+        if json {
+            print_cycle_json(inspection)?;
+        } else {
+            print_cycle_report(entry, inspection);
+        }
+        Ok(())
+    })
+}
+
+/// `[CLI-17]` / `[WK-9]` — build one declaration-level ownership graph from
+/// the root `[CLI-18]` resolved. Both renderers receive this same graph; no
+/// hidden build state or cycle-specific graph representation participates.
+fn cycle_analysis(
+    input: &Path,
+    render: impl FnOnce(
+        &Path,
+        &TypeTable,
+        &ember_analysis::OwnershipInspection,
+    ) -> Result<(), String>,
+) -> Result<ExitCode, String> {
     let (entry, root_dir) = resolve_cycle_analysis_root(input)?;
     let mut map = SourceMap::new();
     let file = map.load(&entry).map_err(|error| error.to_string())?;
@@ -404,11 +442,7 @@ fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
 
     let inspection = ember_analysis::inspect_ownership_graph(&types);
     report(&sink, &map, &Options::default());
-    if json {
-        print_cycle_json(&inspection)?;
-    } else {
-        print_cycle_report(&entry, &inspection);
-    }
+    render(&entry, &types, &inspection)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -533,6 +567,156 @@ fn manifest_string(manifest: &str, wanted_section: &str, wanted_key: &str) -> Op
     None
 }
 
+/// `[WK-9]` — select one already-resolved class or field from the ownership
+/// graph. This does not add a name system: source-qualified names are the
+/// type table's existing dotted canonical names, written at the CLI with `::`.
+fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
+    cycle_analysis(input, |entry, types, inspection| {
+        let (class, field) = resolve_cycle_target(entry, types, target)?;
+        let selected_edges: Vec<_> = inspection
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.source == class
+                    && field.as_deref().is_none_or(|field| edge.field == field)
+            })
+            .collect();
+        let paths: Vec<_> = inspection
+            .shortest_cycles
+            .iter()
+            .filter(|cycle| {
+                cycle.edges.iter().any(|edge| {
+                    edge.source == class
+                        && field.as_deref().is_none_or(|field| edge.field == field)
+                })
+            })
+            .collect();
+
+        let selected = field
+            .as_deref()
+            .map_or_else(
+                || cycle_class_name(&class),
+                |field| format!("{}.{}", cycle_class_name(&class), field),
+            );
+        println!("Cycle explanation: {selected}");
+        println!("Analysis root: {}", entry.display());
+        println!("Selected ownership declarations:");
+        if selected_edges.is_empty() {
+            println!("  none");
+        } else {
+            for edge in selected_edges {
+                print_cycle_edge(edge);
+            }
+        }
+        println!("Static ownership paths:");
+        if paths.is_empty() {
+            println!("  none");
+            if field.is_some() {
+                println!(
+                    "The selected edge is dynamically cycle-capable; no static cycle was proved."
+                );
+            }
+            return Ok(());
+        }
+        for path in paths {
+            println!("  {}", cycle_path(&path.edges));
+        }
+        Ok(())
+    })
+}
+
+fn resolve_cycle_target(
+    entry: &Path,
+    types: &TypeTable,
+    target: &str,
+) -> Result<(String, Option<String>), String> {
+    let (written_class, field) = match target.rsplit_once('.') {
+        Some((class, field)) => (class, Some(field)),
+        None => (target, None),
+    };
+    if written_class.is_empty() || field.is_some_and(str::is_empty) {
+        return Err(format!(
+            "invalid cycle target `{target}` for analysis root `{}`",
+            entry.display()
+        ));
+    }
+    let qualified = written_class.replace("::", ".");
+    let is_qualified = written_class.contains("::");
+    let candidates: Vec<_> = types
+        .classes()
+        .filter(|(_, definition)| {
+            let name = definition.name.as_str();
+            if is_qualified {
+                name == qualified
+            } else {
+                name == qualified || name.rsplit('.').next() == Some(qualified.as_str())
+            }
+        })
+        .collect();
+    let Some((class_id, definition)) = candidates.first().copied() else {
+        return Err(format!(
+            "cannot find class `{written_class}` in cycle analysis root `{}`",
+            entry.display()
+        ));
+    };
+    if candidates.len() > 1 {
+        let candidates = candidates
+            .iter()
+            .map(|(_, definition)| cycle_class_name(definition.name.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "class `{written_class}` is ambiguous in cycle analysis root `{}`; candidates: {candidates}",
+            entry.display()
+        ));
+    }
+    let class = definition.name.to_string();
+    let field = field.map(str::to_owned);
+    if let Some(field_name) = field.as_deref() {
+        let exists = (0..types.class_field_count(class_id)).any(|index| {
+            types
+                .class_field_at_info(class_id, index)
+                .is_some_and(|(_, field)| field.name.as_str() == field_name)
+        });
+        if !exists {
+            return Err(format!(
+                "class `{}` has no field `{field_name}` in cycle analysis root `{}`",
+                cycle_class_name(&class),
+                entry.display()
+            ));
+        }
+    }
+    Ok((class, field))
+}
+
+fn cycle_class_name(name: &str) -> String {
+    name.replace('.', "::")
+}
+
+fn print_cycle_edge(edge: &ember_analysis::OwnershipEdge) {
+    let target = edge.target.as_deref().unwrap_or("<unknown>");
+    println!(
+        "  {} {}.{}: {} -> {}",
+        edge.kind.name(),
+        edge.source,
+        edge.field,
+        edge.field_type,
+        target
+    );
+}
+
+fn cycle_path(edges: &[ember_analysis::OwnershipEdge]) -> String {
+    let Some(first) = edges.first() else {
+        return String::new();
+    };
+    edges
+        .iter()
+        .map(|edge| format!("{}.{}", edge.source, edge.field))
+        .chain(std::iter::once(first.source.clone()))
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
+
 fn print_cycle_report(path: &Path, inspection: &ember_analysis::OwnershipInspection) {
     println!("Ownership graph: {}", path.display());
     println!("Edges:");
@@ -540,15 +724,7 @@ fn print_cycle_report(path: &Path, inspection: &ember_analysis::OwnershipInspect
         println!("  none");
     }
     for edge in &inspection.edges {
-        let target = edge.target.as_deref().unwrap_or("<unknown>");
-        println!(
-            "  {} {}.{}: {} -> {}",
-            edge.kind.name(),
-            edge.source,
-            edge.field,
-            edge.field_type,
-            target
-        );
+        print_cycle_edge(edge);
     }
     println!("Shortest static cycles:");
     if inspection.shortest_cycles.is_empty() {
@@ -556,17 +732,7 @@ fn print_cycle_report(path: &Path, inspection: &ember_analysis::OwnershipInspect
         return;
     }
     for cycle in &inspection.shortest_cycles {
-        let Some(first) = cycle.edges.first() else {
-            continue;
-        };
-        let path = cycle
-            .edges
-            .iter()
-            .map(|edge| format!("{}.{}", edge.source, edge.field))
-            .chain(std::iter::once(first.source.clone()))
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        println!("  {path}");
+        println!("  {}", cycle_path(&cycle.edges));
     }
 }
 

@@ -534,6 +534,48 @@ fn cycle_inspection_uses_a_package_directory_as_its_analysis_root() {
 }
 
 #[test]
+fn cycle_explanation_uses_the_same_root_and_graph_as_inspection() {
+    let root = workspace_root();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(format!("cycle_inspection.{SOURCE_EXT}"));
+    let fixture = fixture
+        .strip_prefix(&root)
+        .expect("cycle fixture is inside the workspace")
+        .to_string_lossy()
+        .into_owned();
+
+    let inspected = ember(&["inspect", "--cycle", &fixture], &root);
+    assert_eq!(
+        inspected.exit, 0,
+        "cycle inspection failed:\n{}",
+        inspected.stderr
+    );
+    let explained = ember(&["explain", "--cycle", &fixture, "Root.child"], &root);
+    assert_eq!(
+        explained.exit, 0,
+        "cycle explanation failed:\n{}",
+        explained.stderr
+    );
+    assert!(
+        explained.stdout.contains("Root.child -> Child.leaf -> Leaf.root -> Root"),
+        "cycle explanation omitted the selected field's ownership path:\n{}",
+        explained.stdout
+    );
+    assert!(
+        explained.stdout.contains("strong Root.child: Child -> Child"),
+        "cycle explanation omitted the selected field declaration:\n{}",
+        explained.stdout
+    );
+    assert!(
+        inspected.stdout.contains("Root.child -> Child.leaf -> Leaf.root -> Root"),
+        "inspection and explanation did not share the ownership graph:\ninspection:\n{}",
+        inspected.stdout
+    );
+}
+
+#[test]
 fn cycle_lint_offers_only_safe_weak_suggestions() {
     let root = workspace_root();
     let direct = ember(
