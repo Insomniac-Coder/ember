@@ -7656,3 +7656,30 @@ The atomic `T: Sync` upgrade row remains Phase 6 work and foreign-owner
 rejection remains Phase 5/7 work; their absence is recorded rather than
 treated as a specification gap. No ODR or defect is involved. Phase accounting
 remains **1 of 9 complete**; Phase 2 and Phase 3 remain active.
+
+### 0.175 `[EXC-3]` unique `Shared[T].get_mut()` elision — 2026-09-20
+
+Commit `b5db42f` applies the already-specified `unique_handle` exception to a
+`Shared[T]` owner with one local strong handle. The compiler recognizes only
+the exact temporary mutable reborrow it creates for `get_mut()` and traces that
+temporary to one unprojected `Shared` local. A copied owner, stored/passed
+owner, projected owner, arbitrary reference, or any second assignment to the
+temporary remains dynamically instrumented. This preserves `[HEAP-5]`'s
+ordinary borrowing and dynamic-exclusivity semantics while allowing the
+existing `[EXC-3]` proof when no alias can exist.
+
+The matcher now also closes an interval whose end is the first statement of an
+`Assert` success block. Assertions have one continuation and invoke no user
+code; their failing path aborts. Direct-call handling is unchanged, so this
+narrow CFG case does not relax the existing unknown-call boundary. The
+all-profile `[HEAP-5]` probe prints `42`, requires that emitted C contain no
+dynamic write-access operations, and its safety side table records the
+`unique_handle` elision reason. The established aliased-owner NLL probe still
+requires both dynamic write-access operations and prints `42`.
+
+Focused analysis tests and the workspace check pass. The frozen 0.9.8 target
+defines both the `Shared.get_mut()` and `[EXC-3]` rules, so this is neither an
+ODR nor a compiler defect. Atomic `T: Sync` counter selection, the remaining
+`[TST-26]` cases, cycle diagnostics, and the Phase 3 exit matrix remain open.
+Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
+active.
