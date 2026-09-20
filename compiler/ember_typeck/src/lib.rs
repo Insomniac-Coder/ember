@@ -2183,6 +2183,22 @@ impl<'a> Checker<'a> {
                             )),
                         );
                     }
+                    if self.lint_return_intersection
+                        && has_attribute(&item.attrs, "view")
+                        && carries_a_borrow.len() >= 2
+                    {
+                        self.sink.emit(
+                            Diagnostic::lint(
+                                codes::L3014,
+                                item.span,
+                                format!(
+                                    "view region is the intersection of {} fields",
+                                    carries_a_borrow.len()
+                                ),
+                            )
+                            .help("split independent views when callers need separate lifetimes"),
+                        );
+                    }
 
                     let def = self.types.struct_def_mut(id);
                     def.fields = fields;
