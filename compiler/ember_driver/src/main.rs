@@ -15,7 +15,7 @@ use ember_build::interface::{
     round_trip_artifacts,
 };
 use ember_build::{Layout, LinkRequest, Profile, Toolchain};
-use ember_diag::{Diagnostic, Sink, codes::{self, CodeKind}};
+use ember_diag::Sink;
 use ember_span::SourceMap;
 use ember_types::TypeTable;
 
@@ -1361,10 +1361,6 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    validate_manifest_lints(&root_dir, &mut sink);
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -1563,55 +1559,6 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
-}
-
-/// `[MAN-3]`'s first live manifest surface. The rest of the package manifest
-/// is still staged, but lint names must not silently turn into inert typos.
-fn validate_manifest_lints(start: &Path, sink: &mut Sink) {
-    let mut directory = Some(start);
-    let manifest = loop {
-        let Some(candidate) = directory else { return };
-        let path = candidate.join("ember.toml");
-        if path.is_file() {
-            break path;
-        }
-        directory = candidate.parent();
-    };
-    let Ok(text) = std::fs::read_to_string(&manifest) else {
-        sink.emit(Diagnostic::error(codes::E9001, ember_span::Span::DUMMY, "could not read ember.toml"));
-        return;
-    };
-    let mut in_lints = false;
-    for line in text.lines() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            in_lints = line == "[lints]";
-            continue;
-        }
-        if !in_lints || line.is_empty() {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            sink.emit(Diagnostic::error(codes::E9001, ember_span::Span::DUMMY, "invalid `[lints]` entry"));
-            continue;
-        };
-        let code = codes::lookup(&key.trim().to_ascii_uppercase());
-        if !matches!(code, Some(code) if code.kind == CodeKind::Lint) {
-            sink.emit(Diagnostic::error(
-                codes::E9010,
-                ember_span::Span::DUMMY,
-                format!("`{}` is not a lint the compiler defines", key.trim()),
-            ));
-            continue;
-        }
-        if !matches!(value.trim().trim_matches('"'), "allow" | "warn" | "deny") {
-            sink.emit(Diagnostic::error(
-                codes::E9001,
-                ember_span::Span::DUMMY,
-                "a lint level must be `allow`, `warn`, or `deny`",
-            ));
-        }
-    }
 }
 
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable

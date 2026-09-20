@@ -7210,11 +7210,3 @@ through `T: Clone` and preserves both values at `42`.
 The remaining Clone work is broader owned-storage coverage, not generic
 struct registration. Phase accounting remains **1 of 9 complete**, Phase 2
 active.
-
-### 0.153 `[MAN-3]` lint manifest validation — 2026-09-20
-
-The driver now discovers the nearest `ember.toml` and validates `[lints]`
-entries against the diagnostic registry. `l3014 = "warn"` is accepted, while
-an unknown key is rejected as E9010. The configuration is deliberately
-separate from the pending L3014 producer; no lint is silently claimed enabled
-before that producer exists.
