@@ -7683,3 +7683,33 @@ ODR nor a compiler defect. Atomic `T: Sync` counter selection, the remaining
 `[TST-26]` cases, cycle diagnostics, and the Phase 3 exit matrix remain open.
 Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
 active.
+
+### 0.176 Weak upgrade during destruction and static ownership cycles — 2026-09-20
+
+Commit `9815983` adds the missing `[TST-26]` deinitialising-upgrade probe. A
+`Shared[Node]` contains a weak self edge and attempts `upgrade()` from
+`Node.drop`; it prints `1` only when the runtime refuses resurrection after
+the final strong release starts destruction. The case runs in debug, release,
+and shipping and pins weak retain, release, and upgrade in generated C.
+
+Commit `33ba143` begins the specified package-visible `[WK-5]`–`[WK-7]`
+diagnostic path. It builds a graph of statically known strong ownership from
+class fields, including inherited fields, value aggregates, `Box`, `Shared`,
+arrays, and payload enums; `Weak`, references, pointers, and views contribute
+no strong edge. It reports exactly one shortest cycle per strong SCC as the
+warning-only `L3001`, identifies the full edge path, labels its participating
+field declarations, and offers the first field as a `Weak[Target]` repair.
+`-D warnings` promotes the lint in the normal way without altering ownership
+or runtime lifetime semantics.
+
+Commit `8671606` proves a `Shared[Child]` edge is strong, and `cd339c6` proves
+that a generic `Holder[Child]` field is analysed after substitution and is
+rendered in user-facing source form rather than an internal mangled identity.
+Focused analysis tests, all-profile direct conformance probes, and the
+workspace check pass. No ODR or existing compiler defect is involved: the
+frozen target defines this diagnostic behavior directly.
+
+Runtime `--leak-check` SCC reporting, `explain`/`inspect --cycle`, foreign
+unknown-edge reporting, and the remaining `[WK-*]` matrix still remain Phase 3
+work. Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
+active.
