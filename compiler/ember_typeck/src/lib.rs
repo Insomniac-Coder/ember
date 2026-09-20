@@ -327,6 +327,15 @@ struct PendingMethod {
     source: (usize, usize, usize),
 }
 
+/// A non-generic interface default synthesized for one generic-struct
+/// instantiation, waiting until the ordinary instantiation pass can check and
+/// emit its body.
+struct PendingDefaultMethod {
+    def: DefId,
+    owner: Ty,
+    source: (usize, usize, usize),
+}
+
 /// The declaration behind a source-defined method. Generic method instances
 /// need this independently of ordinary function sources: the receiver type is
 /// part of both body checking and deterministic symbol identity.
@@ -438,10 +447,22 @@ struct InterfaceDef {
     /// interface's declaration and takes its type. Nothing calls it — a
     /// generic body is never emitted, only its instantiations are.
     methods: Vec<(Symbol, DefId, Option<Mode>, bool)>,
+    /// Source information for default bodies. Generic implementers do not
+    /// exist during the ordinary default-registration pass, so their concrete
+    /// instantiations reuse these declarations later.
+    defaults: Vec<InterfaceDefault>,
     supertraits: Vec<Symbol>,
     /// Default methods returning `Self` by value are dyn-compatible only when
     /// their declaration explicitly carries `where Self: Sized` (`[TYP-22]`).
     dyn_sized_defaults: HashSet<DefId>,
+}
+
+#[derive(Clone)]
+struct InterfaceDefault {
+    name: Symbol,
+    declaration: DefId,
+    receiver: Option<Mode>,
+    source: (usize, usize, usize),
 }
 
 struct Checker<'a> {
@@ -599,6 +620,11 @@ struct Checker<'a> {
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
     pending_methods: Vec<PendingMethod>,
+    /// Default interface methods materialized for instantiated generic structs.
+    pending_default_methods: Vec<PendingDefaultMethod>,
+    /// Default bodies already emitted through either the ordinary module walk
+    /// or a deferred generic-struct instantiation.
+    checked_default_methods: HashSet<DefId>,
     /// Source declarations for generic methods, keyed by their uninstantiated
     /// method `DefId`.
     generic_method_sources: HashMap<DefId, MethodSource>,
@@ -710,6 +736,8 @@ impl<'a> Checker<'a> {
             scoped_arenas: HashSet::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
+            pending_default_methods: Vec::new(),
+            checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
             member_callable_declarations: Vec::new(),
             pending_generic_methods: Vec::new(),
@@ -2498,9 +2526,9 @@ impl<'a> Checker<'a> {
     /// that would have made it work — the pass has to be whole-program, as the
     /// name pass above it already is.
     fn collect_interfaces(&mut self, module: &ast::Module) {
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             if let ast::ItemKind::Interface(decl) = &item.kind {
-                self.collect_interface(decl, item.span, item.vis.kind);
+                self.collect_interface(decl, item.span, item.vis.kind, item_index);
             }
         }
     }
@@ -2841,18 +2869,75 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Generic structs do not exist when the ordinary module default pass
+    /// runs. Materialize only the defaults their new concrete implementation
+    /// needs, then let the instantiation pass check the original body.
+    fn register_instantiated_defaults(
+        &mut self,
+        ty: Ty,
+        implementations: &[(Ty, Symbol, Span)],
+    ) {
+        for (_, interface, _) in implementations {
+            let defaults = self
+                .interfaces
+                .get(interface)
+                .map(|def| def.defaults.clone())
+                .unwrap_or_default();
+            for default in defaults {
+                let already_exists = match default.receiver {
+                    Some(_) => self.methods.contains_key(&(ty, default.name)),
+                    None => self.associated.contains_key(&(ty, default.name)),
+                };
+                if already_exists {
+                    continue;
+                }
+                let mut signature = self.signatures[default.declaration.0 as usize].clone();
+                for (_, param, _, _) in &mut signature.params {
+                    let substituted = self.types.substitute_self(*param, ty);
+                    *param = self.resolve_assoc(substituted, ty);
+                }
+                let ret = self.types.substitute_self(signature.ret, ty);
+                signature.ret = self.resolve_assoc(ret, ty);
+                if let Some(receiver) = default.receiver {
+                    signature.params.insert(0, (Symbol::intern("self"), ty, receiver, Span::DUMMY));
+                }
+                let generic = !signature.generics.is_empty();
+                let registered = if let Some(receiver) = default.receiver {
+                    self.register_method(ty, default.name, signature, receiver, Some(*interface), Span::DUMMY)
+                } else {
+                    self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
+                };
+                let Some(def) = registered else { continue };
+                if generic {
+                    self.generic_method_sources.insert(
+                        def,
+                        MethodSource { owner: ty, source: default.source, owner_bindings: Vec::new() },
+                    );
+                    self.pending_generic_method_validations.push(def);
+                } else {
+                    self.pending_default_methods.push(PendingDefaultMethod {
+                        def,
+                        owner: ty,
+                        source: default.source,
+                    });
+                }
+            }
+        }
+    }
+
     fn collect_interface(
         &mut self,
         decl: &ast::InterfaceDecl,
         span: Span,
         visibility: ast::VisKind,
+        item_index: usize,
     ) {
         // Part IV §8 — `Self` inside an `interface` is the implementing type,
         // which is unknown here, so it is a parameter until the interface is
         // used. `[TYP-22]` is what says a method returning it by value is not
         // `dyn`-compatible; statically it resolves like any other parameter.
         let outer_self = self.self_ty.replace(self.common.self_ty);
-        self.collect_interface_inner(decl, span, visibility);
+        self.collect_interface_inner(decl, span, visibility, item_index);
         self.self_ty = outer_self;
     }
 
@@ -2861,6 +2946,7 @@ impl<'a> Checker<'a> {
         decl: &ast::InterfaceDecl,
         span: Span,
         visibility: ast::VisKind,
+        item_index: usize,
     ) {
         let name = self.qualified(decl.name.name);
         if self.interfaces.contains_key(&name) || self.named_types.contains_key(&name) {
@@ -2886,8 +2972,9 @@ impl<'a> Checker<'a> {
             self.assoc_scope.insert(*name);
         }
         let mut methods = Vec::new();
+        let mut defaults = Vec::new();
         let mut dyn_sized_defaults = HashSet::new();
-        for member in &decl.members {
+        for (member_index, member) in decl.members.iter().enumerate() {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
             let Some((receiver, signature)) =
                 self.method_signature(f, None, &member.attrs, member.span, 0)
@@ -2931,6 +3018,14 @@ impl<'a> Checker<'a> {
                 ));
             }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
+            if f.body.is_some() {
+                defaults.push(InterfaceDefault {
+                    name: f.name.name,
+                    declaration: def,
+                    receiver,
+                    source: (self.current_module, item_index, member_index),
+                });
+            }
         }
         // Resolved for the same reason the bounds and the implementation
         // record are: `interface Ord: Eq` in one module and
@@ -2949,7 +3044,7 @@ impl<'a> Checker<'a> {
         let _ = &assoc;
         self.interfaces.insert(
             name,
-            InterfaceDef { methods, supertraits, dyn_sized_defaults },
+            InterfaceDef { methods, defaults, supertraits, dyn_sized_defaults },
         );
     }
 
@@ -4557,7 +4652,9 @@ impl<'a> Checker<'a> {
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         self.collect_implements(ty, &decl.implements, &[], span);
         self.current_module = previous_module;
-        for (implemented_ty, interface, interface_span) in self.implemented[implemented_at..].to_vec() {
+        let implementations = self.implemented[implemented_at..].to_vec();
+        self.register_instantiated_defaults(ty, &implementations);
+        for (implemented_ty, interface, interface_span) in implementations {
             self.check_implementation(implemented_ty, interface, interface_span);
         }
         ty
@@ -5479,6 +5576,7 @@ impl<'a> Checker<'a> {
             std::collections::HashSet::new();
         while !self.pending.is_empty()
             || !self.pending_methods.is_empty()
+            || !self.pending_default_methods.is_empty()
             || !self.pending_generic_method_validations.is_empty()
             || !self.pending_generic_methods.is_empty()
         {
@@ -5564,6 +5662,27 @@ impl<'a> Checker<'a> {
                 }
                 self.type_params.clear();
                 if let Some(function) = function {
+                    out.push(function);
+                }
+            }
+
+            while let Some(job) = self.pending_default_methods.pop() {
+                if !self.checked_default_methods.insert(job.def) {
+                    continue;
+                }
+                let (module_index, item_index, member_index) = job.source;
+                let item = &modules[module_index].module.items[item_index];
+                let Some(member) = item_members(item).and_then(|members| members.get(member_index))
+                else {
+                    continue;
+                };
+                let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+                let Some(block) = &decl.body else { continue };
+
+                self.current_module = module_index;
+                if let Some(function) =
+                    self.check_one_method(job.owner, decl, block, job.def, &member.attrs, member.span)
+                {
                     out.push(function);
                 }
             }
@@ -5924,7 +6043,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         }
                         entry.def
                     };
-                    if out.iter().any(|f: &Function| f.def == def) {
+                    if !self.checked_default_methods.insert(def) {
                         continue;
                     }
                     if !self.signatures[def.0 as usize].generics.is_empty() {

@@ -290,11 +290,11 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Frozen development target: **v0.9.7_Hardened_3**, with 0.9.7_Hardened_2 named as its immutable immediate predecessor by H3; the H2 artifact is not present in this checkout. No 0.9.x repository-normative adoption is implied by the file |
-| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls and owned `Box[dyn I]` for direct structs, including instantiated source generic structs with explicit interface methods. They support borrowed and box-carried dispatch, concrete drop glue, and checked layout/implementation metadata through HIR, MIR verification, and C emission. H3 remains a frozen development target, not the adopted repository-normative source |
-| Latest continuation checkpoint | `e511acc` adds mutable dispatch through direct struct interface boxes; the next checkpoint extends the same adapter boundary to instantiated generic source structs. Generic-class payloads, enums/scalars, multi-interface composition, and generic implementations relying on interface default bodies remain open |
+| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls and owned `Box[dyn I]` for direct structs, including instantiated source generic structs with explicit interface methods or non-generic interface default bodies. They support borrowed and box-carried dispatch, concrete drop glue, and checked layout/implementation metadata through HIR, MIR verification, and C emission. H3 remains a frozen development target, not the adopted repository-normative source |
+| Latest continuation checkpoint | `25411e5` materializes instantiated generic struct interface adapters; the next checkpoint completes their non-generic default bodies. Generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
-| Recent commits | `e511acc` mutable struct interface boxes · `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · `54bdcad` borrowed class-to-interface adapters · earlier history remains recorded below |
-| Working tree | `main` was clean at `e511acc` before the generic-struct continuation below; always re-run `git status` and `git log -1` because this row is not live state |
+| Recent commits | `25411e5` generic struct interface adapters · `e511acc` mutable struct interface boxes · `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · earlier history remains recorded below |
+| Working tree | `main` was clean at `25411e5` before the generic-default continuation below; always re-run `git status` and `git log -1` because this row is not live state |
 | `cargo build --workspace --locked` | **0 warnings** in debug (2026-09-20) |
 | `cargo test --workspace --locked` | **222 Rust tests, all passing**, 0 failures (2026-09-20). The test build retains one pre-existing non-snake-case test-name warning. Added conformance programs do not change this Rust count because one integration test walks the directory |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
@@ -7089,3 +7089,29 @@ Generic-class payloads, enums/scalars, multiple interfaces, and other owned
 dynamic-storage cases remain separate slices. The adopted specification,
 frozen target, ADRs, and phase accounting are unchanged: **1 of 9 complete**,
 Phase 2 active, and Phase 3 has not passed its exit gate.
+
+### 0.145 `[IFC-1]` generic struct interface default bodies — 2026-09-20
+
+An instantiated generic struct can now inherit a non-generic interface default
+body. Interface collection retains each default declaration's signature and
+source location. When a new generic-struct implementation is recorded, the
+checker specializes each missing default signature to that concrete owner,
+registers it through the ordinary interface-method path, and queues its source
+body for the instantiation pass. A checked-`DefId` set ensures that an early
+instantiation found during normal body checking and a late instantiation found
+while checking a generic-struct method still emit the default exactly once.
+
+The direct probe covers both `ref dyn Answer` and `Box[dyn Answer]`; the late
+probe forces `Payload[i32]` to first appear while a `Factory[i32]` method is
+checked after the normal default-body walk. Both all-profile probes emit `42`
+and pin the generated concrete vtable. `cargo test -p ember_typeck -p
+ember_mir --locked` and the conformance suite pass; the latter completed in
+103 seconds. The run-pass probes compile their generated C through local LLVM
+clang; the remote CI matrix additionally covers GCC, clang, MSVC, and clang-cl.
+
+**Deliberate boundary:** default interface members with their own generic
+parameters remain a separate slice. Generic-class payloads, enums/scalars,
+multiple interfaces, and other owned dynamic-storage cases remain separate
+slices. The adopted specification, frozen target, ADRs, and phase accounting
+are unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed
+its exit gate.
