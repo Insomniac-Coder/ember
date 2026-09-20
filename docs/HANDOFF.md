@@ -7261,3 +7261,26 @@ This completes the direct and inherited non-generic class-payload matrix for a
 single dynamic interface. Generic classes, multiple-interface composition,
 enums, scalars, and the wider DRP-6 handle/Shared exit remain open, so phase
 accounting stays **1 of 9 complete**.
+
+### 0.156 Direct generic classes and generic dynamic boxes — 2026-09-20
+
+Concrete instantiations of a direct generic class are now ordinary class
+definitions with substituted field types, normal class allocation, and the
+existing handle-retain and release behavior. Constructors accept explicit
+arguments or infer them from fields; generic field defaults, `init`, ordinary
+methods, and `mut self` methods are all checked and emitted per instantiation.
+
+The same per-instantiation registration now installs a generic class's
+declared interface implementation. A `Pixel[bool] implements Render` can be
+stored in `Box[dyn Render]`, dispatch shared and mutable slots, release its
+destructor once, and rejects reuse after box transfer with `E3040`. The
+all-profile fixtures cover scalar and class-handle generic fields, defaults,
+methods, constructors, dynamic adapter emission, release, mutable dispatch,
+and ownership transfer. CI runs `35485934681`, `35485960694`, `35486006896`,
+and `35486055434` are green across Linux clang/GCC, Windows MSVC/clang-cl, and
+documentation validation.
+
+Generic base classes and generic multi-interface composition remain separate
+implementation work; no representation, ownership, or rule interpretation
+outside the direct generic-class path changed. Phase accounting remains
+**1 of 9 complete**.
