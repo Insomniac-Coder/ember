@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-20 — generic-class inherent extensions were not materialized
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-161 | **A generic inherent extension such as `extend[T] Holder[T]:` was neither collected with `T` in scope nor materialized for `Holder[i32]`.** The ordinary extension pass resolved its target after generic declarations had been cleared, producing `E1010` for `T`; even if that resolution had been bypassed, no extension method recipe was registered on the concrete generic class. The same omission initially let an `override` in this path bypass `[CLS-4]` validation. | `[TYP-16]`, `[IFC-1]`, `[CLS-4]`, `[DSP-2]` | **fixed** | Inherent generic-class extensions are retained as recipes, structurally matched against each concrete class argument list, and materialized with the extension's own substitutions when the class is instantiated. Method bodies and method generics use those bindings, and virtual layout plus `E2110` validation run at the same materialization boundary. `generic_class_inherent_extension*.em` covers direct, reordered, nested, generic-method, and virtual-override cases in every profile; `generic_class_inherent_extension_override_nonvirtual.em` proves that two concrete uses still report one `E2110`. Generic interface-implementation extensions are not claimed by this correction; their conformance/materialization path remains separate. The specification already determines the inherent-extension behavior, so no specification, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-20 — classes accepted `@derive(Clone)` without generating `Clone`
 
 | # | Defect | Rule | Status | Fixed in |

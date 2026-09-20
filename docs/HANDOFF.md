@@ -7440,3 +7440,34 @@ This is D-160, an implementation defect under existing `[OWN-8]`, `[TYP-16]`,
 and `[DRV-1]`, not an ODR: the specification leaves no ownership or design
 choice to make. No specification, ADR, owner decision, or phase status changed.
 Phase accounting remains **1 of 9 complete**.
+
+### 0.166 Generic-class operations and inherent extensions — 2026-09-20
+
+The generic-class matrix now covers ordinary runtime operations that had no
+coverage gap: identity through two aliases, successful and failed optional
+downcasts, a successful forced downcast, and a direct generic-class destructor.
+The positive downcast probe pins `ember_downcast`; the mismatched concrete
+arguments (`Child[bool]` and `Child[i32]`) reject both `is` and `as?` with the
+existing unrelated-class `E2020`. The destructor probe pins its concrete drop
+symbol and its one observable output. These cases exercise the already-defined
+generic materialization, object identity, downcast, and drop paths rather than
+introducing a new language rule.
+
+The compiler did need D-161 for `extend[T] Class[...]:`. The extension collector
+previously resolved the target after its type parameters had left scope, so
+`extend[T] Holder[T]` reported `E1010` and never supplied a method to any
+materialized `Holder`. Generic inherent extensions are now recipes matched
+structurally against a concrete class's arguments; their own binders feed
+signature substitution, generic method validation, and body checking. The
+all-profile regression set covers the direct shape, reordered binders
+(`Pair[Right, Left]`), a nested `Array[Element]` pattern, an extension generic
+method, and a virtual override reached through a generic base handle. A
+non-virtual override is rejected with one `E2110` even when the invalid
+extension materializes twice.
+
+This is deliberately the inherent `[IFC-1]` slice only. Generic `implements`
+extensions use a distinct conformance/materialization path and are not claimed
+as complete here. D-161 is an implementation defect under existing `[TYP-16]`,
+`[IFC-1]`, `[CLS-4]`, and `[DSP-2]`, not an ODR: no semantic choice is
+undefined. No specification, ADR, owner decision, or phase status changed.
+Phase accounting remains **1 of 9 complete**.

@@ -166,6 +166,10 @@ pub fn check(
         checker.current_module = index;
         checker.collect_interfaces(&loaded.module);
     }
+    for (index, loaded) in modules.iter().enumerate().rev() {
+        checker.current_module = index;
+        checker.collect_generic_class_extensions(&loaded.module);
+    }
     checker.resolve_pending_generic_implements();
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
@@ -326,6 +330,17 @@ struct GenericClass {
     declaring_module: usize,
 }
 
+/// An inherent `extend[P] Class[...P...]` recipe. The extension's binders
+/// belong to the extension rather than the class declaration, so each class
+/// materialization matches its concrete arguments against this target before
+/// registering the extension's methods.
+#[derive(Clone)]
+struct GenericClassExtension {
+    params: Vec<Symbol>,
+    target_args: Vec<Ty>,
+    methods: Vec<GenericMethod>,
+}
+
 /// One method of a generic struct: its shape in terms of the struct's type
 /// parameters, and where its body is so an instantiation can be checked.
 #[derive(Clone)]
@@ -357,9 +372,12 @@ struct GenericMethod {
 struct PendingMethod {
     def: DefId,
     owner: Ty,
-    /// The generic it came from and the arguments it was built with, which is
-    /// what binds `T` while the body is checked.
-    origin: (Symbol, Vec<Ty>),
+    /// The source binders and concrete arguments that are in scope while the
+    /// body is checked. An inherent generic extension may name those binders
+    /// differently from its class owner, or in a different order.
+    bindings: Vec<(Symbol, Ty)>,
+    /// Stable owner identity for first-instantiation diagnostic de-duplication.
+    report_owner: Symbol,
     source: (usize, usize, usize),
 }
 
@@ -619,6 +637,12 @@ struct Checker<'a> {
     /// interface implementations stay explicitly rejected until their
     /// substitution paths are implemented.
     generic_classes: HashMap<Symbol, GenericClass>,
+    /// Inherent extensions whose target is a generic class recipe.
+    generic_class_extensions: HashMap<Symbol, Vec<GenericClassExtension>>,
+    /// A generic class/extension declaration can materialize more than once,
+    /// but an invalid `override` is one source error, not one per concrete
+    /// type argument list.
+    reported_generic_override_errors: HashSet<(usize, usize, usize)>,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -799,6 +823,8 @@ impl<'a> Checker<'a> {
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
             generic_classes: HashMap::new(),
+            generic_class_extensions: HashMap::new(),
+            reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
             refcells: HashMap::new(),
@@ -2008,7 +2034,7 @@ impl<'a> Checker<'a> {
             self.current_module = module;
             for item in &loaded.module.items {
                 let ast::ItemKind::Extend(decl) = &item.kind else { continue };
-                if !decl.implements.is_empty() {
+                if !decl.implements.is_empty() || self.is_generic_class_inherent_extension(decl) {
                     continue;
                 }
                 let ty = self.resolve_type(&decl.target);
@@ -2295,6 +2321,198 @@ impl<'a> Checker<'a> {
                     declaring_module: self.current_module,
                 },
             );
+        }
+    }
+
+    /// Collect generic inherent extensions after generic class recipes and
+    /// interfaces have names, but before the ordinary extension pass tries to
+    /// resolve `Class[T]` without `T` in scope. Interface implementations in
+    /// generic extensions remain a separate conformance/materialization slice;
+    /// this preserves the existing inherent-method semantics of `[IFC-1]`.
+    fn collect_generic_class_extensions(&mut self, module: &ast::Module) {
+        for (item_index, item) in module.items.iter().enumerate() {
+            let ast::ItemKind::Extend(decl) = &item.kind else { continue };
+            if !self.is_generic_class_inherent_extension(decl) {
+                continue;
+            }
+            let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
+                continue;
+            };
+            let name = self.resolve_name(segments[0].name);
+            let generic_params = self.declare_generics(&decl.generics);
+            let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
+            let mut target_args = Vec::with_capacity(args.len());
+            for arg in args {
+                let ast::GenericArg::Type(arg) = arg else {
+                    self.error(codes::E1010, decl.target.span, "expected a type argument");
+                    continue;
+                };
+                target_args.push(self.resolve_type(arg));
+            }
+            let mut methods = Vec::new();
+            for (member_index, member) in decl.members.iter().enumerate() {
+                let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                let Some((receiver, signature)) = self.method_signature(
+                    fn_decl,
+                    None,
+                    &member.attrs,
+                    member.span,
+                    params.len(),
+                ) else {
+                    continue;
+                };
+                methods.push(GenericMethod {
+                    name: fn_decl.name.name,
+                    dispatch: fn_decl.dispatch,
+                    has_body: fn_decl.body.is_some(),
+                    receiver,
+                    params: signature.params,
+                    ret: signature.ret,
+                    generics: signature.generics,
+                    borrows: signature.borrows.map(|positions| {
+                        positions
+                            .into_iter()
+                            .map(|position| position + usize::from(receiver.is_some()))
+                            .collect()
+                    }),
+                    source: (self.current_module, item_index, member_index),
+                    span: member.span,
+                });
+            }
+            self.type_params.clear();
+            self.generic_class_extensions
+                .entry(name)
+                .or_default()
+                .push(GenericClassExtension { params, target_args, methods });
+        }
+    }
+
+    fn is_generic_class_inherent_extension(&self, decl: &ast::ExtendDecl) -> bool {
+        if decl.generics.is_empty() || !decl.implements.is_empty() {
+            return false;
+        }
+        let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
+            return false;
+        };
+        segments.len() == 1
+            && !args.is_empty()
+            && self.generic_classes.contains_key(&self.resolve_name(segments[0].name))
+    }
+
+    fn generic_class_extension_bindings(
+        &self,
+        extension: &GenericClassExtension,
+        args: &[Ty],
+    ) -> Option<Vec<Ty>> {
+        if extension.target_args.len() != args.len() {
+            return None;
+        }
+        let mut bindings = vec![None; extension.params.len()];
+        for (&pattern, &actual) in extension.target_args.iter().zip(args) {
+            if !self.match_generic_extension_type(pattern, actual, &mut bindings) {
+                return None;
+            }
+        }
+        bindings.into_iter().collect()
+    }
+
+    /// Unify an extension target pattern with one concrete class argument.
+    /// Parameters bind once, while compound types recurse so extensions such
+    /// as `extend[T] Holder[Array[T]]` retain their ordinary generic meaning.
+    fn match_generic_extension_type(
+        &self,
+        pattern: Ty,
+        actual: Ty,
+        bindings: &mut [Option<Ty>],
+    ) -> bool {
+        match (self.types.kind(pattern), self.types.kind(actual)) {
+            (TyKind::Param { index, .. }, _) if (*index as usize) < bindings.len() => {
+                let slot = &mut bindings[*index as usize];
+                slot.is_none_or(|bound| bound == actual) && {
+                    *slot = Some(actual);
+                    true
+                }
+            }
+            (
+                TyKind::Span { elem: pattern_elem, mutable: pattern_mutable },
+                TyKind::Span { elem: actual_elem, mutable: actual_mutable },
+            ) => {
+                pattern_mutable == actual_mutable
+                    && self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
+            }
+            (
+                TyKind::Ref { mutable: pattern_mutable, inner: pattern_inner },
+                TyKind::Ref { mutable: actual_mutable, inner: actual_inner },
+            )
+            | (
+                TyKind::Ptr { mutable: pattern_mutable, inner: pattern_inner },
+                TyKind::Ptr { mutable: actual_mutable, inner: actual_inner },
+            ) => {
+                pattern_mutable == actual_mutable
+                    && self.match_generic_extension_type(*pattern_inner, *actual_inner, bindings)
+            }
+            (TyKind::Tuple(pattern_items), TyKind::Tuple(actual_items)) => {
+                pattern_items.len() == actual_items.len()
+                    && pattern_items
+                        .iter()
+                        .zip(actual_items)
+                        .all(|(&pattern, &actual)| {
+                            self.match_generic_extension_type(pattern, actual, bindings)
+                        })
+            }
+            (
+                TyKind::Array { elem: pattern_elem, len: pattern_len },
+                TyKind::Array { elem: actual_elem, len: actual_len },
+            ) => {
+                pattern_len == actual_len
+                    && self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
+            }
+            (TyKind::Vec { elem: pattern_elem }, TyKind::Vec { elem: actual_elem }) => {
+                self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
+            }
+            (
+                TyKind::Fn { latebound: pattern_latebound, params: pattern_params, ret: pattern_ret },
+                TyKind::Fn { latebound: actual_latebound, params: actual_params, ret: actual_ret },
+            ) => {
+                pattern_latebound == actual_latebound
+                    && pattern_params.len() == actual_params.len()
+                    && pattern_params.iter().zip(actual_params).all(|(pattern, actual)| {
+                        pattern.mode == actual.mode
+                            && self.match_generic_extension_type(pattern.ty, actual.ty, bindings)
+                    })
+                    && self.match_generic_extension_type(*pattern_ret, *actual_ret, bindings)
+            }
+            (TyKind::Struct(pattern_id), TyKind::Struct(actual_id)) => {
+                match (
+                    self.types.struct_def(*pattern_id).origin.clone(),
+                    self.types.struct_def(*actual_id).origin.clone(),
+                ) {
+                    (Some((pattern_name, pattern_args)), Some((actual_name, actual_args))) => {
+                        pattern_name == actual_name
+                            && pattern_args.len() == actual_args.len()
+                            && pattern_args.iter().zip(actual_args.iter()).all(|(&pattern, &actual)| {
+                                self.match_generic_extension_type(pattern, actual, bindings)
+                            })
+                    }
+                    _ => pattern == actual,
+                }
+            }
+            (TyKind::Class(pattern_id), TyKind::Class(actual_id)) => {
+                match (
+                    self.types.class_def(*pattern_id).origin.clone(),
+                    self.types.class_def(*actual_id).origin.clone(),
+                ) {
+                    (Some((pattern_name, pattern_args)), Some((actual_name, actual_args))) => {
+                        pattern_name == actual_name
+                            && pattern_args.len() == actual_args.len()
+                            && pattern_args.iter().zip(actual_args.iter()).all(|(&pattern, &actual)| {
+                                self.match_generic_extension_type(pattern, actual, bindings)
+                            })
+                    }
+                    _ => pattern == actual,
+                }
+            }
+            _ => pattern == actual,
         }
     }
 
@@ -2835,6 +3053,9 @@ impl<'a> Checker<'a> {
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
+                    if self.is_generic_class_inherent_extension(decl) {
+                        continue;
+                    }
                     let ty = self.resolve_type(&decl.target);
                     if ty == self.common.error {
                         continue;
@@ -5067,7 +5288,13 @@ impl<'a> Checker<'a> {
                 self.pending_methods.push(PendingMethod {
                     def,
                     owner: ty,
-                    origin: (name, args.to_vec()),
+                    bindings: decl
+                        .params
+                        .iter()
+                        .copied()
+                        .zip(args.iter().copied())
+                        .collect(),
+                    report_owner: name,
                     source: method.source,
                 });
             }
@@ -5193,7 +5420,55 @@ impl<'a> Checker<'a> {
         // inherited/overridden vtable slots before its method bodies are
         // checked.
         let mut declared_methods = Vec::new();
-        for method in &decl.methods {
+        let mut method_recipes: Vec<(GenericMethod, Vec<(Symbol, Ty)>)> = decl
+            .methods
+            .iter()
+            .cloned()
+            .map(|method| {
+                (
+                    method,
+                    decl.params.iter().copied().zip(args.iter().copied()).collect(),
+                )
+            })
+            .collect();
+        for extension in self
+            .generic_class_extensions
+            .get(&name)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let Some(extension_args) = self.generic_class_extension_bindings(&extension, args)
+            else {
+                continue;
+            };
+            let bindings: Vec<(Symbol, Ty)> = extension
+                .params
+                .iter()
+                .copied()
+                .zip(extension_args)
+                .collect();
+            method_recipes.extend(
+                extension
+                    .methods
+                    .into_iter()
+                    .map(|method| (method, bindings.clone())),
+            );
+        }
+        let mut inherited_layouts = HashMap::new();
+        let inherited_virtuals = base
+            .map(|base| self.class_virtual_layout(base, &mut inherited_layouts))
+            .unwrap_or_default();
+        for (method, owner_bindings) in method_recipes {
+            if method.dispatch == ast::Dispatch::Override
+                && !inherited_virtuals.contains_key(&method.name)
+                && self.reported_generic_override_errors.insert(method.source)
+            {
+                self.error(
+                    codes::E2110,
+                    method.span,
+                    "override of a method that is not virtual",
+                );
+            }
             let method_params: Vec<Ty> = method
                 .generics
                 .iter()
@@ -5205,7 +5480,7 @@ impl<'a> Checker<'a> {
                     })
                 })
                 .collect();
-            let mut combined = args.to_vec();
+            let mut combined = owner_bindings.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
             combined.extend(method_params);
             let mut params = Vec::new();
             if let Some(receiver) = method.receiver {
@@ -5257,12 +5532,7 @@ impl<'a> Checker<'a> {
                     MethodSource {
                         owner: ty,
                         source: method.source,
-                        owner_bindings: decl
-                            .params
-                            .iter()
-                            .copied()
-                            .zip(args.iter().copied())
-                            .collect(),
+                        owner_bindings: owner_bindings.clone(),
                     },
                 );
                 self.pending_generic_method_validations.push(def);
@@ -5270,7 +5540,8 @@ impl<'a> Checker<'a> {
                 self.pending_methods.push(PendingMethod {
                     def,
                     owner: ty,
-                    origin: (name, args.to_vec()),
+                    bindings: owner_bindings,
+                    report_owner: name,
                     source: method.source,
                 });
             }
@@ -6284,23 +6555,12 @@ impl<'a> Checker<'a> {
                 let Some(block) = &fn_decl.body else { continue };
 
                 self.current_module = module_index;
-                let (generic_name, args) = job.origin;
-                let params = self
-                    .generic_structs
-                    .get(&generic_name)
-                    .map(|generic| generic.params.clone())
-                    .or_else(|| {
-                        self.generic_classes
-                            .get(&generic_name)
-                            .map(|generic| generic.params.clone())
-                    });
-                let Some(params) = params else { continue };
                 self.type_params.clear();
-                for (param, &ty) in params.iter().zip(args.iter()) {
-                    self.type_params.insert(*param, ty);
+                for (param, ty) in &job.bindings {
+                    self.type_params.insert(*param, *ty);
                 }
 
-                let first = reported.insert((generic_name, fn_decl.name.name));
+                let first = reported.insert((job.report_owner, fn_decl.name.name));
                 let quiet_before = (!first).then(|| quiet.diagnostics().len());
                 let saved = if first {
                     None
@@ -6644,6 +6904,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn check_method_bodies(&mut self, module: &ast::Module) -> Vec<Function> {
         let mut out = Vec::new();
         for item in &module.items {
+            if let ast::ItemKind::Extend(decl) = &item.kind
+                && self.is_generic_class_inherent_extension(decl)
+            {
+                continue;
+            }
             let (members, owner) = match &item.kind {
                 ast::ItemKind::Struct(decl) => {
                     (&decl.members, self.named_types.get(&self.qualified(decl.name.name)).copied())
