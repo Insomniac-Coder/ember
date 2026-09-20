@@ -7199,3 +7199,14 @@ live at `42`.
 
 Generic derived structs remain open. Phase accounting remains **1 of 9
 complete**, Phase 2 active.
+
+### 0.152 `[OWN-8]` generic derived Clone — 2026-09-20
+
+Generic struct instantiation now carries `@derive(Clone)` to each concrete
+instance and uses the same field-wise resolver and `std.core.Clone` record as
+a non-generic struct. The all-profile `Wrapper[i32]` probe passes the instance
+through `T: Clone` and preserves both values at `42`.
+
+The remaining Clone work is broader owned-storage coverage, not generic
+struct registration. Phase accounting remains **1 of 9 complete**, Phase 2
+active.

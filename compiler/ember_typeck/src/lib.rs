@@ -286,6 +286,7 @@ struct GenericStruct {
     generic_params: Vec<GenericParam>,
     fields: Vec<FieldDef>,
     derives_copy: bool,
+    derives_clone: bool,
     /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
     /// `Buffer[T]` is read-only outside `Buffer`'s module for every `T`.
     declaring_module: usize,
@@ -2109,6 +2110,7 @@ impl<'a> Checker<'a> {
                     generic_params,
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
+                    derives_clone: has_derive(&item.attrs, "Clone"),
                     implements: decl.implements.clone(),
                     methods,
                 },
@@ -4769,6 +4771,10 @@ impl<'a> Checker<'a> {
                     source: method.source,
                 });
             }
+        }
+        if decl.derives_clone {
+            self.pending_derived_clones.push((ty, span));
+            self.resolve_derived_clones();
         }
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
