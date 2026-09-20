@@ -163,6 +163,7 @@ pub fn check(
         checker.current_module = index;
         checker.collect_interfaces(&loaded.module);
     }
+    checker.resolve_pending_generic_implements();
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -334,6 +335,16 @@ struct PendingDefaultMethod {
     def: DefId,
     owner: Ty,
     source: (usize, usize, usize),
+}
+
+/// An implementation reached while generic recipes are collected, before
+/// interface declarations have been collected.  It is resolved through the
+/// ordinary implementation path once those declarations exist.
+struct PendingGenericImplements {
+    ty: Ty,
+    implements: Vec<ast::TypeExpr>,
+    span: Span,
+    module: usize,
 }
 
 /// The declaration behind a source-defined method. Generic method instances
@@ -622,6 +633,9 @@ struct Checker<'a> {
     pending_methods: Vec<PendingMethod>,
     /// Default interface methods materialized for instantiated generic structs.
     pending_default_methods: Vec<PendingDefaultMethod>,
+    /// Generic recipe types may be instantiated while interface declarations
+    /// are still being collected.
+    pending_generic_implements: Vec<PendingGenericImplements>,
     /// Default bodies already emitted through either the ordinary module walk
     /// or a deferred generic-struct instantiation.
     checked_default_methods: HashSet<DefId>,
@@ -737,6 +751,7 @@ impl<'a> Checker<'a> {
             pending: Vec::new(),
             pending_methods: Vec::new(),
             pending_default_methods: Vec::new(),
+            pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
             member_callable_declarations: Vec::new(),
@@ -2925,6 +2940,34 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn resolve_pending_generic_implements(&mut self) {
+        let pending = std::mem::take(&mut self.pending_generic_implements);
+        for pending in pending {
+            let _ = self.register_instantiated_implements(
+                pending.ty,
+                &pending.implements,
+                pending.span,
+                pending.module,
+            );
+        }
+    }
+
+    fn register_instantiated_implements(
+        &mut self,
+        ty: Ty,
+        implements: &[ast::TypeExpr],
+        span: Span,
+        module: usize,
+    ) -> Vec<(Ty, Symbol, Span)> {
+        let previous_module = std::mem::replace(&mut self.current_module, module);
+        let implemented_at = self.implemented.len();
+        self.collect_implements(ty, implements, &[], span);
+        self.current_module = previous_module;
+        let implementations = self.implemented[implemented_at..].to_vec();
+        self.register_instantiated_defaults(ty, &implementations);
+        implementations
+    }
+
     fn collect_interface(
         &mut self,
         decl: &ast::InterfaceDecl,
@@ -4648,14 +4691,30 @@ impl<'a> Checker<'a> {
                 });
             }
         }
-        let implemented_at = self.implemented.len();
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
-        self.collect_implements(ty, &decl.implements, &[], span);
+        let interfaces_are_ready = decl.implements.iter().all(|entry| {
+            interface_name(entry).is_none_or(|written| {
+                self.interfaces.contains_key(&self.resolve_name(written))
+            })
+        });
         self.current_module = previous_module;
-        let implementations = self.implemented[implemented_at..].to_vec();
-        self.register_instantiated_defaults(ty, &implementations);
-        for (implemented_ty, interface, interface_span) in implementations {
-            self.check_implementation(implemented_ty, interface, interface_span);
+        if interfaces_are_ready {
+            let implementations = self.register_instantiated_implements(
+                ty,
+                &decl.implements,
+                span,
+                decl.declaring_module,
+            );
+            for (implemented_ty, interface, interface_span) in implementations {
+                self.check_implementation(implemented_ty, interface, interface_span);
+            }
+        } else {
+            self.pending_generic_implements.push(PendingGenericImplements {
+                ty,
+                implements: decl.implements.clone(),
+                span,
+                module: decl.declaring_module,
+            });
         }
         ty
     }

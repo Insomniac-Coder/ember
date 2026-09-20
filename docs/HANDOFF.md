@@ -7115,3 +7115,27 @@ multiple interfaces, and other owned dynamic-storage cases remain separate
 slices. The adopted specification, frozen target, ADRs, and phase accounting
 are unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed
 its exit gate.
+
+### 0.146 `[IFC-1]` deferred generic interface materialization — 2026-09-20
+
+A generic recipe can now mention another generic struct that declares
+`implements I` before interface declarations have been collected. Previously,
+collecting the outer recipe instantiated the inner symbolic type and rejected
+its interface name immediately, even though the declaration appeared later in
+the same module. Such implementation clauses are now deferred only until the
+global interface-collection pass completes, then use the same registration,
+default-body materialization, and conformance checks as an ordinary concrete
+instantiation.
+
+`tests/run-pass/generic_struct_interface_default_generic_method.em` covers a
+generic interface default member directly and through a late `Factory[i32]`
+method instantiation. Both calls print `42`; the generated C contains the
+concrete `Payload[i32]` specialization. The focused type-checker test and the
+complete conformance suite pass. This also closes the preceding handoff's
+generic-default-member boundary; it does not complete a language phase.
+
+**Deliberate boundary:** generic-class payloads, enums/scalars, multiple
+interfaces, and the remaining owned dynamic-storage matrix remain separate
+slices. The adopted specification, frozen target, ADRs, and phase accounting
+are unchanged: **1 of 9 complete**, Phase 2 active, and Phase 3 has not passed
+its exit gate.
