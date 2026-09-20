@@ -1153,9 +1153,9 @@ impl Emitter<'_> {
         format!("{}_drop_payload", c_name(&self.types.struct_def(id).name.to_string()))
     }
 
-    /// The class payload of a compiler-known `Weak[C]` wrapper. Unlike Box,
-    /// Weak stays a one-field C struct so copies and drops can route through
-    /// the runtime's separate weak-count operations.
+    /// The counted-owner payload of a compiler-known `Weak[O]` wrapper. Unlike
+    /// Box, Weak stays a one-field C struct so copies and drops can route
+    /// through the runtime's separate weak-count operations.
     fn weak_inner_id(&self, id: StructId) -> Option<Ty> {
         let def = self.types.struct_def(id);
         match &def.origin {

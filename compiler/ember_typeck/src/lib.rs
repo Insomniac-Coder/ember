@@ -5775,15 +5775,22 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[WK-1]` — a weak handle is meaningful only for a nominal class
-    /// handle. Its private pointer has class-pointer layout, while its custom
-    /// drop glue releases the runtime weak count rather than a strong count.
+    /// `[HEAP-7]`, `[WK-11]` — a weak handle observes either kind of counted
+    /// owner: a nominal class handle or `Shared[T]`. Its private field keeps
+    /// the owner handle's pointer layout, while custom copy/drop glue uses the
+    /// runtime weak count rather than the strong count.
     fn weak_of(&mut self, inner: Ty, span: Span) -> Ty {
         if inner == self.common.error {
             return inner;
         }
-        if !matches!(self.types.kind(inner), TyKind::Class(_)) {
-            self.error(codes::E2020, span, "`Weak` requires a class handle type");
+        let counted_owner = matches!(self.types.kind(inner), TyKind::Class(_))
+            || self.shared_inner(inner).is_some();
+        if !counted_owner {
+            self.error(
+                codes::E2020,
+                span,
+                "`Weak` requires a class handle or `Shared[T]` owner type",
+            );
             return self.common.error;
         }
         let name = Symbol::intern(&format!("Weak_{}", type_stem(&self.types.display(inner))));
@@ -5794,8 +5801,8 @@ impl<'a> Checker<'a> {
             name,
             fields: vec![FieldDef {
                 name: Symbol::intern("value"),
-                // A class type is already a pointer-sized handle. Wrapping it
-                // in `Ptr[C]` would create a pointer-to-handle (`C**`) in C.
+                // Counted owners are already pointer-sized handles. Wrapping
+                // one in `Ptr[O]` would create a pointer-to-handle in C.
                 ty: inner,
                 span: Span::DUMMY,
                 has_default: false,
