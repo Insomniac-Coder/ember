@@ -7578,3 +7578,29 @@ This is deliberately not a claim that the full owner ruling is implemented:
 `Weak[Shared[T]]`, `T: Sync` atomic counters, and `[TST-26]` remain open.
 No specification question arose—the 0.9.8 target and ADR-037 already fix these
 semantics. Phase accounting remains **1 of 9 complete**.
+
+### 0.172 `Weak[Shared[T]]` counted-owner handles — 2026-09-20
+
+Commit `6181a01` generalizes the existing compiler-known `Weak` wrapper from
+class handles alone to both owner forms authorized by `[HEAP-7]` and
+`[WK-11]`–`[WK-14]`: `Weak[C]` and `Weak[Shared[T]]`. The latter retains the
+source `Shared[T]` header/control block; it does not allocate a second control
+block. Its constructor, `empty()`, `Copy` retain/release, typed `upgrade()`,
+and expiry/no-resurrection behavior all reuse the established weak runtime
+path.
+
+The all-profile `weak_shared_handle` probe verifies an empty weak handle, a
+copied live handle whose upgrade reads its `Shared` payload, and an expired
+handle returned from a helper. It pins the allocation and each relevant weak
+runtime symbol in emitted C. The `[WK-14]` conformance pair establishes that
+the distinct class and Shared weak forms coexist when explicitly typed and do
+not assign to one another. The updated non-owner boundary still rejects
+`Weak(1)`. Focused type-checker/codegen tests, the workspace check, and the
+complete 17-test milestone harness pass.
+
+No ODR is involved: the owner ruling and frozen 0.9.8 target prescribe this
+surface and lifetime model completely. `Shared.get_mut(mut self)`, its
+NLL-bounded dynamic-exclusivity instrumentation, `T: Sync` atomic-count
+selection, and the remaining `[TST-26]` matrix stay open. Publication policy:
+push only after five validated local commits unless the owner explicitly
+overrides that threshold. Phase accounting remains **1 of 9 complete**.
