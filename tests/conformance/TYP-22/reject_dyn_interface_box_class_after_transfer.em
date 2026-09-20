@@ -13,5 +13,5 @@ class Pixel implements Render:
 fn main():
     pixel = Pixel(42)
     boxed: Box[dyn Render] = Box(pixel)
-    println(pixel.value) #$ error[E3040]: `pixel` is used after it has been moved out of
+    println(pixel.value) #$ error[E3040]: `pixel` has been moved out of
     println(boxed.render())
