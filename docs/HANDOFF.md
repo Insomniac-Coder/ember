@@ -7210,3 +7210,27 @@ through `T: Clone` and preserves both values at `42`.
 The remaining Clone work is broader owned-storage coverage, not generic
 struct registration. Phase accounting remains **1 of 9 complete**, Phase 2
 active.
+
+### 0.153 `[LT-1b]`/`[LT-2a]` L3014 and class dynamic boxes — 2026-09-20
+
+`L3014` is now enabled only when the nearest package manifest sets
+`[lints].l3014` to `warn` or `deny`. A multiple-view-parameter return warns
+unless `@borrows` states the relationship explicitly, and a multi-field
+`@view` struct has its own warning case. Each rule directory includes a
+runnable acceptance program, which matters because the conformance harness
+runs accepted programs after checking their diagnostics. `docs/errors/L3014.md`
+executes both the opt-in warning and its explicit-`@borrows` repair.
+
+The next owned-dynamic increment permits a direct, non-generic class payload
+in `Box[dyn I]`. The box transfers the class handle's strong reference rather
+than creating a second allocation; its shared interface adapter is unchanged,
+and box destruction releases the class exactly once. The all-profile positive
+probe prints the dispatched value and its class destructor value, while the
+negative companion pins `E3040` after ownership transfer. Generated-C checks
+prove a dynamic class-box drop adapter exists and no `ember_box_new_copy`
+carrier allocation is emitted.
+
+CI run `35484282604` is green across Linux clang/GCC, Windows MSVC/clang-cl,
+and the documentation gate. Phase accounting remains **1 of 9 complete**:
+Phase 2 still needs DRP, CELL/threading, and diagnostic exits; the class-box
+slice advances but does not close Phase 3.

@@ -14,10 +14,10 @@ Complete the remaining Phase 2 ownership exits and Phase 3 object/runtime exits 
 
 ### Phase 2 prerequisites
 
-- [ ] Task 1: Implement direct `Clone.clone` for non-`Copy` structs and `[OWN-8]` conformance.
-- [ ] Task 2: Implement field-wise `@derive(Clone)`, including rejection when a field is not `Clone`.
-- [ ] Checkpoint: Run focused ownership/type-checking tests and the full workspace suite.
-- [ ] Task 3: Add manifest `[lints]` configuration and opt-in `L3014` coverage for `[LT-1b]` and `[LT-2a]`.
+- [x] Task 1: Implement direct `Clone.clone` for non-`Copy` structs and `[OWN-8]` conformance.
+- [x] Task 2: Implement field-wise `@derive(Clone)`, including rejection when a field is not `Clone`.
+- [x] Checkpoint: Run focused ownership/type-checking tests and the full workspace suite.
+- [x] Task 3: Add manifest `[lints]` configuration and opt-in `L3014` coverage for `[LT-1b]` and `[LT-2a]`.
 - [ ] Task 4: Implement the remaining phase-required effects, thread traits, and semantic diagnostic producers in dependency order.
 - [ ] Checkpoint: All Phase 2 rule-family, UI, M2, and unclassified-borrow-error gates pass.
 

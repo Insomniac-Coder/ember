@@ -259,15 +259,16 @@ borrow errors across the whole corpus.*
 M2 exists (`tests/milestones/`) and no unclassified log is produced, so what is
 left is coverage:
 
-    OWN   7/8    missing OWN-8 (Clone, @derive(Clone)) — an unbuilt feature,
-                 not a missing test; OWN-6 is complete at MEM-API-1
+    OWN   8/8    complete. `Clone`, `@derive(Clone)`, nested/user-written
+                 field delegation, standard-interface conformance, and generic
+                 instantiation all have all-profile conformance evidence.
     BRW   9/9    complete. BRW-8 is pinned by all-profile generated-C evidence
                  for small `Copy` parameters, and BRW-9 by dangling-local
                  reference rejection.
-    LT    8/10   missing LT-1b and LT-2a: both require the opt-in L3014 lint,
-                 but the compiler has no manifest `[lints]` configuration yet.
-                 LT-5 has direct travel/liveness probes and LT-7 has the
-                 late-bound callback-region conformance matrix.
+    LT   10/10   complete. The opt-in `L3014` lint has runnable warning and
+                 acceptance coverage for LT-1b and LT-2a; LT-5 has direct
+                 travel/liveness probes and LT-7 has the late-bound
+                 callback-region conformance matrix.
     DRP   4/6    missing DRP-4 (needs effects, Phase 4),
                  DRP-6 (Box/handle/Shared — Phase 3). DRP-5 has cases since D-030
                  was fixed (drop-body moves rejected)
