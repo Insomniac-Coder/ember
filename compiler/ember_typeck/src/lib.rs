@@ -326,6 +326,10 @@ struct GenericClass {
 struct GenericMethod {
     name: Symbol,
     dispatch: ast::Dispatch,
+    /// Abstract class methods have a callable declaration but no body to
+    /// instantiate. Their declarations still participate in lookup and the
+    /// class-vtable layout.
+    has_body: bool,
     /// `None` for an associated function on the generic type.
     receiver: Option<Mode>,
     /// The parameters after `self`. `self` itself is not here: its type is
@@ -351,6 +355,15 @@ struct PendingMethod {
     /// what binds `T` while the body is checked.
     origin: (Symbol, Vec<Ty>),
     source: (usize, usize, usize),
+}
+
+/// A materialized abstract class method has a checked signature and virtual
+/// slot, but no source body to lower.  It is retained as HIR/MIR declaration
+/// metadata so derived vtables use the base slot's ABI.
+struct PendingAbstractMethod {
+    def: DefId,
+    owner: Ty,
+    span: Span,
 }
 
 /// A non-generic interface default synthesized for one generic-struct
@@ -666,6 +679,7 @@ struct Checker<'a> {
     pending: Vec<(Instance, DefId)>,
     /// The same, for the methods of instantiated generic structs.
     pending_methods: Vec<PendingMethod>,
+    pending_abstract_methods: Vec<PendingAbstractMethod>,
     /// Default interface methods materialized for instantiated generic structs.
     pending_default_methods: Vec<PendingDefaultMethod>,
     /// Generic recipe types may be instantiated while interface declarations
@@ -789,6 +803,7 @@ impl<'a> Checker<'a> {
             scoped_arenas: HashSet::new(),
             pending: Vec::new(),
             pending_methods: Vec::new(),
+            pending_abstract_methods: Vec::new(),
             pending_default_methods: Vec::new(),
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
@@ -2118,6 +2133,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    has_body: true,
                     receiver,
                     params: signature.params,
                     ret: signature.ret,
@@ -2180,9 +2196,6 @@ impl<'a> Checker<'a> {
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
-                if fn_decl.body.is_none() {
-                    continue;
-                }
                 let Some((receiver, signature)) = self.method_signature(
                     fn_decl,
                     None,
@@ -2195,6 +2208,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    has_body: fn_decl.body.is_some(),
                     receiver,
                     params: signature.params,
                     ret: signature.ret,
@@ -5142,6 +5156,14 @@ impl<'a> Checker<'a> {
             if method.name.is("drop") {
                 self.types.class_def_mut(id).has_drop = true;
             }
+            if !method.has_body {
+                self.pending_abstract_methods.push(PendingAbstractMethod {
+                    def,
+                    owner: ty,
+                    span: method.span,
+                });
+                continue;
+            }
             if generic {
                 self.generic_method_sources.insert(
                     def,
@@ -6073,6 +6095,7 @@ impl<'a> Checker<'a> {
                 closure_captures_by_move: false,
                 class_owner: None,
                 class_virtual_slot: None,
+                is_abstract: false,
             });
         }
 
@@ -6112,6 +6135,7 @@ impl<'a> Checker<'a> {
             std::collections::HashSet::new();
         while !self.pending.is_empty()
             || !self.pending_methods.is_empty()
+            || !self.pending_abstract_methods.is_empty()
             || !self.pending_default_methods.is_empty()
             || !self.pending_generic_method_validations.is_empty()
             || !self.pending_generic_methods.is_empty()
@@ -6210,6 +6234,52 @@ impl<'a> Checker<'a> {
                 if let Some(function) = function {
                     out.push(function);
                 }
+            }
+
+            while let Some(job) = self.pending_abstract_methods.pop() {
+                let signature = self.signatures[job.def.0 as usize].clone();
+                let locals = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(_, (name, ty, _, span))| LocalDecl {
+                        name: Some(*name),
+                        ty: *ty,
+                        span: *span,
+                        for_iterator: false,
+                    })
+                    .collect();
+                let params = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, _, mode, _))| hir::Param {
+                        local: LocalId(index as u32),
+                        mode: *mode,
+                    })
+                    .collect();
+                let TyKind::Class(class_owner) = *self.types.kind(job.owner) else { continue };
+                out.push(Function {
+                    def: job.def,
+                    name: Symbol::intern("abstract"),
+                    class_init: false,
+                    class_init_default_fields: Vec::new(),
+                    symbol: method_symbol(&self.types.display(job.owner), Symbol::intern("abstract")),
+                    is_unsafe: false,
+                    abi: None,
+                    params,
+                    locals,
+                    ret: signature.ret,
+                    body: hir::Block { stmts: Vec::new(), span: job.span },
+                    span: job.span,
+                    overflow: OverflowPolicy::Panic,
+                    borrows: signature.borrows,
+                    closure_environment: None,
+                    closure_captures_by_move: false,
+                    class_owner: Some(class_owner),
+                    class_virtual_slot: self.class_virtual_slots.get(&job.def).copied(),
+                    is_abstract: true,
+                });
             }
 
             while let Some(job) = self.pending_default_methods.pop() {
@@ -6473,6 +6543,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            is_abstract: false,
         }
     }
 
@@ -6628,6 +6699,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     closure_captures_by_move: false,
                     class_owner: None,
                     class_virtual_slot: None,
+                    is_abstract: false,
                 })
             })
             .collect()
@@ -6890,6 +6962,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 _ => None,
             },
             class_virtual_slot: self.class_virtual_slots.get(&def).copied(),
+            is_abstract: false,
         })
     }
 
@@ -14125,6 +14198,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             closure_captures_by_move,
             class_owner: None,
             class_virtual_slot: None,
+            is_abstract: false,
         });
         def
     }

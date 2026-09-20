@@ -183,6 +183,7 @@ struct VirtualMethod {
     symbol: String,
     params: Vec<Ty>,
     ret: Ty,
+    is_abstract: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -266,6 +267,9 @@ impl Emitter<'_> {
         self.emit_class_type_infos();
 
         for body in bodies {
+            if body.is_abstract {
+                continue;
+            }
             self.emit_body(body);
         }
 
@@ -455,6 +459,7 @@ impl Emitter<'_> {
                         symbol: body.symbol.clone(),
                         params: body.args().map(|(_, decl)| decl.ty).collect(),
                         ret: body.return_ty(),
+                        is_abstract: body.is_abstract,
                     },
                 ))
             })
@@ -877,7 +882,7 @@ impl Emitter<'_> {
         let tables: Vec<(ClassId, Vec<Option<VirtualMethod>>)> = self
             .virtual_tables
             .iter()
-            .filter(|(_, slots)| slots.iter().any(Option::is_some))
+            .filter(|(_, slots)| !slots.is_empty())
             .map(|(id, slots)| (*id, slots.clone()))
             .collect();
         if tables.is_empty() {
@@ -904,6 +909,9 @@ impl Emitter<'_> {
             let table_name = ember_branding::vtable(&class_name);
             for (slot, implementation) in slots.iter().enumerate() {
                 let Some(implementation) = implementation else { continue };
+                if implementation.is_abstract {
+                    continue;
+                }
                 let Some(signature) = self.virtual_signatures.get(&(*id, slot)).cloned() else {
                     continue;
                 };
@@ -937,10 +945,16 @@ impl Emitter<'_> {
         self.line("");
 
         for (id, slots) in &tables {
+            if !slots.iter().flatten().any(|method| !method.is_abstract) {
+                continue;
+            }
             let table_name = ember_branding::vtable(&self.types.class_def(*id).name.to_string());
             self.line(&format!("static const struct {table_name} {table_name} = {{"));
             for (slot, implementation) in slots.iter().enumerate() {
                 let Some(implementation) = implementation else { continue };
+                if implementation.is_abstract {
+                    continue;
+                }
                 let Some(signature) = self.virtual_signatures.get(&(*id, slot)) else { continue };
                 let value = if implementation.owner == signature.owner {
                     implementation.symbol.clone()
@@ -1021,7 +1035,7 @@ impl Emitter<'_> {
             if self
                 .virtual_tables
                 .get(&id)
-                .is_some_and(|slots| slots.iter().any(Option::is_some))
+                .is_some_and(|slots| slots.iter().flatten().any(|method| !method.is_abstract))
             {
                 let table = ember_branding::vtable(&def.name.to_string());
                 self.line(&format!("    (const {}*)&{},", ember_branding::runtime("vtable"), table));
@@ -1519,6 +1533,9 @@ impl Emitter<'_> {
         }
         self.line("/* prototypes */");
         for body in bodies {
+            if body.is_abstract {
+                continue;
+            }
             let signature = self.signature(body);
             // Not `static`: modules share one translation unit, and a private
             // helper another module never calls would be an unused `static`

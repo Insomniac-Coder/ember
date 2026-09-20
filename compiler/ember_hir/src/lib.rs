@@ -130,6 +130,10 @@ pub struct Function {
     /// `[DSP-2]` — the vtable slot assigned to a virtual or override method.
     /// `None` means ordinary static dispatch.
     pub class_virtual_slot: Option<usize>,
+    /// A bodyless `virtual` declaration on an abstract class. It carries the
+    /// checked callable and vtable signature but is never emitted as a C
+    /// function; a concrete override supplies its slot implementation.
+    pub is_abstract: bool,
 }
 
 impl Function {

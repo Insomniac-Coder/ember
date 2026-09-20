@@ -103,6 +103,9 @@ pub struct Body {
     /// select vtables.  It is not runtime metadata in the Ember value ABI.
     pub class_owner: Option<ember_types::ClassId>,
     pub class_virtual_slot: Option<usize>,
+    /// See `ember_hir::Function::is_abstract`. This body is declaration
+    /// metadata for virtual-table layout, not executable code.
+    pub is_abstract: bool,
     /// `[EXC-3a]` — dynamic accesses removed by a verified static proof.
     /// These records are compiler metadata only; the C backend serializes
     /// them into the `[EFF-10]` safety side table.

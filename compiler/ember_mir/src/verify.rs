@@ -371,6 +371,7 @@ mod tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            is_abstract: false,
             elided_accesses: Vec::new(),
         }
     }
@@ -1277,6 +1278,7 @@ mod view_invariant_tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            is_abstract: false,
             elided_accesses: Vec::new(),
         };
         (body, types)
@@ -1427,6 +1429,7 @@ mod interface_upcast_invariant_tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            is_abstract: false,
             elided_accesses: Vec::new(),
         };
         (body, types)

@@ -341,6 +341,7 @@ impl<'a> Builder<'a> {
             closure_captures_by_move: self.function.closure_captures_by_move,
             class_owner: self.function.class_owner,
             class_virtual_slot: self.function.class_virtual_slot,
+            is_abstract: self.function.is_abstract,
             elided_accesses: Vec::new(),
         }
     }
