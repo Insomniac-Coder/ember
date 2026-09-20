@@ -310,6 +310,7 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
+    implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
     openness: ClassOpenness,
     declaring_module: usize,
@@ -2151,11 +2152,11 @@ impl<'a> Checker<'a> {
             if decl.generics.is_empty() {
                 continue;
             }
-            if decl.base.is_some() || !decl.implements.is_empty() {
+            if decl.base.is_some() {
                 self.error(
                     codes::E1010,
                     item.span,
-                    "generic classes currently do not support bases or interface implementations",
+                    "generic classes currently do not support base classes",
                 );
                 continue;
             }
@@ -2223,6 +2224,7 @@ impl<'a> Checker<'a> {
                     params,
                     fields,
                     defaults,
+                    implements: decl.implements.clone(),
                     methods,
                     openness: class_openness(decl.openness),
                     declaring_module: self.current_module,
@@ -5121,6 +5123,30 @@ impl<'a> Checker<'a> {
                     source: method.source,
                 });
             }
+        }
+        let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
+        let interfaces_are_ready = decl.implements.iter().all(|entry| {
+            interface_name(entry)
+                .is_none_or(|written| self.interfaces.contains_key(&self.resolve_name(written)))
+        });
+        self.current_module = previous_module;
+        if interfaces_are_ready {
+            let implementations = self.register_instantiated_implements(
+                ty,
+                &decl.implements,
+                span,
+                decl.declaring_module,
+            );
+            for (implemented_ty, interface, interface_span) in implementations {
+                self.check_implementation(implemented_ty, interface, interface_span);
+            }
+        } else {
+            self.pending_generic_implements.push(PendingGenericImplements {
+                ty,
+                implements: decl.implements.clone(),
+                span,
+                module: decl.declaring_module,
+            });
         }
         ty
     }
