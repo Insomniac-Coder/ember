@@ -1,10 +1,11 @@
 //! Conservative static exclusivity elision (`[EXC-3]`).
 //!
 //! This pass intentionally proves only the smallest useful `unique_handle`
-//! case: an access rooted at an unprojected local class handle that is never
-//! copied, passed, returned, or otherwise escaped.  Anything involving a
-//! receiver reference, an indexed/projection root, or an unknown handle use
-//! remains dynamic and therefore fail-closed.
+//! case: an access rooted at an unprojected local counted owner that is never
+//! copied, passed, returned, or otherwise escaped. `Shared[T].get_mut()` uses
+//! one compiler-created `ref mut Shared[T]` temporary; that temporary can be
+//! traced back to its one local owner. Anything involving an indexed/projection
+//! root, or an unknown handle use remains dynamic and therefore fail-closed.
 
 use ember_mir::{
     AccessElisionReason, Body, ElidedAccess, Operand, Place, Rvalue, Stmt, StmtKind, Terminator,
@@ -30,17 +31,16 @@ fn elide_static_accesses(body: &mut Body, types: &TypeTable) -> usize {
             let StmtKind::BeginAccess { place, mutable } = &statement.kind else {
                 continue;
             };
-            if !*mutable || !place.projection.is_empty() {
+            if !*mutable {
                 continue;
             }
-            let local = place.local;
-            if !matches!(types.kind(body.local(local).ty), TyKind::Class(_)) {
+            let Some((local, allowed_reborrow)) = unique_owner_local(body, types, place) else {
                 continue;
-            }
+            };
             let Some((end_block, end_index)) = matching_end(body, block_index, begin_index, place, *mutable) else {
                 continue;
             };
-            if !unique_handle(body, block_index, local) {
+            if !unique_handle(body, block_index, local, allowed_reborrow) {
                 continue;
             }
             remove.push((block_index, begin_index, end_block, end_index));
@@ -92,24 +92,101 @@ fn matching_end(
             _ => {}
         }
     }
-    if begin_index + 1 == block.stmts.len() {
-        if let Terminator::Call { next, .. } = &block.terminator {
-            let successor = body.blocks.get(next.0 as usize)?;
-            if let Some(Stmt {
-                kind: StmtKind::EndAccess { place: end_place, mutable: end_mutable },
-                ..
-            }) = successor.stmts.first()
-            {
-                if end_place == place && *end_mutable == mutable {
-                    return Some((next.0 as usize, 0));
-                }
-            }
+    let successor = match &block.terminator {
+        // Preserve the existing direct-call case exactly. A call may close an
+        // access only when it immediately follows the begin.
+        Terminator::Call { next, .. } if begin_index + 1 == block.stmts.len() => *next,
+        // An assertion has a single success successor and does not invoke
+        // user code. Its failure path aborts, so a matching end at the start
+        // of the success block still forms a closed interval.
+        Terminator::Assert { next, .. } => *next,
+        _ => return None,
+    };
+    let successor_block = body.blocks.get(successor.0 as usize)?;
+    if let Some(Stmt {
+        kind: StmtKind::EndAccess {
+            place: end_place,
+            mutable: end_mutable,
+        },
+        ..
+    }) = successor_block.stmts.first()
+    {
+        if end_place == place && *end_mutable == mutable {
+            return Some((successor.0 as usize, 0));
         }
     }
     None
 }
 
-fn unique_handle(body: &Body, access_block: usize, root: ember_mir::LocalId) -> bool {
+/// The source owner a closed access can use for `[EXC-3]` proof. Classes
+/// already begin directly on their local handle. `Shared.get_mut()` must first
+/// form a normal `ref mut Shared[T]`; accepting only the exact compiler-created
+/// temporary preserves that same proof without treating arbitrary references as
+/// unique handles.
+fn unique_owner_local(
+    body: &Body,
+    types: &TypeTable,
+    place: &Place,
+) -> Option<(ember_mir::LocalId, Option<ember_mir::LocalId>)> {
+    if place.projection.is_empty()
+        && matches!(types.kind(body.local(place.local).ty), TyKind::Class(_))
+    {
+        return Some((place.local, None));
+    }
+    if !matches!(place.projection.as_slice(), [ember_mir::Projection::Deref]) {
+        return None;
+    }
+    let temporary = place.local;
+    let mut source = None;
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            let StmtKind::Assign {
+                place: destination,
+                rvalue,
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if destination != &Place::local(temporary) {
+                continue;
+            }
+            let Rvalue::Ref {
+                place: borrowed,
+                mutable: true,
+            } = rvalue
+            else {
+                return None;
+            };
+            if !borrowed.projection.is_empty() {
+                return None;
+            }
+            if !is_shared_owner(body, types, borrowed.local) {
+                return None;
+            }
+            if source.replace(borrowed.local).is_some() {
+                return None;
+            }
+        }
+    }
+    source.map(|local| (local, Some(temporary)))
+}
+
+fn is_shared_owner(body: &Body, types: &TypeTable, local: ember_mir::LocalId) -> bool {
+    let TyKind::Struct(id) = types.kind(body.local(local).ty) else {
+        return false;
+    };
+    types.struct_def(*id)
+        .origin
+        .as_ref()
+        .is_some_and(|(name, arguments)| name.is("Shared") && arguments.len() == 1)
+}
+
+fn unique_handle(
+    body: &Body,
+    access_block: usize,
+    root: ember_mir::LocalId,
+    allowed_reborrow: Option<ember_mir::LocalId>,
+) -> bool {
     for (block_index, block) in body.blocks.iter().enumerate() {
         for statement in &block.stmts {
             if matches!(statement.kind, StmtKind::BeginAccess { .. } | StmtKind::EndAccess { .. } | StmtKind::Drop { .. }) {
@@ -119,6 +196,18 @@ fn unique_handle(body: &Body, access_block: usize, root: ember_mir::LocalId) -> 
                 StmtKind::Assign { place, rvalue } => {
                     if place == &Place::local(root) {
                         return false;
+                    }
+                    if matches!(
+                        rvalue,
+                        Rvalue::Ref {
+                            place: borrowed,
+                            mutable: true,
+                        }
+                            if borrowed == &Place::local(root)
+                                && Some(place.local) == allowed_reborrow
+                                && place.projection.is_empty()
+                    ) {
+                        continue;
                     }
                     if rvalue_uses_root(rvalue, root) {
                         return false;
