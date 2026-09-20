@@ -7518,3 +7518,20 @@ variant-dispatch arm drops its bindings before the branch joins. `[GRM-13]`,
 `[OWN-2]`, `[OBJ-3]`, and `[WK-1]`–`[WK-3]` determine these rules directly; the
 work closes D-163 and D-164 without an ODR, ADR, specification edit, owner
 decision, or phase-status change. Phase accounting remains **1 of 9 complete**.
+
+### 0.169 `Shared[T]` / `Weak[T]` source boundary — 2026-09-20
+
+The next Phase 3 candidate, `Shared[T]`, cannot begin as an implementation
+slice. The frozen target says it is a counted heap value with `s.get()`,
+Copy-retain, class-header compatibility, dynamic exclusivity, and a `Weak[T]`
+companion, but it never defines construction, `get()` receiver/result modes,
+or the `Weak[T]` constructor, empty, upgrade, drop, and relationship to the
+separate class-only `Weak[C]` API. Those choices change public accepted
+programs and ownership/borrow behavior.
+
+ODR-017 is open in `docs/OWNER-QUEUE.md` with the exact missing decisions. No
+compiler code or speculative test was added, and no defect or phase status was
+claimed. ODR-016 is already closed by 0.9.7_Hardened_3's diagnostic-identity
+work and does not answer this library API gap. Implementation pauses at this
+owner boundary until a ruling defines the surface. Phase accounting remains
+**1 of 9 complete**.

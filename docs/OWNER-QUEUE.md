@@ -35,6 +35,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-013 | **CLOSED** — static generic `H: Hasher` parameter | Language / callable-interface ABI | — | **No** — ruled 2026-09-13 |
 | ODR-014 | **CLOSED** — exact Span iterator/chunk/raw-pointer contract | Standard-library API / views / unsafe boundary | — | **No** — ruled 2026-09-13 |
 | ODR-015 | **CLOSED** — `@latebound` callable-type boundary | Language / lifetime callback API | — | **No** — ruled 2026-09-14 |
+| ODR-016 | **CLOSED** — diagnostic identity for existing multi-region and callable-mode rejections | Diagnostics / conformance | — | **No** — incorporated in 0.9.7_Hardened_3 |
+| ODR-017 | **OPEN** — `Shared[T]` and its `Weak[T]` companion surface | Standard-library API / ownership / borrowing | **P1** | **Yes** |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -42,9 +44,9 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-015 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **There is no open owner semantic/API
-decision.** H8 records the complete helper-mode and callable-abstraction
+ODR-001, ODR-002, and ODR-004 through ODR-016 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **ODR-017 is the one open owner
+semantic/API decision.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -65,6 +67,69 @@ Other gaps are likewise implementation/conformance work.
 Priorities: **P1** blocks a language or implementation decision · **P2** changes
 no language semantics but affects conformance or tooling confidence · **P3**
 editorial cleanup that can safely wait.
+
+---
+
+## ODR-017 — `Shared[T]` and `Weak[T]` library ownership surface — **OPEN**
+
+    ID:        ODR-017
+    Status:    OPEN
+    Category:  STANDARD-LIBRARY API / OWNERSHIP / BORROWING
+    Priority:  P1
+    Location:  Ember_v0.9.7_Hardened_3.md IX.1, [GRM-3], [TYP-15], [DRP-6],
+               [RC-2e], and Part VIII [OBJ-3], [WK-1]–[WK-3]
+
+    Question:  What is the complete public construction, borrowing, mutation,
+               and weak-reference API for `Shared[T]`?
+
+    Blocks implementation:            YES — `Shared[T]` / `Weak[T]` Phase 3 slice
+    Blocks conformance:               YES — no source program can be written
+                                      without selecting undefined API spellings
+    Blocks specification freeze:      NO — question recorded against frozen target
+    Blocks normative specification adoption: YES — while the public API is undefined
+    Requires owner semantic decision: YES
+
+**Existing wording.** IX.1 calls `Shared[T]` a "reference-counted heap `T`"
+with the same header as classes, says it is Copy by retain, names `s.get()`,
+and says mutation follows Part VIII §3. It also says it has `Weak[T]`.
+`[GRM-3]` makes both names ordinary library types, `[DRP-6]` requires a
+`Shared[T]` drop to release, and `[TYP-15]` constrains what may be stored in its
+contents. Part VIII completely defines a different, class-only `Weak[C]`
+surface: `Weak(h)`, `Weak[C].empty()`, and `upgrade() -> Option[C]`.
+
+**Gap.** The target never supplies a construction spelling for `Shared[T]`, the
+return type and receiver mode of `get()`, or any operation, construction, empty
+value, upgrade result, or relationship to `Weak[C]` for `Weak[T]`. Therefore an
+implementation would have to choose whether construction is `Shared(value)` or
+an associated function; whether `get()` returns a shared or mutable borrow and
+how it enters dynamic exclusivity; and whether `Weak[T]` is a companion for
+`Shared[T]`, an alias for a `Weak[Shared[T]]` form, or something else. Each
+choice changes accepted programs and memory/borrowing behavior.
+
+**Why this cannot be resolved safely by an agent.** Reusing the class-only
+`Weak[C]` behavior would reject or reinterpret the explicitly named `Weak[T]`
+surface. Inventing constructors, borrow modes, or a wrapper representation
+would create public language-library API and decide the exclusivity boundary,
+not merely repair a compiler defect. No existing rule selects among those
+choices.
+
+**Requested owner resolution.** Supply the exact public declarations and
+semantics for `Shared[T]` construction, `get()` receiver/result modes and
+mutation access, copying and destruction, the `Weak[T]` constructor/empty/
+upgrade/drop behavior, payload eligibility and drop ordering, and the explicit
+non-interoperation rule with class `Weak[C]` and C++ bridge types. The ruling
+should identify the corresponding conformance cases and use the existing object
+header, ARC, and dynamic-exclusivity mechanisms where appropriate.
+
+---
+
+## ODR-016 — diagnostic identity for existing rejections — **CLOSED**
+
+`0.9.7_Hardened_3` H3.3 assigns existing multi-region provenance rejections to
+`E3065`/B14 and callable parameter-mode mismatches to `E2228`/B15. This changes
+diagnostic and conformance identity only: the underlying acceptance rules were
+already defined. The target records ODR-016 as closed; it does not define any
+`Shared[T]` or `Weak[T]` semantics.
 
 ---
 
