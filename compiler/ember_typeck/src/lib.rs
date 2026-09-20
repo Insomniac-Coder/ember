@@ -310,6 +310,7 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
+    methods: Vec<GenericMethod>,
     openness: ClassOpenness,
     declaring_module: usize,
 }
@@ -2145,22 +2146,16 @@ impl<'a> Checker<'a> {
     /// signatures are read. Concrete instances are still ordinary classes;
     /// the recipe only supplies parameter substitution for their fields.
     fn collect_generic_classes(&mut self, module: &ast::Module) {
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             let ast::ItemKind::Class(decl) = &item.kind else { continue };
             if decl.generics.is_empty() {
                 continue;
             }
-            if decl.base.is_some()
-                || !decl.implements.is_empty()
-                || decl
-                    .members
-                    .iter()
-                    .any(|member| matches!(&member.kind, ast::MemberKind::Fn(_)))
-            {
+            if decl.base.is_some() || !decl.implements.is_empty() {
                 self.error(
                     codes::E1010,
                     item.span,
-                    "generic classes currently support fields and memberwise construction only",
+                    "generic classes currently do not support bases or interface implementations",
                 );
                 continue;
             }
@@ -2182,6 +2177,37 @@ impl<'a> Checker<'a> {
                     _ => None,
                 })
                 .collect();
+            let mut methods = Vec::new();
+            for (member_index, member) in decl.members.iter().enumerate() {
+                let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                if fn_decl.body.is_none() {
+                    continue;
+                }
+                let Some((receiver, signature)) = self.method_signature(
+                    fn_decl,
+                    None,
+                    &member.attrs,
+                    member.span,
+                    params.len(),
+                ) else {
+                    continue;
+                };
+                methods.push(GenericMethod {
+                    name: fn_decl.name.name,
+                    receiver,
+                    params: signature.params,
+                    ret: signature.ret,
+                    generics: signature.generics,
+                    borrows: signature.borrows.map(|positions| {
+                        positions
+                            .into_iter()
+                            .map(|position| position + usize::from(receiver.is_some()))
+                            .collect()
+                    }),
+                    source: (self.current_module, item_index, member_index),
+                    span: member.span,
+                });
+            }
             let defaults = decl
                 .members
                 .iter()
@@ -2197,6 +2223,7 @@ impl<'a> Checker<'a> {
                     params,
                     fields,
                     defaults,
+                    methods,
                     openness: class_openness(decl.openness),
                     declaring_module: self.current_module,
                 },
@@ -5025,6 +5052,76 @@ impl<'a> Checker<'a> {
             .collect();
         self.types.class_def_mut(id).fields = fields;
         self.class_default_exprs.insert(id, decl.defaults.clone());
+        for method in &decl.methods {
+            let method_params: Vec<Ty> = method
+                .generics
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    self.types.intern(TyKind::Param {
+                        index: index as u32,
+                        name: param.name,
+                    })
+                })
+                .collect();
+            let mut combined = args.to_vec();
+            combined.extend(method_params);
+            let mut params = Vec::new();
+            if let Some(receiver) = method.receiver {
+                params.push((Symbol::intern("self"), ty, receiver, method.span));
+            }
+            for &(param_name, param_ty, mode, param_span) in &method.params {
+                params.push((
+                    param_name,
+                    self.substitute_ty(param_ty, &combined),
+                    mode,
+                    param_span,
+                ));
+            }
+            let signature = Signature {
+                params,
+                ret: self.substitute_ty(method.ret, &combined),
+                generics: method
+                    .generics
+                    .iter()
+                    .map(|param| self.substitute_generic_param(param, &combined))
+                    .collect(),
+                borrows: method.borrows.clone(),
+            };
+            let generic = !signature.generics.is_empty();
+            let def = if let Some(receiver) = method.receiver {
+                self.register_method(ty, method.name, signature, receiver, None, method.span)
+            } else {
+                self.register_associated(ty, method.name, signature, None, method.span)
+            };
+            let Some(def) = def else { continue };
+            if method.name.is("drop") {
+                self.types.class_def_mut(id).has_drop = true;
+            }
+            if generic {
+                self.generic_method_sources.insert(
+                    def,
+                    MethodSource {
+                        owner: ty,
+                        source: method.source,
+                        owner_bindings: decl
+                            .params
+                            .iter()
+                            .copied()
+                            .zip(args.iter().copied())
+                            .collect(),
+                    },
+                );
+                self.pending_generic_method_validations.push(def);
+            } else {
+                self.pending_methods.push(PendingMethod {
+                    def,
+                    owner: ty,
+                    origin: (name, args.to_vec()),
+                    source: method.source,
+                });
+            }
+        }
         ty
     }
 
@@ -5986,21 +6083,31 @@ impl<'a> Checker<'a> {
                 out.push(function);
             }
 
-            // `[TYP-16]` — the methods of instantiated generic structs, checked
-            // with the struct's parameters bound to the arguments it was built
-            // with and `self` bound to the instantiation.
+            // `[TYP-16]` — methods of instantiated generic nominals are
+            // checked with their owner's parameters bound to the concrete
+            // arguments and `self` bound to the instantiation.
             while let Some(job) = self.pending_methods.pop() {
                 let (module_index, item_index, member_index) = job.source;
                 let item = &modules[module_index].module.items[item_index];
-                let ast::ItemKind::Struct(decl) = &item.kind else { continue };
-                let Some(member) = decl.members.get(member_index) else { continue };
+                let Some(member) = item_members(item).and_then(|members| members.get(member_index))
+                else {
+                    continue;
+                };
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                 let Some(block) = &fn_decl.body else { continue };
 
                 self.current_module = module_index;
                 let (generic_name, args) = job.origin;
-                let Some(generic) = self.generic_structs.get(&generic_name) else { continue };
-                let params = generic.params.clone();
+                let params = self
+                    .generic_structs
+                    .get(&generic_name)
+                    .map(|generic| generic.params.clone())
+                    .or_else(|| {
+                        self.generic_classes
+                            .get(&generic_name)
+                            .map(|generic| generic.params.clone())
+                    });
+                let Some(params) = params else { continue };
                 self.type_params.clear();
                 for (param, &ty) in params.iter().zip(args.iter()) {
                     self.type_params.insert(*param, ty);
