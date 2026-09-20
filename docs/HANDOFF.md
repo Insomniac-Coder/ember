@@ -7633,3 +7633,26 @@ these semantics, so this is neither an ODR nor a new defect. Atomic
 `T: Sync` counter selection, the remaining `[TST-26]` combinations,
 cycle diagnostics, and the Phase 3 exit matrix remain open. Phase accounting
 remains **1 of 9 complete**; Phase 2 and Phase 3 remain active.
+
+### 0.174 `[TST-26]` final-release and weak-cycle coverage — 2026-09-20
+
+Commit `d57e4a8` promotes two already-working owner paths into explicit
+all-profile conformance. A copied `Shared[Token]` with copied weak observers
+prints its payload value, then exactly one destructor output when the last
+strong owner ends, and finally demonstrates that the retained weak handle
+upgrades to `None`. A separate `Weak[Class]` upgrade case guards the
+pre-existing class-owner behavior after `Weak` was generalized to
+`Weak[O]`.
+
+Commit `e385eb0` adds the cycle-breaking shape that is buildable before the
+threading and foreign phases: a `Shared[Node]` stores `Weak[Shared[Node]]`
+to its own allocation. The payload remains observable, but the self weak edge
+does not preserve strong ownership; normal final release runs `Node.drop`
+once. The generated-C assertions pin weak retain/release and final strong
+release. The complete debug/release/shipping conformance suite passes in 151
+seconds.
+
+The atomic `T: Sync` upgrade row remains Phase 6 work and foreign-owner
+rejection remains Phase 5/7 work; their absence is recorded rather than
+treated as a specification gap. No ODR or defect is involved. Phase accounting
+remains **1 of 9 complete**; Phase 2 and Phase 3 remain active.
