@@ -29,6 +29,8 @@ usage:
     ember explain <CODE>              describe a diagnostic code
     ember inspect --safety [options] <path>
                                       report emitted/elided safety checks
+    ember inspect --cycle [--json] <file.em>
+                                      report the static ownership graph
 
 options:
     --profile debug|release|shipping   default: debug
@@ -304,6 +306,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 
 fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut safety = false;
+    let mut cycle = false;
     let mut elided_only = false;
     let mut json = false;
     let mut function = None;
@@ -313,6 +316,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     while index < args.len() {
         match args[index].as_str() {
             "--safety" => safety = true,
+            "--cycle" => cycle = true,
             "--elided-only" => elided_only = true,
             "--json" => json = true,
             "--function" => {
@@ -336,11 +340,147 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if !safety {
-        return Err("`ember inspect` currently requires `--safety`".to_string());
+    if safety && cycle {
+        return Err("`ember inspect` accepts only one report kind at a time".to_string());
+    }
+    if !safety && !cycle {
+        return Err("`ember inspect` requires `--safety` or `--cycle`".to_string());
+    }
+    if cycle {
+        if elided_only || function.is_some() {
+            return Err("`--elided-only` and `--function` apply only to `--safety`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --cycle` needs a source file")?;
+        return inspect_cycle(&path, json);
     }
     let path = path.ok_or("`ember inspect --safety` needs a side-table path")?;
     inspect_safety(&path, elided_only, function.as_deref(), json)
+}
+
+/// `[CLI-17]` — inspect the exact package-local graph that `[WK-5]` uses.
+/// This intentionally ends at type checking: cycle inspection is a
+/// diagnostic-only declaration analysis, so lowering and code generation
+/// would not add evidence and could obscure the source ownership types.
+fn inspect_cycle(input: &Path, json: bool) -> Result<ExitCode, String> {
+    let mut map = SourceMap::new();
+    let file = map.load(input).map_err(|error| error.to_string())?;
+    let source = map.file(file).text.clone();
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, &source, &mut sink);
+    let module = ember_parser::parse(file, &source, lexed.tokens, &mut sink);
+    if sink.has_errors() {
+        report(&sink, &map, &Options::default());
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let root_dir = input
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let lint_return_intersection = manifest_enables_l3014(&root_dir);
+    let modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    if sink.has_errors() {
+        report(&sink, &map, &Options::default());
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let (mut types, common) = TypeTable::new();
+    ember_typeck::check(
+        &modules,
+        &mut types,
+        &common,
+        &mut sink,
+        overflow_policy(Profile::Debug),
+        lint_return_intersection,
+    );
+    if sink.has_errors() {
+        report(&sink, &map, &Options::default());
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let inspection = ember_analysis::inspect_ownership_graph(&types);
+    report(&sink, &map, &Options::default());
+    if json {
+        print_cycle_json(&inspection)?;
+    } else {
+        print_cycle_report(input, &inspection);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_cycle_report(path: &Path, inspection: &ember_analysis::OwnershipInspection) {
+    println!("Ownership graph: {}", path.display());
+    println!("Edges:");
+    if inspection.edges.is_empty() {
+        println!("  none");
+    }
+    for edge in &inspection.edges {
+        let target = edge.target.as_deref().unwrap_or("<unknown>");
+        println!(
+            "  {} {}.{}: {} -> {}",
+            edge.kind.name(),
+            edge.source,
+            edge.field,
+            edge.field_type,
+            target
+        );
+    }
+    println!("Shortest static cycles:");
+    if inspection.shortest_cycles.is_empty() {
+        println!("  none");
+        return;
+    }
+    for cycle in &inspection.shortest_cycles {
+        let Some(first) = cycle.edges.first() else {
+            continue;
+        };
+        let path = cycle
+            .edges
+            .iter()
+            .map(|edge| format!("{}.{}", edge.source, edge.field))
+            .chain(std::iter::once(first.source.clone()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        println!("  {path}");
+    }
+}
+
+fn print_cycle_json(inspection: &ember_analysis::OwnershipInspection) -> Result<(), String> {
+    let edges: Vec<_> = inspection
+        .edges
+        .iter()
+        .map(|edge| {
+            serde_json::json!({
+                "source": edge.source,
+                "declaration": edge.declaration,
+                "field": edge.field,
+                "type": edge.field_type,
+                "target": edge.target,
+                "kind": edge.kind.name(),
+            })
+        })
+        .collect();
+    let cycles: Vec<_> = inspection
+        .shortest_cycles
+        .iter()
+        .map(|cycle| {
+            cycle
+                .edges
+                .iter()
+                .map(|edge| format!("{}.{}", edge.source, edge.field))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let report = serde_json::json!({
+        "schema": 1,
+        "edges": edges,
+        "shortest_cycles": cycles,
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
 fn inspect_safety(

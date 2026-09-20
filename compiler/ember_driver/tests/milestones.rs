@@ -416,6 +416,59 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
     );
 }
 
+#[test]
+fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
+    let root = workspace_root();
+    let report = ember(
+        &[
+            "inspect",
+            "--cycle",
+            &format!("compiler/ember_driver/tests/fixtures/cycle_inspection.{SOURCE_EXT}"),
+        ],
+        &root,
+    );
+    assert_eq!(report.exit, 0, "cycle inspection failed:\n{}", report.stderr);
+    assert!(
+        report.stdout.contains("strong Root.child: Child -> Child"),
+        "cycle inspection omitted a direct strong edge:\n{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("weak Child.root: Weak[Root] -> Root"),
+        "cycle inspection omitted a weak edge:\n{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("strong Child.leaf: Shared[Leaf] -> Leaf"),
+        "cycle inspection leaked compiler-private generic spelling:\n{}",
+        report.stdout
+    );
+    assert!(
+        report
+            .stdout
+            .contains("Root.child -> Child.leaf -> Leaf.root -> Root"),
+        "cycle inspection omitted the shortest static cycle:\n{}",
+        report.stdout
+    );
+
+    let json = ember(
+        &[
+            "inspect",
+            "--cycle",
+            "--json",
+            &format!("compiler/ember_driver/tests/fixtures/cycle_inspection.{SOURCE_EXT}"),
+        ],
+        &root,
+    );
+    assert_eq!(json.exit, 0, "JSON cycle inspection failed:\n{}", json.stderr);
+    assert!(
+        json.stdout.contains("\"kind\":\"weak\"")
+            && json.stdout.contains("\"shortest_cycles\""),
+        "JSON cycle inspection omitted graph facts:\n{}",
+        json.stdout
+    );
+}
+
 fn profiles(expectations: &Expectations) -> Vec<&str> {
     if expectations.profiles.is_empty() {
         vec!["debug"]

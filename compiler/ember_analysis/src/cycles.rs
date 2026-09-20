@@ -18,8 +18,57 @@ struct StrongEdge {
     to: usize,
     field_owner: usize,
     field: String,
+    field_type: String,
     span: Span,
     order: usize,
+}
+
+/// The ownership classification a user-visible graph edge carries.
+///
+/// `Unknown` is deliberately distinct from both `Strong` and `Weak`: an
+/// unresolved generic or opaque dynamic owner is not evidence that an edge is
+/// non-owning, but it cannot participate in a statically proven SCC either.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OwnershipEdgeKind {
+    Strong,
+    Weak,
+    Unknown,
+}
+
+impl OwnershipEdgeKind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Strong => "strong",
+            Self::Weak => "weak",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// One edge in the source-level ownership graph exposed by `[CLI-17]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipEdge {
+    pub source: String,
+    pub declaration: String,
+    pub field: String,
+    pub field_type: String,
+    pub target: Option<String>,
+    pub kind: OwnershipEdgeKind,
+}
+
+/// One shortest all-strong cycle for a strongly connected component.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipCycle {
+    pub edges: Vec<OwnershipEdge>,
+}
+
+/// The static data that `ember inspect --cycle` presents. The same strong
+/// graph is used by the declaration-time `L3001` lint; weak and unknown edges
+/// are retained here so a report never silently calls them strong.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipInspection {
+    pub edges: Vec<OwnershipEdge>,
+    pub shortest_cycles: Vec<OwnershipCycle>,
 }
 
 /// `[WK-5]` / `[WK-6]` — warn once for the shortest visible strong cycle in
@@ -34,6 +83,61 @@ pub fn lint_strong_cycles(types: &TypeTable, sink: &mut Sink) {
         };
         report_cycle(types, &cycle, sink);
     }
+}
+
+/// `[CLI-17]` — expose the package-visible ownership graph without changing
+/// program acceptance or ownership semantics. Each strong SCC contributes its
+/// shortest visible cycle, just as it does for `L3001`.
+pub fn inspect_ownership_graph(types: &TypeTable) -> OwnershipInspection {
+    let graph = ownership_graph(types);
+    let mut edges: Vec<_> = graph
+        .iter()
+        .flatten()
+        .map(|edge| inspect_strong_edge(types, edge))
+        .collect();
+
+    for (source, _) in types.classes() {
+        for field_index in 0..types.class_field_count(source) {
+            let (field_owner, field) = types
+                .class_field_at_info(source, field_index)
+                .expect("class field count must resolve every inherited field");
+            let source = class_name(types, source);
+            let declaration = class_name(types, field_owner);
+            let field_type = ownership_type_name(types, field.ty);
+            for target in weak_targets(types, field.ty) {
+                edges.push(OwnershipEdge {
+                    source: source.clone(),
+                    declaration: declaration.clone(),
+                    field: field.name.to_string(),
+                    field_type: field_type.clone(),
+                    target: Some(class_name(types, target)),
+                    kind: OwnershipEdgeKind::Weak,
+                });
+            }
+            if contains_unknown_owner(types, field.ty) {
+                edges.push(OwnershipEdge {
+                    source,
+                    declaration,
+                    field: field.name.to_string(),
+                    field_type,
+                    target: None,
+                    kind: OwnershipEdgeKind::Unknown,
+                });
+            }
+        }
+    }
+
+    let shortest_cycles = strongly_connected_components(&graph)
+        .into_iter()
+        .filter_map(|component| shortest_cycle(&graph, &component))
+        .map(|cycle| OwnershipCycle {
+            edges: cycle
+                .iter()
+                .map(|edge| inspect_strong_edge(types, edge))
+                .collect(),
+        })
+        .collect();
+    OwnershipInspection { edges, shortest_cycles }
 }
 
 fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
@@ -51,6 +155,7 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
                     to: target.0 as usize,
                     field_owner: field_owner.0 as usize,
                     field: field.name.to_string(),
+                    field_type: ownership_type_name(types, field.ty),
                     span: field.span,
                     order,
                 });
@@ -59,6 +164,40 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
         }
     }
     graph
+}
+
+fn inspect_strong_edge(types: &TypeTable, edge: &StrongEdge) -> OwnershipEdge {
+    OwnershipEdge {
+        source: class_name(types, ClassId(edge.from as u32)),
+        declaration: class_name(types, ClassId(edge.field_owner as u32)),
+        field: edge.field.clone(),
+        field_type: edge.field_type.clone(),
+        target: Some(class_name(types, ClassId(edge.to as u32))),
+        kind: OwnershipEdgeKind::Strong,
+    }
+}
+
+/// Type-table identity names generic instances with an internal separator so
+/// separate instances are unambiguous to the compiler. Cycle reports are a
+/// source-facing CLI, however, and `[WK-9]` requires an instantiated ownership
+/// type in Ember spelling rather than that compiler-private identity.
+fn ownership_type_name(types: &TypeTable, ty: Ty) -> String {
+    match types.kind(ty) {
+        TyKind::Struct(id) => {
+            let def = types.struct_def(*id);
+            let Some((name, arguments)) = &def.origin else {
+                return types.display(ty);
+            };
+            let arguments = arguments
+                .iter()
+                .map(|argument| ownership_type_name(types, *argument))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{name}[{arguments}]")
+        }
+        TyKind::Class(id) => class_name(types, *id),
+        _ => types.display(ty),
+    }
 }
 
 /// All class handles retained by a value of `ty`. `Weak[O]` is the one
@@ -137,6 +276,136 @@ fn collect_strong_targets(
         | TyKind::IntLit
         | TyKind::FloatLit
         | TyKind::Error => {}
+    }
+}
+
+/// Retained weak handles are shown by inspection but never passed to the SCC
+/// traversal. A `Weak[Shared[T]]` still identifies `T` as its possible target;
+/// its weak outer owner controls the edge classification.
+fn weak_targets(types: &TypeTable, ty: Ty) -> Vec<ClassId> {
+    let mut targets = BTreeSet::new();
+    let mut seen = HashSet::new();
+    collect_weak_targets(types, ty, &mut seen, &mut targets);
+    targets.into_iter().collect()
+}
+
+fn collect_weak_targets(
+    types: &TypeTable,
+    ty: Ty,
+    seen: &mut HashSet<Ty>,
+    targets: &mut BTreeSet<ClassId>,
+) {
+    if !seen.insert(ty) {
+        return;
+    }
+    match types.kind(ty) {
+        TyKind::Struct(id) => {
+            let def = types.struct_def(*id);
+            if let Some((name, arguments)) = &def.origin
+                && name.is("Weak")
+            {
+                for argument in arguments {
+                    targets.extend(strong_targets(types, *argument));
+                }
+                return;
+            }
+            for field in &def.fields {
+                collect_weak_targets(types, field.ty, seen, targets);
+            }
+        }
+        TyKind::Enum(id) => {
+            for variant in &types.enum_def(*id).variants {
+                for field in &variant.fields {
+                    collect_weak_targets(types, field.ty, seen, targets);
+                }
+            }
+        }
+        TyKind::Tuple(items) => {
+            for item in items {
+                collect_weak_targets(types, *item, seen, targets);
+            }
+        }
+        TyKind::Array { elem, .. } | TyKind::Vec { elem } => {
+            collect_weak_targets(types, *elem, seen, targets);
+        }
+        TyKind::Bool
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Uint(_)
+        | TyKind::Float(_)
+        | TyKind::Void
+        | TyKind::Never
+        | TyKind::Str
+        | TyKind::Span { .. }
+        | TyKind::Class(_)
+        | TyKind::Range(_)
+        | TyKind::Ref { .. }
+        | TyKind::Ptr { .. }
+        | TyKind::Fn { .. }
+        | TyKind::Dyn { .. }
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. }
+        | TyKind::Infer(_)
+        | TyKind::IntLit
+        | TyKind::FloatLit
+        | TyKind::Error => {}
+    }
+}
+
+/// A dynamic object or unresolved type parameter may later retain a class
+/// handle. It is an unknown edge for inspection, never an invented strong edge
+/// for a warning. Raw pointers, references, and views are explicitly
+/// non-owning under `[WK-5]` and so do not appear in this vocabulary.
+fn contains_unknown_owner(types: &TypeTable, ty: Ty) -> bool {
+    let mut seen = HashSet::new();
+    contains_unknown_owner_inner(types, ty, &mut seen)
+}
+
+fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types.kind(ty) {
+        TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } => true,
+        TyKind::Struct(id) => {
+            let def = types.struct_def(*id);
+            if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
+                return false;
+            }
+            def.fields
+                .iter()
+                .any(|field| contains_unknown_owner_inner(types, field.ty, seen))
+        }
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| {
+            variant
+                .fields
+                .iter()
+                .any(|field| contains_unknown_owner_inner(types, field.ty, seen))
+        }),
+        TyKind::Tuple(items) => items
+            .iter()
+            .any(|item| contains_unknown_owner_inner(types, *item, seen)),
+        TyKind::Array { elem, .. } | TyKind::Vec { elem } => {
+            contains_unknown_owner_inner(types, *elem, seen)
+        }
+        TyKind::Bool
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Uint(_)
+        | TyKind::Float(_)
+        | TyKind::Void
+        | TyKind::Never
+        | TyKind::Str
+        | TyKind::Span { .. }
+        | TyKind::Class(_)
+        | TyKind::Range(_)
+        | TyKind::Ref { .. }
+        | TyKind::Ptr { .. }
+        | TyKind::Fn { .. }
+        | TyKind::Infer(_)
+        | TyKind::IntLit
+        | TyKind::FloatLit
+        | TyKind::Error => false,
     }
 }
 
@@ -383,5 +652,23 @@ mod tests {
         lint_strong_cycles(&types, &mut sink);
 
         assert_eq!(sink.warning_count(), 0);
+    }
+
+    #[test]
+    fn inspection_marks_unresolved_owners_unknown() {
+        let (mut types, _) = TypeTable::new();
+        let holder = class(&mut types, "Holder");
+        let parameter = types.intern(TyKind::Param {
+            index: 0,
+            name: Symbol::intern("T"),
+        });
+        types.class_def_mut(holder).fields = vec![field("value", parameter)];
+
+        let inspection = inspect_ownership_graph(&types);
+
+        assert_eq!(inspection.edges.len(), 1);
+        assert_eq!(inspection.edges[0].kind, OwnershipEdgeKind::Unknown);
+        assert_eq!(inspection.edges[0].target, None);
+        assert!(inspection.shortest_cycles.is_empty());
     }
 }

@@ -19,7 +19,10 @@ pub use borrows::{
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::elide_static_accesses_all;
-pub use cycles::lint_strong_cycles;
+pub use cycles::{
+    inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,
+    OwnershipInspection,
+};
 pub use definite_init::{
     analyze_all as analyze_definite_init_all, analyze_definite_init,
     check_all as check_definite_init_all,
