@@ -7795,3 +7795,31 @@ exact full conformance suite passes locally in 155 seconds, and every document
 gate passes. These are compiler and coverage repairs defined by the frozen
 target; no ODR is required. Phase accounting remains **1 of 9 complete**;
 Phase 2 and Phase 3 remain active.
+
+### 0.180 `[WK-8]` runtime ownership-cycle report — 2026-09-20
+
+Commit `0298eec` implements the frozen `[WK-8]` contract behind `ember run
+--leak-check`. In that diagnostic mode only, C generation emits exact
+ownership-edge enumerators for class fields and `Shared[T]` payloads, while
+the runtime records live counted allocations and finds SCCs using strong edges.
+Each report prints object debug identities, class/field names, the internal
+strong-edge count, the static-prediction verdict, a safe `Weak` replacement
+when a direct field permits one, and visible `strong`, `weak`, or `unknown`
+edge vocabulary. Pure `Shared` payload cycles are reported without claiming
+the class-only static lint predicted them.
+
+The debug registry never becomes a collector root and never rewrites the
+program graph. It also filters control blocks whose strong count reached zero
+but which remain physically allocated only for `Weak` handles, so it neither
+reports nor inspects already-dropped payloads. Ordinary generated programs
+omit both the callbacks and their registrations; the object-header layout and
+release path therefore remain unchanged outside the opt-in mode.
+
+Two conformance probes cover a class self-cycle with a visible weak field and
+a `Shared` payload self-cycle. Driver integration tests pin every required
+report fact and reject `--leak-check` outside `ember run`. The locked workspace
+build and full test suite pass (including the 22-test milestone harness and
+all-profile conformance suite); `rule_index.py`, branding, runtime-generation,
+and diff checks also pass. No ODR is required because the 0.9.8 frozen target
+defines the report, its contents, and its diagnostic-only boundary directly.
+Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 are active.
