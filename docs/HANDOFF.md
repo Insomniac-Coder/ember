@@ -7741,3 +7741,29 @@ edge classification, and the remaining `[WK-*]` matrix remain Phase 3 work.
 No ODR is involved: the frozen target defines this inspection output and does
 not alter ownership semantics. Phase accounting remains **1 of 9 complete**;
 Phase 2 and Phase 3 remain active.
+
+### 0.178 `[WK-10]` weak-repair edits and `WK-5` acceptance — 2026-09-20
+
+Commit `9c19dfe` completes the machine-applicable portion of `[WK-10]`.
+`L3001` now carries an exact edit over the declared type annotation when its
+cycle-closing field is a direct, non-generic class handle: for example,
+`Parent.child: Child` is offered the replacement `Weak[Child]`. The diagnostic
+intentionally withholds an edit for `Shared`, container, and generic-recipe
+fields, where changing the type would alter an ownership contract the compiler
+cannot prove non-owning. The JSON integration test pins both the offered direct
+repair and the absent `Shared` repair; the error page reflects the exact help
+text.
+
+The preceding `WK-5` warning-only fixtures also exposed a `[TST-4a]` suite
+invariant in CI: every conformance rule directory must have an `accept_*`
+case. `accept_weak_class_handle_is_nonowning.em` supplies that missing all-
+profile acceptance path, proving live upgrade of a class weak handle while its
+strong owner remains live. This is a test-coverage repair, not a compiler
+defect or specification gap. The known lack of C lowering for a `Weak[C]`
+*field* remains explicitly outside this executable fixture and Phase 3 work.
+
+Focused analysis/driver tests, all-profile accept-case runs, workspace checking,
+the error-page verifier, and `git diff --check` pass. No ODR is involved: the
+frozen target defines both the safe fix-it boundary and weak-owner behavior.
+Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
+active.
