@@ -665,6 +665,96 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
 }
 
 #[test]
+fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
+    let root = workspace_root();
+    let generic = format!(
+        "tests/conformance/WK-7/warning_generic_class_cycle_after_substitution.{SOURCE_EXT}"
+    );
+    let class = ember(&["explain", "--cycle", &generic, "Parent"], &root);
+    assert_eq!(
+        class.exit, 0,
+        "class explanation failed:\n{}",
+        class.stderr
+    );
+    assert!(
+        class.stdout.contains("Cycle explanation: Parent")
+            && class.stdout.contains("Holder[Child]"),
+        "class explanation omitted the generic ownership path:\n{}",
+        class.stdout
+    );
+    let field = ember(
+        &["explain", "--cycle", &generic, "Parent.holder"],
+        &root,
+    );
+    assert_eq!(
+        field.exit, 0,
+        "field explanation failed:\n{}",
+        field.stderr
+    );
+    assert!(
+        field.stdout.contains("Holder[Child]"),
+        "field explanation did not show the instantiated generic owner:\n{}",
+        field.stdout
+    );
+
+    let directory = temporary_directory("cycle-dynamic-root");
+    let dynamic = directory.join("dynamic.em");
+    std::fs::write(
+        &dynamic,
+        "interface Link:\n    fn ping(self)\n\nclass Node:\n    next: Box[dyn Link]\n\nfn main():\n    return\n",
+    )
+    .expect("dynamic-cycle source is writable");
+    let dynamic_arg = dynamic.to_string_lossy().into_owned();
+    let dynamic_report = ember(
+        &["explain", "--cycle", &dynamic_arg, "Node.next"],
+        &root,
+    );
+    assert_eq!(
+        dynamic_report.exit, 0,
+        "dynamic explanation failed:\n{}",
+        dynamic_report.stderr
+    );
+    assert!(
+        dynamic_report
+            .stdout
+            .contains("dynamically cycle-capable; no static cycle was proved"),
+        "dynamic explanation overclaimed a static cycle:\n{}",
+        dynamic_report.stdout
+    );
+
+    let unrelated = directory.join("unrelated.em");
+    std::fs::write(
+        &unrelated,
+        "class Unrelated:\n    next: Unrelated\n\nfn main():\n    return\n",
+    )
+    .expect("unrelated source is writable");
+    let unrelated_arg = unrelated.to_string_lossy().into_owned();
+    let inspected = ember(&["inspect", "--cycle", &unrelated_arg], &root);
+    assert_eq!(
+        inspected.exit, 0,
+        "unrelated inspection failed:\n{}",
+        inspected.stderr
+    );
+    assert!(
+        inspected.stdout.contains("Unrelated.next -> Unrelated"),
+        "unrelated inspection did not establish its graph:\n{}",
+        inspected.stdout
+    );
+    let invalid = directory.join("missing-root").to_string_lossy().into_owned();
+    let no_fallback = ember(&["explain", "--cycle", &invalid, "Unrelated"], &root);
+    assert_ne!(no_fallback.exit, 0, "invalid root unexpectedly resolved");
+    assert!(
+        !no_fallback.stderr.contains("Unrelated")
+            && !no_fallback.stdout.contains("Ownership graph"),
+        "invalid root consulted a stale unrelated analysis:\nstderr:\n{}\nstdout:\n{}",
+        no_fallback.stderr,
+        no_fallback.stdout
+    );
+
+    std::fs::remove_dir_all(directory).expect("temporary source directory is removable");
+}
+
+#[test]
 fn cycle_lint_offers_only_safe_weak_suggestions() {
     let root = workspace_root();
     let direct = ember(
