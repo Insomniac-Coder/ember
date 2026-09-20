@@ -7295,3 +7295,22 @@ vtable. The all-profile regressions are green in CI runs `35486307173` and
 `35486358779` on Linux clang/GCC, Windows MSVC/clang-cl, and documentation
 validation. Generic base classes remain open; Phase accounting remains
 **1 of 9 complete**.
+
+### 0.158 Generic class base substitution — 2026-09-20
+
+Generic class recipes now retain their base type expression and resolve it only
+after the owner's type arguments are concrete. This realizes the existing
+generic-class grammar and `[CLS-4]` single-inheritance rule without creating a
+runtime `Base[T]` placeholder. `Derived[T](Base[T])` therefore uses the
+concrete `Base[i32]` layout, calls its matching `super.init`, preserves the
+derived-to-base release chain, and can implement an interface carried by a
+class dynamic box. A `Base[T] → Middle[T] → Leaf[T]` chain confirms recursive
+substitution.
+
+The conformance probes run in debug, release, and shipping, and the dynamic
+probe asserts a normal generic class adapter with no `ember_box_new_copy`
+carrier allocation. CI runs `35486834344` and `35486882602` are green across
+Linux clang/GCC, Windows MSVC/clang-cl, and documentation validation. This
+work follows the existing class-generic grammar, monomorphization, and
+single-inheritance rules; no new semantics or owner decision was inferred.
+Phase accounting remains **1 of 9 complete**.
