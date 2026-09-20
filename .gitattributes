@@ -7,7 +7,7 @@
 
 # Owner-supplied custody artifacts are retained byte-for-byte. Their original
 # line endings and trailing bytes are part of the recorded integrity hash.
-docs/spec-source/as-received/** -text
+docs/spec-source/as-received/** -text -diff
 
 *.png binary
 *.pdf binary

@@ -36,7 +36,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-014 | **CLOSED** — exact Span iterator/chunk/raw-pointer contract | Standard-library API / views / unsafe boundary | — | **No** — ruled 2026-09-13 |
 | ODR-015 | **CLOSED** — `@latebound` callable-type boundary | Language / lifetime callback API | — | **No** — ruled 2026-09-14 |
 | ODR-016 | **CLOSED** — diagnostic identity for existing multi-region and callable-mode rejections | Diagnostics / conformance | — | **No** — incorporated in 0.9.7_Hardened_3 |
-| ODR-017 | **OPEN** — `Shared[T]` and its `Weak[T]` companion surface | Standard-library API / ownership / borrowing | **P1** | **Yes** |
+| ODR-017 | **CLOSED** — `Shared[T]` strong-owner and generalized `Weak[O]` surface | Standard-library API / ownership / borrowing | — | **No** — ruled 2026-09-20 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -44,9 +44,9 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-016 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **ODR-017 is the one open owner
-semantic/API decision.** H8 records the complete helper-mode and callable-abstraction
+ODR-001, ODR-002, and ODR-004 through ODR-017 are closed; ODR-003 is deferred
+editorial work with no semantic impact. **There is no open owner semantic/API
+decision.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -70,24 +70,24 @@ editorial cleanup that can safely wait.
 
 ---
 
-## ODR-017 — `Shared[T]` and `Weak[T]` library ownership surface — **OPEN**
+## ODR-017 — `Shared[T]` strong-owner and generalized weak-owner surface — **CLOSED**
 
     ID:        ODR-017
-    Status:    OPEN
+    Status:    CLOSED — owner-approved `Shared[T]` / `Weak[O]` API
     Category:  STANDARD-LIBRARY API / OWNERSHIP / BORROWING
-    Priority:  P1
-    Location:  Ember_v0.9.7_Hardened_3.md IX.1, [GRM-3], [TYP-15], [DRP-6],
-               [RC-2e], and Part VIII [OBJ-3], [WK-1]–[WK-3]
+    Priority:  —
+    Location:  Ember_v0.9.8_Hardened_1.md IX.1, [GRM-3], [TYP-15], [DRP-6],
+               [RC-5], [RC-2e], and Part VIII [OBJ-3], [WK-1]–[WK-3],
+               [WK-11]–[WK-14]
 
     Question:  What is the complete public construction, borrowing, mutation,
                and weak-reference API for `Shared[T]`?
 
-    Blocks implementation:            YES — `Shared[T]` / `Weak[T]` Phase 3 slice
-    Blocks conformance:               YES — no source program can be written
-                                      without selecting undefined API spellings
-    Blocks specification freeze:      NO — question recorded against frozen target
-    Blocks normative specification adoption: YES — while the public API is undefined
-    Requires owner semantic decision: YES
+    Blocks implementation:            NO — implementation is authorized
+    Blocks conformance:               NO — `[TST-26]` evidence is authorized
+    Blocks specification freeze:      NO — 0.9.8_Hardened_1 is frozen
+    Blocks normative specification adoption: implementation evidence still required
+    Requires owner semantic decision: NO
 
 **Existing wording.** IX.1 calls `Shared[T]` a "reference-counted heap `T`"
 with the same header as classes, says it is Copy by retain, names `s.get()`,
@@ -120,6 +120,25 @@ upgrade/drop behavior, payload eligibility and drop ordering, and the explicit
 non-interoperation rule with class `Weak[C]` and C++ bridge types. The ruling
 should identify the corresponding conformance cases and use the existing object
 header, ARC, and dynamic-exclusivity mechanisms where appropriate.
+
+**Owner resolution — 2026-09-20.** `Shared(value: T) -> Shared[T]` constructs
+one strong owner. `get()` returns `ref T`; `get_mut(mut self)` returns `ref mut
+T`, using ordinary static borrowing and the existing dynamic-exclusivity
+mechanism rather than unique ownership or a `Shared`-specific aliasing model.
+`Shared[T]` is Copy by strong retain and releases its payload at final strong
+release.
+
+`Weak[O]` means the weak form of the counted owner `O`. The v1 owner forms are
+a class handle `C` and `Shared[T]`; therefore class weak handles remain
+`Weak[C]` and the companion of `Shared[T]` is `Weak[Shared[T]]`. `Weak(owner)`,
+`Weak[O].empty()`, Copy-by-weak-retain, weak drop, and
+`upgrade() -> Option[O]` reuse the existing weak-count/deinitialization model.
+The two Ember weak-owner forms do not interconvert with each other or with C++
+bridge owners. The ruling is preserved verbatim at
+`docs/spec-source/as-received/ODR-017_Shared_Weak_API_completion.md`; ADR-037
+and `0.9.8_Hardened_1` are the authority chain. This is an owner-approved
+semantic change, so it begins language version 0.9.8 rather than a 0.9.7
+hardening.
 
 ---
 

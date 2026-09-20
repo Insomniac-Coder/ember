@@ -1275,3 +1275,42 @@ Region analysis records compiler-only invocation-specific late-bound origins
 and the existing E3062/E3063 checks reject return and unbounded-Box escapes.
 This note records repository evidence only; it does not amend the owner ruling
 or install H1 as the adopted specification.
+
+## ADR-037 — `Shared[T]` uses the counted-owner and weak-owner model
+
+**Owner ruling resolving ODR-017, 2026-09-20.** The previous target described
+`Shared[T]` as a counted heap value with `s.get()` and a `Weak[T]` companion,
+but did not define construction, access modes, weak construction, upgrade, or
+whether that weak form was distinct from class `Weak[C]`. Implementing any one
+of those choices would have created a public ownership API without authority.
+
+**Decision.** `Shared(value: T) -> Shared[T]` is the strong-owner constructor.
+`Shared[T].get() -> ref T` returns a shared borrow without retaining or moving
+the owner. `Shared[T].get_mut(mut self) -> ref mut T` is a long-term mutable
+access using existing static borrowing and dynamic exclusivity; `mut self` is
+not a uniqueness proof. `Shared[T]` is Copy by strong retain and its final
+release runs `T`'s ordinary destruction.
+
+`Weak[O]` is the weak form of a counted owner, not a separate payload-pointer
+family. In v1, `O` is either a class handle `C` or `Shared[T]`. Consequently
+the existing `Weak[C]` remains valid and unchanged, while a shared payload uses
+`Weak[Shared[T]]`. `Weak(owner)`, `Weak[O].empty()`, copying, dropping, and
+`upgrade() -> Option[O]` reuse the object header's weak count and the existing
+no-resurrection rule. `Weak[C]`, `Weak[Shared[T]]`, and C++ bridge owners never
+interconvert.
+
+**Alternatives rejected.** A separate `Weak[T]` payload family would overload
+`Weak[Foo]` between a weak class and a weak `Shared[Foo]` interpretation.
+Treating `get_mut` as requiring unique strong ownership would make a shared
+owner secretly unique. A new `Shared`-specific aliasing mechanism would
+duplicate the class access-state model. The selected surface instead reuses the
+ordinary constructor, Copy/drop, borrow, Option, ARC, and exclusivity rules.
+
+**Version and evidence treatment.** This supplies previously undefined public
+source semantics, so `0.9.7_Hardened_3` remains immutable and
+`0.9.8_Hardened_1` is the owner-selected language-revision successor. The
+received ruling is preserved byte-for-byte at
+`docs/spec-source/as-received/ODR-017_Shared_Weak_API_completion.md` with
+SHA-256 `939028B039073BD1F086EE304327338C2DB7743F1721BB99C6AF6B953FC71D0E`.
+The new target remains non-normative until its implementation, conformance, and
+adoption gates are satisfied.
