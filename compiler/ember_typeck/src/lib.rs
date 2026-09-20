@@ -3561,6 +3561,14 @@ impl<'a> Checker<'a> {
                 span,
             ) {
                 self.derived_clone_methods.push((def, ty, span));
+                let clone = Symbol::intern("std.core.Clone");
+                if self.interfaces.contains_key(&clone)
+                    && !self.implemented.iter().any(|(owner, interface, _)| {
+                        *owner == ty && *interface == clone
+                    })
+                {
+                    self.implemented.push((ty, clone, span));
+                }
             }
         }
         for (ty, _) in pending {

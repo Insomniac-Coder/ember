@@ -7189,3 +7189,13 @@ profiles.
 Derived types are not yet registered as `Clone` implementations, and generic
 derived structs remain open. Phase accounting remains **1 of 9 complete**,
 Phase 2 active.
+
+### 0.151 `[OWN-8]` derived Clone interface conformance — 2026-09-20
+
+A successful `@derive(Clone)` now records the ordinary `std.core.Clone`
+implementation as well as emitting its method. The all-profile probe passes a
+derived `Pair` through `T: Clone`, calls the bound method, and keeps both values
+live at `42`.
+
+Generic derived structs remain open. Phase accounting remains **1 of 9
+complete**, Phase 2 active.
