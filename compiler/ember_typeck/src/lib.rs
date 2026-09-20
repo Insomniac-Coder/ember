@@ -310,6 +310,7 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
+    base: Option<ClassId>,
     implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
     openness: ClassOpenness,
@@ -2152,17 +2153,36 @@ impl<'a> Checker<'a> {
             if decl.generics.is_empty() {
                 continue;
             }
-            if decl.base.is_some() {
-                self.error(
-                    codes::E1010,
-                    item.span,
-                    "generic classes currently do not support base classes",
-                );
-                continue;
-            }
             let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
+            let base = match decl.base.as_ref() {
+                None => None,
+                Some(base) => {
+                    let resolved = self.resolve_type(base);
+                    match self.types.kind(resolved) {
+                        TyKind::Class(id) if self.types.class_def(*id).origin.is_none() => Some(*id),
+                        TyKind::Class(_) => {
+                            self.error(
+                                codes::E1010,
+                                base.span,
+                                "a generic class base is not supported yet",
+                            );
+                            self.type_params.clear();
+                            continue;
+                        }
+                        _ if resolved == self.common.error => {
+                            self.type_params.clear();
+                            continue;
+                        }
+                        _ => {
+                            self.error(codes::E2020, base.span, "a class base must name another class");
+                            self.type_params.clear();
+                            continue;
+                        }
+                    }
+                }
+            };
             let fields = decl
                 .members
                 .iter()
@@ -2224,6 +2244,7 @@ impl<'a> Checker<'a> {
                     params,
                     fields,
                     defaults,
+                    base,
                     implements: decl.implements.clone(),
                     methods,
                     openness: class_openness(decl.openness),
@@ -5032,7 +5053,7 @@ impl<'a> Checker<'a> {
             fields: Vec::new(),
             span,
             openness: decl.openness,
-            base: None,
+            base: decl.base,
             has_drop: false,
             origin: Some((name, args.to_vec())),
             declaring_module: decl.declaring_module,
