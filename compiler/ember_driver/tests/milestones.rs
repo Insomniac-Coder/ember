@@ -469,6 +469,40 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
     );
 }
 
+#[test]
+fn cycle_lint_offers_only_safe_weak_suggestions() {
+    let root = workspace_root();
+    let direct = ember(
+        &[
+            "check",
+            "--json",
+            &format!("tests/conformance/WK-5/warning_direct_strong_class_cycle.{SOURCE_EXT}"),
+        ],
+        &root,
+    );
+    assert_eq!(direct.exit, 0, "direct-cycle check failed:\n{}", direct.stderr);
+    assert!(
+        direct.stdout.contains("\"replacement\":\"Weak[Child]\""),
+        "direct class edge lacks a machine-applicable Weak replacement:\n{}",
+        direct.stdout
+    );
+
+    let shared = ember(
+        &[
+            "check",
+            "--json",
+            &format!("tests/conformance/WK-5/warning_shared_class_cycle.{SOURCE_EXT}"),
+        ],
+        &root,
+    );
+    assert_eq!(shared.exit, 0, "Shared-cycle check failed:\n{}", shared.stderr);
+    assert!(
+        shared.stdout.contains("\"suggestions\":[]"),
+        "a Shared ownership contract must not receive an automatic Weak rewrite:\n{}",
+        shared.stdout
+    );
+}
+
 fn profiles(expectations: &Expectations) -> Vec<&str> {
     if expectations.profiles.is_empty() {
         vec!["debug"]

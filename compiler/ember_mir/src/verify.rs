@@ -1263,6 +1263,7 @@ mod view_invariant_tests {
                 name: Symbol::intern("n"),
                 ty: borrow,
                 span: Span::DUMMY,
+                ty_span: Span::DUMMY,
                 has_default: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,

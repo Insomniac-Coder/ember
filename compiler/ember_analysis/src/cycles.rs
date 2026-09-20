@@ -19,6 +19,8 @@ struct StrongEdge {
     field_owner: usize,
     field: String,
     field_type: String,
+    type_span: Span,
+    weak_replacement: Option<String>,
     span: Span,
     order: usize,
 }
@@ -156,6 +158,8 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
                     field_owner: field_owner.0 as usize,
                     field: field.name.to_string(),
                     field_type: ownership_type_name(types, field.ty),
+                    type_span: field.ty_span,
+                    weak_replacement: direct_weak_replacement(types, field_owner, field.ty),
                     span: field.span,
                     order,
                 });
@@ -164,6 +168,21 @@ fn ownership_graph(types: &TypeTable) -> Vec<Vec<StrongEdge>> {
         }
     }
     graph
+}
+
+/// A direct class handle has an unambiguous back-reference replacement. The
+/// replacement is intentionally withheld for `Shared`, containers, and fields
+/// originating in a generic class recipe: changing those types can alter a
+/// declared ownership contract, which `[WK-10]` forbids an automatic edit from
+/// doing.
+fn direct_weak_replacement(types: &TypeTable, field_owner: ClassId, ty: Ty) -> Option<String> {
+    if types.class_def(field_owner).origin.is_some() {
+        return None;
+    }
+    let TyKind::Class(target) = types.kind(ty) else {
+        return None;
+    };
+    Some(format!("Weak[{}]", class_name(types, *target)))
 }
 
 fn inspect_strong_edge(types: &TypeTable, edge: &StrongEdge) -> OwnershipEdge {
@@ -539,19 +558,24 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
         )))
         .collect::<Vec<_>>()
         .join(" -> ");
-    let owner = class_name(types, ClassId(first.field_owner as u32));
-    let target = class_name(types, ClassId(first.to as u32));
     let mut diagnostic = Diagnostic::lint(
         codes::L3001,
         first.span,
         format!("potential reference cycle: {path}"),
     )
     .primary_label("this strong field closes the shortest statically visible cycle")
-    .help(format!(
-        "use `Weak[{target}]` for `{owner}.{}` if this is a back-reference",
-        first.field
-    ))
     .note("every edge in this statically visible cycle is strong; the cycle may leak at run time");
+    if let Some(replacement) = &first.weak_replacement {
+        let owner = class_name(types, ClassId(first.field_owner as u32));
+        diagnostic = diagnostic.suggest(
+            format!(
+                "replace `{owner}.{}` with `{replacement}` if this is a back-reference",
+                first.field
+            ),
+            first.type_span,
+            replacement.clone(),
+        );
+    }
     for edge in cycle.iter().skip(1) {
         let owner = class_name(types, ClassId(edge.field_owner as u32));
         diagnostic = diagnostic.secondary(
@@ -599,6 +623,7 @@ mod tests {
             name: Symbol::intern(name),
             ty,
             span: Span::DUMMY,
+            ty_span: Span::DUMMY,
             has_default: false,
             read_only_outside: false,
             vis: FieldVis::Private,

@@ -224,6 +224,10 @@ pub struct FieldDef {
     pub name: Symbol,
     pub ty: Ty,
     pub span: Span,
+    /// The exact source range of the field's type annotation. Diagnostics use
+    /// this rather than replacing a whole declaration when a type has an
+    /// unambiguous machine-applicable repair.
+    pub ty_span: Span,
     /// `[STR-2]` — whether the declaration supplied a default.
     pub has_default: bool,
     /// `[MOD-7]` — declared `pub(read)` or `pub(package, read)`: readable
@@ -1641,6 +1645,7 @@ mod tests {
             name: Symbol::intern(name),
             ty,
             span: Span::DUMMY,
+            ty_span: Span::DUMMY,
             has_default: false,
             read_only_outside: false,
             vis: FieldVis::Public,
