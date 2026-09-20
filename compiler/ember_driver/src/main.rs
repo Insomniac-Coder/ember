@@ -605,7 +605,7 @@ fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
             println!("  none");
         } else {
             for edge in selected_edges {
-                print_cycle_edge(edge);
+                print_cycle_explanation_edge(edge);
             }
         }
         println!("Static ownership paths:");
@@ -619,7 +619,7 @@ fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
             return Ok(());
         }
         for path in paths {
-            println!("  {}", cycle_path(&path.edges));
+            println!("  {}", cycle_explanation_path(&path.edges));
         }
         Ok(())
     })
@@ -705,6 +705,22 @@ fn print_cycle_edge(edge: &ember_analysis::OwnershipEdge) {
     );
 }
 
+fn print_cycle_explanation_edge(edge: &ember_analysis::OwnershipEdge) {
+    let target = edge
+        .target
+        .as_deref()
+        .map(cycle_class_name)
+        .unwrap_or_else(|| "<unknown>".to_string());
+    println!(
+        "  {} {}.{}: {} -> {}",
+        edge.kind.name(),
+        cycle_class_name(&edge.source),
+        edge.field,
+        cycle_class_name(&edge.field_type),
+        target
+    );
+}
+
 fn cycle_path(edges: &[ember_analysis::OwnershipEdge]) -> String {
     let Some(first) = edges.first() else {
         return String::new();
@@ -713,6 +729,18 @@ fn cycle_path(edges: &[ember_analysis::OwnershipEdge]) -> String {
         .iter()
         .map(|edge| format!("{}.{}", edge.source, edge.field))
         .chain(std::iter::once(first.source.clone()))
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
+
+fn cycle_explanation_path(edges: &[ember_analysis::OwnershipEdge]) -> String {
+    let Some(first) = edges.first() else {
+        return String::new();
+    };
+    edges
+        .iter()
+        .map(|edge| format!("{}.{}", cycle_class_name(&edge.source), edge.field))
+        .chain(std::iter::once(cycle_class_name(&first.source)))
         .collect::<Vec<_>>()
         .join(" -> ")
 }

@@ -576,6 +576,95 @@ fn cycle_explanation_uses_the_same_root_and_graph_as_inspection() {
 }
 
 #[test]
+fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
+    let root = workspace_root();
+    let package = temporary_directory("cycle-target-resolution");
+    let source = package.join("src");
+    std::fs::create_dir_all(&source).expect("package source directory is creatable");
+    std::fs::write(
+        package.join("ember.toml"),
+        "[package]\nname = \"cycle_targets\"\nkind = \"bin\"\n",
+    )
+    .expect("package manifest is writable");
+    std::fs::write(
+        source.join("main.em"),
+        "import scene\nimport ecs\n\nfn main():\n    return\n",
+    )
+    .expect("package root source is writable");
+    std::fs::write(
+        source.join("scene.em"),
+        "pub class Node:\n    next: Node\n",
+    )
+    .expect("scene module is writable");
+    std::fs::write(source.join("ecs.em"), "pub class Node:\n    next: Node\n")
+        .expect("ecs module is writable");
+
+    let package_arg = package.to_string_lossy().into_owned();
+    let qualified = ember(
+        &["explain", "--cycle", &package_arg, "scene::Node.next"],
+        &root,
+    );
+    assert_eq!(
+        qualified.exit, 0,
+        "qualified explanation failed:\n{}",
+        qualified.stderr
+    );
+    assert!(
+        qualified
+            .stdout
+            .contains("scene::Node.next -> scene::Node"),
+        "qualified explanation did not use Ember qualification:\n{}",
+        qualified.stdout
+    );
+
+    let missing_class = ember(
+        &["explain", "--cycle", &package_arg, "scene::Missing"],
+        &root,
+    );
+    assert_ne!(missing_class.exit, 0, "missing class unexpectedly resolved");
+    assert!(
+        missing_class.stderr.contains("cannot find class `scene::Missing`"),
+        "missing class used the wrong diagnostic:\n{}",
+        missing_class.stderr
+    );
+
+    let missing_field = ember(
+        &["explain", "--cycle", &package_arg, "scene::Node.missing"],
+        &root,
+    );
+    assert_ne!(missing_field.exit, 0, "missing field unexpectedly resolved");
+    assert!(
+        missing_field.stderr.contains("has no field `missing`"),
+        "missing field used the wrong diagnostic:\n{}",
+        missing_field.stderr
+    );
+
+    let ambiguous = ember(&["explain", "--cycle", &package_arg, "Node"], &root);
+    assert_ne!(ambiguous.exit, 0, "ambiguous class unexpectedly resolved");
+    assert!(
+        ambiguous.stderr.contains("scene::Node") && ambiguous.stderr.contains("ecs::Node"),
+        "ambiguity did not name each qualified candidate:\n{}",
+        ambiguous.stderr
+    );
+
+    let invalid = package.join("not-a-root").to_string_lossy().into_owned();
+    let invalid_root = ember(&["explain", "--cycle", &invalid, "Node"], &root);
+    assert_ne!(invalid_root.exit, 0, "invalid root unexpectedly resolved");
+    assert!(
+        invalid_root.stderr.contains("must be an existing package directory"),
+        "invalid root did not fail during root resolution:\n{}",
+        invalid_root.stderr
+    );
+    assert!(
+        !invalid_root.stderr.contains("scene::Node"),
+        "invalid root fell back to the earlier package:\n{}",
+        invalid_root.stderr
+    );
+
+    std::fs::remove_dir_all(package).expect("temporary package directory is removable");
+}
+
+#[test]
 fn cycle_lint_offers_only_safe_weak_suggestions() {
     let root = workspace_root();
     let direct = ember(
