@@ -22,7 +22,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
-use ember_branding::SOURCE_EXT;
+use ember_branding::{MANIFEST, SOURCE_EXT};
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
@@ -505,14 +505,17 @@ fn cycle_inspection_uses_a_package_directory_as_its_analysis_root() {
     let source = package.join("src");
     std::fs::create_dir_all(&source).expect("package source directory is creatable");
     std::fs::write(
-        package.join("ember.toml"),
+        package.join(MANIFEST),
         "[package]\nname = \"cycle_root\"\nkind = \"bin\"\n",
     )
     .expect("package manifest is writable");
-    std::fs::write(source.join("main.em"), "import scene\n\nfn main():\n    return\n")
+    std::fs::write(
+        source.join(ember_branding::source_file("main")),
+        "import scene\n\nfn main():\n    return\n",
+    )
         .expect("package root source is writable");
     std::fs::write(
-        source.join("scene.em"),
+        source.join(ember_branding::source_file("scene")),
         "pub class Node:\n    next: Node\n",
     )
     .expect("imported module is writable");
@@ -582,21 +585,24 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
     let source = package.join("src");
     std::fs::create_dir_all(&source).expect("package source directory is creatable");
     std::fs::write(
-        package.join("ember.toml"),
+        package.join(MANIFEST),
         "[package]\nname = \"cycle_targets\"\nkind = \"bin\"\n",
     )
     .expect("package manifest is writable");
     std::fs::write(
-        source.join("main.em"),
+        source.join(ember_branding::source_file("main")),
         "import scene\nimport ecs\n\nfn main():\n    return\n",
     )
     .expect("package root source is writable");
     std::fs::write(
-        source.join("scene.em"),
+        source.join(ember_branding::source_file("scene")),
         "pub class Node:\n    next: Node\n",
     )
     .expect("scene module is writable");
-    std::fs::write(source.join("ecs.em"), "pub class Node:\n    next: Node\n")
+    std::fs::write(
+        source.join(ember_branding::source_file("ecs")),
+        "pub class Node:\n    next: Node\n",
+    )
         .expect("ecs module is writable");
 
     let package_arg = package.to_string_lossy().into_owned();
@@ -698,7 +704,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
     );
 
     let directory = temporary_directory("cycle-dynamic-root");
-    let dynamic = directory.join("dynamic.em");
+    let dynamic = directory.join(ember_branding::source_file("dynamic"));
     std::fs::write(
         &dynamic,
         "interface Link:\n    fn ping(self)\n\nclass Node:\n    next: Box[dyn Link]\n\nfn main():\n    return\n",
@@ -722,7 +728,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
         dynamic_report.stdout
     );
 
-    let unrelated = directory.join("unrelated.em");
+    let unrelated = directory.join(ember_branding::source_file("unrelated"));
     std::fs::write(
         &unrelated,
         "class Unrelated:\n    next: Unrelated\n\nfn main():\n    return\n",
