@@ -29,6 +29,9 @@ pub interface Ord: Eq:
 pub interface Default:
     fn default() -> Self
 
+pub interface Clone:
+    fn clone(self) -> Self
+
 ## Part IV §8's canonical associated-type iterator contract. Named standard
 ## iterators, including the Arena-backed collection and Span iterators,
 ## implement this interface rather than introducing a second iterator
@@ -37,5 +40,5 @@ pub interface Iterator:
     type Item
     fn next(mut self) -> Option[Item]
 
-## Part IV §8 also declares `Clone`, `Hash`, `Display`, `Debug`, and the
-## operator interfaces; they remain staged with their dependent surface.
+## Part IV §8 also declares `Hash`, `Display`, `Debug`, and the operator
+## interfaces; they remain staged with their dependent surface.

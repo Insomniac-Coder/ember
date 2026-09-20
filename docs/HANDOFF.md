@@ -7178,3 +7178,14 @@ both values print as `42`, and pins both emitted clone symbols.
 This is intentionally a method-contract slice: generic structs and the
 standard-library `Clone` interface are still open. Phase accounting remains
 **1 of 9 complete**, Phase 2 active.
+
+### 0.150 `[OWN-8]` standard Clone interface — 2026-09-20
+
+`std.core` now declares the specified `Clone` interface and exports it through
+the ordinary prelude. A direct `struct Leaf implements Clone` probe verifies
+that a `T: Clone` bound exposes `clone` and preserves the value across all
+profiles.
+
+Derived types are not yet registered as `Clone` implementations, and generic
+derived structs remain open. Phase accounting remains **1 of 9 complete**,
+Phase 2 active.

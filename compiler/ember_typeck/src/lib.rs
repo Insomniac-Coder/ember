@@ -1636,7 +1636,7 @@ impl<'a> Checker<'a> {
     /// bound afterwards and may deliberately replace the prelude spelling.
     fn bind_prelude(&mut self, modules: &[LoadedModule]) {
         const EXPORTS: &[(&str, &[&str])] = &[
-            ("std.core", &["Eq", "Ord", "Default", "Iterator"]),
+            ("std.core", &["Eq", "Ord", "Default", "Clone", "Iterator"]),
             ("std.collections", &["Hash"]),
         ];
         let by_path: HashMap<String, usize> =
