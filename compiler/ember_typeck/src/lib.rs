@@ -310,7 +310,10 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
-    base: Option<ClassId>,
+    /// Resolved only when this recipe is instantiated, after owner type
+    /// arguments have concrete bindings. Keeping the source expression avoids
+    /// materializing an unusable `Base[T]` runtime class.
+    base: Option<ast::TypeExpr>,
     implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
     openness: ClassOpenness,
@@ -2156,33 +2159,7 @@ impl<'a> Checker<'a> {
             let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
-            let base = match decl.base.as_ref() {
-                None => None,
-                Some(base) => {
-                    let resolved = self.resolve_type(base);
-                    match self.types.kind(resolved) {
-                        TyKind::Class(id) if self.types.class_def(*id).origin.is_none() => Some(*id),
-                        TyKind::Class(_) => {
-                            self.error(
-                                codes::E1010,
-                                base.span,
-                                "a generic class base is not supported yet",
-                            );
-                            self.type_params.clear();
-                            continue;
-                        }
-                        _ if resolved == self.common.error => {
-                            self.type_params.clear();
-                            continue;
-                        }
-                        _ => {
-                            self.error(codes::E2020, base.span, "a class base must name another class");
-                            self.type_params.clear();
-                            continue;
-                        }
-                    }
-                }
-            };
+            let base = decl.base.clone();
             let fields = decl
                 .members
                 .iter()
@@ -5048,12 +5025,44 @@ impl<'a> Checker<'a> {
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
         }
+        let base = if let Some(base_expr) = &decl.base {
+            let mut bindings = HashMap::new();
+            for (&param, &arg) in decl.params.iter().zip(args.iter()) {
+                bindings.insert(param, arg);
+            }
+            let saved = std::mem::replace(&mut self.type_params, bindings);
+            let resolved = self.resolve_type(base_expr);
+            self.type_params = saved;
+            match self.types.kind(resolved) {
+                TyKind::Class(base) => {
+                    if self.types.class_def(*base).openness == ClassOpenness::Final {
+                        self.error(
+                            codes::E2020,
+                            base_expr.span,
+                            format!(
+                                "class `{name}` cannot inherit from final class `{}`",
+                                self.types.class_def(*base).name
+                            ),
+                        );
+                        return self.common.error;
+                    }
+                    Some(*base)
+                }
+                _ if resolved == self.common.error => return self.common.error,
+                _ => {
+                    self.error(codes::E2020, base_expr.span, "a class base must name another class");
+                    return self.common.error;
+                }
+            }
+        } else {
+            None
+        };
         let id = self.types.add_class(ClassDef {
             name: instance,
             fields: Vec::new(),
             span,
             openness: decl.openness,
-            base: decl.base,
+            base,
             has_drop: false,
             origin: Some((name, args.to_vec())),
             declaring_module: decl.declaring_module,
