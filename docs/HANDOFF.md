@@ -7554,3 +7554,27 @@ the decision, and the frozen 0.9.8 target is the implementation authority.
 `ember-spec.md` remains the adopted v0.8.5_Hardened_1 source until the recorded
 adoption gates pass. ODR-017 is closed; implementation and `[TST-26]`
 conformance work are now authorized. Phase accounting remains **1 of 9 complete**.
+
+### 0.171 `Shared[T]` construction and shared borrowing — 2026-09-20
+
+The first authorized `Shared[T]` slice is committed locally as `8ba924f`.
+`Shared(value)` creates a strong owner in the ordinary object-header control
+block; copying its public `Copy` handle retains that block, the last release
+runs the payload's normal destruction, and `s.get()` forms an owner-rooted
+`ref T`. The compiler emits payload alignment/type metadata and uses the
+existing object retain/release operations rather than a second reference-count
+system.
+
+The all-profile run-pass case prints both the payload destructor's `7` and the
+borrowed value's `7`, while pinning the allocation/retain/release C paths. A
+new `[TYP-15]` conformance case rejects a non-static `Span` stored through
+`Shared`, with a `Shared`-specific diagnostic. The workspace type check,
+focused analysis tests, the direct run-pass probe, and the complete
+17-test milestone harness pass; the workspace formatter check still reports
+pre-existing drift in untouched source files.
+
+This is deliberately not a claim that the full owner ruling is implemented:
+`get_mut(mut self)`, dynamic access enforcement for that mutable borrow,
+`Weak[Shared[T]]`, `T: Sync` atomic counters, and `[TST-26]` remain open.
+No specification question arose—the 0.9.8 target and ADR-037 already fix these
+semantics. Phase accounting remains **1 of 9 complete**.
