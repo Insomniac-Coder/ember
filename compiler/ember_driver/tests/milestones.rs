@@ -419,11 +419,26 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
 #[test]
 fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
     let root = workspace_root();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(format!("cycle_inspection.{SOURCE_EXT}"));
+    let fixture = fixture
+        .strip_prefix(&root)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} is outside {}: {error}",
+                fixture.display(),
+                root.display()
+            )
+        })
+        .to_string_lossy()
+        .into_owned();
     let report = ember(
         &[
             "inspect",
             "--cycle",
-            &format!("compiler/ember_driver/tests/fixtures/cycle_inspection.{SOURCE_EXT}"),
+            &fixture,
         ],
         &root,
     );
@@ -456,7 +471,7 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
             "inspect",
             "--cycle",
             "--json",
-            &format!("compiler/ember_driver/tests/fixtures/cycle_inspection.{SOURCE_EXT}"),
+            &fixture,
         ],
         &root,
     );
