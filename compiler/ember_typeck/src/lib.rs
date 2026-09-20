@@ -680,6 +680,11 @@ struct Checker<'a> {
     /// The same, for the methods of instantiated generic structs.
     pending_methods: Vec<PendingMethod>,
     pending_abstract_methods: Vec<PendingAbstractMethod>,
+    /// Declaration identities for bodyless abstract virtual methods. A
+    /// materialized concrete generic class walks its inherited virtual slots
+    /// against this set to enforce `[GRM-2]` before code generation could
+    /// produce a table with no concrete implementation.
+    abstract_methods: HashSet<DefId>,
     /// Default interface methods materialized for instantiated generic structs.
     pending_default_methods: Vec<PendingDefaultMethod>,
     /// Generic recipe types may be instantiated while interface declarations
@@ -804,6 +809,7 @@ impl<'a> Checker<'a> {
             pending: Vec::new(),
             pending_methods: Vec::new(),
             pending_abstract_methods: Vec::new(),
+            abstract_methods: HashSet::new(),
             pending_default_methods: Vec::new(),
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
@@ -2087,6 +2093,43 @@ impl<'a> Checker<'a> {
         }
         layouts.insert(id, layout.clone());
         layout
+    }
+
+    /// `[GRM-2]` — a concrete class may not leave a bodyless virtual method
+    /// inherited from an abstract generic base. Generic class declarations
+    /// become concrete classes only at instantiation time, so this check must
+    /// run after the instantiated methods and inherited vtable layout exist.
+    ///
+    /// Scan derived-to-base so a nearer concrete override satisfies an older
+    /// abstract declaration, while a nearer abstract redeclaration remains an
+    /// obligation for the first concrete descendant.
+    fn validate_instantiated_abstract_methods(&mut self, id: ClassId, span: Span) {
+        if self.types.class_def(id).openness == ClassOpenness::Abstract {
+            return;
+        }
+
+        let mut seen = HashSet::new();
+        let mut current = Some(id);
+        while let Some(class) = current {
+            for (name, def, dispatch) in
+                self.class_declared_methods.get(&class).cloned().unwrap_or_default()
+            {
+                if dispatch == ast::Dispatch::Static || !seen.insert(name) {
+                    continue;
+                }
+                if self.abstract_methods.contains(&def) {
+                    let owner = self.types.class_def(id).name;
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!(
+                            "concrete class `{owner}` does not implement abstract method `{name}`"
+                        ),
+                    );
+                }
+            }
+            current = self.types.class_def(class).base;
+        }
     }
 
     /// `[TYP-16]` — collect generic struct recipes after nominal headers are
@@ -5157,6 +5200,7 @@ impl<'a> Checker<'a> {
                 self.types.class_def_mut(id).has_drop = true;
             }
             if !method.has_body {
+                self.abstract_methods.insert(def);
                 self.pending_abstract_methods.push(PendingAbstractMethod {
                     def,
                     owner: ty,
@@ -5191,6 +5235,7 @@ impl<'a> Checker<'a> {
         self.class_declared_methods.insert(id, declared_methods);
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
+        self.validate_instantiated_abstract_methods(id, span);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry)
