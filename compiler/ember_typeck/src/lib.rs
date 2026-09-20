@@ -325,6 +325,7 @@ struct GenericClass {
 #[derive(Clone)]
 struct GenericMethod {
     name: Symbol,
+    dispatch: ast::Dispatch,
     /// `None` for an associated function on the generic type.
     receiver: Option<Mode>,
     /// The parameters after `self`. `self` itself is not here: its type is
@@ -2116,6 +2117,7 @@ impl<'a> Checker<'a> {
                 };
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
+                    dispatch: fn_decl.dispatch,
                     receiver,
                     params: signature.params,
                     ret: signature.ret,
@@ -2192,6 +2194,7 @@ impl<'a> Checker<'a> {
                 };
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
+                    dispatch: fn_decl.dispatch,
                     receiver,
                     params: signature.params,
                     ret: signature.ret,
@@ -5084,6 +5087,12 @@ impl<'a> Checker<'a> {
             .collect();
         self.types.class_def_mut(id).fields = fields;
         self.class_default_exprs.insert(id, decl.defaults.clone());
+        // Generic classes are materialized after the ordinary class-collection
+        // pass, so they cannot use `record_class_virtual_methods`. Preserve the
+        // declaration order here and immediately assign the concrete class's
+        // inherited/overridden vtable slots before its method bodies are
+        // checked.
+        let mut declared_methods = Vec::new();
         for method in &decl.methods {
             let method_params: Vec<Ty> = method
                 .generics
@@ -5127,6 +5136,9 @@ impl<'a> Checker<'a> {
                 self.register_associated(ty, method.name, signature, None, method.span)
             };
             let Some(def) = def else { continue };
+            if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
+                declared_methods.push((method.name, def, method.dispatch));
+            }
             if method.name.is("drop") {
                 self.types.class_def_mut(id).has_drop = true;
             }
@@ -5154,6 +5166,9 @@ impl<'a> Checker<'a> {
                 });
             }
         }
+        self.class_declared_methods.insert(id, declared_methods);
+        let mut layouts = HashMap::new();
+        let _ = self.class_virtual_layout(id, &mut layouts);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry)
