@@ -269,9 +269,9 @@ left is coverage:
                  acceptance coverage for LT-1b and LT-2a; LT-5 has direct
                  travel/liveness probes and LT-7 has the late-bound
                  callback-region conformance matrix.
-    DRP   4/6    missing DRP-4 (needs effects, Phase 4),
-                 DRP-6 (Box/handle/Shared — Phase 3). DRP-5 has cases since D-030
-                 was fixed (drop-body moves rejected)
+    DRP   5/6    missing DRP-4 (needs effects, Phase 4). DRP-6's Box,
+                 class-handle, Shared, and view cases are now covered; DRP-5
+                 has cases since D-030 was fixed (drop-body moves rejected)
     SPN   3/3    done
     OWN-5        both clauses now, after D-035 — see the note below
     CELL  11/13  Cell/RefCell cases exist for every currently buildable rule;

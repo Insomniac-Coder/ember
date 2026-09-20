@@ -7823,3 +7823,21 @@ all-profile conformance suite); `rule_index.py`, branding, runtime-generation,
 and diff checks also pass. No ODR is required because the 0.9.8 frozen target
 defines the report, its contents, and its diagnostic-only boundary directly.
 Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 are active.
+
+### 0.181 `[DRP-6]` counted-owner release coverage — 2026-09-20
+
+Commit `99b96fb` closes the remaining currently buildable `[DRP-6]` coverage
+gap. The established Box probe already proves payload-before-free ordering and
+the view probe proves that a view drop does not destroy its sources. The new
+all-profile conformance program adds the two remaining counted owners: a
+copied `Shared[Token]` destroys `Token` only at the final strong release, then
+a class handle releases and runs its own destructor at scope exit. Generated-C
+assertions pin class allocation, Shared control-block construction, and the
+release path.
+
+The direct program run and exact full conformance suite pass in debug, release,
+and shipping; rule-index, branding, and diff checks pass as well. `DRP` is now
+**5/6** in the Phase 2 coverage ledger; the sole remaining `DRP-4` obligation
+depends on Phase 4 effects. No ODR or defect is involved because `[DRP-6]`
+already fixes all four destruction rules. Phase accounting remains **1 of 9
+complete**; Phase 2 and Phase 3 are active.
