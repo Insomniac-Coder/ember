@@ -7371,3 +7371,21 @@ shipping. CI run `35489346392` is green on Linux clang/GCC, Windows MSVC/
 clang-cl, and the specification gate. The specification already fixes the
 required semantics; this is an implementation correction, not an ODR or ADR.
 Phase accounting remains **1 of 9 complete**.
+
+### 0.163 Direct abstract-class virtual methods — 2026-09-20
+
+Bodyless `virtual` declarations on direct `abstract class` definitions now
+enter ordinary method lookup, inherited class-vtable layout, and the existing
+deferred declaration-only HIR/MIR path. A `Shape`-typed handle to a `Square`
+therefore dispatches its abstract `area` slot to `Square.area`; no fabricated
+base implementation is emitted.
+
+The same concrete-class validation now covers direct and materialized generic
+class hierarchies. `abstract_class_virtual_dispatch.em` prints `42` and pins
+the direct vtable adapter in generated C across debug, release, and shipping.
+`class_missing_abstract_override.em` pins the complementary `E2020` rejection
+when a concrete `Square` inherits an abstract `area` without overriding it.
+CI run `35490077331` is green on Linux clang/GCC, Windows MSVC/clang-cl, and
+the specification gate. This implements existing `[GRM-2]`, `[CLS-4]`, and
+`[DSP-2]` requirements without an owner decision. Phase accounting remains
+**1 of 9 complete**.
