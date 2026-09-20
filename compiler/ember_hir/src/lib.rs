@@ -443,6 +443,10 @@ pub enum Builtin {
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.
     BoxNew { elem: Ty, boxed: Ty },
+    /// `[HEAP-3]`, `[HEAP-6]` — `Shared(owned value)`. The payload and
+    /// compiler-known handle type travel together so the backend can allocate
+    /// one counted object with the ordinary class-header control block.
+    SharedNew { elem: Ty, shared: Ty },
     /// `[WK-1]`/`[WK-2]` — `Weak(class_handle)`. The class and wrapper types
     /// travel with the operation so the backend can retain the control block
     /// without increasing the object's strong reference count.
@@ -706,6 +710,7 @@ impl Builtin {
             Builtin::ClassDowncast { forced: false, .. } => "as?",
             Builtin::ClassSuperInit { .. } => "super.init",
             Builtin::BoxNew { .. } => "Box",
+            Builtin::SharedNew { .. } => "Shared",
             Builtin::WeakNew { .. } => "Weak",
             Builtin::WeakUpgrade { .. } => "upgrade",
             Builtin::WeakEmpty { .. } => "empty",

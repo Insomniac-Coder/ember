@@ -1069,7 +1069,7 @@ fn check_multi_result_summary(
     }
 }
 
-/// `[TYP-15]`, `[LT-3]` — a Box has no bounding region, so a view may enter it
+/// `[TYP-15]`, `[LT-3]` — an unbounded Box or Shared owner has no bounding region, so a view may enter it
 /// only when every carried region is static. This check belongs after region
 /// inference: spelling the same static view through a local or a zero-input
 /// function must not change whether the program is accepted.
@@ -1078,7 +1078,8 @@ fn check_box_storage_regions(body: &Body, types: &TypeTable, regions: &Regions, 
         let Terminator::Call {
             func:
                 FuncRef::Builtin {
-                    which: Builtin::BoxNew { elem, .. },
+                    which:
+                        builtin @ (Builtin::BoxNew { elem, .. } | Builtin::SharedNew { elem, .. }),
                     ..
                 },
             args,
@@ -1099,11 +1100,16 @@ fn check_box_storage_regions(body: &Body, types: &TypeTable, regions: &Regions, 
             continue;
         }
         let shown = types.display(*elem);
+        let owner = match builtin {
+            Builtin::BoxNew { .. } => "Box",
+            Builtin::SharedNew { .. } => "Shared",
+            _ => unreachable!("only BoxNew and SharedNew reach this check"),
+        };
         sink.emit_classified(
             Diagnostic::error(
                 codes::E3063,
                 block.terminator_span,
-                format!("`{shown}` is a view, so it may not be stored in a Box's contents"),
+                format!("`{shown}` is a view, so it may not be stored in a {owner}'s contents"),
             )
             .primary_label("stored here")
             .help(concat!(

@@ -659,6 +659,11 @@ struct Checker<'a> {
     /// pointer. This table supplies the ownership-aware constructor,
     /// auto-deref and drop semantics without making raw access public.
     boxes: HashMap<StructId, Ty>,
+    /// `[HEAP-3]`–`[HEAP-6]` — every compiler-known `Shared[T]` and its
+    /// payload. The public handle is Copy, but copy/drop use the same strong
+    /// control-block operations as class handles rather than bitwise pointer
+    /// duplication.
+    shareds: HashMap<StructId, Ty>,
     /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
     /// upgrade. The wrapper has a private class-pointer field, but unlike the
     /// class handle it retains only the runtime control block.
@@ -837,6 +842,7 @@ impl<'a> Checker<'a> {
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
+            shareds: HashMap::new(),
             weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
@@ -4357,6 +4363,13 @@ impl<'a> Checker<'a> {
             let (inner, _) = args[0];
             return self.box_of(inner);
         }
+        if name.is("Shared") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, _) = args[0];
+            return self.shared_of(inner);
+        }
         if name.is("Weak") {
             if !require(self, 1) {
                 return self.common.error;
@@ -4995,6 +5008,10 @@ impl<'a> Checker<'a> {
                 if let Some(inner) = self.boxes.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
                     return self.box_of(inner);
+                }
+                if let Some(inner) = self.shareds.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.shared_of(inner);
                 }
                 if let Some(inner) = self.weaks.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
@@ -5716,6 +5733,48 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[HEAP-3]`–`[HEAP-6]` — one counted owner for an ordinary value.
+    ///
+    /// The logical private field is a pointer to the payload so safe reference
+    /// formation can remain ordinary HIR. The backend maps the wrapper itself
+    /// to the runtime object header and materializes that pointer at the
+    /// payload offset; no raw field is visible to source programs.
+    fn shared_of(&mut self, inner: Ty) -> Ty {
+        let name = Symbol::intern(&format!("Shared_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                ty: pointer,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: false,
+            origin: Some((Symbol::intern("Shared"), vec![inner])),
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.shareds.insert(id, inner);
+        ty
+    }
+
+    fn shared_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.shareds.get(id).copied(),
+            _ => None,
+        }
+    }
+
     /// `[WK-1]` — a weak handle is meaningful only for a nominal class
     /// handle. Its private pointer has class-pointer layout, while its custom
     /// drop glue releases the runtime weak count rather than a strong count.
@@ -5777,6 +5836,22 @@ impl<'a> Checker<'a> {
         let field = Expr {
             ty: pointer,
             kind: ExprKind::Field { base: Box::new(boxed), index: 0 },
+            span,
+        };
+        Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span }
+    }
+
+    /// The safe payload place underlying `Shared.get()` and later
+    /// `Shared.get_mut()`. It is rooted at the counted-owner handle, so the
+    /// existing borrow and liveness machinery sees the owner relationship.
+    fn read_shared_through(&mut self, shared: Expr) -> Expr {
+        let Some(inner) = self.shared_inner(shared.ty) else { return shared };
+        let span = shared.span;
+        let TyKind::Struct(id) = *self.types.kind(shared.ty) else { unreachable!() };
+        let pointer = self.types.struct_def(id).fields[0].ty;
+        let field = Expr {
+            ty: pointer,
+            kind: ExprKind::Field { base: Box::new(shared), index: 0 },
             span,
         };
         Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span }
@@ -11244,6 +11319,47 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
 
+        // `[HEAP-3]` — `Shared(value)` creates the first strong owner. Like
+        // Box construction it consumes the ordinary argument value; unlike
+        // Box its compiler-known wrapper is Copy by strong retain.
+        if name.is("Shared") {
+            if explicit.len() > 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Shared` takes one type argument, found {}", explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Shared` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let expected_inner = expected.and_then(|ty| self.shared_inner(ty));
+            let hint = explicit.first().copied().or(expected_inner);
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => self.synth_committed(&args[0].value),
+            };
+            if value.ty == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let inner = value.ty;
+            let shared = self.shared_of(inner);
+            return Expr {
+                ty: shared,
+                kind: ExprKind::Builtin {
+                    which: Builtin::SharedNew { elem: inner, shared },
+                    args: vec![value],
+                },
+                span,
+            };
+        }
+
         // `[WK-1]`/`[WK-2]` — `Weak(class_handle)` creates a weak control-block
         // reference without consuming or retaining the object's strong handle.
         if name.is("Weak") {
@@ -13649,6 +13765,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return self.synth_weak_method(receiver, class, name, args, span);
         }
+        // `[HEAP-4]` — Shared does not auto-dereference. Its explicit `get`
+        // boundary forms an ordinary shared reference rooted at the strong
+        // owner, preserving liveness and borrow facts for later analysis.
+        if let Some(inner) = self.shared_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_shared_method(receiver, inner, name, args, span);
+        }
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
         // does not duplicate the payload's method surface.
@@ -15197,6 +15327,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn builtin_consumes_argument(which: Builtin, index: usize) -> bool {
         match which {
             Builtin::BoxNew { .. }
+            | Builtin::SharedNew { .. }
             | Builtin::MemForget { .. }
             | Builtin::CellIntoInner
             | Builtin::MaybeUninitAssumeInit { .. }
@@ -15619,6 +15750,51 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let payload = self.read_box_through(receiver);
+        let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
+        Expr {
+            ty,
+            kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
+            span,
+        }
+    }
+
+    /// `[HEAP-4]` — `Shared[T].get() -> ref T`. Its receiver must be an owner
+    /// place so the returned reference has a concrete liveness root; `get_mut`
+    /// is added in the following exclusivity slice.
+    fn synth_shared_method(
+        &mut self,
+        receiver: Expr,
+        inner: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("get") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`Shared[{}]` has no method named `{}`", self.types.display(inner), name.name),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`get` takes 0 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(
+                codes::E2140,
+                span,
+                "`Shared.get` needs an owner place so its returned reference cannot outlive a temporary",
+            );
+            return error;
+        }
+        let payload = self.read_shared_through(receiver);
         let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
         Expr {
             ty,

@@ -265,6 +265,7 @@ impl Emitter<'_> {
         self.emit_class_drop_adapters();
         self.emit_class_field_drop_glue();
         self.emit_class_type_infos();
+        self.emit_shared_type_infos();
 
         for body in bodies {
             if body.is_abstract {
@@ -1050,6 +1051,67 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[HEAP-3]`, `[HEAP-6]` — every `Shared[T]` uses the class-object
+    /// control block, with a compiler-owned `TypeInfo` that describes the
+    /// aligned payload and runs ordinary `T` destruction at final release.
+    fn emit_shared_type_infos(&mut self) {
+        let shareds: Vec<(StructId, Ty)> = self
+            .types
+            .structs()
+            .filter_map(|(id, _)| self.shared_inner_id(id).map(|inner| (id, inner)))
+            .collect();
+        if shareds.is_empty() {
+            return;
+        }
+        self.line("/* Shared value type information */");
+        for (id, inner) in &shareds {
+            if !self.types.needs_drop(*inner) {
+                continue;
+            }
+            let drop = self.shared_drop_symbol(*id);
+            let inner_c = self.c_type(*inner);
+            let payload = format!(
+                "(*(({inner_c}*){}(({}*)raw, _Alignof({inner_c}))))",
+                ember_branding::runtime("obj_payload"),
+                ember_branding::runtime("obj_header"),
+            );
+            let mut lines = Vec::new();
+            self.drop_lines(&payload, *inner, &mut lines);
+            self.line(&format!("static void {drop}(void* raw) {{"));
+            for line in lines {
+                self.line(&format!("    {line}"));
+            }
+            self.line("}");
+        }
+        for (id, inner) in shareds {
+            let info = self.shared_type_info_symbol(id);
+            let inner_c = self.c_type(inner);
+            let display = format!("Shared[{}]", self.types.display(inner));
+            self.line(&format!("static const {} {info} = {{", ember_branding::runtime("type_info")));
+            self.line(&format!(
+                "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET(_Alignof({inner_c})) + sizeof({inner_c})),"
+            ));
+            self.line(&format!(
+                "    (uint32_t)((_Alignof({inner_c}) > _Alignof({RT}obj_header)) ? _Alignof({inner_c}) : _Alignof({RT}obj_header)),"
+            ));
+            self.line("    UINT32_C(0),");
+            self.line(&format!("    {},", c_string_literal(&display)));
+            self.line("    NULL,");
+            if self.types.needs_drop(inner) {
+                self.line(&format!("    &{},", self.shared_drop_symbol(id)));
+            } else {
+                self.line("    NULL,");
+            }
+            self.line("    NULL,");
+            self.line("    NULL,");
+            self.line("    NULL,");
+            self.line("    UINT32_C(0),");
+            self.line("    NULL,");
+            self.line("    UINT32_C(0)");
+            self.line("};");
+        }
+    }
+
     fn node_name(&self, node: TypeNode) -> String {
         match node {
             TypeNode::Struct(id) => c_name(&self.types.struct_def(id).name.to_string()),
@@ -1070,6 +1132,25 @@ impl Emitter<'_> {
             Some((name, args)) if name.is("Box") && args.len() == 1 => Some(args[0]),
             _ => None,
         }
+    }
+
+    /// The payload of a compiler-known `Shared[T]` counted handle. The C
+    /// representation is the common runtime header pointer; its `T` payload
+    /// lives immediately after that header at the alignment-aware offset.
+    fn shared_inner_id(&self, id: StructId) -> Option<Ty> {
+        let def = self.types.struct_def(id);
+        match &def.origin {
+            Some((name, args)) if name.is("Shared") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    fn shared_type_info_symbol(&self, id: StructId) -> String {
+        format!("{}_type_info", c_name(&self.types.struct_def(id).name.to_string()))
+    }
+
+    fn shared_drop_symbol(&self, id: StructId) -> String {
+        format!("{}_drop_payload", c_name(&self.types.struct_def(id).name.to_string()))
     }
 
     /// The class payload of a compiler-known `Weak[C]` wrapper. Unlike Box,
@@ -1098,6 +1179,9 @@ impl Emitter<'_> {
                         return Definition::Alias(self.c_type(inner));
                     }
                     return Definition::Alias(format!("{}*", self.c_type(inner)));
+                }
+                if self.shared_inner_id(id).is_some() {
+                    return Definition::Alias(format!("{}obj_header*", RT));
                 }
                 Definition::Struct(
                     self.types
@@ -1262,6 +1346,14 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                if self.shared_inner_id(*id).is_some() {
+                    out.push(format!(
+                        "{}(({}*){access});",
+                        ember_branding::runtime("release"),
+                        ember_branding::runtime("obj_header")
+                    ));
+                    return;
+                }
                 if self.weak_inner_id(*id).is_some() {
                     out.push(format!(
                         "{}(({}*){access}.value);",
@@ -1759,6 +1851,14 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                if self.shared_inner_id(*id).is_some() {
+                    out.push(format!(
+                        "{}(({}*){access});",
+                        ember_branding::runtime("retain"),
+                        ember_branding::runtime("obj_header")
+                    ));
+                    return;
+                }
                 if self.weak_inner_id(*id).is_some() {
                     out.push(format!(
                         "{}(({}*){access}.value);",
@@ -2425,6 +2525,18 @@ impl Emitter<'_> {
                             rendered[0]
                         );
                     }
+                    Builtin::SharedNew { elem, shared } => {
+                        let elem_c = self.c_type(*elem);
+                        let shared_c = self.c_type(*shared);
+                        let TyKind::Struct(id) = self.types.kind(*shared) else {
+                            unreachable!("SharedNew carries a compiler-known wrapper")
+                        };
+                        let info = self.shared_type_info_symbol(*id);
+                        return format!(
+                            "(({shared_c}){RT}obj_new_copy(&{info}, _Alignof({elem_c}), sizeof({elem_c}), &{}))",
+                            rendered[0]
+                        );
+                    }
                     Builtin::WeakNew { weak, .. } => {
                         let weak_c = self.c_type(*weak);
                         return format!(
@@ -2724,7 +2836,17 @@ impl Emitter<'_> {
                         // `T*`. The logical field therefore contributes no C
                         // member access; the following projection emits
                         // `(*box)` directly.
-                        if self.box_inner_id(*id).is_none() {
+                        if let Some(inner) = self.shared_inner_id(*id) {
+                            debug_assert_eq!(*index, 0);
+                            let inner_c = self.c_type(inner);
+                            out = format!(
+                                "(({}*){}(({}*){out}, _Alignof({})))",
+                                inner_c,
+                                ember_branding::runtime("obj_payload"),
+                                ember_branding::runtime("obj_header"),
+                                inner_c,
+                            );
+                        } else if self.box_inner_id(*id).is_none() {
                             out.push_str(&format!(".{}", def.fields[*index].name));
                         }
                     }

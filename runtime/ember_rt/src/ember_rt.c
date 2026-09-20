@@ -310,6 +310,21 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     return object;
 }
 
+ember_obj_header* ember_obj_new_copy(
+    const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value) {
+    if (payload_align == 0 || (payload_align & (payload_align - 1)) != 0
+        || ti == NULL
+        || ti->size < EMBER_OBJ_PAYLOAD_OFFSET(payload_align) + payload_size
+        || (payload_size != 0 && value == NULL)) {
+        object_panic_text("invalid shared object payload");
+    }
+    ember_obj_header* object = ember_obj_new(ti);
+    if (payload_size != 0) {
+        memcpy(ember_obj_payload(object, payload_align), value, payload_size);
+    }
+    return object;
+}
+
 void ember_obj_retain(ember_obj_header* object) {
     if (object == NULL) {
         return;

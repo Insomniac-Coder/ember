@@ -2330,7 +2330,10 @@ impl<'a> Builder<'a> {
                         | hir::Builtin::FixedArenaAlloc { .. }
                         | hir::Builtin::ScopedArenaAlloc { .. }
                 );
-                let spill_first = matches!(which, hir::Builtin::BoxNew { .. });
+                let spill_first = matches!(
+                    which,
+                    hir::Builtin::BoxNew { .. } | hir::Builtin::SharedNew { .. }
+                );
                 let args: Vec<Operand> = args
                     .iter()
                     .enumerate()

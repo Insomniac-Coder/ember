@@ -319,9 +319,22 @@ typedef struct ember_obj_header {
     const ember_type_info* ti;
 } ember_obj_header;
 
+/* Shared-value payloads immediately follow the common header, rounded up to
+ * their required alignment. The macro is usable in generated static type-info
+ * initializers; the inline accessor keeps ordinary generated expressions from
+ * duplicating the alignment arithmetic. */
+#define EMBER_OBJ_PAYLOAD_OFFSET(payload_align) \
+    ((sizeof(ember_obj_header) + (payload_align) - 1) & ~((payload_align) - 1))
+
+static inline void* ember_obj_payload(ember_obj_header* object, size_t payload_align) {
+    return (void*)((unsigned char*)object + EMBER_OBJ_PAYLOAD_OFFSET(payload_align));
+}
+
 /* Allocate a zeroed object header with one strong and one implicit weak
  * reference. Class fields are initialized by generated constructor code. */
 ember_obj_header* ember_obj_new(const ember_type_info* ti);
+ember_obj_header* ember_obj_new_copy(
+    const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value);
 
 /* These helpers are the out-of-line implementation boundary used by the
  * header-inline retain/release operations below. They preserve the exact

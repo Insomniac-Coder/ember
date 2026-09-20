@@ -1187,8 +1187,11 @@ impl TypeTable {
                 // with custom control-block release glue. `has_drop` stays
                 // false so Copy remains valid; their canonical origin is the
                 // separate signal that drop elaboration must run.
-                matches!(&def.origin, Some((name, args)) if name.is("Weak") && args.len() == 1)
-                    || def.has_drop
+                matches!(
+                    &def.origin,
+                    Some((name, args))
+                        if (name.is("Weak") || name.is("Shared")) && args.len() == 1
+                ) || def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             // Dropping a class handle releases its strong reference.
