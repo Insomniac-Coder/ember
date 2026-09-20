@@ -7245,3 +7245,19 @@ that the class handle remains the sole allocation. CI run `35484731245` is
 green on all compiler/toolchain combinations. This is coverage of the existing
 class-box ownership boundary, not a claim that generic classes, multiple
 interfaces, enums, or scalars are supported.
+
+### 0.155 `[TYP-22]` inherited class dynamic-box coverage — 2026-09-20
+
+Three focused conformance slices extend the verified class payload boundary
+without changing its representation. `6e82101` boxes an inherited class,
+`f173c0a` proves release through the dynamic box runs the derived destructor
+before its base destructor, and `162f890` dispatches a `mut self` interface
+slot that updates an inherited field. Each runs in debug, release, and
+shipping; emitted-C assertions keep the direct class-handle carrier and reject
+an accidental `ember_box_new_copy` allocation. CI run `35485226914` is green
+across Linux clang/GCC, Windows MSVC/clang-cl, and documentation validation.
+
+This completes the direct and inherited non-generic class-payload matrix for a
+single dynamic interface. Generic classes, multiple-interface composition,
+enums, scalars, and the wider DRP-6 handle/Shared exit remain open, so phase
+accounting stays **1 of 9 complete**.
