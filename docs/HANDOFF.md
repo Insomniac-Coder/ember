@@ -7280,7 +7280,18 @@ and ownership transfer. CI runs `35485934681`, `35485960694`, `35486006896`,
 and `35486055434` are green across Linux clang/GCC, Windows MSVC/clang-cl, and
 documentation validation.
 
-Generic base classes and generic multi-interface composition remain separate
-implementation work; no representation, ownership, or rule interpretation
-outside the direct generic-class path changed. Phase accounting remains
+Generic base classes remain separate implementation work; no representation,
+ownership, or rule interpretation outside the direct generic-class path
+changed. Phase accounting remains **1 of 9 complete**.
+
+### 0.157 Direct generic multi-interface composition — 2026-09-20
+
+The instantiated implementation registry also supports a direct generic class
+that implements multiple interfaces, including a derived interface table. A
+`Pair[bool] implements Parent, Child` dispatches both the inherited `Parent`
+slot and the `Child` slot through `ref dyn Child`; its `Box[dyn Child]`
+counterpart preserves the one class-handle allocation and the same composed
+vtable. The all-profile regressions are green in CI runs `35486307173` and
+`35486358779` on Linux clang/GCC, Windows MSVC/clang-cl, and documentation
+validation. Generic base classes remain open; Phase accounting remains
 **1 of 9 complete**.
