@@ -7858,3 +7858,21 @@ missing/ambiguous-target diagnostics. `[WK-9]` implementation and conformance
 are paused pending that ruling. This is not a compiler defect and it does not
 alter the frozen 0.9.8 target. All completed work remains locally validated;
 Phase accounting remains **1 of 9 complete** with Phase 2 and Phase 3 active.
+
+### 0.183 ODR-018 owner resolution / 0.9.8_Hardened_2 — 2026-09-20
+
+The owner closed ODR-018 with one canonical command:
+`ember explain --cycle <path> <Class[.field]>`. `<path>` is either a package
+directory directly containing `ember.toml` or a standalone `.em` source file.
+It must use the same resolver and normal module/import closure as `ember
+inspect --cycle <path>`; cwd scanning, stale-build fallback, prior-build
+inference, arbitrary-package selection, and a partial-package module mode are
+forbidden. Targets support `Class`, `Class.field`, `module::Class`, and
+`module::Class.field`; ambiguities fail with qualified candidates.
+
+`Ember_v0.9.8_Hardened_2.md` records the ruling as tooling hardening, closes
+the ODR, and preserves the owner text byte-for-byte. No implementation or
+conformance claim follows from that specification change. The next work is the
+single shared resolver, the `explain` command, and its required executable
+coverage; Phase accounting remains **1 of 9 complete** with Phases 2 and 3
+active.

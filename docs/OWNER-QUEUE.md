@@ -37,7 +37,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-015 | **CLOSED** — `@latebound` callable-type boundary | Language / lifetime callback API | — | **No** — ruled 2026-09-14 |
 | ODR-016 | **CLOSED** — diagnostic identity for existing multi-region and callable-mode rejections | Diagnostics / conformance | — | **No** — incorporated in 0.9.7_Hardened_3 |
 | ODR-017 | **CLOSED** — `Shared[T]` strong-owner and generalized `Weak[O]` surface | Standard-library API / ownership / borrowing | — | **No** — ruled 2026-09-20 |
-| ODR-018 | **OPEN** — source/package selection for `ember explain --cycle` | CLI / static diagnostics / package resolution | **P1** | **Yes** |
+| ODR-018 | **CLOSED** — explicit shared cycle-analysis root | CLI / static diagnostics / package resolution | — | **No** — ruled 2026-09-20 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -46,8 +46,8 @@ intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
 ODR-001, ODR-002, and ODR-004 through ODR-017 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **ODR-018 is the sole open owner
-CLI-resolution decision.** H8 records the complete helper-mode and callable-abstraction
+editorial work with no semantic impact. **ODR-018 is closed by the explicit
+shared cycle-analysis-root ruling.** H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -71,58 +71,39 @@ editorial cleanup that can safely wait.
 
 ---
 
-## ODR-018 — source/package selection for `ember explain --cycle` — **OPEN**
+## ODR-018 — source/package selection for `ember explain --cycle` — **CLOSED**
 
     ID:        ODR-018
-    Status:    OPEN — implementation paused pending an owner CLI-resolution ruling
+    Status:    CLOSED — owner-selected shared analysis-root resolution
     Category:  CLI / STATIC DIAGNOSTICS / PACKAGE RESOLUTION
     Priority:  P1
-    Location:  Ember_v0.9.8_Hardened_1.md [WK-9] and XX.1 CLI listing;
-               compare [CLI-17]
+    Location:  Ember_v0.9.8_Hardened_2.md [CLI-17], [CLI-18], and [WK-9]
 
-    Question:  Which source package supplies the ownership graph for
-               `ember explain --cycle <Class[.field]>`, and how is the named
-               class or field resolved within that package?
+    Resolution: `ember explain --cycle <path> <Class[.field]>`; `<path>` uses
+                the same package-directory or standalone-file resolution as
+                `ember inspect --cycle <path>`.
 
-    Blocks implementation:            YES — `[WK-9]` has no defined graph input
-    Blocks conformance:               YES — no canonical invocation can be tested
-    Blocks specification freeze:      NO — the 0.9.8 target remains immutable
-    Blocks normative specification adoption: one CLI amendment is required
-    Requires owner semantic decision: YES
+    Blocks implementation:            NO — implementation is authorized
+    Blocks conformance:               NO — canonical invocations are defined
+    Blocks specification freeze:      NO — H2 records the tooling hardening
+    Blocks normative specification adoption: implementation evidence still required
+    Requires owner semantic decision: NO
 
-**Existing wording.** `[WK-9]` requires `ember explain --cycle
-<Class[.field]>` to explain one field from the statically visible ownership
-paths. The same CLI listing gives `[CLI-17]` the distinct spelling `ember
-inspect --cycle <path>`, and `[CLI-17]` says that its graph is the one used by
-`[WK-5]`. Neither `[WK-9]` nor the command listing supplies a source path,
-package root, manifest, current-package rule, or qualification rule for the
-`Class[.field]` argument.
+**Owner ruling.** A valid path is exactly a package directory containing
+`ember.toml`, resolved through its manifest and normal module/import closure,
+or one standalone `.em` source file under the existing single-file rules. Both
+cycle commands use this one resolver. They do not scan cwd, consult a stale or
+unrelated build, infer a prior root, or select a package arbitrarily; an invalid
+root fails before ownership analysis with no fallback. A module file is a
+standalone root, never a third partial-package interpretation.
 
-**Gap.** The current compiler loads an ownership graph from an explicit source
-path and its imports. With the documented `explain` spelling it has no input
-from which to load that graph. Searching the working directory, assuming a
-manifest, selecting the last compiled source, or silently choosing between
-same-named classes in different modules would each define observable CLI and
-diagnostic behavior that the specification does not select.
-
-**Requested owner resolution.** Choose one exact invocation and lookup rule:
-
-1. **Recommended:** `ember explain --cycle <path> <Class[.field]>`, where
-   `<path>` supplies the same package/module closure as `inspect --cycle`, and
-   state the required qualification/error behavior for ambiguous or missing
-   class and field names.
-2. Keep the current argument shape but define a `--package <path>` or project
-   root selection mechanism, including its package discovery and ambiguity
-   rules.
-3. Define a different explicit package-selection mechanism and its exact
-   precedence with source paths and working directories.
-
-The ruling must state whether the class name is source-module-qualified, which
-diagnostic handles a missing or ambiguous target, and whether the command may
-load imports beyond the selected root. It must not rely on an implicit current
-directory scan or a previously compiled process state unless those are made
-normative. Once selected, the existing static graph and `[WK-9]` output
-requirements can be implemented without another ownership-semantic decision.
+`Class`, `Class.field`, `module::Class`, and `module::Class.field` resolve only
+inside that universe. Existing unknown-name/member diagnostics apply to missing
+targets. An unqualified ambiguity fails and names its qualified candidates.
+The ruling is preserved at
+`docs/spec-source/as-received/ODR-018_Cycle_explanation_analysis_root.md` and
+is recorded by ADR-038. It is CLI/tooling hardening only: no source-language,
+ownership, lifetime, ABI, runtime, or graph-semantics decision changed.
 
 ---
 

@@ -1314,3 +1314,33 @@ received ruling is preserved byte-for-byte at
 SHA-256 `939028B039073BD1F086EE304327338C2DB7743F1721BB99C6AF6B953FC71D0E`.
 The new target remains non-normative until its implementation, conformance, and
 adoption gates are satisfied.
+
+## ADR-038 — Cycle tools share one explicit analysis root
+
+**Owner ruling resolving ODR-018, 2026-09-20.** `[WK-9]` named a class or field
+for `ember explain --cycle` but supplied no program from which to construct the
+ownership graph. Selecting cwd, a previous build, or one of several packages
+would make observable CLI behavior without an owner rule.
+
+**Decision.** The canonical command is `ember explain --cycle <path>
+<Class[.field]>`. The same `<path>` resolver serves it and `ember inspect
+--cycle <path>`: a package directory directly containing `ember.toml` loads
+its manifest and ordinary module/import closure; one `.em` path is a standalone
+file under the existing single-file synthesis. No cwd scan, stale-build
+fallback, prior-root inference, or arbitrary package choice is allowed. A
+module path has only the standalone interpretation, never a partial-package
+mode.
+
+Target names resolve only within that selected universe. `::` qualifies modules
+and types; `.` selects a field. Existing name/member diagnostic families handle
+unknown classes and fields. An unqualified class with multiple candidates is
+an error that names the qualified candidates rather than choosing one.
+
+**Boundary and evidence treatment.** This is `0.9.8_Hardened_2`, a CLI/tooling
+hardening. It does not change ownership or lifetime semantics, source-language
+acceptance, the existing ownership graph, ABI, runtime-object behavior, or
+runtime metadata. The ruling is preserved byte-for-byte at
+`docs/spec-source/as-received/ODR-018_Cycle_explanation_analysis_root.md` with
+SHA-256 `BF735AFF393CB5EAEB08D73409AF8DF7F29E7D51773CA38D8E2950A26B5CCD7C`.
+H2 is a frozen development target, not an implementation or conformance claim;
+implementation and executable evidence remain separately required.
