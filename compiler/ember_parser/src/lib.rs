@@ -41,7 +41,7 @@ pub const LANGUAGE_VERSIONS: &[&str] = &[
     // neighboring revisions accept and interpret ordinary source identically.
     // Recognising a selector does not adopt its frozen development target or
     // enable it for a module that explicitly selected an earlier contract.
-    "0.9", "0.9.5", "0.9.6", "0.9.7",
+    "0.9", "0.9.5", "0.9.6", "0.9.7", "0.9.8",
 ];
 
 /// Parse one file's token stream into a [`Module`].
