@@ -4674,9 +4674,9 @@ impl<'a> Checker<'a> {
         })
     }
 
-    /// Substitution that also rebuilds an instantiated generic struct:
-    /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different struct with a
-    /// different layout, not the same one with its fields rewritten.
+    /// Substitution that also rebuilds an instantiated generic nominal type:
+    /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different nominal type
+    /// with a different layout, not the same one with its fields rewritten.
     fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
         match self.types.kind(ty).clone() {
             TyKind::Param { index, .. } => args.get(index as usize).copied().unwrap_or(ty),
@@ -4754,6 +4754,19 @@ impl<'a> Checker<'a> {
                 }
                 let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
                 self.instantiate_struct(name, &decl, &concrete, Span::DUMMY)
+            }
+            TyKind::Class(id) => {
+                let origin = self.types.class_def(id).origin.clone();
+                let Some((name, generic_args)) = origin else { return ty };
+                let concrete = generic_args
+                    .iter()
+                    .map(|&arg| self.substitute_ty(arg, args))
+                    .collect::<Vec<_>>();
+                if concrete == generic_args {
+                    return ty;
+                }
+                let Some(decl) = self.generic_classes.get(&name).cloned() else { return ty };
+                self.instantiate_class(name, &decl, &concrete, Span::DUMMY)
             }
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(id);

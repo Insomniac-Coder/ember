@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-20 — generic-class substitutions did not rebuild nested classes
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-159 | **Substitution rebuilt instantiated generic structs but not generic classes.** A method on `Factory[T]` with a `Payload[T]` parameter or result retained the symbolic materialization `Payload_T` when `Factory[i32]` was checked, so a real `Payload[i32]` argument or return was treated as a different type. The same gap prevented a generic class from exercising an inherited generic interface default through that method. | `[TYP-16]`, `[IFC-1]` | **fixed** | `substitute_ty` now reconstructs an instantiated class from its recorded generic origin after substituting its arguments, exactly as it already reconstructs an instantiated struct. `tests/run-pass/generic_class_interface_default_generic_method.em` was rejected before the correction and now verifies direct and late calls to the specialized interface default, plus a nested generic-class parameter and result, in debug, release, and shipping. `generic_class_interface_default_dyn_box.em` covers the complementary non-generic default through borrowed and owned dynamic interface adapters. The specification already composes these constructs; no specification, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-19 — owned interface receivers were accepted as dyn-compatible
 
 | # | Defect | Rule | Status | Fixed in |

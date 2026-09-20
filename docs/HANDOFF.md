@@ -7389,3 +7389,26 @@ CI run `35490077331` is green on Linux clang/GCC, Windows MSVC/clang-cl, and
 the specification gate. This implements existing `[GRM-2]`, `[CLS-4]`, and
 `[DSP-2]` requirements without an owner decision. Phase accounting remains
 **1 of 9 complete**.
+
+### 0.164 Generic-class interface defaults and nested substitutions — 2026-09-20
+
+Generic nominal substitution now rebuilds a class materialization after
+substituting its origin arguments, matching the existing generic-struct path.
+Consequently, a signature written as `Payload[T]` in a `Factory[T]` method
+becomes `Payload[i32]` when the factory is instantiated, rather than retaining
+the unrelated symbolic `Payload_T` class. This fixes the ordinary generic-class
+method boundary that also blocked a generic class from using an inherited
+generic interface default through another generic class.
+
+`generic_class_interface_default_dyn_box.em` proves `Pixel[i32] implements
+Answer` inherits an ordinary interface default and dispatches it through both
+`ref dyn Answer` and `Box[dyn Answer]`; it pins the concrete class adapter.
+`generic_class_interface_default_generic_method.em` proves the generic default
+member both directly and through `Factory[i32]`, whose `Payload[i32]` parameter
+and result are now correctly specialized. Both probes run in debug, release,
+and shipping; the focused type-checker/MIR suites and the complete run-pass
+corpus pass.
+
+This is an implementation defect recorded as D-159, not an ODR: `[TYP-16]`,
+`[IFC-1]`, and `[TYP-22]` already determine the behavior. No specification or
+owner decision changed. Phase accounting remains **1 of 9 complete**.
