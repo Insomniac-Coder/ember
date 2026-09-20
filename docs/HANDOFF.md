@@ -7167,3 +7167,14 @@ This advances field-wise derived cloning but remains short of complete
 `[OWN-8]`: user-written Clone implementations, generic structs, and the
 standard-library Clone interface are still separate work. Phase accounting is
 unchanged: **1 of 9 complete**, Phase 2 active.
+
+### 0.149 `[OWN-8]` derived Clone delegates to handwritten fields — 2026-09-20
+
+Derived Clone now uses the same checked `clone(self) -> Self` method lookup
+for every non-Copy field, whether that method was derived or written in source.
+The all-profile probe retains a move-only `Leaf` in a derived `Pair`, verifies
+both values print as `42`, and pins both emitted clone symbols.
+
+This is intentionally a method-contract slice: generic structs and the
+standard-library `Clone` interface are still open. Phase accounting remains
+**1 of 9 complete**, Phase 2 active.

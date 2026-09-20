@@ -495,8 +495,6 @@ struct Checker<'a> {
     lambdas: Vec<Function>,
     /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
     derived_clone_methods: Vec<(DefId, Ty, Span)>,
-    /// Types whose `clone` method came from the current derived-Clone slice.
-    derived_clone_types: HashSet<Ty>,
     /// Candidates resolved after every source method is known, so field order
     /// never changes whether a legal derived clone is available.
     pending_derived_clones: Vec<(Ty, Span)>,
@@ -739,7 +737,6 @@ impl<'a> Checker<'a> {
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             derived_clone_methods: Vec::new(),
-            derived_clone_types: HashSet::new(),
             pending_derived_clones: Vec::new(),
             captures: None,
             self_ty: None,
@@ -3521,6 +3518,18 @@ impl<'a> Checker<'a> {
         Some(def)
     }
 
+    fn clone_method(&self, ty: Ty) -> Option<DefId> {
+        let entry = self.methods.get(&(ty, Symbol::intern("clone")))?;
+        let signature = self.signatures.get(entry.def.0 as usize)?;
+        (entry.receiver == Mode::Borrow
+            && signature.generics.is_empty()
+            && signature.params.len() == 1
+            && signature.params[0].1 == ty
+            && signature.params[0].2 == Mode::Borrow
+            && signature.ret == ty)
+            .then_some(entry.def)
+    }
+
     fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
         if !has_derive(attrs, "Clone") {
             return;
@@ -3533,7 +3542,7 @@ impl<'a> Checker<'a> {
         while let Some(index) = pending.iter().position(|(ty, _)| {
             let TyKind::Struct(id) = *self.types.kind(*ty) else { return false };
             self.types.struct_def(id).fields.iter().all(|field| {
-                self.types.is_copy(field.ty) || self.derived_clone_types.contains(&field.ty)
+                self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
             })
         }) {
             let (ty, span) = pending.swap_remove(index);
@@ -3551,14 +3560,13 @@ impl<'a> Checker<'a> {
                 None,
                 span,
             ) {
-                self.derived_clone_types.insert(ty);
                 self.derived_clone_methods.push((def, ty, span));
             }
         }
         for (ty, _) in pending {
             let TyKind::Struct(id) = *self.types.kind(ty) else { continue };
             let Some(field) = self.types.struct_def(id).fields.iter().find(|field| {
-                !self.types.is_copy(field.ty) && !self.derived_clone_types.contains(&field.ty)
+                !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
             }) else {
                 continue;
             };
@@ -6156,7 +6164,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         if self.types.is_copy(field.ty) {
                             field_expr
                         } else {
-                            let clone = self.methods[&(field.ty, Symbol::intern("clone"))].def;
+                            let clone = self.clone_method(field.ty).expect("checked derived Clone field");
                             Expr {
                                 ty: field.ty,
                                 kind: ExprKind::Call {
