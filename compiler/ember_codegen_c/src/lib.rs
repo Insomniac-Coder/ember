@@ -3334,10 +3334,21 @@ impl Planner<'_> {
         }
         match node {
             TypeNode::Struct(id) => {
-                let fields: Vec<Ty> =
-                    self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
-                for field in fields {
-                    self.require(field);
+                // `Weak[O]` always lowers to one pointer-valued field. Its
+                // owner can therefore remain a forward declaration; making
+                // the planner require the owner first reverses the C order
+                // for `class Node { parent: Weak[Node] }` and leaves the
+                // wrapper incomplete at the class-field declaration.
+                let is_weak = matches!(
+                    &self.types.struct_def(id).origin,
+                    Some((name, args)) if name.is("Weak") && args.len() == 1
+                );
+                if !is_weak {
+                    let fields: Vec<Ty> =
+                        self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
+                    for field in fields {
+                        self.require(field);
+                    }
                 }
             }
             TypeNode::Class(id) => {
