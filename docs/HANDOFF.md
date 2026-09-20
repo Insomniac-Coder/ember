@@ -7876,3 +7876,36 @@ conformance claim follows from that specification change. The next work is the
 single shared resolver, the `explain` command, and its required executable
 coverage; Phase accounting remains **1 of 9 complete** with Phases 2 and 3
 active.
+
+### 0.184 `[CLI-17]`, `[CLI-18]`, and `[WK-9]` implementation checklist — 2026-09-20
+
+ODR-018's implementation uses one derived, explicit cycle-analysis-root result:
+the root resolver accepts a package directory directly containing `ember.toml`
+or a standalone `.em` file. For a package it reads the manifest, selects the
+ordinary `src/main.em` or `src/lib.em` entry (or `[build] entry`), and loads the
+same module/import closure for both commands. A supplied module file remains a
+standalone root. No command searches cwd, build output, or prior process state.
+
+Checklist:
+
+- [x] `ember inspect --cycle <path>` accepts package and standalone roots.
+- [x] `ember explain --cycle <path> <Class[.field]>` shares the resolver and
+  ownership graph with `inspect`, and `--help` advertises the canonical form.
+- [x] Class-only, class-field, and `module::Class[.field]` targets resolve in
+  that universe; qualified explanation output uses Ember `::` spelling.
+- [x] Missing classes/fields and ambiguous unqualified classes fail without a
+  new cycle-specific diagnostic code; ambiguity names every qualified candidate.
+- [x] Invalid roots fail before analysis, cannot fall back to cwd or a previous
+  unrelated analysis, and generic/dynamic edges retain existing non-overclaim
+  behavior.
+- [x] Driver evidence covers package, standalone, shared graph, class/field,
+  qualification, missing/ambiguous targets, invalid/no-fallback roots, generic
+  ownership types, and dynamic-cycle-capable edges. Existing cycle tests remain
+  in the milestone suite.
+- [ ] Run the workspace gate and confirm the pushed CI batch before recording
+  final repository-wide conformance evidence.
+
+The implementation is diagnostic-only. It adds no ownership/lifetime mechanism,
+source-language acceptance change, ABI/runtime change, second graph, or hidden
+root-selection state. Phase accounting remains **1 of 9 complete** with Phases
+2 and 3 active.
