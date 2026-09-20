@@ -1566,7 +1566,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 fn manifest_enables_l3014(start: &Path) -> bool {
     let mut directory = Some(start);
     while let Some(candidate) = directory {
-        let path = candidate.join("ember.toml");
+        let path = candidate.join(ember_branding::MANIFEST);
         if path.is_file() {
             let Ok(text) = std::fs::read_to_string(path) else { return false };
             let mut in_lints = false;
