@@ -7330,3 +7330,27 @@ CI run `35487571717` is green on Linux clang/GCC, Windows MSVC/clang-cl, and
 the specification gate. This is a direct implementation of `[CLS-4]` and
 `[DSP-2]`; no new class or generic semantics were inferred. Phase accounting
 remains **1 of 9 complete**.
+
+### 0.160 Generic class mutable virtual dispatch — 2026-09-20
+
+A concrete `Derived[T]` override with a `mut self` receiver now has explicit
+all-profile coverage through a `Base[T]` handle. The override mutates the
+inherited field and returns `42`; generated C is pinned to the concrete
+derived slot adapter and the base-typed vtable call. CI run `35487852844` is
+green across Linux clang/GCC, Windows MSVC/clang-cl, and the specification
+gate. Phase accounting remains **1 of 9 complete**.
+
+### 0.161 Generic abstract-class virtual methods — 2026-09-20
+
+Bodyless virtual declarations on an `abstract class T[U]` now materialize as
+typed HIR/MIR vtable metadata rather than executable functions. This preserves
+method lookup and the base slot ABI while ensuring only a concrete override is
+emitted. `Square[bool]` implements `Shape[bool].area`, and a base-typed call
+dispatches to its derived adapter in debug, release, and shipping; generated C
+contains the base vtable struct but no fabricated abstract implementation.
+
+The initial CI run exposed two analysis-test `Body` fixtures that needed the
+new metadata field; `d944a59` corrects them. CI run `35488391546` is green on
+all compiler/toolchain combinations and the specification gate. This follows
+the explicit generic-class grammar, `[GRM-2]`, `[CLS-4]`, and `[DSP-2]`; no
+owner decision was required. Phase accounting remains **1 of 9 complete**.
