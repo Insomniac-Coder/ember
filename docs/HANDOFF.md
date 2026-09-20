@@ -7713,3 +7713,31 @@ Runtime `--leak-check` SCC reporting, `explain`/`inspect --cycle`, foreign
 unknown-edge reporting, and the remaining `[WK-*]` matrix still remain Phase 3
 work. Phase accounting remains **1 of 9 complete**; Phase 2 and Phase 3 remain
 active.
+
+### 0.177 Cycle CI repair and static graph inspection — 2026-09-20
+
+Commit `70f7948` repairs the two CI gates exposed by the initial cycle-lint
+landing. The four warning fixtures now have inert `main` entry points because
+the repository's `compile-pass` harness runs successful fixtures after checking
+their diagnostics. The `L3001` error-reference page supplies both a triggering
+strong cycle and a compiling `Weak` back-reference repair, closing `[DIA-6]`'s
+executable-documentation requirement. The fixture repair is test-harness
+coverage, not an ownership-language change or compiler defect.
+
+Commit `dda1ec1` implements the specified `ember inspect --cycle <file.em>`
+slice of `[CLI-17]`. It reports the same package-local strong graph used by
+`L3001`, adds visible `weak` and conservative `unknown` classifications without
+letting either participate in SCC detection, shows source-spelled instantiated
+owners such as `Shared[Leaf]`, and emits one shortest strong cycle per SCC.
+Both text and `--json` output are covered by the driver integration test; the
+analysis unit test pins `unknown` handling for unresolved owners. The source
+fixture intentionally lives outside executable milestone directories because
+the current backend does not yet lower weak class fields.
+
+Focused analysis/driver tests, workspace checking, all-profile direct cycle
+fixture runs, `error_pages.py`, the specification gates, and `git diff --check`
+pass. `ember explain --cycle`, runtime leak-check SCC reporting, foreign opaque
+edge classification, and the remaining `[WK-*]` matrix remain Phase 3 work.
+No ODR is involved: the frozen target defines this inspection output and does
+not alter ownership semantics. Phase accounting remains **1 of 9 complete**;
+Phase 2 and Phase 3 remain active.
