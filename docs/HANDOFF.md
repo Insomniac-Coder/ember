@@ -7841,3 +7841,20 @@ and shipping; rule-index, branding, and diff checks pass as well. `DRP` is now
 depends on Phase 4 effects. No ODR or defect is involved because `[DRP-6]`
 already fixes all four destruction rules. Phase accounting remains **1 of 9
 complete**; Phase 2 and Phase 3 are active.
+
+### 0.182 `[WK-9]` source-selection ODR — 2026-09-20
+
+After completing `[WK-8]` and the remaining currently buildable `[DRP-6]`
+coverage, the next Phase 3 cycle obligation is `[WK-9]`. It requires `ember
+explain --cycle <Class[.field]>`, but the frozen target supplies neither a
+source path nor a package/project selection rule for that command. This is
+material: the whole ownership graph and class-name resolution depend on it;
+using the current directory, a previous build, or an arbitrary same-named
+class would invent observable CLI behavior.
+
+ODR-018 records the exact choice needed, recommends reusing `inspect --cycle`'s
+explicit source-path model, and requests the associated qualification and
+missing/ambiguous-target diagnostics. `[WK-9]` implementation and conformance
+are paused pending that ruling. This is not a compiler defect and it does not
+alter the frozen 0.9.8 target. All completed work remains locally validated;
+Phase accounting remains **1 of 9 complete** with Phase 2 and Phase 3 active.

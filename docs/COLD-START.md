@@ -604,8 +604,9 @@ withdrawn as wrong; D5 closed with the compiler right; D-030 was fixed. What
 remains:
 
 **The queue lives in `docs/OWNER-QUEUE.md`.** ODR-001, ODR-002, and ODR-004
-through ODR-014 are closed. ODR-003 is deferred editorial work. **No owner
-semantic/API decision is currently open.**
+through ODR-017 are closed. ODR-003 is deferred editorial work. **ODR-018 is
+open for `[WK-9]`: `ember explain --cycle` names a class or field but supplies
+no source or package-selection rule.**
 
 * **ODR-001 — CLOSED.** `[UNS-10]`'s `UnsafeCell` API stays exactly as written.
 * **ODR-002 — CLOSED as tooling work, not spec work.** The six rules stayed
