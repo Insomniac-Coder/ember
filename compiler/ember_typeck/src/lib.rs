@@ -178,6 +178,7 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    checker.resolve_derived_clones();
     checker.validate_class_methods(modules);
     checker.assign_class_virtual_slots();
     // Conformance is a whole-program question. Checking it inside the loop
@@ -494,6 +495,11 @@ struct Checker<'a> {
     lambdas: Vec<Function>,
     /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
     derived_clone_methods: Vec<(DefId, Ty, Span)>,
+    /// Types whose `clone` method came from the current derived-Clone slice.
+    derived_clone_types: HashSet<Ty>,
+    /// Candidates resolved after every source method is known, so field order
+    /// never changes whether a legal derived clone is available.
+    pending_derived_clones: Vec<(Ty, Span)>,
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
@@ -733,6 +739,8 @@ impl<'a> Checker<'a> {
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             derived_clone_methods: Vec::new(),
+            derived_clone_types: HashSet::new(),
+            pending_derived_clones: Vec::new(),
             captures: None,
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
@@ -3513,38 +3521,53 @@ impl<'a> Checker<'a> {
         Some(def)
     }
 
-    /// `[OWN-8]` — start with field types that have existing `Copy` semantics.
-    /// Recursing into move-only `Clone` fields is a separate slice; treating
-    /// them as bit copies here would violate ownership.
     fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
         if !has_derive(attrs, "Clone") {
             return;
         }
-        let TyKind::Struct(id) = *self.types.kind(ty) else { return };
-        if let Some(field) = self.types.struct_def(id).fields.iter().find(|field| !self.types.is_copy(field.ty)) {
+        self.pending_derived_clones.push((ty, span));
+    }
+
+    fn resolve_derived_clones(&mut self) {
+        let mut pending = std::mem::take(&mut self.pending_derived_clones);
+        while let Some(index) = pending.iter().position(|(ty, _)| {
+            let TyKind::Struct(id) = *self.types.kind(*ty) else { return false };
+            self.types.struct_def(id).fields.iter().all(|field| {
+                self.types.is_copy(field.ty) || self.derived_clone_types.contains(&field.ty)
+            })
+        }) {
+            let (ty, span) = pending.swap_remove(index);
+            let signature = Signature {
+                params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
+                ret: ty,
+                generics: Vec::new(),
+                borrows: None,
+            };
+            if let Some(def) = self.register_method(
+                ty,
+                Symbol::intern("clone"),
+                signature,
+                Mode::Borrow,
+                None,
+                span,
+            ) {
+                self.derived_clone_types.insert(ty);
+                self.derived_clone_methods.push((def, ty, span));
+            }
+        }
+        for (ty, _) in pending {
+            let TyKind::Struct(id) = *self.types.kind(ty) else { continue };
+            let Some(field) = self.types.struct_def(id).fields.iter().find(|field| {
+                !self.types.is_copy(field.ty) && !self.derived_clone_types.contains(&field.ty)
+            }) else {
+                continue;
+            };
             let shown = self.types.display(field.ty);
             self.error(
                 codes::E2040,
                 field.span,
                 format!("field `{}` has type `{shown}`, which does not implement `Clone`", field.name),
             );
-            return;
-        }
-        let signature = Signature {
-            params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
-            ret: ty,
-            generics: Vec::new(),
-            borrows: None,
-        };
-        if let Some(def) = self.register_method(
-            ty,
-            Symbol::intern("clone"),
-            signature,
-            Mode::Borrow,
-            None,
-            span,
-        ) {
-            self.derived_clone_methods.push((def, ty, span));
         }
     }
 
@@ -6117,17 +6140,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let fields = fields
                     .iter()
                     .enumerate()
-                    .map(|(index, field)| Expr {
-                        ty: field.ty,
-                        kind: ExprKind::Field {
-                            base: Box::new(Expr {
-                                ty,
-                                kind: ExprKind::Local(self_local),
+                    .map(|(index, field)| {
+                        let field_expr = Expr {
+                            ty: field.ty,
+                            kind: ExprKind::Field {
+                                base: Box::new(Expr {
+                                    ty,
+                                    kind: ExprKind::Local(self_local),
+                                    span,
+                                }),
+                                index,
+                            },
+                            span,
+                        };
+                        if self.types.is_copy(field.ty) {
+                            field_expr
+                        } else {
+                            let clone = self.methods[&(field.ty, Symbol::intern("clone"))].def;
+                            Expr {
+                                ty: field.ty,
+                                kind: ExprKind::Call {
+                                    callee: clone,
+                                    arg_eval_order: None,
+                                    args: vec![field_expr],
+                                    latebound: false,
+                                },
                                 span,
-                            }),
-                            index,
-                        },
-                        span,
+                            }
+                        }
                     })
                     .collect();
                 Some(Function {

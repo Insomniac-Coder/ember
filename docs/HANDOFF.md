@@ -7153,3 +7153,17 @@ This is deliberately the first safe derive slice, not complete `[OWN-8]`:
 recursive Clone calls, generic structs, standard-library Clone exposure, and
 the rest of the derive family remain open. Phase accounting therefore remains
 **1 of 9 complete**, with Phase 2 active.
+
+### 0.148 `[OWN-8]` nested derived Clone — 2026-09-20
+
+Derived Clone registration now resolves after all source methods have been
+collected and iterates to a fixed point. A derived struct may therefore contain
+another derived, move-only struct even when the outer declaration appears
+first. Its generated body calls the inner generated `clone` method, rather than
+copying the field. The all-profile OWN-8 probe keeps the original nested value
+live, prints both values as `42`, and pins both generated symbols.
+
+This advances field-wise derived cloning but remains short of complete
+`[OWN-8]`: user-written Clone implementations, generic structs, and the
+standard-library Clone interface are still separate work. Phase accounting is
+unchanged: **1 of 9 complete**, Phase 2 active.
