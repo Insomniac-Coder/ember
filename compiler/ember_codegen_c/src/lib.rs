@@ -1072,6 +1072,17 @@ impl Emitter<'_> {
         }
     }
 
+    /// The class payload of a compiler-known `Weak[C]` wrapper. Unlike Box,
+    /// Weak stays a one-field C struct so copies and drops can route through
+    /// the runtime's separate weak-count operations.
+    fn weak_inner_id(&self, id: StructId) -> Option<Ty> {
+        let def = self.types.struct_def(id);
+        match &def.origin {
+            Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
     /// What one type definition looks like in C. Members are already written
     /// as declarators — an array member interleaves its type and its name, so
     /// this cannot be a `(type, name)` pair.
@@ -1251,6 +1262,14 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                if self.weak_inner_id(*id).is_some() {
+                    out.push(format!(
+                        "{}(({}*){access}.value);",
+                        ember_branding::runtime("weak_release"),
+                        ember_branding::runtime("obj_header")
+                    ));
+                    return;
+                }
                 if let Some(inner) = self.box_inner_id(*id)
                     && let TyKind::Dyn { interfaces } = self.types.kind(inner)
                     && interfaces.len() == 1
@@ -1740,6 +1759,14 @@ impl Emitter<'_> {
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                if self.weak_inner_id(*id).is_some() {
+                    out.push(format!(
+                        "{}(({}*){access}.value);",
+                        ember_branding::runtime("weak_retain"),
+                        ember_branding::runtime("obj_header")
+                    ));
+                    return;
+                }
                 // `[ARN-8]` — MaybeUninit's field is layout storage, not an
                 // initialized owner. Copying it is a byte copy and must not
                 // retain a value that may not exist yet.
@@ -2397,6 +2424,29 @@ impl Emitter<'_> {
                             "(({boxed_c}){RT}box_new_copy(sizeof({elem_c}), _Alignof({elem_c}), &{}))",
                             rendered[0]
                         );
+                    }
+                    Builtin::WeakNew { weak, .. } => {
+                        let weak_c = self.c_type(*weak);
+                        return format!(
+                            "({}(({}*){}), ({weak_c}){{ {} }})",
+                            ember_branding::runtime("weak_retain"),
+                            ember_branding::runtime("obj_header"),
+                            rendered[0],
+                            rendered[0]
+                        );
+                    }
+                    Builtin::WeakUpgrade { class, .. } => {
+                        let class_c = self.c_type(*class);
+                        return format!(
+                            "(({class_c}){}(({}*)({}.value)))",
+                            ember_branding::runtime("weak_upgrade"),
+                            ember_branding::runtime("obj_header"),
+                            rendered[0]
+                        );
+                    }
+                    Builtin::WeakEmpty { weak } => {
+                        let weak_c = self.c_type(*weak);
+                        return format!("({weak_c}){{0}}");
                     }
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);

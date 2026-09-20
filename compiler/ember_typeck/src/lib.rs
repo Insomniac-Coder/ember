@@ -659,6 +659,10 @@ struct Checker<'a> {
     /// pointer. This table supplies the ownership-aware constructor,
     /// auto-deref and drop semantics without making raw access public.
     boxes: HashMap<StructId, Ty>,
+    /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
+    /// upgrade. The wrapper has a private class-pointer field, but unlike the
+    /// class handle it retains only the runtime control block.
+    weaks: HashMap<StructId, Ty>,
     /// `[CELL-5]` — every `RefCell[T]` built so far, and the `T` it holds.
     /// A transparent struct with a second field for the one-word borrow
     /// counter plus location fields for the conflicting borrow's source
@@ -833,6 +837,7 @@ impl<'a> Checker<'a> {
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
+            weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
@@ -4352,6 +4357,13 @@ impl<'a> Checker<'a> {
             let (inner, _) = args[0];
             return self.box_of(inner);
         }
+        if name.is("Weak") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, arg_span) = args[0];
+            return self.weak_of(inner, arg_span);
+        }
         if name.is("Cell") || name.is("RefCell") {
             if !require(self, 1) {
                 return self.common.error;
@@ -4983,6 +4995,10 @@ impl<'a> Checker<'a> {
                 if let Some(inner) = self.boxes.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
                     return self.box_of(inner);
+                }
+                if let Some(inner) = self.weaks.get(&id).copied() {
+                    let inner = self.substitute_ty(inner, args);
+                    return self.weak_of(inner, Span::DUMMY);
                 }
                 if let Some(inner) = self.cells.get(&id).copied() {
                     let inner = self.substitute_ty(inner, args);
@@ -5696,6 +5712,55 @@ impl<'a> Checker<'a> {
     fn box_inner(&self, ty: Ty) -> Option<Ty> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.boxes.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `[WK-1]` — a weak handle is meaningful only for a nominal class
+    /// handle. Its private pointer has class-pointer layout, while its custom
+    /// drop glue releases the runtime weak count rather than a strong count.
+    fn weak_of(&mut self, inner: Ty, span: Span) -> Ty {
+        if inner == self.common.error {
+            return inner;
+        }
+        if !matches!(self.types.kind(inner), TyKind::Class(_)) {
+            self.error(codes::E2020, span, "`Weak` requires a class handle type");
+            return self.common.error;
+        }
+        let name = Symbol::intern(&format!("Weak_{}", type_stem(&self.types.display(inner))));
+        if let Some(&ty) = self.named_types.get(&name) {
+            return ty;
+        }
+        let id = self.types.add_struct(StructDef {
+            name,
+            fields: vec![FieldDef {
+                name: Symbol::intern("value"),
+                // A class type is already a pointer-sized handle. Wrapping it
+                // in `Ptr[C]` would create a pointer-to-handle (`C**`) in C.
+                ty: inner,
+                span: Span::DUMMY,
+                has_default: false,
+                read_only_outside: false,
+                vis: FieldVis::Private,
+            }],
+            span: Span::DUMMY,
+            // Weak handles are Copy, but their copy/drop semantics are not
+            // bitwise: code generation emits weak_retain/weak_release.
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: false,
+            origin: Some((Symbol::intern("Weak"), vec![inner])),
+            declaring_module: usize::MAX,
+        });
+        let ty = self.types.intern(TyKind::Struct(id));
+        self.named_types.insert(name, ty);
+        self.weaks.insert(id, inner);
+        ty
+    }
+
+    fn weak_inner(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.weaks.get(id).copied(),
             _ => None,
         }
     }
@@ -10676,6 +10741,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if is_single_path(recv, "super") {
                     return self.synth_super_init(*name, generic_args, args, span);
                 }
+                if let Some(ty) = self.weak_named(recv) {
+                    return self.synth_weak_construction(ty, *name, generic_args, args, span);
+                }
                 if let Some(ty) = self.maybe_uninit_named(recv) {
                     return self.synth_maybe_uninit_construction(
                         ty,
@@ -11176,6 +11244,46 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
 
+        // `[WK-1]`/`[WK-2]` — `Weak(class_handle)` creates a weak control-block
+        // reference without consuming or retaining the object's strong handle.
+        if name.is("Weak") {
+            if explicit.len() > 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Weak` takes one type argument, found {}", explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if args.len() != 1 {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`Weak` takes one argument, found {}", args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let expected_inner = expected.and_then(|ty| self.weak_inner(ty));
+            let hint = explicit.first().copied().or(expected_inner);
+            let value = match hint {
+                Some(inner) => self.check_expr(&args[0].value, inner),
+                None => self.synth_committed(&args[0].value),
+            };
+            let class = value.ty;
+            let weak = self.weak_of(class, value.span);
+            if weak == self.common.error {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return Expr {
+                ty: weak,
+                kind: ExprKind::Builtin {
+                    which: Builtin::WeakNew { class, weak },
+                    args: vec![value],
+                },
+                span,
+            };
+        }
+
         // `[UNS-10]` — `std.mem.UnsafeCell(owned v)`. Its public name is
         // source-backed for module visibility, but its representation and two
         // operations are compiler-known while the unsafe standard-library
@@ -11517,6 +11625,41 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         };
         Some(self.maybe_uninit_of(inner))
+    }
+
+    /// Recognise the type receiver in `Weak[C].empty()`. As with
+    /// `MaybeUninit[T]`, grammar-level indexing is reinterpreted as a type
+    /// application only after resolving the base name.
+    fn weak_named(&mut self, expr: &ast::Expr) -> Option<Ty> {
+        let ast::ExprKind::IndexOrInstantiate { base, args } = &expr.kind else {
+            return None;
+        };
+        let ast::ExprKind::Path { segments } = &base.kind else {
+            return None;
+        };
+        if segments.len() != 1
+            || !segments[0].name.is("Weak")
+            || self.lookup(Symbol::intern("Weak")).is_some()
+        {
+            return None;
+        }
+        if args.len() != 1 {
+            self.error(codes::E2020, expr.span, "`Weak` takes one type argument");
+            return Some(self.common.error);
+        }
+        let (inner, inner_span) = match &args[0] {
+            ast::TypeOrExpr::Type(ty) => (self.resolve_type(ty), ty.span),
+            ast::TypeOrExpr::Expr(expr) => (self.type_from_expr(expr), expr.span),
+            ast::TypeOrExpr::Binding { name, .. } => {
+                self.error(
+                    codes::E2173,
+                    name.span,
+                    "`Weak` takes a type, not an associated-type binding",
+                );
+                (self.common.error, name.span)
+            }
+        };
+        Some(self.weak_of(inner, inner_span))
     }
 
     /// `[GRM-8]`, `[TYP-18]` — bracket arguments on a method call are parsed
@@ -13492,6 +13635,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             None => receiver,
         };
         let explicit = self.resolve_method_type_args(generic_args);
+        // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
+        // auto-dereference to the object because that would make a dead
+        // control block look like a live class handle.
+        if let Some(class) = self.weak_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_weak_method(receiver, class, name, args, span);
+        }
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
         // does not duplicate the payload's method surface.
@@ -15342,6 +15499,91 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 which: Builtin::UnsafeCellGet { inner },
                 args: vec![borrowed],
             },
+            span,
+        }
+    }
+
+    /// `[WK-3]` — `upgrade` asks the runtime to acquire a strong reference if
+    /// the object is still live, then produces the corresponding `Option[C]`.
+    fn synth_weak_method(
+        &mut self,
+        receiver: Expr,
+        class: Ty,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !name.name.is("upgrade") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`Weak[{}]` has no method named `{}`", self.types.display(class), name.name),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`upgrade` takes 0 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        let option_ty = self.option_of(class);
+        let TyKind::Enum(option) = *self.types.kind(option_ty) else {
+            unreachable!("option_of must return an enum")
+        };
+        Expr {
+            ty: option_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::WeakUpgrade { class, option },
+                args: vec![receiver],
+            },
+            span,
+        }
+    }
+
+    /// `[WK-1]` — `Weak[C].empty()` creates a non-upgradeable weak handle
+    /// without allocating a control block. It is a type-associated operation,
+    /// not a method on an existing weak value.
+    fn synth_weak_construction(
+        &mut self,
+        ty: Ty,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(_) = self.weak_inner(ty) else { return error };
+        if !generic_args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes no type arguments, found {}", name.name, generic_args.len()),
+            );
+            return error;
+        }
+        if !name.name.is("empty") {
+            self.error(
+                codes::E1010,
+                name.span,
+                format!("`{}` has no associated function named `{}`", self.types.display(ty), name.name),
+            );
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`empty` takes 0 arguments, found {}", args.len()),
+            );
+            return error;
+        }
+        Expr {
+            ty,
+            kind: ExprKind::Builtin { which: Builtin::WeakEmpty { weak: ty }, args: Vec::new() },
             span,
         }
     }

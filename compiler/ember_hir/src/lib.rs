@@ -443,6 +443,15 @@ pub enum Builtin {
     /// box type travel with the operation so the backend can allocate exactly
     /// one `T` without recovering a compiler-private wrapper relationship.
     BoxNew { elem: Ty, boxed: Ty },
+    /// `[WK-1]`/`[WK-2]` — `Weak(class_handle)`. The class and wrapper types
+    /// travel with the operation so the backend can retain the control block
+    /// without increasing the object's strong reference count.
+    WeakNew { class: Ty, weak: Ty },
+    /// `[WK-3]` — `weak.upgrade() -> Option[C]`. MIR branches on the runtime
+    /// query and constructs the owned option payload exactly once.
+    WeakUpgrade { class: Ty, option: EnumId },
+    /// `[WK-1]` — `Weak[C].empty()` has no object/control-block allocation.
+    WeakEmpty { weak: Ty },
     /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
     ArrayPush,
     /// `a.len()`.
@@ -697,6 +706,9 @@ impl Builtin {
             Builtin::ClassDowncast { forced: false, .. } => "as?",
             Builtin::ClassSuperInit { .. } => "super.init",
             Builtin::BoxNew { .. } => "Box",
+            Builtin::WeakNew { .. } => "Weak",
+            Builtin::WeakUpgrade { .. } => "upgrade",
+            Builtin::WeakEmpty { .. } => "empty",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",
             Builtin::StringNew => "String",

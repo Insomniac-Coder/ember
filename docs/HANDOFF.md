@@ -7492,3 +7492,29 @@ the unsatisfied-bounds compile-fail case requires the established failed
 `[TYP-17]`, `[IFC-1]`, and `[TYP-22]`: the source rule already supplies the
 semantics, so no ODR, ADR, specification edit, or owner decision is involved.
 Phase accounting remains **1 of 9 complete**.
+
+### 0.168 Weak class handles and match-arm ownership — 2026-09-20
+
+`Weak[C]` now reaches the existing runtime weak-control-block implementation
+through a compiler-known `Copy` wrapper. `Weak(h)` adds a weak reference without
+adding a strong one; copies use `ember_weak_retain`, wrapper cleanup uses
+`ember_weak_release`, and `upgrade()` performs the runtime strong acquisition
+once before constructing `Option[C]`. `Weak[C].empty()` is a null wrapper and
+therefore upgrades to `None` without an allocation. The checker rejects a
+non-class payload rather than admitting an invalid control-block handle.
+
+The direct all-profile probe covers an empty weak reference, a copied live weak
+reference, a live upgrade, and an expired weak reference returned from a helper.
+Its two `Token.drop` outputs prove the object dies both when the last local
+strong owner ends with weak handles still live and when the main strong owner
+ends; its generated C pins all three runtime weak operations. `Weak(1)` is a
+compile-fail probe for the `Weak[C]` boundary.
+
+While exercising `Some(value)` from `upgrade()`, the probe exposed D-164:
+MIR assigned a matched payload to its binding local but did not register that
+local for arm cleanup. A copied class handle thus leaked one strong reference.
+Pattern bindings are now normal owned locals and each successful normal or
+variant-dispatch arm drops its bindings before the branch joins. `[GRM-13]`,
+`[OWN-2]`, `[OBJ-3]`, and `[WK-1]`–`[WK-3]` determine these rules directly; the
+work closes D-163 and D-164 without an ODR, ADR, specification edit, owner
+decision, or phase-status change. Phase accounting remains **1 of 9 complete**.

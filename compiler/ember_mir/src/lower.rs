@@ -1924,6 +1924,12 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::WeakUpgrade { class, option },
+                args,
+            } => {
+                self.lower_weak_upgrade(place, &args[0], *class, *option, expr.span);
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
@@ -2304,7 +2310,8 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::ArenaMapWithCapacity { .. }
                     | hir::Builtin::ArenaAllocUninit { .. }
                     | hir::Builtin::ArenaAllocArrayZeroed { .. }
-                    | hir::Builtin::MaybeUninitUninit { .. } => expr.ty,
+                    | hir::Builtin::MaybeUninitUninit { .. }
+                    | hir::Builtin::WeakEmpty { .. } => expr.ty,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -2579,14 +2586,19 @@ impl<'a> Builder<'a> {
             self.current = arm_entry;
             arm_entry = self.new_block();
             self.at(arm.span);
+            let owned_mark = self.owned.len();
             self.lower_pattern_test(&scrutinee_place, &arm.pattern, arm_entry);
 
+            // A rejected guard runs only after its pattern bindings have been
+            // initialized. Route that path through arm-local cleanup before
+            // trying the next arm, so a copied class handle cannot leak.
+            let guard_failed = arm.guard.as_ref().map(|_| self.new_block());
             if let Some(guard) = &arm.guard {
                 let passed = self.new_block();
                 let discr = self.lower_operand(guard);
                 self.terminate(Terminator::SwitchInt {
                     discr,
-                    targets: vec![(0, arm_entry)],
+                    targets: vec![(0, guard_failed.expect("guard has a failure block"))],
                     otherwise: passed,
                 });
                 self.current = passed;
@@ -2596,7 +2608,15 @@ impl<'a> Builder<'a> {
                 hir::MatchArmBody::Block(block) => self.lower_block(block),
                 hir::MatchArmBody::Expr(value) => self.lower_into(dest.clone(), value),
             }
+            self.emit_drops_from(owned_mark);
             self.goto_if_open(join);
+
+            if let Some(failed) = guard_failed {
+                self.current = failed;
+                self.emit_drops_from(owned_mark);
+                self.goto_if_open(arm_entry);
+            }
+            self.owned.truncate(owned_mark);
         }
 
         // Everything refused. `[ENM-2]` makes the arms exhaustive, so this is
@@ -2674,6 +2694,7 @@ impl<'a> Builder<'a> {
         for ((arm, entry), &variant) in arms.iter().zip(entries).zip(order) {
             self.current = entry;
             self.at(arm.span);
+            let owned_mark = self.owned.len();
             let hir::PatternKind::Variant { fields, .. } = &arm.pattern.kind else {
                 unreachable!("variant_dispatch accepted only variant patterns")
             };
@@ -2687,6 +2708,8 @@ impl<'a> Builder<'a> {
                 hir::MatchArmBody::Block(block) => self.lower_block(block),
                 hir::MatchArmBody::Expr(value) => self.lower_into(dest.clone(), value),
             }
+            self.emit_drops_from(owned_mark);
+            self.owned.truncate(owned_mark);
             self.goto_if_open(join);
         }
     }
@@ -2711,6 +2734,11 @@ impl<'a> Builder<'a> {
                     place: Place::local(target),
                     rvalue: Rvalue::Use(value),
                 });
+                // Pattern bindings are ordinary arm locals. In particular a
+                // `Copy` class handle needs its matching release at arm exit;
+                // without this registration each successful `Some(handle)`
+                // leaked one strong reference.
+                self.owns(target);
                 if let Some(sub) = sub {
                     self.lower_pattern_test(place, sub, on_fail);
                 }
@@ -4920,6 +4948,63 @@ impl<'a> Builder<'a> {
 
         self.current = join;
         self.push(StmtKind::StorageDead(raw));
+    }
+
+    /// `[WK-3]` — attempt to acquire one strong handle from a weak control
+    /// block. The runtime result is already an owning class handle, so unlike
+    /// a downcast query it remains a normal statement temporary: copying it
+    /// into `Some` retains once and its statement-end drop releases once.
+    fn lower_weak_upgrade(
+        &mut self,
+        place: Place,
+        source: &'a hir::Expr,
+        class: Ty,
+        option: ember_types::EnumId,
+        span: ember_span::Span,
+    ) {
+        let source = self.lower_operand_borrowed(source);
+        let raw = self.temp(class, span);
+        self.push(StmtKind::StorageLive(raw));
+
+        let checked = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::WeakUpgrade { class, option },
+                arg_ty: class,
+            },
+            args: vec![source],
+            dest: Place::local(raw),
+            next: checked,
+        });
+        self.current = checked;
+
+        let success = self.new_block();
+        let failure = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(raw)),
+            targets: vec![(0, failure)],
+            otherwise: success,
+        });
+
+        self.current = failure;
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(option, 0), operands: Vec::new() },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = success;
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, 1),
+                operands: vec![Operand::Copy(Place::local(raw))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = join;
     }
 
     /// `[CLS-1]`/`[CLS-2]`/`[CLS-3]` — allocate a class object, then initialize

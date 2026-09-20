@@ -1183,7 +1183,12 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                def.has_drop
+                // `[WK-2]` — compiler-known weak handles are Copy wrappers
+                // with custom control-block release glue. `has_drop` stays
+                // false so Copy remains valid; their canonical origin is the
+                // separate signal that drop elaboration must run.
+                matches!(&def.origin, Some((name, args)) if name.is("Weak") && args.len() == 1)
+                    || def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             // Dropping a class handle releases its strong reference.

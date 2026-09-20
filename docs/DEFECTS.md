@@ -52,6 +52,15 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-20 — weak class handles and match-arm ownership
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-164 | **A value bound by a `match` pattern was assigned to a MIR local but never registered for arm-exit destruction.** A `Some(value)` binding of a `Copy` class handle retained the handle, then no matching release ran; the object stayed alive after every visible owner had ended. | `[GRM-13]`, `[OWN-2]`, `[OBJ-3]` | **fixed** | Pattern bindings are now owned arm locals, and both ordinary and direct variant-dispatch match lowering emit their drops when the arm completes. `weak_class_handle.em` initially printed no final `Token.drop` after a live `Some(value)` upgrade; it now prints the exact two destructor events in debug, release, and shipping. The source already fixes by-value `Copy` binding and class-release semantics, so no specification, ADR, owner decision, or version changed. |
+| D-163 | **`Weak[C]` was specified and supported by the runtime ABI but was absent from the type checker, MIR, and C backend.** Every `Weak(token)` or `Weak[C]` use was rejected as an unknown type/constructor, so `[WK-2]` and `[WK-3]` could not be exercised at all. | `[OBJ-3]`, `[WK-1]`, `[WK-2]`, `[WK-3]` | **fixed** | `Weak[C]` is now a compiler-known Copy wrapper around a class handle with weak-count retain/release glue; `Weak(h)`, `Weak[C].empty()`, and `upgrade() -> Option[C]` lower to the existing runtime weak-reference ABI. `weak_class_handle.em` was red with `E1010` before the change and now proves live upgrade, expired upgrade, empty upgrade, weak-copy accounting, and destructor timing in every profile; `weak_nonclass.em` rejects `Weak(1)` with `E2020`. The normative rules supply all behavior, so no ODR, specification edit, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-20 — generic-class interface extensions were not materialized
 
 | # | Defect | Rule | Status | Fixed in |
