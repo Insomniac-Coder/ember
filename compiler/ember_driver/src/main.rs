@@ -39,6 +39,7 @@ options:
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
     --out-dir <dir>                    default: target/
+    --leak-check                       `run` only: report live ownership SCCs
     --json                             machine-readable diagnostics
     -D warnings                        treat warnings as errors
 
@@ -234,6 +235,9 @@ struct Options {
     out_dir: Option<PathBuf>,
     json: bool,
     deny_warnings: bool,
+    /// `[WK-8]` — emit the opt-in runtime cycle inspector into the generated
+    /// entry point without changing the Ember program's command-line arguments.
+    leak_check: bool,
     /// `[CLI-9]` — lex and parse only, reporting `E00xx` and `E01xx`. Names
     /// are not resolved, so an example naming undeclared types still passes.
     /// This is what `[TST-7]`'s gate over the specification's own code blocks
@@ -290,6 +294,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             let input = input.ok_or_else(|| format!("`ember {command}` needs a source file"))?;
             let options = parse_options(&rest)?;
+            if options.leak_check && command != "run" {
+                return Err("`--leak-check` is only valid with `ember run`".to_string());
+            }
             compile(Path::new(&input), command, &options)
         }
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
@@ -685,6 +692,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--syntax-only" => options.syntax_only = true,
             "--json" => options.json = true,
+            "--leak-check" => options.leak_check = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;
@@ -1646,7 +1654,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let emitted = ember_codegen_c::emit(verified_mir, &map, &module_name, program.main.is_some());
+    let emitted = ember_codegen_c::emit(
+        verified_mir,
+        &map,
+        &module_name,
+        program.main.is_some(),
+        options.leak_check,
+    );
     if options.emit.as_deref() == Some("c") {
         print!("{}", emitted.c_source);
         return Ok(finish(&sink, &map, options));

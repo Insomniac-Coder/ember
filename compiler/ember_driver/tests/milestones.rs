@@ -518,6 +518,107 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
     );
 }
 
+#[test]
+fn leak_check_is_run_only() {
+    let root = workspace_root();
+    let checked = ember(
+        &[
+            "check",
+            "--leak-check",
+            &format!("tests/conformance/WK-8/accept_runtime_strong_self_cycle.{SOURCE_EXT}"),
+        ],
+        &root,
+    );
+    assert_ne!(checked.exit, 0, "`check --leak-check` unexpectedly succeeded");
+    assert!(
+        checked.stderr.contains("only valid with `ember run`"),
+        "run-only leak-check rejection was unclear:\n{}",
+        checked.stderr
+    );
+}
+
+#[test]
+fn leak_check_reports_a_live_strong_object_cycle() {
+    let root = workspace_root();
+    let out_dir = std::env::temp_dir().join(format!(
+        "ember-leak-check-{}",
+        std::process::id()
+    ));
+    let out_dir = out_dir.to_string_lossy().into_owned();
+    let report = ember(
+        &[
+            "run",
+            "--leak-check",
+            &format!("tests/conformance/WK-8/accept_runtime_strong_self_cycle.{SOURCE_EXT}"),
+            "--out-dir",
+            &out_dir,
+        ],
+        &root,
+    );
+    assert_eq!(report.exit, 0, "leak-check run failed:\n{}", report.stderr);
+    assert!(
+        report.stderr.contains("runtime ownership cycle"),
+        "leak-check omitted the runtime SCC report:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("Node.next"),
+        "leak-check omitted the owning field:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("strong edges: 1"),
+        "leak-check omitted the strong-edge count:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("statically predicted: yes"),
+        "leak-check omitted static-cycle correlation:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("suggested weak edge: none"),
+        "leak-check offered a Weak rewrite for an Option ownership contract:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("weak Node.previous"),
+        "leak-check omitted the weak ownership vocabulary:\n{}",
+        report.stderr
+    );
+}
+
+#[test]
+fn leak_check_reports_a_shared_payload_cycle_without_static_overclaim() {
+    let root = workspace_root();
+    let out_dir = std::env::temp_dir().join(format!(
+        "ember-shared-leak-check-{}",
+        std::process::id()
+    ));
+    let out_dir = out_dir.to_string_lossy().into_owned();
+    let report = ember(
+        &[
+            "run",
+            "--leak-check",
+            &format!("tests/conformance/WK-8/accept_runtime_shared_self_cycle.{SOURCE_EXT}"),
+            "--out-dir",
+            &out_dir,
+        ],
+        &root,
+    );
+    assert_eq!(report.exit, 0, "leak-check run failed:\n{}", report.stderr);
+    assert!(
+        report.stderr.contains("strong Shared[Node].value"),
+        "leak-check omitted the Shared payload edge:\n{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("statically predicted: no"),
+        "leak-check claimed the class-only lint predicted a Shared cycle:\n{}",
+        report.stderr
+    );
+}
+
 fn profiles(expectations: &Expectations) -> Vec<&str> {
     if expectations.profiles.is_empty() {
         vec!["debug"]

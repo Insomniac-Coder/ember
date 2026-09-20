@@ -22,6 +22,406 @@ static ember_rt_config g_config;
 static bool g_initialised = false;
 static ember_alloc_stats g_stats = { 0, 0, 0 };
 
+/* `[WK-8]` is deliberately diagnostic-only: the list records live headers
+ * while debug objects are enabled, and is never a collector root or a source
+ * of mutation. Compiler-generated enumerators own layout knowledge. */
+typedef struct debug_live_object {
+    ember_obj_header* object;
+    struct debug_live_object* next;
+} debug_live_object;
+
+typedef struct debug_type_edges {
+    const ember_type_info* type;
+    ember_debug_edge_enumerator enumerate;
+    struct debug_type_edges* next;
+} debug_type_edges;
+
+typedef struct debug_edge {
+    size_t from;
+    size_t to;
+    const char* field;
+    const char* weak_replacement;
+    ember_ownership_edge_kind kind;
+    bool statically_predicted;
+} debug_edge;
+
+typedef struct debug_edges {
+    debug_edge* items;
+    size_t len;
+    size_t cap;
+    bool allocation_failed;
+} debug_edges;
+
+typedef struct debug_collector {
+    debug_edges* edges;
+    ember_obj_header* const* objects;
+    size_t object_count;
+    size_t from;
+} debug_collector;
+
+static debug_live_object* g_debug_live = NULL;
+static debug_type_edges* g_debug_types = NULL;
+
+/* Defined with the ownership operations below. The leak report must use the
+ * same atomic-aware load when it filters already-dropped weak control blocks. */
+static uint32_t object_load_strong(const ember_obj_header* object);
+
+static bool debug_objects_enabled(void) {
+    return (g_config.flags & EMBER_RT_DEBUG_OBJECTS) != 0;
+}
+
+static void debug_allocation_failure(void) {
+    fputs("ember runtime: unable to allocate leak-check metadata\n", stderr);
+    abort();
+}
+
+static void debug_track_object(ember_obj_header* object) {
+    if (!debug_objects_enabled()) {
+        return;
+    }
+    debug_live_object* entry = (debug_live_object*)malloc(sizeof *entry);
+    if (entry == NULL) {
+        debug_allocation_failure();
+    }
+    entry->object = object;
+    entry->next = g_debug_live;
+    g_debug_live = entry;
+}
+
+static void debug_untrack_object(ember_obj_header* object) {
+    if (!debug_objects_enabled()) {
+        return;
+    }
+    debug_live_object** current = &g_debug_live;
+    while (*current != NULL) {
+        if ((*current)->object == object) {
+            debug_live_object* removed = *current;
+            *current = removed->next;
+            free(removed);
+            return;
+        }
+        current = &(*current)->next;
+    }
+}
+
+static void debug_clear_live_objects(void) {
+    while (g_debug_live != NULL) {
+        debug_live_object* removed = g_debug_live;
+        g_debug_live = removed->next;
+        free(removed);
+    }
+}
+
+static void debug_clear_type_edges(void) {
+    while (g_debug_types != NULL) {
+        debug_type_edges* removed = g_debug_types;
+        g_debug_types = removed->next;
+        free(removed);
+    }
+}
+
+void ember_debug_register_type_edges(
+    const ember_type_info* type,
+    ember_debug_edge_enumerator enumerate) {
+    if (!debug_objects_enabled() || type == NULL || enumerate == NULL) {
+        return;
+    }
+    for (debug_type_edges* entry = g_debug_types; entry != NULL; entry = entry->next) {
+        if (entry->type == type) {
+            entry->enumerate = enumerate;
+            return;
+        }
+    }
+    debug_type_edges* entry = (debug_type_edges*)malloc(sizeof *entry);
+    if (entry == NULL) {
+        debug_allocation_failure();
+    }
+    entry->type = type;
+    entry->enumerate = enumerate;
+    entry->next = g_debug_types;
+    g_debug_types = entry;
+}
+
+static ember_debug_edge_enumerator debug_enumerator_for(const ember_type_info* type) {
+    for (debug_type_edges* entry = g_debug_types; entry != NULL; entry = entry->next) {
+        if (entry->type == type) {
+            return entry->enumerate;
+        }
+    }
+    return NULL;
+}
+
+static size_t debug_object_index(
+    ember_obj_header* const* objects, size_t object_count, ember_obj_header* object) {
+    for (size_t index = 0; index < object_count; ++index) {
+        if (objects[index] == object) {
+            return index;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static bool debug_push_edge(debug_edges* edges, debug_edge edge) {
+    if (edges->len == edges->cap) {
+        size_t cap = edges->cap == 0 ? 8 : edges->cap * 2;
+        debug_edge* resized = (debug_edge*)realloc(edges->items, cap * sizeof *resized);
+        if (resized == NULL) {
+            edges->allocation_failed = true;
+            return false;
+        }
+        edges->items = resized;
+        edges->cap = cap;
+    }
+    edges->items[edges->len++] = edge;
+    return true;
+}
+
+static void debug_collect_edge(
+    void* raw,
+    ember_obj_header* target,
+    const char* field,
+    ember_ownership_edge_kind kind,
+    const char* weak_replacement,
+    bool statically_predicted) {
+    debug_collector* collector = (debug_collector*)raw;
+    debug_edge edge;
+    edge.from = collector->from;
+    edge.to = debug_object_index(collector->objects, collector->object_count, target);
+    edge.field = field;
+    edge.weak_replacement = weak_replacement;
+    edge.kind = kind;
+    edge.statically_predicted = statically_predicted;
+    (void)debug_push_edge(collector->edges, edge);
+}
+
+static bool debug_reachable(
+    size_t object_count,
+    const debug_edges* edges,
+    size_t root,
+    bool reverse,
+    bool* reached) {
+    size_t* queue = (size_t*)malloc(object_count * sizeof *queue);
+    if (queue == NULL) {
+        return false;
+    }
+    size_t head = 0;
+    size_t tail = 0;
+    queue[tail++] = root;
+    reached[root] = true;
+    while (head < tail) {
+        size_t current = queue[head++];
+        for (size_t index = 0; index < edges->len; ++index) {
+            const debug_edge* edge = &edges->items[index];
+            if (edge->kind != EMBER_OWNERSHIP_EDGE_STRONG || edge->to == SIZE_MAX) {
+                continue;
+            }
+            size_t source = reverse ? edge->to : edge->from;
+            size_t target = reverse ? edge->from : edge->to;
+            if (source == current && !reached[target]) {
+                reached[target] = true;
+                queue[tail++] = target;
+            }
+        }
+    }
+    free(queue);
+    return true;
+}
+
+static bool debug_component_has_cycle(
+    const debug_edges* edges, const bool* component) {
+    for (size_t index = 0; index < edges->len; ++index) {
+        const debug_edge* edge = &edges->items[index];
+        if (edge->kind == EMBER_OWNERSHIP_EDGE_STRONG
+            && edge->to != SIZE_MAX
+            && component[edge->from]
+            && component[edge->to]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char* debug_object_name(const ember_obj_header* object) {
+    if (object == NULL || object->ti == NULL || object->ti->name == NULL) {
+        return "<unknown>";
+    }
+    return object->ti->name;
+}
+
+static const char* debug_edge_kind_name(ember_ownership_edge_kind kind) {
+    switch (kind) {
+        case EMBER_OWNERSHIP_EDGE_STRONG: return "strong";
+        case EMBER_OWNERSHIP_EDGE_WEAK: return "weak";
+        case EMBER_OWNERSHIP_EDGE_UNKNOWN: return "unknown";
+        default: return "unknown";
+    }
+}
+
+static void debug_print_component(
+    FILE* out,
+    ember_obj_header* const* objects,
+    const debug_edges* edges,
+    const bool* component,
+    size_t object_count) {
+    size_t strong_count = 0;
+    bool statically_predicted = false;
+    const debug_edge* suggestion = NULL;
+    for (size_t index = 0; index < edges->len; ++index) {
+        const debug_edge* edge = &edges->items[index];
+        if (edge->kind != EMBER_OWNERSHIP_EDGE_STRONG || edge->to == SIZE_MAX
+            || !component[edge->from] || !component[edge->to]) {
+            continue;
+        }
+        strong_count += 1;
+        statically_predicted = statically_predicted || edge->statically_predicted;
+        if (suggestion == NULL && edge->weak_replacement != NULL) {
+            suggestion = edge;
+        }
+    }
+    fprintf(out, "runtime ownership cycle:\n");
+    fputs("  objects:", out);
+    for (size_t index = 0; index < object_count; ++index) {
+        if (component[index]) {
+            fprintf(out, " %s@%p", debug_object_name(objects[index]), (void*)objects[index]);
+        }
+    }
+    fputc('\n', out);
+    fprintf(out, "  strong edges: %zu\n", strong_count);
+    fprintf(out, "  statically predicted: %s\n", statically_predicted ? "yes" : "no");
+    if (suggestion != NULL) {
+        fprintf(
+            out,
+            "  suggested weak edge: %s (replace with %s)\n",
+            suggestion->field,
+            suggestion->weak_replacement);
+    } else {
+        fputs("  suggested weak edge: none\n", out);
+    }
+    fputs("  edges:\n", out);
+    for (size_t index = 0; index < edges->len; ++index) {
+        const debug_edge* edge = &edges->items[index];
+        if (!component[edge->from]) {
+            continue;
+        }
+        if (edge->kind == EMBER_OWNERSHIP_EDGE_STRONG
+            && (edge->to == SIZE_MAX || !component[edge->to])) {
+            continue;
+        }
+        if (edge->to == SIZE_MAX) {
+            fprintf(
+                out,
+                "    %s %s: %s@%p -> <unknown>\n",
+                debug_edge_kind_name(edge->kind),
+                edge->field,
+                debug_object_name(objects[edge->from]),
+                (void*)objects[edge->from]);
+            continue;
+        }
+        fprintf(
+            out,
+            "    %s %s: %s@%p -> %s@%p\n",
+            debug_edge_kind_name(edge->kind),
+            edge->field,
+            debug_object_name(objects[edge->from]),
+            (void*)objects[edge->from],
+            debug_object_name(objects[edge->to]),
+            (void*)objects[edge->to]);
+    }
+}
+
+void ember_debug_leak_report(FILE* out) {
+    if (!debug_objects_enabled()) {
+        return;
+    }
+    if (out == NULL) {
+        out = stderr;
+    }
+    size_t object_count = 0;
+    for (debug_live_object* entry = g_debug_live; entry != NULL; entry = entry->next) {
+        if (object_load_strong(entry->object) != 0) {
+            object_count += 1;
+        }
+    }
+    if (object_count == 0) {
+        return;
+    }
+    ember_obj_header** objects = (ember_obj_header**)malloc(object_count * sizeof *objects);
+    bool* remaining = (bool*)calloc(object_count, sizeof *remaining);
+    bool* forward = (bool*)calloc(object_count, sizeof *forward);
+    bool* backward = (bool*)calloc(object_count, sizeof *backward);
+    bool* component = (bool*)calloc(object_count, sizeof *component);
+    if (objects == NULL || remaining == NULL || forward == NULL || backward == NULL || component == NULL) {
+        free(objects);
+        free(remaining);
+        free(forward);
+        free(backward);
+        free(component);
+        debug_allocation_failure();
+    }
+    size_t object_index = 0;
+    for (debug_live_object* entry = g_debug_live; entry != NULL; entry = entry->next) {
+        if (object_load_strong(entry->object) != 0) {
+            objects[object_index] = entry->object;
+            remaining[object_index] = true;
+            object_index += 1;
+        }
+    }
+
+    debug_edges edges = { 0 };
+    for (size_t index = 0; index < object_count; ++index) {
+        ember_obj_header* object = objects[index];
+        ember_debug_edge_enumerator enumerate = debug_enumerator_for(object->ti);
+        if (enumerate == NULL) {
+            continue;
+        }
+        debug_collector collector = { &edges, objects, object_count, index };
+        enumerate(object, debug_collect_edge, &collector);
+    }
+    if (edges.allocation_failed) {
+        free(edges.items);
+        free(objects);
+        free(remaining);
+        free(forward);
+        free(backward);
+        free(component);
+        debug_allocation_failure();
+    }
+
+    for (size_t root = 0; root < object_count; ++root) {
+        if (!remaining[root]) {
+            continue;
+        }
+        memset(forward, 0, object_count * sizeof *forward);
+        memset(backward, 0, object_count * sizeof *backward);
+        if (!debug_reachable(object_count, &edges, root, false, forward)
+            || !debug_reachable(object_count, &edges, root, true, backward)) {
+            free(edges.items);
+            free(objects);
+            free(remaining);
+            free(forward);
+            free(backward);
+            free(component);
+            debug_allocation_failure();
+        }
+        for (size_t index = 0; index < object_count; ++index) {
+            component[index] = remaining[index] && forward[index] && backward[index];
+            if (component[index]) {
+                remaining[index] = false;
+            }
+        }
+        if (debug_component_has_cycle(&edges, component)) {
+            debug_print_component(out, objects, &edges, component, object_count);
+        }
+    }
+
+    free(edges.items);
+    free(objects);
+    free(remaining);
+    free(forward);
+    free(backward);
+    free(component);
+}
+
 ember_rt_config ember_rt_config_default(void) {
     ember_rt_config cfg;
     cfg.alloc = NULL;
@@ -45,6 +445,11 @@ int ember_rt_init(const ember_rt_config* cfg) {
 void ember_rt_shutdown(void) {
     if (!g_initialised) {
         return;
+    }
+    if (debug_objects_enabled()) {
+        ember_debug_leak_report(stderr);
+        debug_clear_live_objects();
+        debug_clear_type_edges();
     }
     fflush(stdout);
     fflush(stderr);
@@ -307,6 +712,7 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     object->strong = 1;
     object->weak = 1;
     object->ti = ti;
+    debug_track_object(object);
     return object;
 }
 
@@ -389,6 +795,7 @@ void ember_weak_release(ember_obj_header* object) {
     }
     if (previous == 1 && object_load_strong(object) == 0) {
         const ember_type_info* ti = object->ti;
+        debug_untrack_object(object);
         ember_free(object, ti->size, ti->align);
     }
 }

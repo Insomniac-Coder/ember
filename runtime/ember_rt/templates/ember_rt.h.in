@@ -503,6 +503,39 @@ void ember_rt_thread_detach(void);
 
 /* -- debug facilities ------------------------------------------------------- */
 
+/* `[WK-8]` runtime cycle inspection is opt-in. The generated entry point
+ * enables it for `ember run --leak-check`; embedding hosts can register their
+ * own generated enumerators before requesting a report. */
+#define EMBER_RT_DEBUG_OBJECTS UINT32_C(1)
+
+/* A generated enumerator describes the ownership references held by one live
+ * object. The callback keeps the runtime independent from compiler layouts:
+ * generated code knows where a field lives, while the runtime owns the live
+ * registry and SCC traversal. `target` is NULL for an unknown edge. */
+typedef enum ember_ownership_edge_kind {
+    EMBER_OWNERSHIP_EDGE_STRONG = 1,
+    EMBER_OWNERSHIP_EDGE_WEAK = 2,
+    EMBER_OWNERSHIP_EDGE_UNKNOWN = 3,
+} ember_ownership_edge_kind;
+
+typedef void (*ember_debug_edge_visitor)(
+    void* context,
+    ember_obj_header* target,
+    const char* field,
+    ember_ownership_edge_kind kind,
+    const char* weak_replacement,
+    bool statically_predicted);
+
+typedef void (*ember_debug_edge_enumerator)(
+    ember_obj_header* object,
+    ember_debug_edge_visitor visitor,
+    void* context);
+
+void ember_debug_register_type_edges(
+    const ember_type_info* type,
+    ember_debug_edge_enumerator enumerate);
+void ember_debug_leak_report(FILE* out);
+
 typedef struct ember_alloc_stats {
     uint64_t live_bytes;
     uint64_t total_allocations;
