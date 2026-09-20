@@ -315,6 +315,7 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
+    derives_clone: bool,
     /// Resolved only when this recipe is instantiated, after owner type
     /// arguments have concrete bindings. Keeping the source expression avoids
     /// materializing an unusable `Base[T]` runtime class.
@@ -2286,6 +2287,7 @@ impl<'a> Checker<'a> {
                     params,
                     fields,
                     defaults,
+                    derives_clone: has_derive(&item.attrs, "Clone"),
                     base,
                     implements: decl.implements.clone(),
                     methods,
@@ -2405,6 +2407,7 @@ impl<'a> Checker<'a> {
                         // this bootstrap collection path.
                         continue;
                     };
+                    let ty = self.types.intern(TyKind::Class(id));
                     let fields = decl
                         .members
                         .iter()
@@ -2451,6 +2454,7 @@ impl<'a> Checker<'a> {
                     def.base = base;
                     def.has_drop = has_drop;
                     self.class_default_exprs.insert(id, default_exprs);
+                    self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
@@ -3768,10 +3772,16 @@ impl<'a> Checker<'a> {
     fn resolve_derived_clones(&mut self) {
         let mut pending = std::mem::take(&mut self.pending_derived_clones);
         while let Some(index) = pending.iter().position(|(ty, _)| {
-            let TyKind::Struct(id) = *self.types.kind(*ty) else { return false };
-            self.types.struct_def(id).fields.iter().all(|field| {
-                self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
-            })
+            match self.types.kind(*ty) {
+                TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().all(|field| {
+                    self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
+                }),
+                // `[OWN-8]` — class handles clone like ordinary handle copies.
+                // Their fields stay in the same object, so a shallow clone has
+                // no field-wise Clone requirements.
+                TyKind::Class(_) => true,
+                _ => false,
+            }
         }) {
             let (ty, span) = pending.swap_remove(index);
             let signature = Signature {
@@ -5269,6 +5279,10 @@ impl<'a> Checker<'a> {
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
         self.validate_concrete_class_abstract_methods(id, span);
+        if decl.derives_clone {
+            self.pending_derived_clones.push((ty, span));
+            self.resolve_derived_clones();
+        }
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry)
@@ -6707,42 +6721,52 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         std::mem::take(&mut self.derived_clone_methods)
             .into_iter()
             .filter_map(|(def, ty, span)| {
-                let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
-                let fields = self.types.struct_def(id).fields.clone();
                 let self_local = LocalId(1);
-                let fields = fields
-                    .iter()
-                    .enumerate()
-                    .map(|(index, field)| {
-                        let field_expr = Expr {
-                            ty: field.ty,
-                            kind: ExprKind::Field {
-                                base: Box::new(Expr {
-                                    ty,
-                                    kind: ExprKind::Local(self_local),
+                let (value, class_owner) = match self.types.kind(ty) {
+                    TyKind::Struct(id) => {
+                        let fields = self.types.struct_def(*id).fields.clone();
+                        let fields = fields
+                            .iter()
+                            .enumerate()
+                            .map(|(index, field)| {
+                                let field_expr = Expr {
+                                    ty: field.ty,
+                                    kind: ExprKind::Field {
+                                        base: Box::new(Expr {
+                                            ty,
+                                            kind: ExprKind::Local(self_local),
+                                            span,
+                                        }),
+                                        index,
+                                    },
                                     span,
-                                }),
-                                index,
-                            },
-                            span,
-                        };
-                        if self.types.is_copy(field.ty) {
-                            field_expr
-                        } else {
-                            let clone = self.clone_method(field.ty).expect("checked derived Clone field");
-                            Expr {
-                                ty: field.ty,
-                                kind: ExprKind::Call {
-                                    callee: clone,
-                                    arg_eval_order: None,
-                                    args: vec![field_expr],
-                                    latebound: false,
-                                },
-                                span,
-                            }
-                        }
-                    })
-                    .collect();
+                                };
+                                if self.types.is_copy(field.ty) {
+                                    field_expr
+                                } else {
+                                    let clone =
+                                        self.clone_method(field.ty).expect("checked derived Clone field");
+                                    Expr {
+                                        ty: field.ty,
+                                        kind: ExprKind::Call {
+                                            callee: clone,
+                                            arg_eval_order: None,
+                                            args: vec![field_expr],
+                                            latebound: false,
+                                        },
+                                        span,
+                                    }
+                                }
+                            })
+                            .collect();
+                        (Expr { ty, kind: ExprKind::StructLit { struct_id: *id, fields }, span }, None)
+                    }
+                    TyKind::Class(id) => (
+                        Expr { ty, kind: ExprKind::Local(self_local), span },
+                        Some(*id),
+                    ),
+                    _ => return None,
+                };
                 Some(Function {
                     def,
                     name: Symbol::intern("clone"),
@@ -6762,20 +6786,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         },
                     ],
                     ret: ty,
-                    body: Block {
-                        stmts: vec![Stmt::Return(Some(Expr {
-                            ty,
-                            kind: ExprKind::StructLit { struct_id: id, fields },
-                            span,
-                        }))],
-                        span,
-                    },
+                    body: Block { stmts: vec![Stmt::Return(Some(value))], span },
                     span,
                     overflow: OverflowPolicy::default(),
                     borrows: None,
                     closure_environment: None,
                     closure_captures_by_move: false,
-                    class_owner: None,
+                    class_owner,
                     class_virtual_slot: None,
                     is_abstract: false,
                 })

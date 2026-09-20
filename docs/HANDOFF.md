@@ -7412,3 +7412,31 @@ corpus pass.
 This is an implementation defect recorded as D-159, not an ODR: `[TYP-16]`,
 `[IFC-1]`, and `[TYP-22]` already determine the behavior. No specification or
 owner decision changed. Phase accounting remains **1 of 9 complete**.
+
+### 0.165 Generic-class default coverage and shallow class Clone derivation — 2026-09-20
+
+The generic-class interface-default matrix now also covers the two boundary
+shapes that do not need a compiler change: `Pixel[bool] implements Factory`
+uses a `Self: Sized` default by its concrete type while its `ref dyn Factory`
+and `Box[dyn Factory]` calls use the ordinary dispatchable member; its emitted
+vtable contains the non-callable sized-only placeholder. A generic class that
+implements both `Parent` and `Child: Parent` likewise inherits both defaults
+through borrowed and boxed `dyn Child` adapters. Both all-profile probes pin
+their concrete vtable artifacts.
+
+The compiler did need a correction for `@derive(Clone)` on classes. Although
+the attribute grammar and `[OWN-8]` explicitly include classes and require a
+shallow handle copy, class declarations registered neither the synthesized
+method nor `std.core.Clone`. Direct classes now synthesize a `clone` body that
+returns the handle, and generic-class recipes preserve that derivation for each
+materialized class. `derived_clone_class.em` proves mutation through the clone
+is visible through the original and that generated C retains the handle.
+`derived_clone_generic_class.em` further proves `Counter[Marker]: Clone` even
+though its `Marker` field type is not `Clone`, so the implementation cannot be
+mistaken for the field-wise struct rule. Both pass in debug, release, and
+shipping.
+
+This is D-160, an implementation defect under existing `[OWN-8]`, `[TYP-16]`,
+and `[DRV-1]`, not an ODR: the specification leaves no ownership or design
+choice to make. No specification, ADR, owner decision, or phase status changed.
+Phase accounting remains **1 of 9 complete**.

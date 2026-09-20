@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-20 — classes accepted `@derive(Clone)` without generating `Clone`
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-160 | **`@derive(Clone)` was accepted on a class declaration but registered no `clone` method or `std.core.Clone` implementation.** The grammar explicitly permits the attribute on classes, and `[OWN-8]` defines class cloning as a shallow handle copy; nevertheless both direct and materialized generic classes reported that they had no `clone` method. | `[OWN-8]`, `[TYP-16]`, `[DRV-1]` | **fixed** | Class derives now synthesize `clone(self) -> Self` as a handle return, which the ordinary class return lowering retains, and register `std.core.Clone`. Generic-class recipes retain the derive request and apply it at each concrete materialization. `tests/run-pass/derived_clone_class.em` was rejected before the correction and now proves the shallow shared-object result and emitted retain in debug, release, and shipping. `derived_clone_generic_class.em` proves `Counter[Marker]` satisfies `T: Clone` although `Marker` itself has no `Clone`, with the same all-profile and C-retain checks. The specification already fixes the semantics; no specification, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-20 — generic-class substitutions did not rebuild nested classes
 
 | # | Defect | Rule | Status | Fixed in |
