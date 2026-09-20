@@ -7604,3 +7604,32 @@ NLL-bounded dynamic-exclusivity instrumentation, `T: Sync` atomic-count
 selection, and the remaining `[TST-26]` matrix stay open. Publication policy:
 push only after five validated local commits unless the owner explicitly
 overrides that threshold. Phase accounting remains **1 of 9 complete**.
+
+### 0.173 `Shared[T]` mutable borrowing and dynamic exclusivity — 2026-09-20
+
+Commit `7e09c6c` completes the next owner-authorized `Shared[T]` slice:
+`get_mut(mut self) -> ref mut T` now uses the ordinary static borrow proof
+and materializes the required runtime access state for the precise NLL region.
+`get() -> ref T` receives the matching runtime read interval, so a live
+reader conflicts with an aliased writer and both kinds of access end before a
+subsequent non-conflicting borrow can begin.
+
+Returned references preserve this behavior across direct helpers. A unique
+owner source begins in the caller; a branch-selected or nested helper starts a
+per-object transfer in the callee, and the caller closes it from the returned
+payload at its exact NLL end. This keeps the chosen allocation protected
+without adding a hidden owner word to Ember's reference ABI. MIR verification
+now models access state as a counted per-place multiset, accepts exact
+non-LIFO NLL endings, and explicitly permits a transferred access to cross a
+return boundary. The C backend recovers the object header from the aligned
+payload only for that transfer close.
+
+The `[HEAP-5]` conformance directory covers local and returned mutable
+borrows, reader/writer conflicts, NLL reuse, nested returns, and a
+branch-selected source in debug, release, and shipping. The focused compiler
+tests, workspace check, and complete all-profile conformance suite pass; the
+last suite run took 149 seconds. The frozen 0.9.8 target already specifies
+these semantics, so this is neither an ODR nor a new defect. Atomic
+`T: Sync` counter selection, the remaining `[TST-26]` combinations,
+cycle diagnostics, and the Phase 3 exit matrix remain open. Phase accounting
+remains **1 of 9 complete**; Phase 2 and Phase 3 remain active.
