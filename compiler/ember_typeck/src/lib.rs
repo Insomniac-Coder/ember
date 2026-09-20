@@ -184,6 +184,11 @@ pub fn check(
     checker.resolve_derived_clones();
     checker.validate_class_methods(modules);
     checker.assign_class_virtual_slots();
+    let class_ids: Vec<ClassId> = checker.types.classes().map(|(id, _)| id).collect();
+    for id in class_ids {
+        let span = checker.types.class_def(id).span;
+        checker.validate_concrete_class_abstract_methods(id, span);
+    }
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
     // and can run before a later module's extension has been collected.
@@ -2096,14 +2101,14 @@ impl<'a> Checker<'a> {
     }
 
     /// `[GRM-2]` — a concrete class may not leave a bodyless virtual method
-    /// inherited from an abstract generic base. Generic class declarations
-    /// become concrete classes only at instantiation time, so this check must
-    /// run after the instantiated methods and inherited vtable layout exist.
+    /// inherited from an abstract base. Generic class declarations become
+    /// concrete classes only at instantiation time, so those use this check
+    /// after their instantiated methods and inherited vtable layout exist.
     ///
     /// Scan derived-to-base so a nearer concrete override satisfies an older
     /// abstract declaration, while a nearer abstract redeclaration remains an
     /// obligation for the first concrete descendant.
-    fn validate_instantiated_abstract_methods(&mut self, id: ClassId, span: Span) {
+    fn validate_concrete_class_abstract_methods(&mut self, id: ClassId, span: Span) {
         if self.types.class_def(id).openness == ClassOpenness::Abstract {
             return;
         }
@@ -3600,7 +3605,15 @@ impl<'a> Checker<'a> {
         }
         for (member_index, member) in members.iter().enumerate() {
             let ast::MemberKind::Fn(decl) = &member.kind else { continue };
-            if decl.body.is_none() {
+            let is_abstract_class_method = decl.body.is_none()
+                && from_interface.is_none()
+                && decl.dispatch == ast::Dispatch::Virtual
+                && matches!(
+                    self.types.kind(ty),
+                    TyKind::Class(id)
+                        if self.types.class_def(*id).openness == ClassOpenness::Abstract
+                );
+            if decl.body.is_none() && !is_abstract_class_method {
                 continue;
             }
             let Some((receiver, signature)) =
@@ -3627,8 +3640,15 @@ impl<'a> Checker<'a> {
                     member.span,
                 )
             };
-            if generic {
-                if let Some(def) = registered {
+            if let Some(def) = registered {
+                if is_abstract_class_method {
+                    self.abstract_methods.insert(def);
+                    self.pending_abstract_methods.push(PendingAbstractMethod {
+                        def,
+                        owner: ty,
+                        span: member.span,
+                    });
+                } else if generic {
                     self.generic_method_sources.insert(
                         def,
                         MethodSource {
@@ -5235,7 +5255,7 @@ impl<'a> Checker<'a> {
         self.class_declared_methods.insert(id, declared_methods);
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
-        self.validate_instantiated_abstract_methods(id, span);
+        self.validate_concrete_class_abstract_methods(id, span);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry)
