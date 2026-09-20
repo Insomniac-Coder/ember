@@ -7354,3 +7354,20 @@ new metadata field; `d944a59` corrects them. CI run `35488391546` is green on
 all compiler/toolchain combinations and the specification gate. This follows
 the explicit generic-class grammar, `[GRM-2]`, `[CLS-4]`, and `[DSP-2]`; no
 owner decision was required. Phase accounting remains **1 of 9 complete**.
+
+### 0.162 Generic abstract-method implementation enforcement — 2026-09-20
+
+A concrete materialized generic class now rejects an inherited bodyless
+virtual method unless its nearest declaration in the class chain is a concrete
+override. This enforces the existing `[GRM-2]` obligation before C lowering can
+form a vtable with no implementation. Abstract intermediate classes remain
+valid, while their first concrete descendant retains the obligation.
+
+`generic_class_missing_abstract_override.em` is the three-profile regression:
+`Square[bool]` inherits `Shape[bool].area` without an override and is rejected
+with the established general class-semantic `E2020` error. The positive
+generic abstract dispatch probe still prints `42` in debug, release, and
+shipping. CI run `35489346392` is green on Linux clang/GCC, Windows MSVC/
+clang-cl, and the specification gate. The specification already fixes the
+required semantics; this is an implementation correction, not an ODR or ADR.
+Phase accounting remains **1 of 9 complete**.
