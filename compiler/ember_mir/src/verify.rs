@@ -1035,12 +1035,13 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
             fail(format!("{at} metadata disagrees with its destination type"));
             continue;
         }
-        let supported_concrete = is_source_struct_payload(types, *concrete);
+        let supported_concrete = matches!(types.kind(*concrete), TyKind::Class(_))
+            || is_source_struct_payload(types, *concrete);
         if !supported_concrete
             || !matches!(args.as_slice(), [Operand::Move(source)]
                 if place_ty(body, types, source) == *concrete)
         {
-            fail(format!("{at} must move one concrete struct payload"));
+            fail(format!("{at} must move one concrete struct or class payload"));
             continue;
         }
         if layout.len() != implementations.len() {

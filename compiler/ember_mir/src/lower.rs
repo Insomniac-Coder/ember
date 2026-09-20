@@ -1670,7 +1670,16 @@ impl<'a> Builder<'a> {
                 implementations,
                 value,
             } => {
-                let value = self.lower_operand(value);
+                // A class handle is language-level Copy, but putting it in an
+                // owning dyn box transfers its one strong reference.  Keep
+                // that transfer explicit in MIR so drop elaboration removes
+                // the temporary/local release instead of retaining the
+                // handle and leaving two owners behind.
+                let value = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
+                    self.lower_owned_dyn_box_payload(value)
+                } else {
+                    self.lower_operand(value)
+                };
                 let implementations = implementations
                     .iter()
                     .map(|implementation| {
@@ -4714,6 +4723,25 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), expr);
                 self.read(Place::local(temp), expr.ty)
+            }
+        }
+    }
+
+    /// `Box[dyn I]` is an owning boundary even when its concrete payload is a
+    /// class handle, whose ordinary reads retain/copy.  Unlike an ordinary
+    /// class read, this operation consumes the handle's strong reference.
+    fn lower_owned_dyn_box_payload(&mut self, expr: &'a hir::Expr) -> Operand {
+        self.at(expr.span);
+        match &expr.kind {
+            hir::ExprKind::Local(_)
+            | hir::ExprKind::Field { .. }
+            | hir::ExprKind::Index { .. }
+            | hir::ExprKind::Deref(_) => Operand::Move(self.lower_place(expr)),
+            _ => {
+                let temp = self.temp(expr.ty, expr.span);
+                self.push(StmtKind::StorageLive(temp));
+                self.lower_into(Place::local(temp), expr);
+                Operand::Move(Place::local(temp))
             }
         }
     }

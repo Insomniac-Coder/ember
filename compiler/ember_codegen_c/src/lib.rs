@@ -722,7 +722,7 @@ impl Emitter<'_> {
                     (concrete.clone(), concrete, false)
                 }
             };
-            let drop = if matches!(self.types.kind(adapter.concrete), TyKind::Struct(_)) {
+            let (drop, size, align) = if matches!(self.types.kind(adapter.concrete), TyKind::Struct(_)) {
                 let name = format!("{table}_drop");
                 let mut lines = Vec::new();
                 self.drop_lines(
@@ -735,9 +735,22 @@ impl Emitter<'_> {
                     self.line(&format!("    {line}"));
                 }
                 self.line("}");
-                name
+                (name, format!("sizeof({payload_ty})"), format!("_Alignof({payload_ty})"))
+            } else if class_handle {
+                let name = format!("{table}_drop");
+                self.line(&format!("static void {name}(void* _0) {{"));
+                self.line(&format!(
+                    "    {}(({}*)_0);",
+                    ember_branding::runtime("release"),
+                    ember_branding::runtime("obj_header")
+                ));
+                self.line("}");
+                // A class handle is already an owning allocation. The dyn
+                // box carries it directly, so its release has no separate
+                // payload allocation to free.
+                (name, "0".to_string(), "0".to_string())
             } else {
-                "NULL".to_string()
+                ("NULL".to_string(), "0".to_string(), "0".to_string())
             };
             for (slot, (signature, implementation)) in adapter
                 .layout
@@ -787,8 +800,8 @@ impl Emitter<'_> {
             }
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line(&format!("    {drop},"));
-            self.line(&format!("    sizeof({payload_ty}),"));
-            self.line(&format!("    _Alignof({payload_ty}),"));
+            self.line(&format!("    {size},"));
+            self.line(&format!("    {align},"));
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
                     format!("{table}_slot{slot}")
@@ -1233,7 +1246,7 @@ impl Emitter<'_> {
                         "((const struct {table}*){access}.vtable)->drop({access}.data);"
                     ));
                     out.push(format!(
-                        "{RT}free({access}.data, ((const struct {table}*){access}.vtable)->size, ((const struct {table}*){access}.vtable)->align);"
+                        "if (((const struct {table}*){access}.vtable)->size != 0) {{ {RT}free({access}.data, ((const struct {table}*){access}.vtable)->size, ((const struct {table}*){access}.vtable)->align); }}"
                     ));
                     return;
                 }
@@ -2151,10 +2164,14 @@ impl Emitter<'_> {
             FuncRef::DynBoxNew { concrete, boxed, interface, .. } => {
                 let concrete_c = self.c_type(*concrete);
                 let table = self.interface_adapter_table(*concrete, interface.as_str());
+                let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
+                    rendered[0].clone()
+                } else {
+                    format!("{RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), &{})", rendered[0])
+                };
                 format!(
-                    "({}){{ .data = {RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), &{}), .vtable = &{table} }}",
+                    "({}){{ .data = {data}, .vtable = &{table} }}",
                     self.c_type(*boxed),
-                    rendered[0]
                 )
             }
             // `[CLO-3]` — a call through a value. In C a function value is
