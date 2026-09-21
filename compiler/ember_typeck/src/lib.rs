@@ -21,7 +21,7 @@ use ember_hir as hir;
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{
     BinOp, Block, Builtin, DefId, DestructureBinding, Expr, ExprKind, Function, LocalDecl,
-    LocalId, Mode, Param, Program, Stmt, UnOp,
+    LocalId, MatchArm, MatchArmBody, Mode, Param, Pattern, PatternKind, Program, Stmt, UnOp,
 };
 use ember_span::{Span, Symbol};
 use ember_types::{
@@ -3097,6 +3097,7 @@ impl<'a> Checker<'a> {
                         item_index,
                     );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
                     if self.is_generic_class_extension(decl) {
@@ -4043,6 +4044,11 @@ impl<'a> Checker<'a> {
                 TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().all(|field| {
                     self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
                 }),
+                TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().all(|variant| {
+                    variant.fields.iter().all(|field| {
+                        self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
+                    })
+                }),
                 // `[OWN-8]` — class handles clone like ordinary handle copies.
                 // Their fields stay in the same object, so a shallow clone has
                 // no field-wise Clone requirements.
@@ -4077,17 +4083,23 @@ impl<'a> Checker<'a> {
             }
         }
         for (ty, _) in pending {
-            let TyKind::Struct(id) = *self.types.kind(ty) else { continue };
-            let Some(field) = self.types.struct_def(id).fields.iter().find(|field| {
-                !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
-            }) else {
-                continue;
+            let field = match *self.types.kind(ty) {
+                TyKind::Struct(id) => self.types.struct_def(id).fields.iter().find(|field| {
+                    !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
+                }).map(|field| ("field", field.name, field.ty, field.span)),
+                TyKind::Enum(id) => self.types.enum_def(id).variants.iter().flat_map(|variant| {
+                    variant.fields.iter()
+                }).find(|field| {
+                    !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
+                }).map(|field| ("payload", field.name, field.ty, field.span)),
+                _ => None,
             };
-            let shown = self.types.display(field.ty);
+            let Some((kind, name, field_ty, field_span)) = field else { continue };
+            let shown = self.types.display(field_ty);
             self.error(
                 codes::E2040,
-                field.span,
-                format!("field `{}` has type `{shown}`, which does not implement `Clone`", field.name),
+                field_span,
+                format!("{kind} `{name}` has type `{shown}`, which does not implement `Clone`"),
             );
         }
     }
@@ -7207,6 +7219,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .into_iter()
             .filter_map(|(def, ty, span)| {
                 let self_local = LocalId(1);
+                let locals = vec![
+                    LocalDecl { name: None, ty, span, for_iterator: false },
+                    LocalDecl {
+                        name: Some(Symbol::intern("self")),
+                        ty,
+                        span,
+                        for_iterator: false,
+                    },
+                ];
                 let (value, class_owner) = match self.types.kind(ty) {
                     TyKind::Struct(id) => {
                         let fields = self.types.struct_def(*id).fields.clone();
@@ -7250,6 +7271,90 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         Expr { ty, kind: ExprKind::Local(self_local), span },
                         Some(*id),
                     ),
+                    TyKind::Enum(id) => {
+                        let variants = self.types.enum_def(*id).variants.clone();
+                        let receiver = || Expr {
+                            ty,
+                            kind: ExprKind::Local(self_local),
+                            span,
+                        };
+                        let arms = variants
+                            .iter()
+                            .enumerate()
+                            .map(|(variant, definition)| {
+                                let fields = definition
+                                    .fields
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, field)| {
+                                        // `[OWN-8]` — the generated method receives a borrowed
+                                        // receiver. Project its selected payload directly rather
+                                        // than pattern-binding it: bindings read non-Copy payloads
+                                        // as moves, which is forbidden for a borrowed parameter.
+                                        let field_expr = Expr {
+                                            ty: field.ty,
+                                            kind: ExprKind::EnumField {
+                                                base: Box::new(receiver()),
+                                                variant,
+                                                index,
+                                            },
+                                            span,
+                                        };
+                                        if self.types.is_copy(field.ty) {
+                                            field_expr
+                                        } else {
+                                            let clone = self
+                                                .clone_method(field.ty)
+                                                .expect("checked derived Clone payload");
+                                            Expr {
+                                                ty: field.ty,
+                                                kind: ExprKind::Call {
+                                                    callee: clone,
+                                                    arg_eval_order: None,
+                                                    args: vec![field_expr],
+                                                    latebound: false,
+                                                },
+                                                span,
+                                            }
+                                        }
+                                    })
+                                    .collect();
+                                MatchArm {
+                                    pattern: Pattern {
+                                        ty,
+                                        kind: PatternKind::Variant {
+                                            enum_id: *id,
+                                            variant,
+                                            fields: Vec::new(),
+                                        },
+                                        span,
+                                    },
+                                    guard: None,
+                                    body: MatchArmBody::Expr(Expr {
+                                        ty,
+                                        kind: ExprKind::EnumLit {
+                                            enum_id: *id,
+                                            variant,
+                                            fields,
+                                        },
+                                        span,
+                                    }),
+                                    span,
+                                }
+                            })
+                            .collect();
+                        (
+                            Expr {
+                                ty,
+                                kind: ExprKind::Match {
+                                    scrutinee: Box::new(receiver()),
+                                    arms,
+                                },
+                                span,
+                            },
+                            None,
+                        )
+                    }
                     _ => return None,
                 };
                 Some(Function {
@@ -7261,15 +7366,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     is_unsafe: false,
                     abi: None,
                     params: vec![Param { local: self_local, mode: Mode::Borrow }],
-                    locals: vec![
-                        LocalDecl { name: None, ty, span, for_iterator: false },
-                        LocalDecl {
-                            name: Some(Symbol::intern("self")),
-                            ty,
-                            span,
-                            for_iterator: false,
-                        },
-                    ],
+                    locals,
                     ret: ty,
                     body: Block { stmts: vec![Stmt::Return(Some(value))], span },
                     span,
@@ -15114,6 +15211,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
             ExprKind::Field { base, .. }
+            | ExprKind::EnumField { base, .. }
             | ExprKind::Deref(base)
             | ExprKind::Ref { place: base, .. }
             | ExprKind::Cast { expr: base, .. }
@@ -15295,6 +15393,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 })
             }
             ExprKind::Field { base, .. }
+            | ExprKind::EnumField { base, .. }
             | ExprKind::Deref(base)
             | ExprKind::Cast { expr: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }

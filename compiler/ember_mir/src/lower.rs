@@ -4745,6 +4745,7 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Error => Operand::Const(Const::Void),
             hir::ExprKind::Local(_)
             | hir::ExprKind::Field { .. }
+            | hir::ExprKind::EnumField { .. }
             | hir::ExprKind::Index { .. }
             | hir::ExprKind::Deref(_) => {
                 let place = self.lower_place(expr);
@@ -5204,6 +5205,9 @@ impl<'a> Builder<'a> {
         match &expr.kind {
             hir::ExprKind::Local(local) => Place::local(self.local_map[local.0 as usize]),
             hir::ExprKind::Field { base, index } => self.lower_place(base).field(*index),
+            hir::ExprKind::EnumField { base, variant, index } => {
+                self.lower_place(base).downcast(*variant).field(*index)
+            }
             hir::ExprKind::Index { base, index } => self.lower_index(base, index, expr.span),
             hir::ExprKind::Deref(inner) => {
                 let mut place = self.lower_place(inner);

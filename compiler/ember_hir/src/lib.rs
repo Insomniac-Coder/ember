@@ -227,6 +227,11 @@ pub enum ExprKind {
     Local(LocalId),
     /// Field access by resolved index, not by name.
     Field { base: Box<Expr>, index: usize },
+    /// A compiler-synthesized projection of one payload field from a known enum
+    /// variant. Source programs select payloads through patterns; generated
+    /// bodies use this form so `@derive(Clone)` can borrow a payload without
+    /// binding and moving it out of its borrowed receiver.
+    EnumField { base: Box<Expr>, variant: usize, index: usize },
     /// A direct call to a known function. `latebound` is set when a
     /// monomorphized callable parameter is statically dispatched to a known
     /// closure body; it preserves the expected callable boundary for region
@@ -1083,6 +1088,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             .unwrap_or_else(|| format!("_{}", id.0)),
         ExprKind::Field { base, index } => {
             format!("{}.{index}", dump_expr(base, function, types))
+        }
+        ExprKind::EnumField { base, variant, index } => {
+            format!("{}.<variant {variant}>.{index}", dump_expr(base, function, types))
         }
         ExprKind::Call { callee, args, latebound, .. } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
