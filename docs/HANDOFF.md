@@ -8173,3 +8173,21 @@ materialization plus `[TYP-22]` adapter contract, not a new language decision
 or an ODR. Cross-module generic-enum dynamic-table materialization remains a
 separate interface-artifact task. Phase accounting remains **1 of 9 complete**
 with Phases 2 and 3 active.
+
+### 0.197 `[TYP-16]` generic enum interface contracts — 2026-09-21
+
+Public members declared on a generic enum now contribute declaration-only
+entries to its schema-5 EMIF, as public generic-struct members already do. The
+source owner has the canonical `module.Message[$P0]` receiver identity; the
+owner's binders precede a member's binders; and the contract deliberately has
+no instantiated body metadata. Struct and enum declarations use one collector,
+so this ordering and identity cannot drift between generic nominal kinds.
+
+The milestone builds and imports a helper module containing `Message[T: Eq]`
+with a public generic member, reads its cached EMIF, and verifies that exact
+receiver and binder shape. Rewriting the owner bound to `Hash` changes both the
+helper interface hash and the otherwise unchanged importer's cache key. The
+focused milestone and full workspace suite pass. This implements an existing
+`[TYP-16]` / `[MOD-2]` / `[BLD-2]` requirement; it is not an ODR or new language
+decision. Phase accounting remains **1 of 9 complete** with Phases 2 and 3
+active.
