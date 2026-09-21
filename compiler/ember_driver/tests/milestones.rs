@@ -406,73 +406,77 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
     let source = format!(
         "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
     );
-    let out_dir = std::env::temp_dir().join(format!(
-        "ember-hoisted-loop-safety-{}",
-        std::process::id()
-    ));
-    let run = ember(
-        &[
-            "build",
-            &source,
-            "--out-dir",
-            &out_dir.to_string_lossy(),
-        ],
-        &root,
-    );
-    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
+    for profile in ["debug", "release", "shipping"] {
+        let out_dir = std::env::temp_dir().join(format!(
+            "ember-hoisted-loop-safety-{profile}-{}",
+            std::process::id()
+        ));
+        let run = ember(
+            &[
+                "build",
+                &source,
+                "--profile",
+                profile,
+                "--out-dir",
+                &out_dir.to_string_lossy(),
+            ],
+            &root,
+        );
+        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
 
-    let side_table = out_dir
-        .join("debug")
-        .join("inspect")
-        .join("accept_stable_class_receiver_loop.safety.json");
-    let json = std::fs::read_to_string(&side_table)
-        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-    assert!(
-        json.contains("\"classification\":\"DYNAMIC_HOISTED_LOOP\""),
-        "stable loop was not classified as hoisted:\n{json}"
-    );
-    assert!(
-        json.contains("\"check_site\":\"preheader\""),
-        "hoisted loop lacks its preheader check record:\n{json}"
-    );
-    assert!(
-        json.contains("\"protected_interval\":\"loop\""),
-        "hoisted loop lacks its protected interval record:\n{json}"
-    );
-    assert!(
-        json.contains("\"proof\":\"stable_receiver_direct_call\""),
-        "hoisted loop lacks its proof record:\n{json}"
-    );
+        let side_table = out_dir
+            .join(profile)
+            .join("inspect")
+            .join("accept_stable_class_receiver_loop.safety.json");
+        let json = std::fs::read_to_string(&side_table)
+            .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+        assert!(
+            json.contains("\"classification\":\"DYNAMIC_HOISTED_LOOP\""),
+            "{profile} stable loop was not classified as hoisted:\n{json}"
+        );
+        assert!(
+            json.contains("\"check_site\":\"preheader\""),
+            "{profile} hoisted loop lacks its preheader check record:\n{json}"
+        );
+        assert!(
+            json.contains("\"protected_interval\":\"loop\""),
+            "{profile} hoisted loop lacks its protected interval record:\n{json}"
+        );
+        assert!(
+            json.contains("\"proof\":\"stable_receiver_direct_call\""),
+            "{profile} hoisted loop lacks its proof record:\n{json}"
+        );
 
-    let c_path = out_dir
-        .join("debug")
-        .join("c")
-        .join("accept_stable_class_receiver_loop.c");
-    let c = std::fs::read_to_string(&c_path)
-        .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
-    let main_start = c.find("void em_main(void)").expect("main is emitted");
-    let bump_start = c.rfind("void em_Counter_bump(").expect("method is emitted");
-    let main_c = &c[main_start..bump_start];
-    assert_eq!(
-        main_c.matches("ember_access_begin_write").count(),
-        1,
-        "main must have one preheader write check:\n{main_c}"
-    );
-    assert_eq!(
-        main_c.matches("ember_access_end_write").count(),
-        1,
-        "main must have one postheader write release:\n{main_c}"
-    );
+        let c_path = out_dir
+            .join(profile)
+            .join("c")
+            .join("accept_stable_class_receiver_loop.c");
+        let c = std::fs::read_to_string(&c_path)
+            .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
+        let main_start = c.find("void em_main(void)").expect("main is emitted");
+        let bump_start = c.rfind("void em_Counter_bump(").expect("method is emitted");
+        let main_c = &c[main_start..bump_start];
+        assert_eq!(
+            main_c.matches("ember_access_begin_write").count(),
+            1,
+            "{profile} main must have one preheader write check:\n{main_c}"
+        );
+        assert_eq!(
+            main_c.matches("ember_access_end_write").count(),
+            1,
+            "{profile} main must have one postheader write release:\n{main_c}"
+        );
 
-    let side_table_arg = side_table.to_string_lossy().into_owned();
-    let report = ember(&["inspect", "--safety", &side_table_arg], &root);
-    assert_eq!(report.exit, 0, "inspect failed:\n{}", report.stderr);
-    assert!(
-        report.stdout.contains("DYNAMIC_HOISTED_LOOP")
-            && report.stdout.contains("proof: stable_receiver_direct_call"),
-        "inspect did not identify the hoisted proof:\n{}",
-        report.stdout
-    );
+        let side_table_arg = side_table.to_string_lossy().into_owned();
+        let report = ember(&["inspect", "--safety", &side_table_arg], &root);
+        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
+        assert!(
+            report.stdout.contains("DYNAMIC_HOISTED_LOOP")
+                && report.stdout.contains("proof: stable_receiver_direct_call"),
+            "{profile} inspect did not identify the hoisted proof:\n{}",
+            report.stdout
+        );
+    }
 }
 
 /// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
