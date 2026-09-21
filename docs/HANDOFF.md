@@ -7971,3 +7971,28 @@ case pins `E2040` for an enum payload lacking `Clone`. The exact full
 conformance suite passes in debug, release, and shipping. This implements the
 already-defined `[OWN-8]` field-wise derive rule; it is not an ODR or a compiler
 defect. Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.187 `[TYP-22]` direct enum dynamic-interface adapters — 2026-09-21
+
+Direct enum declarations that implement a dyn-compatible interface can now
+cross both existing `[TYP-22]` boundaries: `ref dyn I` and `Box[dyn I]`. This
+extends the established checked per-(interface, concrete) adapter model; it
+does not introduce a second dynamic representation. Value enums use the
+ordinary value receiver ABI behind the erased `void*` table slot, while a
+dynamic box allocates one aligned enum payload and reuses the existing active
+variant drop glue before freeing it. Class-handle behavior is unchanged.
+
+The MIR verifier now recognizes a direct enum as a source value payload. A
+non-Copy enum must still reach `Box[dyn I]` by the ordinary move path; a copied
+operand is accepted only when the type table proves it Copy. That keeps the
+checked ownership invariant intact rather than making boxing a verifier
+exception.
+
+Two all-profile conformance cases cover borrowed enum dispatch and a boxed,
+non-Copy enum payload. The latter has a destructor and pins dispatch, C vtable
+emission, box allocation, and payload destruction; existing struct and class
+dynamic-box regressions also pass. `cargo test --workspace --locked` passes
+with the full milestone and conformance suites. This fulfills behavior already
+specified by `[TYP-22]` and enum `implements` grammar; no ODR or compiler
+defect is involved. Phase accounting remains **1 of 9 complete** with Phases 2
+and 3 active.
