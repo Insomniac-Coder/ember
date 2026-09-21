@@ -326,6 +326,10 @@ pub struct EnumDef {
     pub name: Symbol,
     pub variants: Vec<VariantDef>,
     pub span: Span,
+    /// The generic recipe and concrete arguments that materialised this enum.
+    /// A generic enum instance remains an ordinary nominal enum after this
+    /// substitution, just as a generic struct instance does.
+    pub origin: Option<(Symbol, Vec<Ty>)>,
     /// `[TYP-12]` — the integer type the tag is stored in.
     pub repr: Ty,
     /// Whether `@repr` was written. `[TYP-12]` requires it for FFI.

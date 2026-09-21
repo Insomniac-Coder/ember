@@ -157,6 +157,7 @@ pub fn check(
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
         checker.collect_generic_structs(&loaded.module);
+        checker.collect_generic_enums(&loaded.module);
         checker.collect_generic_classes(&loaded.module);
     }
     // Interfaces must be available before ordinary function signatures are
@@ -308,6 +309,22 @@ struct GenericStruct {
     /// `[TYP-16]` — the methods declared in the body, resolved once with the
     /// type parameters left opaque. An instantiation substitutes them, the
     /// same way it substitutes the fields.
+    methods: Vec<GenericMethod>,
+}
+
+/// `[TYP-16]` — an enum declared with type parameters. Its variant payloads
+/// are resolved once with opaque parameters; each use substitutes them into a
+/// normal concrete enum definition.
+#[derive(Clone)]
+struct GenericEnum {
+    params: Vec<Symbol>,
+    variants: Vec<VariantDef>,
+    repr: Ty,
+    repr_is_explicit: bool,
+    derives_copy: bool,
+    derives_clone: bool,
+    declaring_module: usize,
+    implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
 }
 
@@ -638,6 +655,8 @@ struct Checker<'a> {
     instances: HashMap<Instance, DefId>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
+    /// Enums declared with type parameters, by qualified name.
+    generic_enums: HashMap<Symbol, GenericEnum>,
     /// Classes declared with type parameters, by qualified name. The initial
     /// slice supports direct memberwise construction only; methods, bases and
     /// interface implementations stay explicitly rejected until their
@@ -837,6 +856,7 @@ impl<'a> Checker<'a> {
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
             generic_structs: HashMap::new(),
+            generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
             generic_class_extensions: HashMap::new(),
             reported_generic_override_errors: HashSet::new(),
@@ -1909,7 +1929,7 @@ impl<'a> Checker<'a> {
                     self.class_ids.insert(name, id);
                     self.named_types.insert(name, ty);
                 }
-                ast::ItemKind::Enum(decl) => {
+                ast::ItemKind::Enum(decl) if decl.generics.is_empty() => {
                     let name = self.qualified(decl.name.name);
                     if self.named_types.contains_key(&name) {
                         self.error(
@@ -1924,6 +1944,7 @@ impl<'a> Checker<'a> {
                         name,
                         variants: Vec::new(),
                         span: item.span,
+                        origin: None,
                         repr,
                         repr_is_explicit,
                         derives_copy: has_derive(&item.attrs, "Copy"),
@@ -2251,6 +2272,71 @@ impl<'a> Checker<'a> {
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
                     derives_clone: has_derive(&item.attrs, "Clone"),
+                    implements: decl.implements.clone(),
+                    methods,
+                },
+            );
+        }
+    }
+
+    /// `[TYP-16]` — record generic enum payload recipes before ordinary
+    /// signatures are checked. The concrete enum is materialised only once its
+    /// type arguments are known.
+    fn collect_generic_enums(&mut self, module: &ast::Module) {
+        for (item_index, item) in module.items.iter().enumerate() {
+            let ast::ItemKind::Enum(decl) = &item.kind else { continue };
+            if decl.generics.is_empty() {
+                continue;
+            }
+            let name = self.qualified(decl.name.name);
+            let generic_params = self.declare_generics(&decl.generics);
+            let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
+            let variants = self.collect_variants(decl);
+            let mut methods = Vec::new();
+            for (member_index, member) in decl.members.iter().enumerate() {
+                let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+                if fn_decl.body.is_none() {
+                    continue;
+                }
+                let Some((receiver, signature)) = self.method_signature(
+                    fn_decl,
+                    None,
+                    &member.attrs,
+                    member.span,
+                    params.len(),
+                ) else {
+                    continue;
+                };
+                methods.push(GenericMethod {
+                    name: fn_decl.name.name,
+                    dispatch: fn_decl.dispatch,
+                    has_body: true,
+                    receiver,
+                    params: signature.params,
+                    ret: signature.ret,
+                    generics: signature.generics,
+                    borrows: signature.borrows.map(|positions| {
+                        positions
+                            .into_iter()
+                            .map(|position| position + usize::from(receiver.is_some()))
+                            .collect()
+                    }),
+                    source: (self.current_module, item_index, member_index),
+                    span: member.span,
+                });
+            }
+            self.type_params.clear();
+            let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
+            self.generic_enums.insert(
+                name,
+                GenericEnum {
+                    params,
+                    variants,
+                    repr,
+                    repr_is_explicit,
+                    derives_copy: has_derive(&item.attrs, "Copy"),
+                    derives_clone: has_derive(&item.attrs, "Clone"),
+                    declaring_module: self.current_module,
                     implements: decl.implements.clone(),
                     methods,
                 },
@@ -2997,7 +3083,11 @@ impl<'a> Checker<'a> {
     /// payloads `Copy`. A unit-only enum is `Copy` regardless (`[ENM-3]`), so
     /// there is nothing to check.
     fn check_enum_copy(&mut self, id: EnumId, attrs: &[ast::Attribute]) {
-        if !has_derive(attrs, "Copy") {
+        self.check_enum_copy_requested(id, has_derive(attrs, "Copy"));
+    }
+
+    fn check_enum_copy_requested(&mut self, id: EnumId, requested: bool) {
+        if !requested {
             return;
         }
         let offenders: Vec<(Symbol, Ty, Span)> = self
@@ -4432,6 +4522,10 @@ impl<'a> Checker<'a> {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_struct(resolved_name, &decl, &resolved, span);
         }
+        if let Some(decl) = self.generic_enums.get(&resolved_name).cloned() {
+            let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+            return self.instantiate_enum(resolved_name, &decl, &resolved, span);
+        }
         if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_class(resolved_name, &decl, &resolved, span);
@@ -5083,7 +5177,18 @@ impl<'a> Checker<'a> {
                 self.instantiate_class(name, &decl, &concrete, Span::DUMMY)
             }
             TyKind::Enum(id) => {
-                let def = self.types.enum_def(id);
+                let def = self.types.enum_def(id).clone();
+                if let Some((name, generic_args)) = def.origin {
+                    let concrete = generic_args
+                        .iter()
+                        .map(|&arg| self.substitute_ty(arg, args))
+                        .collect::<Vec<_>>();
+                    if concrete != generic_args {
+                        if let Some(decl) = self.generic_enums.get(&name).cloned() {
+                            return self.instantiate_enum(name, &decl, &concrete, Span::DUMMY);
+                        }
+                    }
+                }
                 let name = def.name.as_str();
                 if name.starts_with("Option_") && def.variants.len() == 2 {
                     let inner = def.variants[1].fields[0].ty;
@@ -5352,6 +5457,177 @@ impl<'a> Checker<'a> {
             // its instantiations a destructor.
             if method.name.is("drop") {
                 self.types.struct_def_mut(id).has_drop = true;
+            }
+            if generic {
+                self.generic_method_sources.insert(
+                    def,
+                    MethodSource {
+                        owner: ty,
+                        source: method.source,
+                        owner_bindings: decl
+                            .params
+                            .iter()
+                            .copied()
+                            .zip(args.iter().copied())
+                            .collect(),
+                    },
+                );
+                self.pending_generic_method_validations.push(def);
+            } else {
+                self.pending_methods.push(PendingMethod {
+                    def,
+                    owner: ty,
+                    bindings: decl
+                        .params
+                        .iter()
+                        .copied()
+                        .zip(args.iter().copied())
+                        .collect(),
+                    report_owner: name,
+                    source: method.source,
+                });
+            }
+        }
+        if decl.derives_clone {
+            self.pending_derived_clones.push((ty, span));
+            self.resolve_derived_clones();
+        }
+        let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
+        let interfaces_are_ready = decl.implements.iter().all(|entry| {
+            interface_name(entry).is_none_or(|written| {
+                self.interfaces.contains_key(&self.resolve_name(written))
+            })
+        });
+        self.current_module = previous_module;
+        if interfaces_are_ready {
+            let implementations = self.register_instantiated_implements(
+                ty,
+                &decl.implements,
+                span,
+                decl.declaring_module,
+            );
+            for (implemented_ty, interface, interface_span) in implementations {
+                self.check_implementation(implemented_ty, interface, interface_span);
+            }
+        } else {
+            self.pending_generic_implements.push(PendingGenericImplements {
+                ty,
+                implements: decl.implements.clone(),
+                span,
+                module: decl.declaring_module,
+            });
+        }
+        ty
+    }
+
+    /// `[TYP-16]` — materialise one enum for a concrete type-argument list.
+    /// The result intentionally reuses the ordinary enum representation and
+    /// lowering paths; genericity is compile-time substitution only.
+    fn instantiate_enum(
+        &mut self,
+        name: Symbol,
+        decl: &GenericEnum,
+        args: &[Ty],
+        span: Span,
+    ) -> Ty {
+        if args.len() != decl.params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {} type arguments, found {}", decl.params.len(), args.len()),
+            );
+            return self.common.error;
+        }
+        let stem: Vec<String> =
+            args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        if let Some(&ty) = self.named_types.get(&instance) {
+            return ty;
+        }
+
+        let id = self.types.add_enum(EnumDef {
+            name: instance,
+            variants: Vec::new(),
+            span,
+            origin: Some((name, args.to_vec())),
+            repr: decl.repr,
+            repr_is_explicit: decl.repr_is_explicit,
+            derives_copy: decl.derives_copy,
+            has_drop: false,
+        });
+        let ty = self.types.intern(TyKind::Enum(id));
+        self.enum_ids.insert(instance, id);
+        self.named_types.insert(instance, ty);
+
+        let variants = decl
+            .variants
+            .iter()
+            .map(|variant| VariantDef {
+                name: variant.name,
+                fields: variant
+                    .fields
+                    .iter()
+                    .map(|field| FieldDef {
+                        name: field.name,
+                        ty: self.substitute_ty(field.ty, args),
+                        span: field.span,
+                        ty_span: field.ty_span,
+                        has_default: field.has_default,
+                        read_only_outside: field.read_only_outside,
+                        vis: field.vis,
+                    })
+                    .collect(),
+                discriminant: variant.discriminant,
+                span: variant.span,
+            })
+            .collect();
+        self.types.enum_def_mut(id).variants = variants;
+        self.check_enum_copy_requested(id, decl.derives_copy);
+
+        for method in &decl.methods {
+            let method_params: Vec<Ty> = method
+                .generics
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    self.types.intern(TyKind::Param {
+                        index: index as u32,
+                        name: param.name,
+                    })
+                })
+                .collect();
+            let mut combined = args.to_vec();
+            combined.extend(method_params);
+            let mut params = Vec::new();
+            if let Some(receiver) = method.receiver {
+                params.push((Symbol::intern("self"), ty, receiver, method.span));
+            }
+            for &(field_name, param_ty, mode, param_span) in &method.params {
+                params.push((
+                    field_name,
+                    self.substitute_ty(param_ty, &combined),
+                    mode,
+                    param_span,
+                ));
+            }
+            let ret = self.substitute_ty(method.ret, &combined);
+            let generics = method
+                .generics
+                .iter()
+                .map(|param| self.substitute_generic_param(param, &combined))
+                .collect();
+            let signature = Signature { params, ret, generics, borrows: method.borrows.clone() };
+            let generic = !signature.generics.is_empty();
+            let def = if let Some(receiver) = method.receiver {
+                self.register_method(ty, method.name, signature, receiver, None, method.span)
+            } else {
+                self.register_associated(ty, method.name, signature, None, method.span)
+            };
+            let Some(def) = def else {
+                continue;
+            };
+            if method.name.is("drop") {
+                self.types.enum_def_mut(id).has_drop = true;
             }
             if generic {
                 self.generic_method_sources.insert(
@@ -6482,6 +6758,7 @@ impl<'a> Checker<'a> {
             name,
             variants,
             span: Span::DUMMY,
+            origin: None,
             repr,
             repr_is_explicit: false,
             derives_copy: true,
@@ -9120,7 +9397,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let def = self.types.enum_def(id);
         match path {
             [variant] => def.variant(variant.name).map(|(i, _)| (id, i)),
-            [enum_name, variant] if def.name == enum_name.name => {
+            [enum_name, variant]
+                if def.name == enum_name.name
+                    || def.origin.as_ref().is_some_and(|(name, _)| *name == enum_name.name) =>
+            {
                 def.variant(variant.name).map(|(i, _)| (id, i))
             }
             _ => None,
@@ -12898,12 +13178,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// The enum an expression names, if it is a bare path naming one. A local
     /// of the same name wins, so shadowing behaves as it does everywhere else.
-    fn enum_named(&self, expr: &ast::Expr) -> Option<EnumId> {
-        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
-        if segments.len() != 1 {
-            return None;
-        }
-        let name = segments[0].name;
+    fn enum_named(&mut self, expr: &ast::Expr) -> Option<EnumId> {
+        let name = match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name,
+            ast::ExprKind::IndexOrInstantiate { base, .. } => {
+                let ast::ExprKind::Path { segments } = &base.kind else { return None };
+                if segments.len() != 1 {
+                    return None;
+                }
+                let name = segments[0].name;
+                if self.lookup(name).is_some()
+                    || !self.generic_enums.contains_key(&self.resolve_name(name))
+                {
+                    return None;
+                }
+                let ty = self.type_from_expr(expr);
+                return match self.types.kind(ty) {
+                    TyKind::Enum(id) => Some(*id),
+                    _ => None,
+                };
+            }
+            _ => return None,
+        };
         if self.lookup(name).is_some() {
             return None;
         }
