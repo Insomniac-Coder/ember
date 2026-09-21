@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-21 — imported generic-enum variants did not resolve in patterns
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-165 | **A materialized generic enum retained its source origin under the fully qualified declaring-module name, but pattern resolution compared an imported qualifier such as `Entry.Value` only to the raw spelling.** Construction and `clone()` of `Entry[i32]` worked across the import, then the valid qualified variant pattern was rejected with `E1010`. | `[MOD-2]`, `[MOD-3]`, `[TYP-16]`, `[ENM-1]`, `[OWN-8]` | **fixed** | Variant-pattern lookup now resolves the written enum qualifier through the current module's import bindings before comparing it with the concrete enum name or generic origin. `generic_enum_derived_clone_imported.em` was rejected before this change and now constructs, clones, and matches the imported `Entry[i32]` in debug, release, and shipping, while pinning the generated clone body. The specification already defines import bindings and generic materialization, so no specification, ADR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-20 — weak class handles and match-arm ownership
 
 | # | Defect | Rule | Status | Fixed in |

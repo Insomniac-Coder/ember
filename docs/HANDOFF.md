@@ -8219,3 +8219,21 @@ This covers the specified `[TYP-16]`--`[TYP-18]` plus `[MOD-1]`--`[MOD-3]`
 composition. The run-pass suite passes in debug, release, and shipping. No
 compiler behavior changed, no ODR was needed, and phase accounting remains
 **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.200 `[ENM-1]` imported generic-enum pattern resolution — 2026-09-21
+
+The imported generic-enum clone probe exposed D-165: a materialized enum kept
+its fully qualified generic origin, while qualified patterns compared
+`Entry.Value` only to its raw spelling. An importing module could therefore
+construct and clone `Entry[i32]` yet receive `E1010` when it matched the public
+variant. The normal import resolver now supplies the canonical qualifier before
+the concrete name and origin are compared; local, unqualified variant matching
+is unchanged.
+
+`generic_enum_derived_clone_imported.em` was red before the correction and now
+constructs, clones, and matches `Entry[i32]` in debug, release, and shipping.
+Its generated-C assertion requires the helper-owned concrete clone body. The
+full workspace suite passes. This is an implementation defect under existing
+`[MOD-2]`, `[MOD-3]`, `[TYP-16]`, `[ENM-1]`, and `[OWN-8]`, not an ODR or a
+language decision. Phase accounting remains **1 of 9 complete** with Phases 2
+and 3 active.
