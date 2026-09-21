@@ -8059,3 +8059,20 @@ and generic-class inherited-interface regressions remain green, and the full
 conformance suite passes. This is coverage for the already-defined `[TYP-22]`
 superinterface table ordering, not an ODR, compiler defect, or phase-completion
 claim. Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.191 `[TYP-22]` enum interface-default dispatch coverage — 2026-09-21
+
+An enum that declares an interface implementation without restating a
+dispatchable interface default body now has direct evidence at both dynamic
+boundaries. `Signal implements Answer` inherits `Answer.answer`; its concrete
+adapter table forwards that body through `ref dyn Answer` and `Box[dyn Answer]`
+without a handwritten enum method. The test therefore distinguishes the
+ordinary default-member path from the separately rejected `Self: Sized`
+default boundary.
+
+`accept_dyn_interface_enum_default.em` produces `42` through each carrier in
+debug, release, and shipping. The emitted-C probes pin the `Signal` adapter
+table and its default-method slot in every profile. This is an executable
+coverage addition for the frozen interface-default and `[TYP-22]` rules, not an
+ODR, compiler defect, or phase-completion claim. Phase accounting remains **1
+of 9 complete** with Phases 2 and 3 active.
