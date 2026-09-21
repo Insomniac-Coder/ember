@@ -8205,3 +8205,17 @@ The test covers the already-defined `[TYP-16]`, `[MOD-1]`--`[MOD-3]`, and
 `[TYP-22]` composition; it changed no compiler implementation and requires no
 ODR. The focused run-pass suite passes across debug, release, and shipping.
 Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.199 `[TYP-16]` imported generic-enum methods — 2026-09-21
+
+An importing module now has all-profile coverage for a public generic enum's
+generic inherent method. `Message[i32].Empty` materializes the helper-owned
+owner recipe, then `message.choose[i64](44)` materializes the method's separate
+generic argument and returns `44`. The generated-C assertion requires the
+helper-owned concrete `Message[i32]` method symbol, preventing type-check-only
+acceptance from masking omitted monomorphized code.
+
+This covers the specified `[TYP-16]`--`[TYP-18]` plus `[MOD-1]`--`[MOD-3]`
+composition. The run-pass suite passes in debug, release, and shipping. No
+compiler behavior changed, no ODR was needed, and phase accounting remains
+**1 of 9 complete** with Phases 2 and 3 active.
