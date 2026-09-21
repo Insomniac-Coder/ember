@@ -18,7 +18,7 @@ cannot go in `std` at all, because `[STD-1]` holds `std.core`, `std.mem`,
 | | |
 |---|---|
 | Total | 47 tracked items — 20 must-have, 12 nice-to-have, 15 compiler-debt items |
-| Completed | 11 compiler-debt items (`RT-GEN-1`, `LT-REG-1`, `RIDX-1`, `CELL-DEF-1`, `ARN-INIT-1`, `ARN-COLL-1`, `GEN-METHOD-1`, `VER-096-1`, `MEM-API-1`, `TUP-DST-1`, `SPN-API-1`) |
+| Completed | 12 compiler-debt items (`RT-GEN-1`, `LT-REG-1`, `LNT-CFG-1`, `RIDX-1`, `CELL-DEF-1`, `ARN-INIT-1`, `ARN-COLL-1`, `GEN-METHOD-1`, `VER-096-1`, `MEM-API-1`, `TUP-DST-1`, `SPN-API-1`) |
 | Started | `ARCH-096-1`, `DIA-UI-1` |
 | Blocked on phases | all library tasks; each compiler-debt row states its own gate |
 
@@ -127,7 +127,7 @@ Inherited drop chaining remains implemented; dynamic exclusivity, dispatch,
 generic classes, and the complete Phase 3 conformance matrix remain open.
 
 | ~~**LT-REG-1**~~ | ~~Real region variables with a constraint graph~~ | — | **done 2026-09-09.** `compiler/ember_analysis/src/regions.rs`; `[LT-1]`'s elision is in at the call site and in the body (`E3062`). `[LT-2]`'s view structs and `[LT-7]`'s callback regions build on it |
-| **LNT-CFG-1** | `[MAN-3]`'s `[lints]` configuration | 2 | `[LT-1b]`'s `L3014` is an opt-in lint and there is nowhere to opt in |
+| ~~**LNT-CFG-1**~~ | ~~`[MAN-3]`'s `[lints]` configuration~~ | — | **done 2026-09-21.** The nearest manifest enables opt-in `L3014`, and every `[lints]` key is validated against the compiler's registered lint namespace: unknown keys are `E9010`; code-form keys and the documented `unused`, `potential_cycle`, and `large_copy` names are accepted. The regression exercises a package-local manifest and proves both rejection and acceptance paths |
 | **TST-6-1** | Appendix A's fixture as `compile-pass` | 4 | it is held to `--syntax-only` today because the appendix names `Entity`, `Formatter`, `SoA`, `Arena` and `Mutex`, which `std` does not yet have |
 | ~~**CELL-DEF-1**~~ | ~~`Cell[T].take()`, and `update`'s `T: Default` arm~~ | — | **done 2026-09-13.** Receiver-less `Default.default()` resolves through ordinary interface identity; `take` constructs a replacement before moving out the old value, and non-`Copy` `update` parks the old value behind a default placeholder before its borrowed callback runs, then stores the result before dropping the placeholder. Positive move-only/destructor cases and negative missing-capability cases are under `tests/conformance/CELL-1/` |
 | **CELL-SYNC-1** | `[CELL-3]`/`[CELL-8]`/`[UNS-10]` threading traits for interior-mutability cells | 4 | `Cell[T]`, `RefCell[T]`, and `UnsafeCell[T]` are `!Sync`; `Cell[T]` and `UnsafeCell[T]` may move between threads when `T: Send`, while RefCell's synchronized equivalents are `Mutex[T]`/`RwLock[T]`. There is no `Send`, no `Sync` and no thread in the compiler, so there is nothing for these markers to mean yet and nothing that could violate them — this is an intentional dependency gap, not a compiler defect. Done when `[THR-1]` exists and programs sharing these types across threads are refused |

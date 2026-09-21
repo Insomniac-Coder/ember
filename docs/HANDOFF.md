@@ -8277,3 +8277,20 @@ The focused and full workspace suites pass. This is coverage for existing
 `[OWN-8]`, `[TYP-16]`, `[ENM-1]`, and `[MOD-1]`--`[MOD-3]` behavior; it is not
 an ODR, compiler change, or phase-completion claim. Phase accounting remains
 **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.204 `[MAN-3]` manifest lint-key validation — 2026-09-21
+
+The stale `LNT-CFG-1` backlog item concealed D-166: the existing nearest-
+manifest reader could enable `L3014`, but silently accepted unknown `[lints]`
+keys. `[MAN-3]` explicitly requires such a key to fail with `E9010`; no
+interpretation or owner decision was needed. The driver now loads the manifest
+into the diagnostic source map, validates each lint key against the registered
+`L` codes and the documented descriptive manifest keys, and points the error at
+the invalid manifest entry.
+
+The new milestone was deliberately red first: a temporary package declaring
+`not_a_lint = "warn"` compiled successfully before the repair. It now fails
+with `E9010`; a companion test accepts the `l3014`, `unused`,
+`potential_cycle`, and `large_copy` key forms. This closes `LNT-CFG-1` without
+changing lint severity policy, the specification, an ADR, or an ODR. Phase
+accounting remains **1 of 9 complete** with Phases 2 and 3 active.

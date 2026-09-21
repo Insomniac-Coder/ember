@@ -15,8 +15,8 @@ use ember_build::interface::{
     round_trip_artifacts,
 };
 use ember_build::{Layout, LinkRequest, Profile, Toolchain};
-use ember_diag::Sink;
-use ember_span::SourceMap;
+use ember_diag::{Diagnostic, Sink, codes};
+use ember_span::{SourceMap, Span};
 use ember_types::TypeTable;
 
 const USAGE: &str = "\
@@ -419,7 +419,7 @@ fn cycle_analysis(
         return Ok(ExitCode::FAILURE);
     }
 
-    let lint_return_intersection = manifest_enables_l3014(&root_dir);
+    let lint_return_intersection = manifest_enables_l3014(&root_dir, &mut map, &mut sink);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -1893,7 +1893,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let lint_return_intersection = manifest_enables_l3014(&root_dir);
+    let lint_return_intersection = manifest_enables_l3014(&root_dir, &mut map, &mut sink);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -2115,29 +2115,61 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     Ok(ExitCode::SUCCESS)
 }
 
-fn manifest_enables_l3014(start: &Path) -> bool {
+/// `[MAN-3]` — read lint settings from the nearest package and reject every
+/// lint name outside the registry. The manifest is loaded into the source map,
+/// so an `E9010` points at the offending manifest entry rather than at an
+/// unrelated invoking source file.
+fn manifest_enables_l3014(start: &Path, map: &mut SourceMap, sink: &mut Sink) -> bool {
     let mut directory = Some(start);
     while let Some(candidate) = directory {
         let path = candidate.join(ember_branding::MANIFEST);
         if path.is_file() {
-            let Ok(text) = std::fs::read_to_string(path) else { return false };
+            let Ok(manifest_file) = map.load(&path) else {
+                return false;
+            };
+            let text = map.file(manifest_file).text.clone();
             let mut in_lints = false;
-            for line in text.lines() {
-                let line = line.split('#').next().unwrap_or("").trim();
+            let mut l3014_enabled = false;
+            let mut line_start = 0usize;
+            for raw_line in text.lines() {
+                let line = raw_line.split('#').next().unwrap_or("").trim();
                 if line.starts_with('[') && line.ends_with(']') {
                     in_lints = line == "[lints]";
-                } else if in_lints
-                    && let Some((key, value)) = line.split_once('=')
-                    && key.trim().eq_ignore_ascii_case("l3014")
-                {
-                    return matches!(value.trim().trim_matches('"'), "warn" | "deny");
+                } else if in_lints {
+                    if let Some((key, value)) = line.split_once('=') {
+                        let key = key.trim().trim_matches('"');
+                        if !manifest_lint_is_known(key) {
+                            sink.emit(Diagnostic::error(
+                                codes::E9010,
+                                Span::new(
+                                    manifest_file,
+                                    line_start as u32,
+                                    (line_start + raw_line.len()) as u32,
+                                ),
+                                format!("unknown lint `{key}` in `[lints]`"),
+                            ));
+                        } else if key.eq_ignore_ascii_case("l3014") {
+                            l3014_enabled |=
+                                matches!(value.trim().trim_matches('"'), "warn" | "deny");
+                        }
+                    }
                 }
+                line_start += raw_line.len() + 1;
             }
-            return false;
+            return l3014_enabled;
         }
         directory = candidate.parent();
     }
     false
+}
+
+/// `[MAN-3]` accepts every registered `L` code by its rendered spelling, plus
+/// the descriptive names the manifest examples establish. Configuration for a
+/// lint can therefore be validated before that lint has a producer.
+fn manifest_lint_is_known(key: &str) -> bool {
+    ember_diag::codes::lookup(key)
+        .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint)
+        || matches!(key, "unused" | "potential_cycle" | "large_copy")
 }
 
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable

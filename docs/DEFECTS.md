@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-21 — unknown manifest lint keys were silently accepted
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-166 | **The driver's nearest-manifest reader enabled `L3014` but ignored every other `[lints]` key.** A program with `not_a_lint = "warn"` therefore compiled successfully instead of receiving the required manifest error. | `[MAN-3]` | **fixed** | The driver now validates each `[lints]` key against the registered `L`-code namespace plus the manifest's documented descriptive names (`unused`, `potential_cycle`, and `large_copy`), and reports `E9010` on the manifest entry itself. The focused milestone was intentionally red before the correction (the unknown-key package compiled); it now rejects that package with `E9010` and separately accepts all documented key forms. The rule is explicit, so no specification, ADR, ODR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-21 — imported generic-enum variants did not resolve in patterns
 
 | # | Defect | Rule | Status | Fixed in |

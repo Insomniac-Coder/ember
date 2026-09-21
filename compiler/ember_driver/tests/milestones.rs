@@ -293,6 +293,71 @@ fn temporary_directory(label: &str) -> PathBuf {
     path
 }
 
+/// `[MAN-3]` — a manifest must not silently accept configuration for a lint
+/// that the compiler does not define. The manifest lives beside an otherwise
+/// valid standalone source file so this exercises the driver's nearest-package
+/// lookup rather than a parser helper in isolation.
+#[test]
+fn unknown_manifest_lint_is_rejected() {
+    let root = workspace_root();
+    let package = temporary_directory("unknown-manifest-lint");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[lints]\nnot_a_lint = \"warn\"\n",
+    )
+    .expect("manifest is writable");
+    std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+
+    let source_arg = source.to_string_lossy().into_owned();
+    let checked = ember(&["check", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_ne!(
+        checked.exit, 0,
+        "unknown manifest lint unexpectedly compiled"
+    );
+    let rendered = without_source_echo(&checked.stderr);
+    assert!(
+        rendered.contains("error[E9010]"),
+        "unknown lint did not use E9010:\n{}",
+        checked.stderr
+    );
+    assert!(
+        rendered.contains("unknown lint `not_a_lint`"),
+        "unknown lint was not identified:\n{}",
+        checked.stderr
+    );
+    assert!(
+        checked.stderr.contains(MANIFEST),
+        "manifest diagnostic did not name its source file:\n{}",
+        checked.stderr
+    );
+}
+
+/// `[MAN-3]` — the registry spelling and the descriptive lint names used by
+/// the manifest examples all remain valid configuration keys.
+#[test]
+fn known_manifest_lints_are_accepted() {
+    let root = workspace_root();
+    let package = temporary_directory("known-manifest-lints");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[lints]\nl3014 = \"warn\"\nunused = \"warn\"\npotential_cycle = \"warn\"\nlarge_copy = { level = \"warn\", threshold = 256 }\n",
+    )
+    .expect("manifest is writable");
+    std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+
+    let source_arg = source.to_string_lossy().into_owned();
+    let checked = ember(&["check", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_eq!(
+        checked.exit, 0,
+        "known manifest lints were rejected:\n{}",
+        checked.stderr
+    );
+}
+
 #[test]
 fn dynamic_access_safety_side_table_is_written() {
     let root = workspace_root();
