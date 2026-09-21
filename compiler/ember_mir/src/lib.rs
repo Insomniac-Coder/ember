@@ -955,7 +955,8 @@ pub enum CastKind {
     /// borrow without a retain or transfer.
     InterfaceUpcast {
         concrete: Ty,
-        interface: Symbol,
+        /// The complete ordered interface-bound list of the erased carrier.
+        interfaces: Vec<Symbol>,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterMethod>>,
     },
@@ -1168,6 +1169,9 @@ pub enum FuncRef {
     /// `Self: Sized` default: its ordinal is retained, but it has no dyn-call
     /// ABI at this boundary.
     Interface {
+        /// The complete ordered interface-bound list whose flattened table is
+        /// read at this call site.
+        interfaces: Vec<ember_span::Symbol>,
         interface: ember_span::Symbol,
         slot: usize,
         params: Vec<Ty>,
@@ -1179,7 +1183,8 @@ pub enum FuncRef {
     DynBoxNew {
         concrete: Ty,
         boxed: Ty,
-        interface: ember_span::Symbol,
+        /// The complete ordered interface-bound list of the boxed carrier.
+        interfaces: Vec<ember_span::Symbol>,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterMethod>>,
     },
@@ -1469,8 +1474,9 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                 FuncRef::Interface { interface, slot, .. } => {
                     ("@dyn ", format!("{interface}::slot{slot}"))
                 }
-                FuncRef::DynBoxNew { interface, .. } => {
-                    ("", format!("Box[dyn {interface}]"))
+                FuncRef::DynBoxNew { interfaces, .. } => {
+                    let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
+                    ("", format!("Box[dyn {bounds}]"))
                 }
                 FuncRef::Indirect { operand, latebound } => (
                     if *latebound { "@latebound " } else { "" },

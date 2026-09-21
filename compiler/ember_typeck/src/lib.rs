@@ -3968,14 +3968,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The full declaration-order table shape for one `dyn` interface. This
+    /// The full declaration-order table shape for a `dyn` bound list. This
     /// crosses the HIR/MIR boundary because C emission cannot recover
     /// interface declarations from `TypeTable`. `Self: Sized` defaults keep
     /// their ordinal but deliberately expose no callable erased signature:
     /// D-156 rejects them before a dynamic call is formed.
-    fn dyn_vtable_layout(&mut self, interface: Symbol) -> Vec<Option<hir::InterfaceSlot>> {
+    fn dyn_vtable_layout(&mut self, interfaces: &[Symbol]) -> Vec<Option<hir::InterfaceSlot>> {
         let mut methods = Vec::new();
-        self.dyn_methods_in_order(interface, &mut methods, &mut HashSet::new());
+        let mut visiting = HashSet::new();
+        for interface in interfaces {
+            self.dyn_methods_in_order(*interface, &mut methods, &mut visiting);
+        }
         methods
             .into_iter()
             .map(|(_, declaration, _)| {
@@ -4001,14 +4004,15 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    /// The concrete bodies that fill one declaration-derived dynamic
-    /// interface table. Conformance has already checked these signatures; the
-    /// table adapter keeps their concrete receiver ABI behind the `void*`
-    /// receiver required by `[TYP-22]`.
+    /// The concrete bodies that fill one declaration-derived dynamic-interface
+    /// table. A multi-bound carrier is one flattened table in source-bound
+    /// order, sharing inherited slots rather than allocating one table per
+    /// bound. Conformance has already checked these signatures; the adapter
+    /// keeps their concrete receiver ABI behind `[TYP-22]`'s `void*` receiver.
     fn dyn_concrete_adapter(
         &self,
         concrete: Ty,
-        interface: Symbol,
+        interfaces: &[Symbol],
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
         if !self.types.is_primitive_scalar(concrete) {
             match self.types.kind(concrete) {
@@ -4020,16 +4024,21 @@ impl<'a> Checker<'a> {
                 _ => return None,
             }
         }
-        if !self
-            .implemented
-            .iter()
-            .any(|(ty, implemented, _)| *ty == concrete && *implemented == interface)
-        {
-            return None;
+        for interface in interfaces {
+            if !self
+                .implemented
+                .iter()
+                .any(|(ty, implemented, _)| *ty == concrete && *implemented == *interface)
+            {
+                return None;
+            }
         }
 
         let mut methods = Vec::new();
-        self.dyn_methods_in_order(interface, &mut methods, &mut HashSet::new());
+        let mut visiting = HashSet::new();
+        for interface in interfaces {
+            self.dyn_methods_in_order(*interface, &mut methods, &mut visiting);
+        }
         methods
             .into_iter()
             .map(|(name, declaration, _)| {
@@ -4057,7 +4066,7 @@ impl<'a> Checker<'a> {
         &self,
         receiver_ty: Ty,
         name: Symbol,
-    ) -> Option<(Symbol, DefId, Mode, usize, Option<Symbol>)> {
+    ) -> Option<(Vec<Symbol>, Symbol, DefId, Mode, usize, Option<Symbol>)> {
         let inner = match *self.types.kind(receiver_ty) {
             TyKind::Ref { inner, .. } => inner,
             _ => self.box_inner(receiver_ty)?,
@@ -4067,12 +4076,12 @@ impl<'a> Checker<'a> {
         let mut candidates = Vec::new();
         let mut all_methods = Vec::new();
         let mut visiting = HashSet::new();
-        for interface in interfaces {
+        for interface in &interfaces {
             let start = all_methods.len();
-            self.dyn_methods_in_order(interface, &mut all_methods, &mut visiting);
+            self.dyn_methods_in_order(*interface, &mut all_methods, &mut visiting);
             for (index, (method, declaration, receiver)) in all_methods[start..].iter().enumerate() {
                 if *method == name {
-                    candidates.push((interface, *declaration, *receiver, start + index));
+                    candidates.push((*interface, *declaration, *receiver, start + index));
                 }
             }
         }
@@ -4082,7 +4091,7 @@ impl<'a> Checker<'a> {
             .skip(1)
             .find(|candidate| candidate.1 != declaration)
             .map(|candidate| candidate.0);
-        Some((interface, declaration, receiver, slot, ambiguity))
+        Some((interfaces, interface, declaration, receiver, slot, ambiguity))
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`
@@ -10512,11 +10521,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
-        // `[TYP-22]` — a type with a checked implementation can be borrowed
-        // as a single-interface `dyn` carrier. The upcast retains the
-        // declaration-derived layout and concrete method bodies for lowering;
-        // it neither retains nor transfers ownership. Multi-bound
-        // table composition remains the separate materialization slice.
+        // `[TYP-22]` — a type with checked implementations for every bound can
+        // be borrowed as one `dyn I + J` carrier. The upcast retains the
+        // declaration-derived flattened layout and concrete method bodies for
+        // lowering; it neither retains nor transfers ownership.
         let source_kind = self.types.kind(expr.ty).clone();
         let expected_kind = self.types.kind(expected).clone();
         if let (
@@ -10525,17 +10533,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         ) = (source_kind, expected_kind)
             && source_mutable == target_mutable
             && let TyKind::Dyn { interfaces } = self.types.kind(target).clone()
-            && interfaces.len() == 1
-            && let interface = interfaces[0]
-            && let Some(implementations) = self.dyn_concrete_adapter(source, interface)
+            && let Some(implementations) = self.dyn_concrete_adapter(source, &interfaces)
         {
             let span = expr.span;
-            let layout = self.dyn_vtable_layout(interface);
+            let layout = self.dyn_vtable_layout(&interfaces);
             return Expr {
                 ty: expected,
                 kind: ExprKind::InterfaceUpcast {
                     concrete: source,
-                    interface,
+                    interfaces,
                     layout,
                     implementations,
                     expr: Box::new(expr),
@@ -11908,7 +11914,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let expected_inner = expected.and_then(|ty| self.box_inner(ty));
             let hint = explicit.first().copied().or(expected_inner);
             let dyn_target = hint.and_then(|inner| match self.types.kind(inner) {
-                TyKind::Dyn { interfaces } if interfaces.len() == 1 => Some((inner, interfaces[0])),
+                TyKind::Dyn { interfaces } => Some((inner, interfaces.clone())),
                 _ => None,
             });
             let value = if dyn_target.is_some() {
@@ -11922,9 +11928,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if value.ty == self.common.error {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            if let Some((inner, interface)) = dyn_target {
+            if let Some((inner, interfaces)) = dyn_target {
                 let concrete = value.ty;
-                let Some(implementations) = self.dyn_concrete_adapter(concrete, interface)
+                let Some(implementations) = self.dyn_concrete_adapter(concrete, &interfaces)
                 else {
                     self.error(
                         codes::E2020,
@@ -11942,8 +11948,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     ty: boxed,
                     kind: ExprKind::DynBoxNew {
                         concrete,
-                        interface,
-                        layout: self.dyn_vtable_layout(interface),
+                        interfaces: interfaces.clone(),
+                        layout: self.dyn_vtable_layout(&interfaces),
                         implementations,
                         value: Box::new(value),
                     },
@@ -14471,7 +14477,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // interface declaration still supplies the ordinary argument
         // signature, so argument names and parameter modes are checked by
         // the same path as a static interface method.
-        if let Some((interface, def, receiver_mode, slot, ambiguity)) =
+        if let Some((interfaces, interface, def, receiver_mode, slot, ambiguity)) =
             self.dyn_method(receiver.ty, name.name)
         {
             // `[TYP-22]` lets a sized-only default coexist with a dyn
@@ -14545,10 +14551,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let slots = self.call_argument_slots(name.name, args, &signature.params);
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
-            let layout = self.dyn_vtable_layout(interface);
+            let layout = self.dyn_vtable_layout(&interfaces);
             return Expr {
                 ty: signature.ret,
                 kind: ExprKind::InterfaceCall {
+                    interfaces,
                     interface,
                     slot,
                     layout,

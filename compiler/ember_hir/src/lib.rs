@@ -252,6 +252,10 @@ pub enum ExprKind {
     /// the interface vtable.  The slot is assigned from the interface's
     /// declaration order (including supertraits) during type checking.
     InterfaceCall {
+        /// The complete ordered bound list of the erased carrier.  A call
+        /// selects one interface's slot, but its table is the composition of
+        /// every bound in `dyn I + J`.
+        interfaces: Vec<Symbol>,
         interface: Symbol,
         slot: usize,
         /// Every declared slot in the selected interface table. A sized-only
@@ -271,7 +275,8 @@ pub enum ExprKind {
     /// concrete receiver ABI into the interface's erased `void*` slot ABI.
     InterfaceUpcast {
         concrete: Ty,
-        interface: Symbol,
+        /// Every interface bound carried by the resulting erased value.
+        interfaces: Vec<Symbol>,
         layout: Vec<Option<InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterSlot>>,
         expr: Box<Expr>,
@@ -280,7 +285,8 @@ pub enum ExprKind {
     /// `Box[dyn I]`, retaining the checked dispatch/drop adapter metadata.
     DynBoxNew {
         concrete: Ty,
-        interface: Symbol,
+        /// Every interface bound carried by the resulting erased value.
+        interfaces: Vec<Symbol>,
         layout: Vec<Option<InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterSlot>>,
         value: Box<Expr>,
@@ -1125,11 +1131,13 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Cast { expr: inner, to } => {
             format!("({} as {})", dump_expr(inner, function, types), types.display(*to))
         }
-        ExprKind::InterfaceUpcast { interface, expr: inner, .. } => {
-            format!("@dyn {interface}({})", dump_expr(inner, function, types))
+        ExprKind::InterfaceUpcast { interfaces, expr: inner, .. } => {
+            let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
+            format!("@dyn {bounds}({})", dump_expr(inner, function, types))
         }
-        ExprKind::DynBoxNew { interface, value, .. } => {
-            format!("Box[dyn {interface}]({})", dump_expr(value, function, types))
+        ExprKind::DynBoxNew { interfaces, value, .. } => {
+            let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
+            format!("Box[dyn {bounds}]({})", dump_expr(value, function, types))
         }
         ExprKind::EraseRange(inner) => {
             format!("(erase {})", dump_expr(inner, function, types))

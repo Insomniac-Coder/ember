@@ -8568,3 +8568,20 @@ the owned receiver in debug, release, and shipping. The focused full
 conformance suite passes. This is coverage for existing `[TYP-16]`, `[TYP-22]`,
 and `[CLO-6a]`, not a new defect, ODR, compiler change, or phase-completion
 claim.
+
+### 0.224 `[TYP-22]` composed dynamic-interface tables — 2026-09-21
+
+`dyn` uses the frozen grammar's ordered `bound_list`, so `ref dyn Left + Right`
+and `Box[dyn Left + Right]` now carry one declaration-derived flattened table.
+The HIR, MIR verification boundary, and C11 emitter retain the complete bound
+list: every concrete implementer must satisfy every bound, inherited methods
+occupy one shared prefix, and table adapters and owning-box drop glue use the
+same composed identity. Calls select their stable flattened slot rather than
+silently treating the first interface as the entire carrier.
+
+Run-pass coverage exercises borrowed struct, owning struct, owning class, and
+parent/child carriers with generated-C table assertions in debug, release, and
+shipping. The conformance suite also requires `E2070` when two composed bounds
+offer the same method name. This closes an implementation gap in existing
+`[TYP-22]` and `[TYP-24]` semantics; no ODR was needed because `dyn_type :=
+"dyn" bound_list` already defines the surface.

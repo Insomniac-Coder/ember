@@ -74,6 +74,19 @@ fn class_debug_edges_symbol(owner: &str) -> String {
     ember_branding::mangled(&format!("{}_debug_edges", owner.trim_matches('_')))
 }
 
+/// A C-table identity for one ordered `dyn` bound list. Single-interface
+/// identities retain their existing spelling; a composed carrier gets its own
+/// table rather than pretending its first bound describes every slot.
+fn dyn_table_identity(interfaces: &[Symbol]) -> String {
+    match interfaces {
+        [interface] => interface.to_string(),
+        _ => format!(
+            "multi__{}",
+            interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join("__")
+        ),
+    }
+}
+
 pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
@@ -517,7 +530,7 @@ impl Emitter<'_> {
     fn collect_interface_methods(&mut self, bodies: &[Body]) {
         for body in bodies {
             for block in &body.blocks {
-                let Terminator::Call { func: FuncRef::Interface { interface, layout, .. }, .. } = &block.terminator else {
+                let Terminator::Call { func: FuncRef::Interface { interfaces, layout, .. }, .. } = &block.terminator else {
                     continue;
                 };
                 let layout = layout
@@ -527,7 +540,7 @@ impl Emitter<'_> {
                         ret: slot.ret,
                     }))
                     .collect();
-                self.register_interface_layout(interface.to_string(), layout);
+                self.register_interface_layout(dyn_table_identity(interfaces), layout);
             }
         }
     }
@@ -565,7 +578,7 @@ impl Emitter<'_> {
                                 kind:
                                     CastKind::InterfaceUpcast {
                                         concrete,
-                                        interface,
+                                        interfaces,
                                         layout,
                                         implementations,
                                     },
@@ -596,7 +609,7 @@ impl Emitter<'_> {
                         .collect();
                     self.register_interface_adapter(
                         *concrete,
-                        interface.to_string(),
+                        dyn_table_identity(interfaces),
                         layout,
                         implementations,
                     );
@@ -605,7 +618,7 @@ impl Emitter<'_> {
                     func:
                         FuncRef::DynBoxNew {
                             concrete,
-                            interface,
+                            interfaces,
                             layout,
                             implementations,
                             ..
@@ -615,7 +628,7 @@ impl Emitter<'_> {
                 {
                     self.register_interface_adapter(
                         *concrete,
-                        interface.to_string(),
+                        dyn_table_identity(interfaces),
                         layout
                             .iter()
                             .map(|slot| {
@@ -1673,8 +1686,7 @@ impl Emitter<'_> {
                     return;
                 }
                 if let Some(inner) = self.box_inner_id(*id)
-                    && let TyKind::Dyn { interfaces } = self.types.kind(inner)
-                    && interfaces.len() == 1
+                    && matches!(self.types.kind(inner), TyKind::Dyn { .. })
                 {
                     let table = ember_branding::mangled("dyn_vtable_header");
                     out.push(format!(
@@ -2635,9 +2647,10 @@ impl Emitter<'_> {
                     rendered.join(", ")
                 )
             }
-            FuncRef::Interface { interface, slot, .. } => {
+            FuncRef::Interface { interfaces, slot, .. } => {
                 let receiver = rendered.first().expect("interface call has a receiver");
-                let table = ember_branding::vtable(&format!("dyn_{interface}"));
+                let table_identity = dyn_table_identity(interfaces);
+                let table = ember_branding::vtable(&format!("dyn_{table_identity}"));
                 let args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
                 let args = if args.is_empty() {
                     format!("{receiver}.data")
@@ -2648,9 +2661,10 @@ impl Emitter<'_> {
                     "(((const struct {table}*)({receiver}.vtable))->slot{slot})({args})"
                 )
             }
-            FuncRef::DynBoxNew { concrete, boxed, interface, .. } => {
+            FuncRef::DynBoxNew { concrete, boxed, interfaces, .. } => {
                 let concrete_c = self.c_type(*concrete);
-                let table = self.interface_adapter_table(*concrete, interface.as_str());
+                let table_identity = dyn_table_identity(interfaces);
+                let table = self.interface_adapter_table(*concrete, &table_identity);
                 let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
                     rendered[0].clone()
                 } else {
@@ -3375,8 +3389,9 @@ impl Emitter<'_> {
                 let value = self.operand(operand, body);
                 let ty = self.c_type(*to);
                 match kind {
-                    CastKind::InterfaceUpcast { concrete, interface, .. } => {
-                        let table = self.interface_adapter_table(*concrete, interface.as_str());
+                    CastKind::InterfaceUpcast { concrete, interfaces, .. } => {
+                        let table_identity = dyn_table_identity(interfaces);
+                        let table = self.interface_adapter_table(*concrete, &table_identity);
                         let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
                             format!("*({value})")
                         } else {

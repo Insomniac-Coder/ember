@@ -708,6 +708,7 @@ mod tests {
         let mut body = body_with(Vec::new(), span);
         body.blocks[0].terminator = Terminator::Call {
             func: FuncRef::Interface {
+                interfaces: vec![ember_span::Symbol::intern("Drawable")],
                 interface: ember_span::Symbol::intern("Drawable"),
                 slot: 1,
                 params: Vec::new(),
@@ -1075,7 +1076,7 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                         kind:
                             crate::CastKind::InterfaceUpcast {
                                 concrete,
-                                interface,
+                                interfaces,
                                 layout,
                                 implementations,
                             },
@@ -1119,8 +1120,8 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                 fail(format!("{at} concrete metadata disagrees with its source type"));
                 continue;
             }
-            if !matches!(types.kind(*target_inner), TyKind::Dyn { interfaces }
-                if interfaces.len() == 1 && interfaces[0] == *interface)
+            if !matches!(types.kind(*target_inner), TyKind::Dyn { interfaces: target_interfaces }
+                if target_interfaces == interfaces)
             {
                 fail(format!("{at} interface metadata disagrees with its target type"));
                 continue;
@@ -1152,7 +1153,7 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                 FuncRef::DynBoxNew {
                     concrete,
                     boxed,
-                    interface,
+                    interfaces,
                     layout,
                     implementations,
                 },
@@ -1167,8 +1168,8 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
         let valid_box = match types.kind(*boxed) {
             TyKind::Struct(id) => match &types.struct_def(*id).origin {
                 Some((name, box_args)) if name.is("Box") && box_args.len() == 1 => {
-                    matches!(types.kind(box_args[0]), TyKind::Dyn { interfaces }
-                        if interfaces.len() == 1 && interfaces[0] == *interface)
+                    matches!(types.kind(box_args[0]), TyKind::Dyn { interfaces: target_interfaces }
+                        if target_interfaces == interfaces)
                 }
                 _ => false,
             },
@@ -1567,7 +1568,7 @@ mod interface_upcast_invariant_tests {
                                 } else {
                                     types.intern(TyKind::Class(metadata))
                                 },
-                                interface,
+                                interfaces: vec![interface],
                                 layout: vec![Some(ember_hir::InterfaceSlot {
                                     params: Vec::new(),
                                     ret: common.i32,

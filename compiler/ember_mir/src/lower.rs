@@ -1667,7 +1667,7 @@ impl<'a> Builder<'a> {
         match &expr.kind {
             hir::ExprKind::DynBoxNew {
                 concrete,
-                interface,
+                interfaces,
                 layout,
                 implementations,
                 value,
@@ -1698,7 +1698,7 @@ impl<'a> Builder<'a> {
                     func: FuncRef::DynBoxNew {
                         concrete: *concrete,
                         boxed: expr.ty,
-                        interface: *interface,
+                        interfaces: interfaces.clone(),
                         layout: layout.clone(),
                         implementations,
                     },
@@ -1761,6 +1761,7 @@ impl<'a> Builder<'a> {
                 }
             }
             hir::ExprKind::InterfaceCall {
+                interfaces,
                 interface,
                 slot,
                 layout,
@@ -1805,6 +1806,7 @@ impl<'a> Builder<'a> {
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
                     func: FuncRef::Interface {
+                        interfaces: interfaces.clone(),
                         interface: *interface,
                         slot: *slot,
                         params,
@@ -4663,7 +4665,7 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::InterfaceUpcast {
                 concrete,
-                interface,
+                interfaces,
                 layout,
                 implementations,
                 expr: inner,
@@ -4683,7 +4685,7 @@ impl<'a> Builder<'a> {
                 Rvalue::Cast {
                     kind: CastKind::InterfaceUpcast {
                         concrete: *concrete,
-                        interface: *interface,
+                        interfaces: interfaces.clone(),
                         layout: layout.clone(),
                         implementations,
                     },
