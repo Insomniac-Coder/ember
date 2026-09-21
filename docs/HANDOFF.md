@@ -8339,6 +8339,22 @@ is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
 `[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
 phase-completion claim changes.
 
+### 0.210 `[DIA-6]` E9010 executable error page — 2026-09-21
+
+The first CI run containing the `[MAN-3]` E9010 implementation passed all four
+build-and-test jobs but failed the specification-and-registry gate: E9010 was
+now emitted without the required `docs/errors/E9010.md` page. This was a
+defined documentation obligation under `[DIA-6]`, not an implementation gap or
+an ODR.
+
+`E9010.md` now gives the unknown `[lints]` key example, the diagnostic, why a
+misspelled configured lint must not be ignored, and a fixed supported key. The
+error-page runner now allows a page to provide distinct package manifests for
+its failing and fixed examples, which is necessary for a manifest diagnostic.
+`python tools/error_pages.py` reproduces the new page's E9010 failure and its
+successful corrected configuration. No language semantics or phase-completion
+claim changes.
+
 ### 0.208 `[TYP-22]` imported generic-enum mutable interface boxes — 2026-09-21
 
 The cross-module generic-enum matrix now covers a mutable receiver through an

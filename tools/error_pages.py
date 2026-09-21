@@ -39,11 +39,19 @@ PAGES = ROOT / "docs" / "errors"
 REGISTRY_RS = ROOT / "compiler" / "ember_diag" / "src" / "codes.rs"
 BASELINE = ROOT / "tools" / "error_pages_baseline.json"
 
-# Lints are enabled by a package manifest.  An executable lint page must
-# provide the same opt-in its documented program requires; error pages are
-# otherwise compiled in an empty temporary package.
-LINT_MANIFESTS = {
-    "L3014": '[lints]\nl3014 = "warn"\n',
+# Some diagnostic pages require a package manifest. A lint uses the same
+# manifest for its triggering and fixed examples; a manifest diagnostic needs
+# a corrected manifest for the latter. Error pages are otherwise compiled in
+# an empty temporary package.
+PAGE_MANIFESTS = {
+    "L3014": {
+        "fails": '[lints]\nl3014 = "warn"\n',
+        "fixed": '[lints]\nl3014 = "warn"\n',
+    },
+    "E9010": {
+        "fails": '[lints]\nnot_a_lint = "warn"\n',
+        "fixed": '[lints]\nunused = "warn"\n',
+    },
 }
 
 # A fenced block and its info string.
@@ -118,7 +126,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     code = path.stem
     text = path.read_text(encoding="utf-8")
     blocks = {kind: body for kind, body in FENCE.findall(text)}
-    manifest = LINT_MANIFESTS.get(code)
+    manifests = PAGE_MANIFESTS.get(code, {})
     problems = []
 
     # A warning or lint is not an error: the program that trips it **compiles**,
@@ -132,7 +140,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
-        status, output = run(blocks["fails"], work, manifest)
+        status, output = run(blocks["fails"], work, manifests.get("fails"))
         if is_non_error:
             # It must compile — a lint does not reject — and it must actually
             # emit the lint. The second half is the one that matters: without
@@ -157,7 +165,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fixed" not in blocks:
         problems.append(f"{code}: no ```ember,fixed block — [DOC-1] wants the fix as compilable code")
     else:
-        status, output = run(blocks["fixed"], work, manifest)
+        status, output = run(blocks["fixed"], work, manifests.get("fixed"))
         if status != 0:
             problems.append(
                 f"{code}: the ```ember,fixed program does not compile — [PHIL-8a]:\n"
