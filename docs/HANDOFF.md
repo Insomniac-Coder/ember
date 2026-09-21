@@ -8555,3 +8555,16 @@ from the concrete owner argument.
 `make`'s missing receiver in debug, release, and shipping. The focused full
 conformance suite passes. This is coverage for existing `[TYP-16]` and
 `[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.223 `[TYP-22]` specialized generic owned receivers — 2026-09-21
+
+The last formation boundary is now covered for generic interfaces. `Consume[T]`
+declares `consume(owned self)`; forming `ref dyn Consume[i32]` must still reject
+that member because a borrowed fat pointer cannot transfer ownership of its
+erased receiver.
+
+`reject_dyn_generic_interface_with_owned_receiver.em` requires `E2050` naming
+the owned receiver in debug, release, and shipping. The focused full
+conformance suite passes. This is coverage for existing `[TYP-16]`, `[TYP-22]`,
+and `[CLO-6a]`, not a new defect, ODR, compiler change, or phase-completion
+claim.
