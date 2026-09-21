@@ -8237,3 +8237,16 @@ full workspace suite passes. This is an implementation defect under existing
 `[MOD-2]`, `[MOD-3]`, `[TYP-16]`, `[ENM-1]`, and `[OWN-8]`, not an ODR or a
 language decision. Phase accounting remains **1 of 9 complete** with Phases 2
 and 3 active.
+
+### 0.201 `[OWN-8]` imported generic-enum `Copy` derivation — 2026-09-21
+
+The public generic-enum materialization path now has an importing-module
+regression for `@derive(Copy)`. `Flag[i32].On(7)` crosses the module boundary,
+is assigned into a second owner-free value, and both the original and copy are
+matched through the imported qualified variant. The two outputs prove this is
+the `Copy` reuse path, not a moved value hidden by a single successful match.
+
+The all-profile run-pass suite passes. This is coverage for the existing
+`[OWN-8]`, `[TYP-16]`, `[ENM-1]`, and `[MOD-1]`--`[MOD-3]` contract, not a
+compiler change, ODR, or phase-completion claim. Phase accounting remains
+**1 of 9 complete** with Phases 2 and 3 active.
