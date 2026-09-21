@@ -8604,3 +8604,20 @@ full workspace, conformance suite, runtime-template check, and generated-C
 warning gate pass. This closes the functional representation and dispatch gap
 in `[OBJ-2]`/`[DSP-3]`; repeated-handle lookup caching remains a separate
 performance slice, not an ODR or semantic ambiguity.
+
+### 0.226 `[DSP-3]` repeated class-interface lookup caching — 2026-09-22
+
+Repeated calls through the same unprojected class-interface parameter now use
+one compiler-hidden C local holding the result of the `TypeInfo` lookup. The
+emitter only applies this cache where the parameter is initialized for every
+entry path and cannot be rebound, so it needs no speculative control-flow
+proof or cache invalidation protocol for ordinary locals. Other receivers keep
+the direct linear lookup and remain correct by construction.
+
+`class_interface_handle_cache.em` calls `Render.render()` twice through one
+`Render` parameter, prints `42` in debug, release, and shipping, and requires
+exactly one `ember_itable_lookup` in generated C. The full workspace,
+conformance suite, UI snapshots, and generated-C warning gate pass. This
+completes the repeated-parameter caching requirement in `[DSP-3]`; extending
+the optimization to mutable ordinary locals is optional future work, not an
+ODR or a remaining semantic gap.

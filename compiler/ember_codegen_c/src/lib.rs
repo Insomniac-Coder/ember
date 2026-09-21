@@ -128,6 +128,8 @@ pub fn emit(
         interface_layouts: BTreeMap::new(),
         interface_adapters: BTreeMap::new(),
         class_interface_tables: BTreeMap::new(),
+        class_interface_call_interfaces: BTreeSet::new(),
+        interface_caches: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -229,6 +231,12 @@ struct Emitter<'a> {
     /// The key is an interface identity and the value retains the checked
     /// concrete type used to name the corresponding adapter table.
     class_interface_tables: BTreeMap<ClassId, BTreeMap<String, Ty>>,
+    /// Interfaces read through a one-word class handle. A marker is needed
+    /// even when the concrete adapter table came from another module.
+    class_interface_call_interfaces: BTreeSet<String>,
+    /// Per-body hidden caches for repeated interface calls through an
+    /// unchanged class-interface parameter.
+    interface_caches: BTreeMap<InterfaceCacheKey, String>,
 }
 
 #[derive(Clone)]
@@ -258,6 +266,12 @@ struct InterfaceAdapter {
     interface: String,
     layout: Vec<Option<InterfaceMethod>>,
     implementations: Vec<Option<InterfaceAdapterMethod>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct InterfaceCacheKey {
+    local: usize,
+    interface: String,
 }
 
 /// Where a projection walk has reached: a type, plus the variant a
@@ -547,9 +561,23 @@ impl Emitter<'_> {
     fn collect_interface_methods(&mut self, bodies: &[Body]) {
         for body in bodies {
             for block in &body.blocks {
-                let Terminator::Call { func: FuncRef::Interface { interfaces, layout, .. }, .. } = &block.terminator else {
+                let Terminator::Call {
+                    func:
+                        FuncRef::Interface {
+                            interfaces,
+                            interface,
+                            layout,
+                            class_handle,
+                            ..
+                        },
+                    ..
+                } = &block.terminator
+                else {
                     continue;
                 };
+                if *class_handle {
+                    self.class_interface_call_interfaces.insert(interface.to_string());
+                }
                 let layout = layout
                     .iter()
                     .map(|slot| slot.as_ref().map(|slot| InterfaceMethod {
@@ -762,6 +790,7 @@ impl Emitter<'_> {
             .values()
             .flat_map(|tables| tables.keys())
             .cloned()
+            .chain(self.class_interface_call_interfaces.iter().cloned())
             .collect::<BTreeSet<_>>();
         for (interface, methods) in self.interface_layouts.clone() {
             if class_handle_interfaces.contains(&interface) {
@@ -2101,6 +2130,7 @@ impl Emitter<'_> {
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
         self.line(&format!("{signature} {{"));
+        self.interface_caches = interface_cache_plan(body);
 
         // Locals. Parameters are already C parameters; the return slot and
         // every other local are declared here.
@@ -2118,6 +2148,23 @@ impl Emitter<'_> {
             self.line(&format!("    {} _{index};{comment}", self.c_type(decl.ty)));
         }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
+            self.line("");
+        }
+
+        // `[DSP-3]` — a repeated call through an unchanged class-interface
+        // parameter reads one TypeInfo entry at function entry and carries its
+        // opaque table pointer in a hidden C local. Parameters are initialized
+        // for every control-flow path and cannot be rebound, so this is a
+        // sound first caching boundary without speculative CFG assumptions.
+        for (key, cache) in self.interface_caches.clone() {
+            self.line(&format!(
+                "    const void* {cache} = {}(((const {RT}obj_header*)_{})->ti, &{});",
+                ember_branding::runtime("itable_lookup"),
+                key.local,
+                interface_id_symbol(&key.interface),
+            ));
+        }
+        if !self.interface_caches.is_empty() {
             self.line("");
         }
 
@@ -2155,6 +2202,7 @@ impl Emitter<'_> {
 
         self.line("}");
         self.line("");
+        self.interface_caches.clear();
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
@@ -2772,26 +2820,31 @@ impl Emitter<'_> {
                 let receiver = rendered.first().expect("interface call has a receiver");
                 let table_identity = dyn_table_identity(interfaces);
                 let table = ember_branding::vtable(&format!("dyn_{table_identity}"));
-                let args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
+                let call_args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
                 if *class_handle {
-                    let args = if args.is_empty() {
+                    let call_args = if call_args.is_empty() {
                         receiver.clone()
                     } else {
-                        format!("{receiver}, {args}")
+                        format!("{receiver}, {call_args}")
                     };
+                    let table_pointer = self.interface_cache_for_call(func, args).unwrap_or_else(|| {
+                        format!(
+                            "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
+                            ember_branding::runtime("itable_lookup"),
+                            interface_id_symbol(&interface.to_string()),
+                        )
+                    });
                     return format!(
-                        "(((const struct {table}*){}(((const {RT}obj_header*)({receiver}))->ti, &{}))->slot{slot})({args})",
-                        ember_branding::runtime("itable_lookup"),
-                        interface_id_symbol(&interface.to_string()),
+                        "(((const struct {table}*){table_pointer})->slot{slot})({call_args})",
                     );
                 }
-                let args = if args.is_empty() {
+                let call_args = if call_args.is_empty() {
                     format!("{receiver}.data")
                 } else {
-                    format!("{receiver}.data, {args}")
+                    format!("{receiver}.data, {call_args}")
                 };
                 format!(
-                    "(((const struct {table}*)({receiver}.vtable))->slot{slot})({args})"
+                    "(((const struct {table}*)({receiver}.vtable))->slot{slot})({call_args})"
                 )
             }
             FuncRef::DynBoxNew { concrete, boxed, interfaces, .. } => {
@@ -3283,6 +3336,28 @@ impl Emitter<'_> {
                 format!("{RT}{name}_{suffix}({})", rendered.join(", "))
             }
         }
+    }
+
+    /// Return the hidden table local for a repeated class-interface call.
+    /// Only an unprojected copied parameter qualifies; other receivers keep
+    /// the direct lookup so a later reassignment or projection cannot leave a
+    /// stale concrete table behind.
+    fn interface_cache_for_call(&self, func: &FuncRef, args: &[Operand]) -> Option<String> {
+        let FuncRef::Interface { interface, class_handle: true, .. } = func else {
+            return None;
+        };
+        let Operand::Copy(place) = args.first()? else {
+            return None;
+        };
+        if !place.projection.is_empty() {
+            return None;
+        }
+        self.interface_caches
+            .get(&InterfaceCacheKey {
+                local: place.local.0 as usize,
+                interface: interface.to_string(),
+            })
+            .cloned()
     }
 
     /// Which `ember_rt` printer a builtin call resolves to. Phase 0 has no
@@ -3950,6 +4025,56 @@ fn identifier_from(shown: &str) -> String {
 /// dotted prefix (`math.ops.Point`), which C cannot spell.
 fn c_name(name: &str) -> String {
     ember_branding::mangled(name)
+}
+
+/// `[DSP-3]` — cache a TypeInfo lookup when the same interface parameter is
+/// dispatched more than once. Restricting this first cache to function
+/// parameters is intentional: they are initialized before every entry path
+/// and cannot be rebound, so the hoisted table is valid without a control-flow
+/// proof or invalidation protocol for ordinary locals.
+fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
+    let mut counts = BTreeMap::<InterfaceCacheKey, usize>::new();
+    for block in &body.blocks {
+        let Terminator::Call {
+            func:
+                FuncRef::Interface {
+                    interface,
+                    class_handle: true,
+                    ..
+                },
+            args,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        let Some(Operand::Copy(place)) = args.first() else { continue };
+        if !place.projection.is_empty()
+            || body
+                .locals
+                .get(place.local.0 as usize)
+                .is_none_or(|decl| decl.kind != LocalKind::Arg)
+        {
+            continue;
+        }
+        *counts
+            .entry(InterfaceCacheKey {
+                local: place.local.0 as usize,
+                interface: interface.to_string(),
+            })
+            .or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| {
+            let name = ember_branding::mangled(&format!(
+                "itable_cache_{}_{}",
+                key.local, key.interface
+            ));
+            (key, name)
+        })
+        .collect()
 }
 
 /// Locals and parameters that are never read anywhere in the body.
