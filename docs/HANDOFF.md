@@ -8250,3 +8250,16 @@ The all-profile run-pass suite passes. This is coverage for the existing
 `[OWN-8]`, `[TYP-16]`, `[ENM-1]`, and `[MOD-1]`--`[MOD-3]` contract, not a
 compiler change, ODR, or phase-completion claim. Phase accounting remains
 **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.202 `[TYP-20]` imported generic-enum static interface dispatch — 2026-09-21
+
+An importing module now has all-profile coverage for a public generic enum that
+implements a public interface in its declaring module. `Signal[i32]` crosses
+the module boundary into an importer-local `fn call_render[T: Render]`; the
+bound method call returns `42`. This covers static generic dispatch rather than
+the separate `Box[dyn Render]` adapter path already exercised at 0.198.
+
+The focused run-pass suite passes in debug, release, and shipping. This is
+coverage for the defined `[TYP-16]`, `[TYP-17]`, `[TYP-20]`, `[IFC-1]`, and
+`[MOD-1]`--`[MOD-3]` composition, not an ODR or compiler change. Phase
+accounting remains **1 of 9 complete** with Phases 2 and 3 active.
