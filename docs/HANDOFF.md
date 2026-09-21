@@ -8323,3 +8323,18 @@ vtable identities in generated C. The focused run-pass suite passes. This is
 coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--
 `[MOD-3]` composition; no ODR, compiler change, or phase-completion claim
 changes.
+
+### 0.207 `[TYP-22]` imported generic-enum inherited-interface boxes — 2026-09-21
+
+The cross-module generic-enum matrix now covers inherited interface dispatch.
+The helper exposes `Signal[T] implements Parent, Child` where `Child: Parent`;
+the importer constructs `Box[dyn Child]` from `Signal[i32].Ready(7)` and calls
+both the inherited `parent` and child `child` methods. This exercises the child
+table's required superinterface-first slot ordering across a module boundary.
+
+`generic_enum_inherited_interface_imported.em` runs in debug, release, and
+shipping, prints `42`, and pins the helper-owned concrete `Child` table with
+both forwarding slots in generated C. The focused run-pass suite passes. This
+is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
+`[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
+phase-completion claim changes.
