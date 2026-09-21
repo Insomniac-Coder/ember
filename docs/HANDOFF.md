@@ -7902,8 +7902,8 @@ Checklist:
   qualification, missing/ambiguous targets, invalid/no-fallback roots, generic
   ownership types, and dynamic-cycle-capable edges. Existing cycle tests remain
   in the milestone suite.
-- [ ] Run the workspace gate and confirm the pushed CI batch before recording
-  final repository-wide conformance evidence.
+- [x] The locked workspace gate passed; GitHub Actions run 35524751842 passed
+  on the specification/registry job and all four compiler platforms.
 
 The implementation is diagnostic-only. It adds no ownership/lifetime mechanism,
 source-language acceptance change, ABI/runtime change, second graph, or hidden
