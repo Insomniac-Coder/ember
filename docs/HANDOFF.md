@@ -8191,3 +8191,17 @@ focused milestone and full workspace suite pass. This implements an existing
 `[TYP-16]` / `[MOD-2]` / `[BLD-2]` requirement; it is not an ODR or new language
 decision. Phase accounting remains **1 of 9 complete** with Phases 2 and 3
 active.
+
+### 0.198 `[TYP-16]` imported generic-enum dynamic boxes — 2026-09-21
+
+An importing module now has all-profile regression coverage for materializing a
+public generic enum declared in a helper module and coercing it to the helper's
+public `Box[dyn Render]` interface. The emitted C names the helper-owned
+concrete `Signal[Token]` vtable and allocates the enum payload with the ordinary
+dynamic-box path. Calling the erased method prints `42`; the box's active
+variant drop later prints the imported `Token` payload's `7` exactly once.
+
+The test covers the already-defined `[TYP-16]`, `[MOD-1]`--`[MOD-3]`, and
+`[TYP-22]` composition; it changed no compiler implementation and requires no
+ODR. The focused run-pass suite passes across debug, release, and shipping.
+Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
