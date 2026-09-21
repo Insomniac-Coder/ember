@@ -8518,3 +8518,16 @@ sized-only marker rather than exposing a callable erased slot.
 `requires Self: Sized` in debug, release, and shipping. The focused full
 conformance suite passes. This is coverage for existing `[TYP-16]` and
 `[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.220 `[TYP-22]` specialized generic interface methods — 2026-09-21
+
+The complementary dyn-compatibility boundary is now covered after generic
+interface specialization. `Generic[T]` declares a method-generic `convert[U]`;
+forming `ref dyn Generic[i32]` must still identify that method as generic. The
+interface owner argument may be concrete, but it cannot turn a method-generic
+contract into an erased-callable slot.
+
+`reject_dyn_generic_interface_generic_method.em` requires `E2050` naming
+`convert` as generic in debug, release, and shipping. The focused full
+conformance suite passes. This is coverage for existing `[TYP-16]` and
+`[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
