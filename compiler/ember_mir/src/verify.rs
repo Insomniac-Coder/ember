@@ -1183,9 +1183,13 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
         let valid_payload = matches!(args.as_slice(), [Operand::Move(source)]
             if place_ty(body, types, source) == *concrete)
             || matches!(args.as_slice(), [Operand::Copy(source)]
-                if types.is_copy(*concrete) && place_ty(body, types, source) == *concrete);
+                if types.is_copy(*concrete) && place_ty(body, types, source) == *concrete)
+            || matches!(args.as_slice(), [Operand::Const(constant)]
+                if is_copy_scalar_constant(types, constant, *concrete));
         if !supported_concrete || !valid_payload {
-            fail(format!("{at} must move one concrete struct, enum, or class payload"));
+            fail(format!(
+                "{at} must move one concrete struct, enum, scalar, or class payload"
+            ));
             continue;
         }
         if layout.len() != implementations.len() {
@@ -1213,12 +1217,26 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
 }
 
 fn is_source_value_payload(types: &TypeTable, ty: Ty) -> bool {
+    if types.is_primitive_scalar(ty) {
+        return true;
+    }
     match types.kind(ty) {
         TyKind::Struct(id) => {
             types.struct_def(*id).origin.is_none()
                 || types.struct_def(*id).declaring_module != usize::MAX
         }
         TyKind::Enum(_) => true,
+        _ => false,
+    }
+}
+
+fn is_copy_scalar_constant(types: &TypeTable, constant: &Const, concrete: Ty) -> bool {
+    if !types.is_primitive_scalar(concrete) || !types.is_copy(concrete) {
+        return false;
+    }
+    match constant {
+        Const::Int { ty, .. } | Const::Float { ty, .. } => *ty == concrete,
+        Const::Bool(_) => matches!(types.kind(concrete), TyKind::Bool),
         _ => false,
     }
 }

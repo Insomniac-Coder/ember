@@ -529,6 +529,20 @@ impl TypeTable {
         &self.kinds[ty.0 as usize]
     }
 
+    /// The direct primitive values that can supply an ordinary interface
+    /// implementation through an `extend` declaration. This deliberately
+    /// excludes view, raw, unsized, and compiler-generated storage types.
+    pub fn is_primitive_scalar(&self, ty: Ty) -> bool {
+        matches!(
+            self.kind(ty),
+            TyKind::Bool
+                | TyKind::Char
+                | TyKind::Int(_)
+                | TyKind::Uint(_)
+                | TyKind::Float(_)
+        )
+    }
+
     /// Whether a type mentions any generic parameter, and so still has to be
     /// substituted before it means anything at run time.
     pub fn is_generic(&self, ty: Ty) -> bool {

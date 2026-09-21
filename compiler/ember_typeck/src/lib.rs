@@ -3702,13 +3702,15 @@ impl<'a> Checker<'a> {
         concrete: Ty,
         interface: Symbol,
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
-        match self.types.kind(concrete) {
-            TyKind::Class(_) => {}
-            TyKind::Struct(id)
-                if self.types.struct_def(*id).origin.is_none()
-                    || self.types.struct_def(*id).declaring_module != usize::MAX => {}
-            TyKind::Enum(_) => {}
-            _ => return None,
+        if !self.types.is_primitive_scalar(concrete) {
+            match self.types.kind(concrete) {
+                TyKind::Class(_) => {}
+                TyKind::Struct(id)
+                    if self.types.struct_def(*id).origin.is_none()
+                        || self.types.struct_def(*id).declaring_module != usize::MAX => {}
+                TyKind::Enum(_) => {}
+                _ => return None,
+            }
         }
         if !self
             .implemented

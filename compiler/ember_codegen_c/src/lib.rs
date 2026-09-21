@@ -723,11 +723,14 @@ impl Emitter<'_> {
     }
 
     fn interface_adapter_concrete_name(&self, concrete: Ty) -> String {
+        if self.types.is_primitive_scalar(concrete) {
+            return self.types.display(concrete);
+        }
         match self.types.kind(concrete) {
             TyKind::Class(id) => self.types.class_def(*id).name.to_string(),
             TyKind::Struct(id) => self.types.struct_def(*id).name.to_string(),
             TyKind::Enum(id) => self.types.enum_def(*id).name.to_string(),
-            _ => unreachable!("only concrete class, struct, and enum adapters reach C emission"),
+            _ => unreachable!("only concrete class, struct, enum, and scalar adapters reach C emission"),
         }
     }
 
@@ -764,10 +767,12 @@ impl Emitter<'_> {
                     (concrete.clone(), concrete, false)
                 }
             };
-            let (drop, size, align) = if matches!(
-                self.types.kind(adapter.concrete),
-                TyKind::Struct(_) | TyKind::Enum(_)
-            ) {
+            let value_payload = self.types.is_primitive_scalar(adapter.concrete)
+                || matches!(
+                    self.types.kind(adapter.concrete),
+                    TyKind::Struct(_) | TyKind::Enum(_)
+                );
+            let (drop, size, align) = if value_payload {
                 let name = format!("{table}_drop");
                 let mut lines = Vec::new();
                 self.drop_lines(
@@ -2649,7 +2654,14 @@ impl Emitter<'_> {
                 let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
                     rendered[0].clone()
                 } else {
-                    format!("{RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), &{})", rendered[0])
+                    let source = if self.types.is_primitive_scalar(*concrete) {
+                        format!("&(({concrete_c}){{{}}})", rendered[0])
+                    } else {
+                        format!("&{}", rendered[0])
+                    };
+                    format!(
+                        "{RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), {source})"
+                    )
                 };
                 format!(
                     "({}){{ .data = {data}, .vtable = &{table} }}",
