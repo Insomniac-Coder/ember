@@ -8108,3 +8108,18 @@ slot in every profile; the debug output also shows its mutable `em_Signal*`
 forwarding cast. This is conformance coverage for `[TYP-22]`, not an ODR,
 compiler defect, or phase-completion claim. Phase accounting remains **1 of 9
 complete** with Phases 2 and 3 active.
+
+### 0.194 `[TYP-22]` mutable borrowed-enum dynamic dispatch coverage — 2026-09-21
+
+The mutable enum adapter is also covered at the borrowed dynamic boundary.
+`ref mut Signal` coerces to `ref mut dyn Bump`, and the erased call forwards the
+same mutable concrete payload pointer to the direct enum method. This keeps the
+borrowed carrier distinct from a `Box[dyn Bump]` allocation while exercising the
+same checked dynamic dispatch slot.
+
+`accept_dyn_interface_ref_enum_mut.em` prints `42` in debug, release, and
+shipping. Its C assertions require the concrete `Bump` table and mutable slot
+in every profile; the direct probe shows the enum pointer is forwarded as
+`em_Signal*`. This is coverage for the frozen `ref mut dyn I` / `[TYP-22]`
+rules, not an ODR, compiler defect, or phase-completion claim. Phase accounting
+remains **1 of 9 complete** with Phases 2 and 3 active.
