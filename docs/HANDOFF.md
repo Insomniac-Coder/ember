@@ -8123,3 +8123,35 @@ in every profile; the direct probe shows the enum pointer is forwarded as
 `em_Signal*`. This is coverage for the frozen `ref mut dyn I` / `[TYP-22]`
 rules, not an ODR, compiler defect, or phase-completion claim. Phase accounting
 remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.195 `[TYP-16]` generic enum materialization — 2026-09-21
+
+Generic enums now follow the existing generic-nominal recipe model. Their
+variant payloads resolve once with opaque parameters; each concrete argument
+list materializes one ordinary `EnumDef`, with substituted payload types,
+deterministic identity, ordinary layout, match lowering, active-variant drop,
+and C emission. Nested substitutions retain that origin so an instantiated
+generic enum can appear inside another generic payload without losing its
+concrete identity. This adds no generic-specific runtime representation or
+backend branch.
+
+Concrete instances now also materialize declared methods, `drop`, `Copy` and
+`Clone` derives, and declared interface implementations through the same
+deferred-method and implementation-registration routes used by generic
+structs. The static interface-bound case proves that the implementation table
+is present rather than merely accepting an inherent method with the same name.
+`@derive(Copy)` validates the substituted payloads, so a `Flag[Token]` where
+`Token` is non-Copy still reports `E2080` at the generic payload declaration.
+
+Five conformance programs cover typed variant construction and matching across
+`i32` and destructible `Token` instances, an owned generic-enum method,
+derived `Clone`, derived `Copy` reuse, the non-Copy rejection, and generic
+enum interface conformance. The main payload case asserts both emitted concrete
+C layouts and the active-variant destructor call. The focused compiler tests
+and the full debug/release/shipping conformance suite pass.
+
+**Deliberate boundary:** imported generic-enum declaration contracts in EMIF,
+cross-module generic-enum callable metadata, and generic-enum dynamic adapter
+coverage remain separate work. The frozen grammar and `[TYP-16]` already define
+this materialization behavior, so this is not an ODR. Phase accounting remains
+**1 of 9 complete** with Phases 2 and 3 active.
