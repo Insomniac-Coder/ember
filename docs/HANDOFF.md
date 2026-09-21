@@ -8308,3 +8308,18 @@ shipping, prints `42`, and pins the concrete helper-owned vtable and forwarding
 slot in generated C. The focused run-pass suite passes. This is coverage for
 the existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
 composition; no compiler behavior, ODR, or phase-completion claim changes.
+
+### 0.206 `[TYP-22]` imported generic-enum multi-interface boxes — 2026-09-21
+
+The public generic-enum importer matrix now creates two independently erased
+boxes from one helper-owned concrete materialization. `Signal[i32] implements
+Read, Write`; the importer forms `Box[dyn Read]` and `Box[dyn Write]`, then
+dispatches each concrete method through its respective table. This distinguishes
+independent interface registrations from the inherited-table ordering path.
+
+`generic_enum_multi_interface_imported.em` runs in debug, release, and
+shipping, prints `20` then `22`, and requires the two helper-owned concrete
+vtable identities in generated C. The focused run-pass suite passes. This is
+coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--
+`[MOD-3]` composition; no ODR, compiler change, or phase-completion claim
+changes.
