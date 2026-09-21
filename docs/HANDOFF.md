@@ -8491,3 +8491,17 @@ release, and shipping, prints `42`, and pins the concrete `Bump[i32]` table and
 its mutable forwarding slot in emitted C. This is coverage for existing
 `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]` composition, not a
 new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.218 `[TYP-22]` imported generic inherited defaults — 2026-09-21
+
+The generic-interface matrix now composes specialized generic supertraits with
+default-body dispatch. The helper declares `Parent[T]` and `Child[T]: Parent[T]`
+with one default each, while `Signal[T]` implements both interfaces without
+handwritten methods. The importer boxes `Signal[i32]` as `dyn Child[i32]` and
+reaches the inherited parent and child defaults through the single child table.
+
+`generic_enum_generic_inherited_defaults_imported.em` runs in debug, release,
+and shipping, prints `42`, and pins the concrete `Child[i32]` table plus its
+parent-first `slot0` and child `slot1` adapters in emitted C. This is coverage
+for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
+composition, not a new defect, ODR, compiler change, or phase-completion claim.
