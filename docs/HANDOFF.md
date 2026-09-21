@@ -8041,3 +8041,21 @@ The direct all-profile probe and `cargo test --workspace --locked` pass. This
 is conformance coverage for the already implemented frozen `[TYP-22]` scalar
 boundary, not an ODR, defect, or phase-completion claim. Phase accounting
 remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.190 `[TYP-22]` inherited enum dynamic-box dispatch coverage — 2026-09-21
+
+A direct enum that explicitly implements both a parent interface and its child
+can now be exercised through `Box[dyn Child]`. The case fixes the existing
+vtable contract in executable form: the child table contains inherited and
+child declarations in their required declaration order, and an erased enum
+payload dispatches both slots correctly. It uses the ordinary direct enum
+adapter and box ownership path; no representation, coercion, or dispatch
+semantics change is claimed.
+
+`accept_dyn_interface_box_enum_inherited.em` runs in debug, release, and
+shipping. It pins the concrete `dyn Child` vtable and both inherited slot
+symbols, then proves the parent-plus-child calls produce `42`. The direct enum
+and generic-class inherited-interface regressions remain green, and the full
+conformance suite passes. This is coverage for the already-defined `[TYP-22]`
+superinterface table ordering, not an ODR, compiler defect, or phase-completion
+claim. Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
