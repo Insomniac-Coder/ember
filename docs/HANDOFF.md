@@ -8505,3 +8505,16 @@ and shipping, prints `42`, and pins the concrete `Child[i32]` table plus its
 parent-first `slot0` and child `slot1` adapters in emitted C. This is coverage
 for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
 composition, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.219 `[TYP-22]` generic sized-only default calls — 2026-09-21
+
+Generic interface materialization now has a negative `Self: Sized` regression.
+`Factory[T]` supplies a sized-only default returning `Self`; `ref dyn
+Factory[i32]` remains a legal formed view, but `clone()` through that view must
+be refused. The specialized declaration therefore has to preserve the
+sized-only marker rather than exposing a callable erased slot.
+
+`reject_dyn_generic_interface_sized_default_call.em` requires `E2020` with
+`requires Self: Sized` in debug, release, and shipping. The focused full
+conformance suite passes. This is coverage for existing `[TYP-16]` and
+`[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
