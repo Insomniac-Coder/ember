@@ -8023,3 +8023,21 @@ allocation shape. The enum, struct, and class dynamic-box regressions and
 `extend`/`[TYP-22]` rules, not a new language decision; no ODR or compiler
 defect is involved. Phase accounting remains **1 of 9 complete** with Phases 2
 and 3 active.
+
+### 0.189 `[TYP-22]` boolean dynamic-box literal coverage — 2026-09-21
+
+The scalar adapter's boolean-constant path now has executable all-profile
+coverage. Unlike integer and floating constants, MIR represents a boolean
+constant without a stored `Ty`; the verifier therefore proves it is a `bool`
+only when the concrete dynamic payload is the same primitive `bool` type. The
+case prevents a future relaxation from accepting an untyped constant merely
+because a dynamic adapter happens to exist.
+
+`accept_dyn_interface_bool_literal.em` declares `extend bool implements Truth`,
+boxes `true` as `Box[dyn Truth]`, and dispatches it through the erased table.
+Generated-C checks pin the bool-specific table, callable no-op drop slot, and
+addressable `bool` compound literal passed to the existing allocation helper.
+The direct all-profile probe and `cargo test --workspace --locked` pass. This
+is conformance coverage for the already implemented frozen `[TYP-22]` scalar
+boundary, not an ODR, defect, or phase-completion claim. Phase accounting
+remains **1 of 9 complete** with Phases 2 and 3 active.
