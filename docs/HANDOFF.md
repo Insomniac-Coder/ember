@@ -7996,3 +7996,30 @@ with the full milestone and conformance suites. This fulfills behavior already
 specified by `[TYP-22]` and enum `implements` grammar; no ODR or compiler
 defect is involved. Phase accounting remains **1 of 9 complete** with Phases 2
 and 3 active.
+
+### 0.188 `[TYP-22]` primitive-scalar dynamic-interface adapters — 2026-09-21
+
+Direct primitive scalar implementations now cross the established `ref dyn I`
+and `Box[dyn I]` adapter boundaries. The type table defines the exact supported
+family (`bool`, `char`, signed and unsigned integers, and floats), excluding
+views, raw pointers, unsized types, and compiler-generated storage wrappers.
+The existing `extend i32 implements I` form therefore receives the same
+checked implementation-table path as a nominal value type without inventing a
+new existential representation.
+
+For a scalar box, the concrete vtable supplies a callable no-op drop slot plus
+the scalar's actual `sizeof` and `_Alignof`, so `Box[dyn I]` still performs its
+normal vtable-directed destruction and exact allocation release. Scalar
+literals are accepted as a box payload only after MIR verifies both the exact
+concrete type and `Copy`; C lowers them through an addressable compound literal
+before the existing `box_new_copy` call. A copied scalar local follows the
+ordinary checked copy path and remains usable.
+
+`accept_dyn_interface_scalar.em` runs in debug, release, and shipping. It
+proves borrowed `i32` dispatch, a copied-local box, and a literal box, and pins
+the generated vtable, no-op drop entry, erased forwarding call, and concrete
+allocation shape. The enum, struct, and class dynamic-box regressions and
+`cargo test --workspace --locked` pass. This implements the frozen generic
+`extend`/`[TYP-22]` rules, not a new language decision; no ODR or compiler
+defect is involved. Phase accounting remains **1 of 9 complete** with Phases 2
+and 3 active.
