@@ -8531,3 +8531,15 @@ contract into an erased-callable slot.
 `convert` as generic in debug, release, and shipping. The focused full
 conformance suite passes. This is coverage for existing `[TYP-16]` and
 `[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.221 `[TYP-22]` specialized generic `Self` returns — 2026-09-21
+
+Generic interface specialization now has a matching by-value-`Self` rejection.
+`Clone[T]` is instantiated as `Clone[i32]`, but a `clone(self) -> Self` member
+still makes the interface dyn-incompatible: the concrete owner argument does
+not size or erase the receiver's `Self` result.
+
+`reject_dyn_generic_interface_returning_self.em` requires `E2050` naming
+`clone`'s by-value `Self` return in debug, release, and shipping. The focused
+full conformance suite passes. This is coverage for existing `[TYP-16]` and
+`[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
