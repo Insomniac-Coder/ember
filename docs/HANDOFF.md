@@ -8370,6 +8370,22 @@ passes. This is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
 `[DRP-6]`, and `[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
 phase-completion claim changes.
 
+### 0.212 `[TYP-22]` imported generic-enum inherited defaults — 2026-09-21
+
+The cross-module generic-enum matrix now covers inherited default dispatch.
+The helper exposes `Signal[T] implements Parent, Child` where `Child: Parent`,
+but supplies neither interface method: `Parent.parent` and `Child.child` both
+come from their respective interface defaults. The importer erases the concrete
+generic enum to `Box[dyn Child]` and reaches both default methods through the
+child table.
+
+`generic_enum_inherited_defaults_imported.em` runs in debug, release, and
+shipping, prints `42`, and pins the helper-owned concrete child table with its
+two default forwarding slots in generated C. The focused run-pass suite passes.
+This is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
+`[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
+phase-completion claim changes.
+
 ### 0.208 `[TYP-22]` imported generic-enum mutable interface boxes — 2026-09-21
 
 The cross-module generic-enum matrix now covers a mutable receiver through an
