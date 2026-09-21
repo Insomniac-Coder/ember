@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-21 — generic interfaces could not be specialized for `dyn`
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-167 | **Interface declarations accepted generic parameters syntactically, but the checker neither bound those parameters while reading member signatures nor materialized a specialized interface contract.** `interface Inspect[T]: fn inspect(self, value: T)` therefore reported `T` as unresolved, and a valid `dyn Inspect[i32]` bound was rejected. | `[TYP-16]`, `[TYP-22]`, `[IFC-1]` | **fixed** | Interface collection now retains and scopes owner generic parameters. A concrete use materializes a specialized declaration identity with substituted signatures and specialized generic supertraits, and generic nominal instantiation binds its owner arguments while registering `implements Inspect[T]`. `generic_enum_generic_interface_imported.em` was red before the correction and now forms `Box[dyn Child[i32]]` from an imported `Signal[i32]`, dispatches its `i32` parameter through inherited and child slots in debug, release, and shipping, and pins the concrete C adapter table. The specification already defines generic interfaces and only forbids generic methods in `dyn`, so no specification, ADR, ODR, owner decision, or version changed. |
+
+---
+
 ## 2026-09-21 — unknown manifest lint keys were silently accepted
 
 | # | Defect | Rule | Status | Fixed in |

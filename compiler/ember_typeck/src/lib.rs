@@ -536,7 +536,12 @@ impl ClassFieldInit {
 
 /// A declared interface: the methods a type must provide, and which of them
 /// carry a default body.
+#[derive(Clone)]
 struct InterfaceDef {
+    /// Generic parameters declared by the interface itself. A concrete use
+    /// such as `dyn Inspect[i32]` materializes these into a declaration whose
+    /// vtable signatures contain `i32`, never an unresolved parameter.
+    generic_params: Vec<GenericParam>,
     /// Member name, the `DefId` its declared signature was given, its
     /// receiver mode (`None` for an associated function), and whether the
     /// interface supplies a body.
@@ -551,6 +556,11 @@ struct InterfaceDef {
     /// instantiations reuse these declarations later.
     defaults: Vec<InterfaceDefault>,
     supertraits: Vec<Symbol>,
+    /// The written supertrait forms are retained for generic-interface
+    /// materialization, where `Parent[T]` must resolve with the interface's
+    /// own parameter bindings and declaration-module imports.
+    supertrait_exprs: Vec<ast::TypeExpr>,
+    declaring_module: usize,
     /// Default methods returning `Self` by value are dyn-compatible only when
     /// their declaration explicitly carries `where Self: Sized` (`[TYP-22]`).
     dyn_sized_defaults: HashSet<DefId>,
@@ -3631,6 +3641,12 @@ impl<'a> Checker<'a> {
             );
             return;
         }
+        // Interface parameters are in scope throughout the member signatures,
+        // just as owner parameters are for a generic struct or enum. They are
+        // deliberately allocated before method-local binders so substitution
+        // can distinguish an interface parameter from a generic method's.
+        let saved_type_params = std::mem::take(&mut self.type_params);
+        let generic_params = self.declare_generics(&decl.generics);
         // `[IFC-4]` — associated types first: a method signature may mention
         // one, so they have to be in scope before the signatures are read.
         let assoc: Vec<Symbol> = decl
@@ -3651,7 +3667,13 @@ impl<'a> Checker<'a> {
         for (member_index, member) in decl.members.iter().enumerate() {
             let ast::MemberKind::Fn(f) = &member.kind else { continue };
             let Some((receiver, signature)) =
-                self.method_signature(f, None, &member.attrs, member.span, 0)
+                self.method_signature(
+                    f,
+                    None,
+                    &member.attrs,
+                    member.span,
+                    generic_params.len(),
+                )
             else {
                 continue;
             };
@@ -3712,14 +3734,164 @@ impl<'a> Checker<'a> {
             .collect();
         let _ = span;
         self.assoc_scope = saved_assoc;
+        self.type_params = saved_type_params;
         // `[IFC-4]` — the associated names were in scope while the
         // signatures were read, which is all the declaration needs them for;
         // an implementation records what each one stands for.
         let _ = &assoc;
         self.interfaces.insert(
             name,
-            InterfaceDef { methods, defaults, supertraits, dyn_sized_defaults },
+            InterfaceDef {
+                generic_params,
+                methods,
+                defaults,
+                supertraits,
+                supertrait_exprs: decl.supertraits.clone(),
+                declaring_module: self.current_module,
+                dyn_sized_defaults,
+            },
         );
+    }
+
+    /// Resolve an interface use in an `implements` or `dyn` position. Unlike a
+    /// generic nominal, a generic interface has no runtime representation of
+    /// its own; this materializes only its declaration-derived contract under
+    /// a concrete, stable identity for method checking and vtable emission.
+    fn resolve_interface_use(&mut self, ty: &ast::TypeExpr) -> Option<Symbol> {
+        let ast::TypeKind::Path { segments, args } = &ty.kind else {
+            self.error(codes::E1010, ty.span, "a `dyn` bound must name an interface");
+            return None;
+        };
+        if segments.len() != 1 {
+            self.error(codes::E1010, ty.span, "a `dyn` bound must name an interface");
+            return None;
+        }
+        let written = segments[0].name;
+        let name = self.resolve_name(written);
+        let Some(definition) = self.interfaces.get(&name).cloned() else {
+            self.error(
+                codes::E1010,
+                ty.span,
+                format!("cannot find interface `{written}` in this scope"),
+            );
+            return None;
+        };
+        if args.is_empty() {
+            if !definition.generic_params.is_empty() {
+                self.error(
+                    codes::E2020,
+                    ty.span,
+                    format!(
+                        "`{written}` takes {} type arguments, found 0",
+                        definition.generic_params.len()
+                    ),
+                );
+                return None;
+            }
+            return Some(name);
+        }
+        let mut resolved = Vec::with_capacity(args.len());
+        for arg in args {
+            let ast::GenericArg::Type(arg) = arg else {
+                self.error(codes::E1010, ty.span, "expected a type argument");
+                return None;
+            };
+            resolved.push(self.resolve_type(arg));
+        }
+        self.instantiate_interface(name, &definition, &resolved, ty.span)
+    }
+
+    /// `[TYP-16]` applied to an interface contract: a specialized interface
+    /// gets specialized method declarations and therefore an unambiguous
+    /// `dyn` vtable ABI. It does not synthesize a nominal runtime type.
+    fn instantiate_interface(
+        &mut self,
+        name: Symbol,
+        definition: &InterfaceDef,
+        args: &[Ty],
+        span: Span,
+    ) -> Option<Symbol> {
+        if args.len() != definition.generic_params.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {} type arguments, found {}", definition.generic_params.len(), args.len()),
+            );
+            return None;
+        }
+        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        if self.interfaces.contains_key(&instance) {
+            return Some(instance);
+        }
+
+        let mut declarations = HashMap::new();
+        let mut methods = Vec::with_capacity(definition.methods.len());
+        for (method, declaration, receiver, has_body) in &definition.methods {
+            let signature = self.signatures[declaration.0 as usize].clone();
+            let params = signature
+                .params
+                .iter()
+                .map(|(name, ty, mode, parameter_span)| {
+                    (*name, self.substitute_ty(*ty, args), *mode, *parameter_span)
+                })
+                .collect();
+            let ret = self.substitute_ty(signature.ret, args);
+            let generics = signature
+                .generics
+                .iter()
+                .map(|param| self.substitute_generic_param(param, args))
+                .collect();
+            let instance_declaration = DefId(self.signatures.len() as u32);
+            self.signatures.push(Signature { params, ret, generics, borrows: signature.borrows });
+            declarations.insert(*declaration, instance_declaration);
+            methods.push((*method, instance_declaration, *receiver, *has_body));
+        }
+        let defaults = definition
+            .defaults
+            .iter()
+            .filter_map(|default| {
+                declarations.get(&default.declaration).copied().map(|declaration| InterfaceDefault {
+                    name: default.name,
+                    declaration,
+                    receiver: default.receiver,
+                    source: default.source,
+                })
+            })
+            .collect();
+        let dyn_sized_defaults = definition
+            .dyn_sized_defaults
+            .iter()
+            .filter_map(|declaration| declarations.get(declaration).copied())
+            .collect();
+        let interface_bindings = definition
+            .generic_params
+            .iter()
+            .map(|param| param.name)
+            .zip(args.iter().copied())
+            .collect();
+        let saved_type_params = std::mem::replace(&mut self.type_params, interface_bindings);
+        let saved_module = std::mem::replace(&mut self.current_module, definition.declaring_module);
+        let supertraits = definition
+            .supertrait_exprs
+            .iter()
+            .filter_map(|supertrait| self.resolve_interface_use(supertrait))
+            .collect();
+        self.current_module = saved_module;
+        self.type_params = saved_type_params;
+        self.interfaces.insert(
+            instance,
+            InterfaceDef {
+                generic_params: Vec::new(),
+                methods,
+                defaults,
+                supertraits,
+                supertrait_exprs: Vec::new(),
+                declaring_module: definition.declaring_module,
+                dyn_sized_defaults,
+            },
+        );
+        Some(instance)
     }
 
     /// Return the precise `[TYP-22]` reason a declared interface cannot be
@@ -4253,22 +4425,14 @@ impl<'a> Checker<'a> {
         span: Span,
     ) {
         for entry in implements {
-            let Some(written) = interface_name(entry) else {
-                self.error(codes::E1010, entry.span, "expected an interface name");
-                continue;
+            let written = match &entry.kind {
+                ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
+                _ => Symbol::intern("<invalid interface>"),
             };
+            let Some(name) = self.resolve_interface_use(entry) else { continue };
             // Recorded under the name the interface is registered by, so that
             // a bound written `T: Ord` on an imported `Ord` matches the
             // implementation written `implements Ord` in another module.
-            let name = self.resolve_name(written);
-            if !self.interfaces.contains_key(&name) {
-                self.error(
-                    codes::E1010,
-                    entry.span,
-                    format!("cannot find interface `{written}` in this scope"),
-                );
-                continue;
-            }
             // `[TYP-19]` — the same interface implemented twice for one type.
             if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == name) {
                 let shown = self.types.display(ty);
@@ -4357,24 +4521,9 @@ impl<'a> Checker<'a> {
             ast::TypeKind::Dyn(bounds) => {
                 let mut interfaces = Vec::with_capacity(bounds.len());
                 for bound in bounds {
-                    let Some(written) = interface_name(bound) else {
-                        self.error(
-                            codes::E1010,
-                            bound.span,
-                            "a `dyn` bound must name an interface",
-                        );
-                        continue;
-                    };
-                    let name = self.resolve_name(written);
-                    if !self.interfaces.contains_key(&name) {
-                        self.error(
-                            codes::E1010,
-                            bound.span,
-                            format!("cannot find interface `{written}` in this scope"),
-                        );
-                        continue;
+                    if let Some(interface) = self.resolve_interface_use(bound) {
+                        interfaces.push(interface);
                     }
-                    interfaces.push(name);
                 }
                 if interfaces.is_empty() {
                     return self.common.error;
@@ -5538,6 +5687,19 @@ impl<'a> Checker<'a> {
             self.pending_derived_clones.push((ty, span));
             self.resolve_derived_clones();
         }
+        // The `implements` clause belongs to the generic declaration, so its
+        // owner parameters must be bound while an instantiated generic nominal registers
+        // its concrete interface contract. Without this, `implements I[T]`
+        // tries to resolve `T` at the importing call site rather than against
+        // the enum's `T = i32` materialization.
+        let interface_bindings = decl
+            .params
+            .iter()
+            .copied()
+            .zip(args.iter().copied())
+            .collect();
+        let saved_interface_params =
+            std::mem::replace(&mut self.type_params, interface_bindings);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry).is_none_or(|written| {
@@ -5563,6 +5725,7 @@ impl<'a> Checker<'a> {
                 module: decl.declaring_module,
             });
         }
+        self.type_params = saved_interface_params;
         ty
     }
 
@@ -5709,6 +5872,14 @@ impl<'a> Checker<'a> {
             self.pending_derived_clones.push((ty, span));
             self.resolve_derived_clones();
         }
+        let interface_bindings = decl
+            .params
+            .iter()
+            .copied()
+            .zip(args.iter().copied())
+            .collect();
+        let saved_interface_params =
+            std::mem::replace(&mut self.type_params, interface_bindings);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry).is_none_or(|written| {
@@ -5734,6 +5905,7 @@ impl<'a> Checker<'a> {
                 module: decl.declaring_module,
             });
         }
+        self.type_params = saved_interface_params;
         ty
     }
 
@@ -5964,6 +6136,14 @@ impl<'a> Checker<'a> {
             self.pending_derived_clones.push((ty, span));
             self.resolve_derived_clones();
         }
+        let interface_bindings = decl
+            .params
+            .iter()
+            .copied()
+            .zip(args.iter().copied())
+            .collect();
+        let saved_interface_params =
+            std::mem::replace(&mut self.type_params, interface_bindings);
         let previous_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
         let interfaces_are_ready = decl.implements.iter().all(|entry| {
             interface_name(entry)
@@ -5999,6 +6179,7 @@ impl<'a> Checker<'a> {
                 module: decl.declaring_module,
             });
         }
+        self.type_params = saved_interface_params;
         ty
     }
 

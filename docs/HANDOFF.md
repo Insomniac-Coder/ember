@@ -8339,6 +8339,35 @@ is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
 `[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
 phase-completion claim changes.
 
+### 0.208 `[TYP-22]` imported generic-enum mutable interface boxes — 2026-09-21
+
+The cross-module generic-enum matrix now covers a mutable receiver through an
+erased owned box. The helper exposes `Signal[T] implements Bump`, with
+`Bump.bump(mut self)` implemented by the public generic enum. The importer
+materializes `Signal[i32]`, erases it into `Box[dyn Bump]`, and calls the
+mutable-receiver slot through the helper-owned concrete adapter.
+
+`generic_enum_mut_interface_imported.em` runs in debug, release, and shipping,
+prints `42`, and pins its helper-owned concrete vtable and mutable forwarding
+slot in generated C. The focused run-pass suite passes. This is coverage for
+existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
+composition; no ODR, compiler change, or phase-completion claim changes.
+
+### 0.209 `[TYP-22]` imported generic-enum mutable interface borrows — 2026-09-21
+
+The cross-module generic-enum matrix now also covers borrowed dynamic dispatch
+through `ref mut dyn`. The importer retains `Signal[i32].Ready(7)` locally,
+passes a mutable erased borrow to a helper function, and dispatches `Bump.bump`
+through the helper-owned concrete adapter. This distinguishes temporary dynamic
+view construction from the owned `Box[dyn Bump]` path.
+
+`generic_enum_ref_mut_interface_imported.em` runs in debug, release, and
+shipping, prints `42`, and pins the reused helper-owned concrete vtable and
+mutable forwarding slot in generated C. The focused run-pass suite passes. This
+is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
+`[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
+phase-completion claim changes.
+
 ### 0.210 `[DIA-6]` E9010 executable error page — 2026-09-21
 
 The first CI run containing the `[MAN-3]` E9010 implementation passed all four
@@ -8386,31 +8415,19 @@ This is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
 `[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
 phase-completion claim changes.
 
-### 0.208 `[TYP-22]` imported generic-enum mutable interface boxes — 2026-09-21
+### 0.213 `[TYP-16]` generic-interface `dyn` materialization — 2026-09-21
 
-The cross-module generic-enum matrix now covers a mutable receiver through an
-erased owned box. The helper exposes `Signal[T] implements Bump`, with
-`Bump.bump(mut self)` implemented by the public generic enum. The importer
-materializes `Signal[i32]`, erases it into `Box[dyn Bump]`, and calls the
-mutable-receiver slot through the helper-owned concrete adapter.
+`interface Inspect[T]` was syntactically accepted but its owner parameter was
+not in scope while member signatures were collected; the checker also tracked
+only bare interface names. Consequently `Inspect[T]` could not be implemented
+and `dyn Inspect[i32]` could not form. This was a compiler defect against the
+existing generic-interface grammar and `[TYP-22]`, not a missing semantic rule.
 
-`generic_enum_mut_interface_imported.em` runs in debug, release, and shipping,
-prints `42`, and pins its helper-owned concrete vtable and mutable forwarding
-slot in generated C. The focused run-pass suite passes. This is coverage for
-existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
-composition; no ODR, compiler change, or phase-completion claim changes.
-
-### 0.209 `[TYP-22]` imported generic-enum mutable interface borrows — 2026-09-21
-
-The cross-module generic-enum matrix now also covers borrowed dynamic dispatch
-through `ref mut dyn`. The importer retains `Signal[i32].Ready(7)` locally,
-passes a mutable erased borrow to a helper function, and dispatches `Bump.bump`
-through the helper-owned concrete adapter. This distinguishes temporary dynamic
-view construction from the owned `Box[dyn Bump]` path.
-
-`generic_enum_ref_mut_interface_imported.em` runs in debug, release, and
-shipping, prints `42`, and pins the reused helper-owned concrete vtable and
-mutable forwarding slot in generated C. The focused run-pass suite passes. This
-is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
-`[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
-phase-completion claim changes.
+The checker now materializes a concrete interface contract from its generic
+declaration, substitutes its method signatures, and binds a generic nominal's
+owner arguments while registering its `implements` clause. The intentionally
+red imported `Signal[T] implements Inspect[T], Child[T]` probe now forms
+`Box[dyn Child[i32]]`, dispatches an `i32` argument through inherited and child
+slots in the specialized table in debug, release, and shipping, and pins that
+table in emitted C. D-167 records the defect and its closure; no ODR, specification, or phase
+completion claim changes.
