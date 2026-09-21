@@ -110,6 +110,11 @@ pub struct Body {
     /// These records are compiler metadata only; the C backend serializes
     /// them into the `[EFF-10]` safety side table.
     pub elided_accesses: Vec<ElidedAccess>,
+    /// `[EXC-8]`–`[EXC-12]` — accesses whose runtime bracket is one
+    /// compiler-internal loop interval rather than one interval per iteration.
+    /// This is MIR metadata only: it neither creates a source-level value nor
+    /// changes the Ember aliasing model.
+    pub hoisted_accesses: Vec<HoistedAccess>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +132,35 @@ impl AccessElisionReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::UniqueHandle => "unique_handle",
+        }
+    }
+}
+
+/// Evidence retained when a dynamic class-exclusivity check is moved from a
+/// canonical counted-loop body to its checked preheader/postheader interval.
+/// The block identifiers are compiler-internal anchors for code generation;
+/// user-facing inspection renders source locations instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HoistedAccess {
+    pub span: Span,
+    pub loop_span: Span,
+    pub preheader: BasicBlockId,
+    pub preheader_statement: usize,
+    pub postheader: BasicBlockId,
+    pub place: Place,
+    pub mutable: bool,
+    pub proof: HoistedAccessProof,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HoistedAccessProof {
+    StableReceiverDirectCall,
+}
+
+impl HoistedAccessProof {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::StableReceiverDirectCall => "stable_receiver_direct_call",
         }
     }
 }
@@ -150,7 +184,7 @@ impl Body {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BasicBlock {
     pub stmts: Vec<Stmt>,
     pub terminator: Terminator,
@@ -930,7 +964,7 @@ pub enum CastKind {
 pub use ember_hir::{BinOp, Builtin, UnOp};
 
 /// One statement, with the source location it came from.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
@@ -942,7 +976,7 @@ impl Stmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum StmtKind {
     Assign {
         place: Place,
@@ -1034,7 +1068,7 @@ impl StmtKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Terminator {
     Goto(BasicBlockId),
     /// A conditional branch on an integer or boolean discriminant.

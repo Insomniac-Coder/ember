@@ -396,6 +396,173 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+/// `[EXC-8]`–`[EXC-14]` — a copied class handle prevents static unique-handle
+/// elision, but the receiver itself is stable across this counted loop. The
+/// compiler therefore emits one checked loop-level interval, reports its
+/// proof, and leaves the callee's independent receiver access alone.
+#[test]
+fn stable_class_loop_access_is_reported_as_hoisted() {
+    let root = workspace_root();
+    let source = format!(
+        "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
+    );
+    let out_dir = std::env::temp_dir().join(format!(
+        "ember-hoisted-loop-safety-{}",
+        std::process::id()
+    ));
+    let run = ember(
+        &[
+            "build",
+            &source,
+            "--out-dir",
+            &out_dir.to_string_lossy(),
+        ],
+        &root,
+    );
+    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
+
+    let side_table = out_dir
+        .join("debug")
+        .join("inspect")
+        .join("accept_stable_class_receiver_loop.safety.json");
+    let json = std::fs::read_to_string(&side_table)
+        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+    assert!(
+        json.contains("\"classification\":\"DYNAMIC_HOISTED_LOOP\""),
+        "stable loop was not classified as hoisted:\n{json}"
+    );
+    assert!(
+        json.contains("\"check_site\":\"preheader\""),
+        "hoisted loop lacks its preheader check record:\n{json}"
+    );
+    assert!(
+        json.contains("\"protected_interval\":\"loop\""),
+        "hoisted loop lacks its protected interval record:\n{json}"
+    );
+    assert!(
+        json.contains("\"proof\":\"stable_receiver_direct_call\""),
+        "hoisted loop lacks its proof record:\n{json}"
+    );
+
+    let c_path = out_dir
+        .join("debug")
+        .join("c")
+        .join("accept_stable_class_receiver_loop.c");
+    let c = std::fs::read_to_string(&c_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
+    let main_start = c.find("void em_main(void)").expect("main is emitted");
+    let bump_start = c.rfind("void em_Counter_bump(").expect("method is emitted");
+    let main_c = &c[main_start..bump_start];
+    assert_eq!(
+        main_c.matches("ember_access_begin_write").count(),
+        1,
+        "main must have one preheader write check:\n{main_c}"
+    );
+    assert_eq!(
+        main_c.matches("ember_access_end_write").count(),
+        1,
+        "main must have one postheader write release:\n{main_c}"
+    );
+
+    let side_table_arg = side_table.to_string_lossy().into_owned();
+    let report = ember(&["inspect", "--safety", &side_table_arg], &root);
+    assert_eq!(report.exit, 0, "inspect failed:\n{}", report.stderr);
+    assert!(
+        report.stdout.contains("DYNAMIC_HOISTED_LOOP")
+            && report.stdout.contains("proof: stable_receiver_direct_call"),
+        "inspect did not identify the hoisted proof:\n{}",
+        report.stdout
+    );
+}
+
+/// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
+/// exactly one caller check. Publishing a handle, dynamic dispatch, and two
+/// receiver identities each deliberately retain their individual checks.
+#[test]
+fn loop_access_hoisting_requires_the_complete_local_proof() {
+    let root = workspace_root();
+    let cases = [
+        (
+            "accept_invariant_local_receiver_loop",
+            "DYNAMIC_HOISTED_LOOP",
+            1usize,
+        ),
+        (
+            "accept_escaping_receiver_loop_keeps_dynamic_check",
+            "DYNAMIC_PER_ACCESS",
+            1usize,
+        ),
+        (
+            "accept_virtual_receiver_loop_keeps_dynamic_check",
+            "DYNAMIC_PER_ACCESS",
+            1usize,
+        ),
+        (
+            "accept_distinct_receivers_loop_keeps_dynamic_checks",
+            "DYNAMIC_PER_ACCESS",
+            2usize,
+        ),
+    ];
+
+    for (name, classification, expected) in cases {
+        let source = format!("tests/conformance/EXC-8/{name}.{SOURCE_EXT}");
+        let out_dir = temporary_directory(&format!("ember-loop-access-{name}"));
+        let run = ember(
+            &[
+                "build",
+                &source,
+                "--out-dir",
+                &out_dir.to_string_lossy(),
+            ],
+            &root,
+        );
+        assert_eq!(run.exit, 0, "{name} did not build:\n{}", run.stderr);
+
+        let side_table = out_dir
+            .join("debug")
+            .join("inspect")
+            .join(format!("{name}.safety.json"));
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&side_table)
+                .unwrap_or_else(|error| panic!("{}: {error}", side_table.display())),
+        )
+        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+        let observed = value
+            .get("checks")
+            .and_then(serde_json::Value::as_array)
+            .expect("safety side table has checks")
+            .iter()
+            .filter(|check| {
+                check.get("function").and_then(serde_json::Value::as_str) == Some("main")
+                    && check.get("classification").and_then(serde_json::Value::as_str)
+                        == Some(classification)
+            })
+            .count();
+        assert_eq!(
+            observed, expected,
+            "{name} should have {expected} main {classification} check(s): {value}"
+        );
+        let wrong = if classification == "DYNAMIC_HOISTED_LOOP" {
+            "DYNAMIC_PER_ACCESS"
+        } else {
+            "DYNAMIC_HOISTED_LOOP"
+        };
+        assert!(
+            !value
+                .get("checks")
+                .and_then(serde_json::Value::as_array)
+                .expect("safety side table has checks")
+                .iter()
+                .any(|check| {
+                    check.get("function").and_then(serde_json::Value::as_str) == Some("main")
+                        && check.get("classification").and_then(serde_json::Value::as_str)
+                            == Some(wrong)
+                }),
+            "{name} has an unsafe mixed loop classification: {value}"
+        );
+    }
+}
+
 #[test]
 fn static_access_elision_is_recorded_in_the_safety_side_table() {
     let root = workspace_root();

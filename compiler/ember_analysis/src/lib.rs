@@ -11,6 +11,7 @@ pub mod access;
 pub mod definite_init;
 pub mod drops;
 pub mod facts;
+pub mod loop_access;
 pub mod regions;
 pub mod unused;
 
@@ -19,6 +20,7 @@ pub use borrows::{
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::elide_static_accesses_all;
+pub use loop_access::hoist_loop_accesses_all;
 pub use cycles::{
     inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,
     OwnershipInspection,

@@ -230,6 +230,61 @@ impl Verifier<'_> {
             }
         }
     }
+
+    /// `[EXC-11]` — hoisting metadata is not an advisory report. It names
+    /// the exact compiler-internal bracket that code generation and safety
+    /// inspection must agree on, so reject a stale or partial record before it
+    /// can cross the backend boundary.
+    fn hoisted_accesses(&mut self, body: &Body) {
+        for record in &body.hoisted_accesses {
+            let Some(preheader) = body.blocks.get(record.preheader.0 as usize) else {
+                self.fail(format!(
+                    "hoisted access preheader bb{} does not exist",
+                    record.preheader.0
+                ));
+                continue;
+            };
+            if !preheader
+                .stmts
+                .get(record.preheader_statement)
+                .is_some_and(|statement| {
+                matches!(
+                    &statement.kind,
+                    StmtKind::BeginAccess { place, mutable }
+                        if place == &record.place
+                            && *mutable == record.mutable
+                            && statement.span == record.span
+                )
+                })
+            {
+                self.fail(format!(
+                    "hoisted access preheader bb{} statement {} lacks its matching begin",
+                    record.preheader.0, record.preheader_statement
+                ));
+            }
+            let Some(postheader) = body.blocks.get(record.postheader.0 as usize) else {
+                self.fail(format!(
+                    "hoisted access postheader bb{} does not exist",
+                    record.postheader.0
+                ));
+                continue;
+            };
+            if !postheader.stmts.iter().any(|statement| {
+                matches!(
+                    &statement.kind,
+                    StmtKind::EndAccess { place, mutable }
+                        if place == &record.place
+                            && *mutable == record.mutable
+                            && statement.span == record.span
+                )
+            }) {
+                self.fail(format!(
+                    "hoisted access postheader bb{} lacks its matching end",
+                    record.postheader.0
+                ));
+            }
+        }
+    }
 }
 
 /// Check one body. An empty result means it is well-formed.
@@ -356,6 +411,7 @@ pub fn verify(body: &Body) -> Vec<Violation> {
     // Run after structural place/target checks so the dataflow does not
     // produce duplicate diagnostics for malformed block references.
     v.access_intervals(body);
+    v.hoisted_accesses(body);
 
     v.violations
 }
@@ -363,7 +419,10 @@ pub fn verify(body: &Body) -> Vec<Violation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BasicBlock, LocalDecl, LocalKind, ParameterMode, Stmt};
+    use crate::{
+        BasicBlock, HoistedAccess, HoistedAccessProof, LocalDecl, LocalKind, ParameterMode,
+        Stmt,
+    };
     use ember_span::Span;
 
     /// A body with one empty block and a real span on its terminator.
@@ -397,6 +456,7 @@ mod tests {
             class_virtual_slot: None,
             is_abstract: false,
             elided_accesses: Vec::new(),
+            hoisted_accesses: Vec::new(),
         }
     }
 
@@ -460,6 +520,49 @@ mod tests {
                 .iter()
                 .any(|violation| violation.message.contains("still open")),
             "missing unclosed-access violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn corrupted_hoisted_access_metadata_is_a_violation() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let place = Place::local(LocalId(0));
+        let mut body = body_with(
+            vec![
+                Stmt::new(
+                    StmtKind::BeginAccess {
+                        place: place.clone(),
+                        mutable: true,
+                    },
+                    span,
+                ),
+                Stmt::new(
+                    StmtKind::EndAccess {
+                        place: place.clone(),
+                        mutable: true,
+                    },
+                    span,
+                ),
+            ],
+            span,
+        );
+        body.hoisted_accesses.push(HoistedAccess {
+            span,
+            loop_span: span,
+            preheader: BasicBlockId(1),
+            preheader_statement: 0,
+            postheader: BasicBlockId(0),
+            place,
+            mutable: true,
+            proof: HoistedAccessProof::StableReceiverDirectCall,
+        });
+
+        let violations = verify(&body);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.message.contains("hoisted access preheader bb1")),
+            "expected malformed hoist metadata to fail verification, got {violations:?}"
         );
     }
 
@@ -1320,6 +1423,7 @@ mod view_invariant_tests {
             class_virtual_slot: None,
             is_abstract: false,
             elided_accesses: Vec::new(),
+            hoisted_accesses: Vec::new(),
         };
         (body, types)
     }
@@ -1471,6 +1575,7 @@ mod interface_upcast_invariant_tests {
             class_virtual_slot: None,
             is_abstract: false,
             elided_accesses: Vec::new(),
+            hoisted_accesses: Vec::new(),
         };
         (body, types)
     }

@@ -118,22 +118,37 @@ pub fn emit(
 fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
     let mut entries = Vec::new();
     for body in bodies {
-        for block in &body.blocks {
-            for stmt in &block.stmts {
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for (statement_index, stmt) in block.stmts.iter().enumerate() {
                 if !matches!(stmt.kind, StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }) {
+                    continue;
+                }
+                if body.hoisted_accesses.iter().any(|record| {
+                    record.preheader.0 as usize == block_index
+                        && record.preheader_statement == statement_index
+                }) {
                     continue;
                 }
                 let location = map.location(stmt.span);
                 entries.push(format!(
-                    "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"dynamic exclusivity\",\"reason\":\"not_proven_by_analysis\",\"status\":\"emitted\"}}",
+                    "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"dynamic exclusivity\",\"classification\":\"DYNAMIC_PER_ACCESS\",\"reason\":\"not_proven_by_analysis\",\"status\":\"emitted\"}}",
                     json_string(&location),
                     json_string(&body.name),
                 ));
             }
         }
+        for hoisted in &body.hoisted_accesses {
+            entries.push(format!(
+                "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"dynamic exclusivity\",\"classification\":\"DYNAMIC_HOISTED_LOOP\",\"reason\":\"inherent_to_mechanism\",\"proof\":{},\"loop\":{},\"check_site\":\"preheader\",\"protected_interval\":\"loop\",\"status\":\"emitted\"}}",
+                json_string(&map.location(hoisted.span)),
+                json_string(&body.name),
+                json_string(hoisted.proof.as_str()),
+                json_string(&map.location(hoisted.loop_span)),
+            ));
+        }
         for elided in &body.elided_accesses {
             entries.push(format!(
-                "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"static exclusivity\",\"reason\":{},\"status\":\"elided\"}}",
+                "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"static exclusivity\",\"classification\":\"STATIC_ELIDED\",\"reason\":{},\"status\":\"elided\"}}",
                 json_string(&map.location(elided.span)),
                 json_string(&body.name),
                 json_string(elided.reason.as_str()),

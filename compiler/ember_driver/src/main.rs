@@ -887,9 +887,42 @@ fn validate_safety_check(check: &serde_json::Value) -> Result<(), String> {
         }
     }
     match object.get("status").and_then(serde_json::Value::as_str) {
-        Some("emitted" | "elided") => Ok(()),
-        Some(status) => Err(format!("unknown safety side-table status `{status}`")),
+        Some("emitted" | "elided") => {}
+        Some(status) => return Err(format!("unknown safety side-table status `{status}`")),
         None => unreachable!("status was checked above"),
+    }
+    let Some(classification) = object
+        .get("classification")
+        .and_then(serde_json::Value::as_str)
+    else {
+        // `classification` was added to schema 1 rather than forcing every
+        // previously-emitted side table through a migration. Its legacy
+        // meaning is inferred at rendering time from `status`.
+        return Ok(());
+    };
+    match classification {
+        "DYNAMIC_PER_ACCESS" | "STATIC_ELIDED" => Ok(()),
+        "DYNAMIC_HOISTED_LOOP" => {
+            for field in ["proof", "loop", "check_site", "protected_interval"] {
+                if object.get(field).and_then(serde_json::Value::as_str).is_none() {
+                    return Err(format!(
+                        "hoisted safety side-table check is missing string field `{field}`"
+                    ));
+                }
+            }
+            if object.get("check_site").and_then(serde_json::Value::as_str) != Some("preheader") {
+                return Err("hoisted safety side-table check must use preheader check_site".to_string());
+            }
+            if object
+                .get("protected_interval")
+                .and_then(serde_json::Value::as_str)
+                != Some("loop")
+            {
+                return Err("hoisted safety side-table check must protect the loop interval".to_string());
+            }
+            Ok(())
+        }
+        other => Err(format!("unknown safety side-table classification `{other}`")),
     }
 }
 
@@ -944,7 +977,44 @@ fn print_safety_report(
             .get("reason")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("<unknown>");
-        println!("    {source}  {function}  {mechanism}  reason: {reason}");
+        let classification = check
+            .get("classification")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| {
+                if check.get("status").and_then(serde_json::Value::as_str) == Some("elided") {
+                    "STATIC_ELIDED"
+                } else {
+                    "DYNAMIC_PER_ACCESS"
+                }
+            });
+        let loop_name = check
+            .get("loop")
+            .and_then(serde_json::Value::as_str);
+        let proof = check
+            .get("proof")
+            .and_then(serde_json::Value::as_str);
+        let check_site = check
+            .get("check_site")
+            .and_then(serde_json::Value::as_str);
+        let interval = check
+            .get("protected_interval")
+            .and_then(serde_json::Value::as_str);
+        print!(
+            "    {source}  {function}  {classification}  {mechanism}  reason: {reason}"
+        );
+        if let Some(loop_name) = loop_name {
+            print!("  loop: {loop_name}");
+        }
+        if let Some(proof) = proof {
+            print!("  proof: {proof}");
+        }
+        if let Some(check_site) = check_site {
+            print!("  check-site: {check_site}");
+        }
+        if let Some(interval) = interval {
+            print!("  interval: {interval}");
+        }
+        println!();
     }
 }
 
@@ -1922,6 +1992,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // MIR proof establishes a unique, unescaped class handle. All other
     // intervals remain explicit runtime checks.
     ember_analysis::elide_static_accesses_all(&mut bodies, &types);
+    // `[EXC-8]`–`[EXC-14]` — after static-elision proofs have removed their
+    // intervals, conservatively turn a canonical stable class loop into one
+    // checked preheader/postheader interval. Unknown loops remain per-access.
+    ember_analysis::hoist_loop_accesses_all(&mut bodies, &types);
     if command == "check" {
         interface_cache
             .commit()

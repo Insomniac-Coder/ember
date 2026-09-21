@@ -3313,6 +3313,7 @@ mod callable_region_metadata_tests {
             class_virtual_slot: None,
             is_abstract: false,
             elided_accesses: Vec::new(),
+            hoisted_accesses: Vec::new(),
         }
     }
 
