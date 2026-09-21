@@ -8352,3 +8352,18 @@ prints `42`, and pins its helper-owned concrete vtable and mutable forwarding
 slot in generated C. The focused run-pass suite passes. This is coverage for
 existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
 composition; no ODR, compiler change, or phase-completion claim changes.
+
+### 0.209 `[TYP-22]` imported generic-enum mutable interface borrows — 2026-09-21
+
+The cross-module generic-enum matrix now also covers borrowed dynamic dispatch
+through `ref mut dyn`. The importer retains `Signal[i32].Ready(7)` locally,
+passes a mutable erased borrow to a helper function, and dispatches `Bump.bump`
+through the helper-owned concrete adapter. This distinguishes temporary dynamic
+view construction from the owned `Box[dyn Bump]` path.
+
+`generic_enum_ref_mut_interface_imported.em` runs in debug, release, and
+shipping, prints `42`, and pins the reused helper-owned concrete vtable and
+mutable forwarding slot in generated C. The focused run-pass suite passes. This
+is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and
+`[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
+phase-completion claim changes.
