@@ -8634,3 +8634,17 @@ the TypeInfo lookup all agree on the concrete type argument.
 release, and shipping while requiring `ember_itable_lookup` in emitted C. This
 is coverage for the `[TYP-16]` and `[OBJ-2]`/`[DSP-3]` composition already
 implemented by 0.225; no ODR, compiler defect, or phase-completion change.
+
+### 0.228 `[IFC-3]` inherited class-interface dispatch — 2026-09-22
+
+Bare class-interface handles now have explicit inherited-interface coverage.
+`Pixel implements Parent, Child` can be passed as `Child`; the generated
+`Child` adapter keeps the required parent-first slot order, and the object's
+TypeInfo publishes that complete table under the `Child` identity. Repeated
+calls through the `Child` parameter reuse the one hidden lookup cache.
+
+`class_interface_handle_inherited.em` dispatches `Parent.parent()` and
+`Child.child()` through one `Child` handle, prints `42` in debug, release, and
+shipping, pins `em_vt_dyn_Child_Pixel`, and requires one emitted
+`ember_itable_lookup`. This is coverage for existing `[IFC-3]`, `[OBJ-2]`, and
+`[DSP-3]` composition, not a defect or ODR.
