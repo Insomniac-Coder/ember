@@ -8447,3 +8447,17 @@ table and forwarding slot in emitted C. The compiler already supported this
 once D-167 materialized generic interface contracts; this is coverage for
 existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
 composition, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.215 `[TYP-22]` borrowed imported generic-interface defaults — 2026-09-21
+
+The same imported generic-interface default is now covered through the
+non-owning carrier. The importer retains `Signal[i32].Ready(7)`, borrows it as
+`ref dyn Answer[i32]`, and calls the default body through the specialized
+adapter. This distinguishes the ordinary borrowed dynamic view from the owned
+`Box[dyn Answer[i32]]` materialization in the preceding checkpoint.
+
+`generic_enum_ref_generic_interface_default_imported.em` runs in debug,
+release, and shipping, prints `42`, and pins the shared concrete `Answer[i32]`
+table and forwarding slot in emitted C. This is coverage for existing
+`[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]` composition, not a
+new defect, ODR, compiler change, or phase-completion claim.
