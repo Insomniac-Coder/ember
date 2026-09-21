@@ -8543,3 +8543,15 @@ not size or erase the receiver's `Self` result.
 `clone`'s by-value `Self` return in debug, release, and shipping. The focused
 full conformance suite passes. This is coverage for existing `[TYP-16]` and
 `[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.222 `[TYP-22]` specialized generic receiver-less methods — 2026-09-21
+
+Generic interface specialization also preserves the requirement for a dynamic
+receiver. `Static[T]` declares `make()` without `self`; forming `ref dyn
+Static[i32]` must report that member rather than inventing an erased receiver
+from the concrete owner argument.
+
+`reject_dyn_generic_interface_without_receiver.em` requires `E2050` naming
+`make`'s missing receiver in debug, release, and shipping. The focused full
+conformance suite passes. This is coverage for existing `[TYP-16]` and
+`[TYP-22]`, not a new defect, ODR, compiler change, or phase-completion claim.
