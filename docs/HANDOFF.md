@@ -7909,3 +7909,39 @@ The implementation is diagnostic-only. It adds no ownership/lifetime mechanism,
 source-language acceptance change, ABI/runtime change, second graph, or hidden
 root-selection state. Phase accounting remains **1 of 9 complete** with Phases
 2 and 3 active.
+
+### 0.185 `[EXC-8]` loop-level dynamic exclusivity — 2026-09-21
+
+Commit `5eab892` implements the smallest executable `[EXC-8]` form without
+weakening ordinary checked semantics. After static-elision analysis, MIR
+recognizes only the canonical counted-loop CFG whose unprojected class receiver
+is unchanged by the header and step. It retains one exact `BeginAccess` in a
+preheader and its matching `EndAccess` in a postheader, so a zero-iteration
+loop starts no access and every entered iteration executes under one internal
+runtime token.
+
+The proof deliberately fails closed. The loop body may prepare only a mutable
+reference to a nominally unrelated class field, then make one direct call. That
+callee must carry valid, finite callable-region metadata and every summarized
+access must be through that exact field-reference argument; virtual, indirect,
+opaque, stale, and mismatched calls remain `DYNAMIC_PER_ACCESS`. A copied or
+published receiver, a changing loop identity, self/related-class field, richer
+body shape, or alternative CFG entry also remains dynamic. This is the
+compiler-internal `[EXC-11]` token, not an Ember value or ABI addition.
+
+`HoistedAccess` metadata is verified before code generation and produces one
+`DYNAMIC_HOISTED_LOOP` safety record with the source loop, proof,
+`check_site: preheader`, and `protected_interval: loop`. Every non-hoisted
+runtime access is explicitly reported as `DYNAMIC_PER_ACCESS`; static elisions
+remain `STATIC_ELIDED`. The five `[EXC-13]` conformance shapes cover stable and
+invariant-local receivers (one check) plus escaping, virtual, and distinct
+receivers (per-access checks). The driver also inspects generated C and safety
+metadata in debug, release, and shipping (`a79b8b7`), ensuring the optimizer
+does not introduce a shipping-only bypass under `[EXC-14]`.
+
+The focused MIR/driver tests and `cargo test --workspace --locked` pass. This
+is an implementation of an already-defined optimization, not an ODR or a
+compiler defect: the frozen 0.9.8_Hardened_2 `[EXC-8]`–`[EXC-14]` rules supply
+the semantics. Nested-token reuse is explicitly optional under `[EXC-10]` and
+is not claimed by this conservative first form. Phase accounting remains **1
+of 9 complete** with Phases 2 and 3 active.

@@ -453,16 +453,24 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
             .join("accept_stable_class_receiver_loop.c");
         let c = std::fs::read_to_string(&c_path)
             .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
-        let main_start = c.find("void em_main(void)").expect("main is emitted");
-        let bump_start = c.rfind("void em_Counter_bump(").expect("method is emitted");
+        let main_symbol = ember_branding::mangled("main");
+        let bump_symbol = ember_branding::mangled("Counter_bump");
+        let main_start = c
+            .find(&format!("void {main_symbol}(void)"))
+            .expect("main is emitted");
+        let bump_start = c
+            .rfind(&format!("void {bump_symbol}("))
+            .expect("method is emitted");
         let main_c = &c[main_start..bump_start];
+        let begin_write = ember_branding::runtime("access_begin_write");
+        let end_write = ember_branding::runtime("access_end_write");
         assert_eq!(
-            main_c.matches("ember_access_begin_write").count(),
+            main_c.matches(&begin_write).count(),
             1,
             "{profile} main must have one preheader write check:\n{main_c}"
         );
         assert_eq!(
-            main_c.matches("ember_access_end_write").count(),
+            main_c.matches(&end_write).count(),
             1,
             "{profile} main must have one postheader write release:\n{main_c}"
         );
