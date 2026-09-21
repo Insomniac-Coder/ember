@@ -8431,3 +8431,19 @@ red imported `Signal[T] implements Inspect[T], Child[T]` probe now forms
 slots in the specialized table in debug, release, and shipping, and pins that
 table in emitted C. D-167 records the defect and its closure; no ODR, specification, or phase
 completion claim changes.
+
+### 0.214 `[TYP-16]` imported generic-interface defaults — 2026-09-21
+
+The generic-interface materialization path now has a direct imported default-
+body regression. The helper exposes `Answer[T]` with an `answer(self, value: T)`
+default and `Signal[T] implements Answer[T]` without a handwritten method. The
+importer materializes `Signal[i32]` as `Box[dyn Answer[i32]]`, so both the
+interface owner parameter and default-method argument must reach the concrete
+adapter signature.
+
+`generic_enum_generic_interface_default_imported.em` runs in debug, release,
+and shipping, prints `42`, and pins the helper-owned concrete `Answer[i32]`
+table and forwarding slot in emitted C. The compiler already supported this
+once D-167 materialized generic interface contracts; this is coverage for
+existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
+composition, not a new defect, ODR, compiler change, or phase-completion claim.
