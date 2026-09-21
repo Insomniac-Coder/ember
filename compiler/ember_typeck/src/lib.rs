@@ -14599,6 +14599,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         kind: ExprKind::Deref(Box::new(borrowed)),
                         span: recv.span,
                     };
+                } else if matches!(self.types.kind(receiver.ty), TyKind::ClassInterface(_)) {
+                    // `[OBJ-2]` keeps this carrier as an owning class handle,
+                    // but `mut self` still needs the ordinary mutable-place
+                    // validation.  Preserve that borrow in HIR so lowering
+                    // can protect a containing class field; the one-word ABI
+                    // is recovered at the dynamic-call boundary.
+                    receiver = self.pass_receiver(receiver, receiver_mode, recv.span);
                 } else if !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. }) {
                     self.error(
                         codes::E2140,

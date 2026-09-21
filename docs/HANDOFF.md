@@ -8648,3 +8648,22 @@ calls through the `Child` parameter reuse the one hidden lookup cache.
 shipping, pins `em_vt_dyn_Child_Pixel`, and requires one emitted
 `ember_itable_lookup`. This is coverage for existing `[IFC-3]`, `[OBJ-2]`, and
 `[DSP-3]` composition, not a defect or ODR.
+
+### 0.229 `[OBJ-2]`/`[DSP-3]` mutable class-interface handles — 2026-09-22
+
+A `mut self` interface method now accepts the frozen one-word class-interface
+handle form. Type checking forms the ordinary mutable receiver borrow, so a
+borrowed parameter is still rejected and a class-valued field retains its
+containing-object access boundary. MIR carries that borrow through the dynamic
+call only for the access analysis; C emission unwraps it at the last moment so
+the TypeInfo lookup and adapter still receive exactly one object pointer. The
+concrete class method continues to own the object access interval.
+
+`class_interface_handle_mut.em` stores `Counter` as `Accumulator`, mutates it
+through `Accumulator.bump()`, and prints `42` in debug, release, and shipping.
+It pins the itable lookup and concrete begin/end access calls in generated C.
+Its `class_interface_handle_mut_borrowed.em` companion preserves the `E3023`
+rejection through a borrowed parameter in every profile. The focused
+all-profile programs, full run-pass corpus, conformance suite, UI snapshots,
+and full workspace pass. This closes a compiler gap in existing `[OBJ-2]`,
+`[DSP-3]`, and `[EXC-1]` semantics; no ODR was needed.

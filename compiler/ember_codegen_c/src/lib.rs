@@ -2822,6 +2822,21 @@ impl Emitter<'_> {
                 let table = ember_branding::vtable(&format!("dyn_{table_identity}"));
                 let call_args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
                 if *class_handle {
+                    // A mutable one-word class-interface receiver reaches this
+                    // boundary as `ref mut I` so ordinary mutable-place and
+                    // containing-object access checks stay visible in MIR.
+                    // The table ABI remains one object pointer, however, so
+                    // peel that compiler-internal reference before lookup or
+                    // adapter dispatch.
+                    let receiver = match args.first() {
+                        Some(Operand::Copy(place) | Operand::Move(place))
+                            if matches!(
+                                self.types.kind(self.place_ty(place, body)),
+                                TyKind::Ref { inner, .. }
+                                    if matches!(self.types.kind(*inner), TyKind::ClassInterface(_))
+                            ) => format!("*({receiver})"),
+                        _ => receiver.clone(),
+                    };
                     let call_args = if call_args.is_empty() {
                         receiver.clone()
                     } else {

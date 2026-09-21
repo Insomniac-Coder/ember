@@ -1773,12 +1773,32 @@ impl<'a> Builder<'a> {
                 // The fat pointer itself is a borrowed, two-word value. The
                 // receiver mode has already been validated against `ref dyn`
                 // by type checking, so no second reference is formed here.
-                let mut lowered_args = vec![self.lower_operand_borrowed(receiver)];
+                // `[OBJ-2]` class-interface handles use their normal mutable
+                // receiver borrow here. This retains the containing-object
+                // access interval for a field receiver while direct handles
+                // continue to rely on the concrete method's own access
+                // interval, exactly like an ordinary class method call.
+                let class_handle_receiver = match self.types.kind(receiver.ty) {
+                    TyKind::ClassInterface(_) => true,
+                    TyKind::Ref { inner, .. } => {
+                        matches!(self.types.kind(*inner), TyKind::ClassInterface(_))
+                    }
+                    _ => false,
+                };
+                let (lowered_receiver, receiver_access) = if class_handle_receiver {
+                    self.lower_mut_argument_with_access(receiver)
+                } else {
+                    (self.lower_operand_borrowed(receiver), None)
+                };
+                let mut lowered_args = vec![lowered_receiver];
                 let order = arg_eval_order
                     .clone()
                     .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
                 let mut explicit: Vec<Option<Operand>> = (0..args.len()).map(|_| None).collect();
                 let mut class_accesses = Vec::new();
+                if let Some(access) = receiver_access {
+                    class_accesses.push(access);
+                }
                 for index in order {
                     let Some(arg) = args.get(index) else { continue };
                     let operand = match modes.get(index).copied() {
@@ -1812,7 +1832,7 @@ impl<'a> Builder<'a> {
                         params,
                         ret: expr.ty,
                         layout: layout.clone(),
-                        class_handle: matches!(self.types.kind(receiver.ty), TyKind::ClassInterface(_)),
+                        class_handle: class_handle_receiver,
                     },
                     args: lowered_args,
                     dest: place,
