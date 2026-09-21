@@ -8461,3 +8461,17 @@ release, and shipping, prints `42`, and pins the shared concrete `Answer[i32]`
 table and forwarding slot in emitted C. This is coverage for existing
 `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]` composition, not a
 new defect, ODR, compiler change, or phase-completion claim.
+
+### 0.216 `[TYP-22]` mutable borrowed imported generic-interface defaults — 2026-09-21
+
+The receiver-mode matrix now covers a generic interface default with a mutable
+erased borrow. The helper declares `Bump[T].bump(mut self, value: T)` as its
+default and `Signal[T] implements Bump[T]` without a handwritten method. The
+importer retains `Signal[i32]`, converts it to `ref mut dyn Bump[i32]`, and
+dispatches the concrete default adapter through the mutable slot.
+
+`generic_enum_mut_generic_interface_default_imported.em` runs in debug,
+release, and shipping, prints `42`, and pins the concrete `Bump[i32]` table and
+its mutable forwarding slot in emitted C. This is coverage for existing
+`[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]` composition, not a
+new defect, ODR, compiler change, or phase-completion claim.
