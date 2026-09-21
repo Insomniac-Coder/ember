@@ -8155,3 +8155,21 @@ cross-module generic-enum callable metadata, and generic-enum dynamic adapter
 coverage remain separate work. The frozen grammar and `[TYP-16]` already define
 this materialization behavior, so this is not an ODR. Phase accounting remains
 **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.196 `[TYP-22]` generic enum dynamic-box coverage — 2026-09-21
+
+The materialized generic-enum path now has direct all-profile dynamic-dispatch
+evidence. `Signal[Token] implements Render` crosses into `Box[dyn Render]`,
+calls its concrete erased table slot, and uses the table's ordinary
+active-variant drop glue before the box is freed. The `Token` payload prints
+once after dispatch, proving this is the owned non-Copy route rather than a
+bitwise-copy test.
+
+`accept_dyn_interface_box_generic_enum.em` emits the concrete
+`Signal_Token` layout, vtable, drop slot, forwarding slot, and ordinary
+`ember_box_new_copy` allocation. It prints `42` and `7` in debug, release, and
+shipping; the full conformance suite passes. This covers the existing generic
+materialization plus `[TYP-22]` adapter contract, not a new language decision
+or an ODR. Cross-module generic-enum dynamic-table materialization remains a
+separate interface-artifact task. Phase accounting remains **1 of 9 complete**
+with Phases 2 and 3 active.
