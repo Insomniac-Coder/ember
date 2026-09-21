@@ -7945,3 +7945,29 @@ compiler defect: the frozen 0.9.8_Hardened_2 `[EXC-8]`–`[EXC-14]` rules supply
 the semantics. Nested-token reuse is explicitly optional under `[EXC-10]` and
 is not claimed by this conservative first form. Phase accounting remains **1
 of 9 complete** with Phases 2 and 3 active.
+
+### 0.186 `[OWN-8]` enum `@derive(Clone)` — 2026-09-21
+
+`@derive(Clone)` now applies to direct enum declarations as well as structs and
+classes. The type collector registers `Entry.clone(self) -> Entry` only after
+every payload is either `Copy` or has a resolved `Clone` method; it also records
+the ordinary `Clone` interface implementation, so an enum works through a
+`T: Clone` generic boundary. A first non-cloneable payload is diagnosed as
+`E2040`, using the enum-specific `payload` wording and its declaration span.
+
+The generated body switches on the enum tag, rebuilds the selected variant,
+copies `Copy` payloads, and calls `clone` for all other payloads. A
+compiler-internal HIR enum-payload projection preserves the receiver path to
+MIR: it passes a non-`Copy` payload to `clone` in borrowed mode instead of
+pattern-binding it. This matters because a pattern binding would lower as a
+move from the generated method's borrowed `self` parameter, which `[FN-1]` /
+`[EXP-6]` correctly reject. The projection is not source syntax or an ABI
+addition.
+
+`accept_derived_enum_clone.em` proves recursive payload cloning, the generated
+`Clone` implementation, and the `T: Clone` route in all three profiles; its
+emitted-C assertion confirms the payload clone call. The companion rejection
+case pins `E2040` for an enum payload lacking `Clone`. The exact full
+conformance suite passes in debug, release, and shipping. This implements the
+already-defined `[OWN-8]` field-wise derive rule; it is not an ODR or a compiler
+defect. Phase accounting remains **1 of 9 complete** with Phases 2 and 3 active.
