@@ -8263,3 +8263,17 @@ The focused run-pass suite passes in debug, release, and shipping. This is
 coverage for the defined `[TYP-16]`, `[TYP-17]`, `[TYP-20]`, `[IFC-1]`, and
 `[MOD-1]`--`[MOD-3]` composition, not an ODR or compiler change. Phase
 accounting remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.203 `[OWN-8]` imported generic-enum non-Copy cloning — 2026-09-21
+
+The public generic-enum `Clone` path now has a non-Copy cross-module proof.
+The helper declares a move-only `Token` with its own derived clone and
+`Entry[T]` with a derived clone. An importer constructs `Entry[Token]`, clones
+it, and matches the clone. Generated-C assertions require both the concrete
+`Entry[Token]` clone body and its call to the helper-owned `Token.clone` body,
+ruling out an accidental bitwise-copy implementation.
+
+The focused and full workspace suites pass. This is coverage for existing
+`[OWN-8]`, `[TYP-16]`, `[ENM-1]`, and `[MOD-1]`--`[MOD-3]` behavior; it is not
+an ODR, compiler change, or phase-completion claim. Phase accounting remains
+**1 of 9 complete** with Phases 2 and 3 active.
