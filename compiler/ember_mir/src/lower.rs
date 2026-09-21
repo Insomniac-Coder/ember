@@ -4710,6 +4710,19 @@ impl<'a> Builder<'a> {
                         layout: layout.clone(),
                         implementations,
                     },
+                    TyKind::Ref { inner, .. }
+                        if matches!(self.types.kind(*inner), TyKind::ClassInterface(_)) =>
+                    {
+                        let TyKind::ClassInterface(interface) = self.types.kind(*inner) else {
+                            unreachable!("class-interface receiver was checked above");
+                        };
+                        CastKind::ClassInterfaceUpcast {
+                            concrete: *concrete,
+                            interface: *interface,
+                            layout: layout.clone(),
+                            implementations,
+                        }
+                    }
                     _ => CastKind::InterfaceUpcast {
                         concrete: *concrete,
                         interfaces: interfaces.clone(),

@@ -4074,6 +4074,7 @@ impl<'a> Checker<'a> {
             TyKind::ClassInterface(interface) => vec![interface],
             TyKind::Ref { inner, .. } => match self.types.kind(inner).clone() {
                 TyKind::Dyn { interfaces } => interfaces,
+                TyKind::ClassInterface(interface) => vec![interface],
                 _ => return None,
             },
             _ => match self.box_inner(receiver_ty).and_then(|inner| match self.types.kind(inner).clone() {
@@ -18972,6 +18973,51 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.emit_mut_argument_place_error(arg.span);
             }
             return view;
+        }
+        // `[OBJ-2]` — a `mut I` parameter borrows the concrete class-handle
+        // place before erasing it to the one-word interface view. Coercing the
+        // handle first would create a value and incorrectly reject the call as
+        // a non-place, even though the eventual C ABI is just a pointer to the
+        // caller's original handle storage.
+        let source = self.synth_committed(arg);
+        let class_interface = match (self.types.kind(source.ty), self.types.kind(param_ty)) {
+            (TyKind::Class(_), TyKind::ClassInterface(interface)) => Some(*interface),
+            _ => None,
+        };
+        if let Some(interface) = class_interface
+            && let Some(implementations) = self.dyn_concrete_adapter(source.ty, &[interface])
+        {
+            self.reject_readonly_write_in_mut_argument(&source, arg.span);
+            let through_shared_ref = self.reject_write_through_shared_ref(&source, arg.span);
+            if !through_shared_ref {
+                self.reject_borrowed_parameter_write(&source, arg.span, false);
+            }
+            if !is_place(&source.kind) && source.ty != self.common.error {
+                self.emit_mut_argument_place_error(arg.span);
+                return source;
+            }
+            let concrete = source.ty;
+            let source_span = source.span;
+            let borrowed_ty = self.types.intern(TyKind::Ref { mutable: true, inner: concrete });
+            let borrowed = Expr {
+                ty: borrowed_ty,
+                kind: ExprKind::Ref { place: Box::new(source), mutable: true },
+                span: source_span,
+            };
+            let interfaces = vec![interface];
+            let layout = self.dyn_vtable_layout(&interfaces);
+            let ty = self.mut_param_ty(param_ty);
+            return Expr {
+                ty,
+                kind: ExprKind::InterfaceUpcast {
+                    concrete,
+                    interfaces,
+                    layout,
+                    implementations,
+                    expr: Box::new(borrowed),
+                },
+                span: source_span,
+            };
         }
         let place = self.check_expr(arg, param_ty);
         // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`

@@ -8667,3 +8667,19 @@ rejection through a borrowed parameter in every profile. The focused
 all-profile programs, full run-pass corpus, conformance suite, UI snapshots,
 and full workspace pass. This closes a compiler gap in existing `[OBJ-2]`,
 `[DSP-3]`, and `[EXC-1]` semantics; no ODR was needed.
+
+### 0.230 `[FN-1]` mutable class-interface parameters — 2026-09-22
+
+`mut value: I` now borrows an implementing class handle before erasing that
+borrow to `ref mut I`. The previous order erased the class to a value first,
+which made the normal mutable-place check reject an otherwise valid call.
+The HIR retains the checked adapter/layout facts; MIR verifies the borrowed
+class-interface cast independently; generated C receives a pointer to the
+caller's handle storage, while the dispatch slot still receives one object
+pointer. No retain, payload allocation, or fat carrier is introduced.
+
+`class_interface_handle_mut_param.em` passes `Counter` to `mut value:
+Accumulator`, dynamically calls `bump`, and prints `42` in every profile. Its
+generated-C assertions pin the itable lookup, concrete access interval, and
+absence of retain. This closes a compiler gap in existing `[FN-1]`, `[OBJ-2]`,
+`[DSP-3]`, and `[EXC-1]` semantics; no ODR was needed.

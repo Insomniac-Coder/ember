@@ -1100,11 +1100,32 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
                         continue;
                     }
                 };
-                if source != *concrete || !matches!(types.kind(source), TyKind::Class(_)) {
+                let source_concrete = match types.kind(source) {
+                    TyKind::Class(_) => Some(source),
+                    TyKind::Ref { mutable: true, inner }
+                        if matches!(types.kind(*inner), TyKind::Class(_)) =>
+                    {
+                        Some(*inner)
+                    }
+                    _ => None,
+                };
+                if source_concrete != Some(*concrete) {
                     fail(format!("{at} concrete metadata disagrees with its class source"));
                     continue;
                 }
-                if !matches!(types.kind(destination), TyKind::ClassInterface(target) if target == interface) {
+                let target_interface = match types.kind(destination) {
+                    TyKind::ClassInterface(target) => Some(*target),
+                    TyKind::Ref { mutable: true, inner }
+                        if matches!(types.kind(*inner), TyKind::ClassInterface(_)) =>
+                    {
+                        let TyKind::ClassInterface(target) = types.kind(*inner) else {
+                            unreachable!("class-interface target was checked above");
+                        };
+                        Some(*target)
+                    }
+                    _ => None,
+                };
+                if target_interface != Some(*interface) {
                     fail(format!("{at} interface metadata disagrees with its target type"));
                     continue;
                 }
