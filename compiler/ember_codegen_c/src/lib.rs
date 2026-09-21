@@ -2153,14 +2153,21 @@ impl Emitter<'_> {
 
         // `[DSP-3]` — a repeated call through an unchanged class-interface
         // parameter reads one TypeInfo entry at function entry and carries its
-        // opaque table pointer in a hidden C local. Parameters are initialized
-        // for every control-flow path and cannot be rebound, so this is a
-        // sound first caching boundary without speculative CFG assumptions.
+        // opaque table pointer in a hidden C local. This includes a `mut I`
+        // parameter: its reborrow is a temporary, but the parameter's handle
+        // storage is the stable lookup source on every entry path.
         for (key, cache) in self.interface_caches.clone() {
+            let receiver = match self.types.kind(body.locals[key.local].ty) {
+                TyKind::Ref { inner, .. }
+                    if matches!(self.types.kind(*inner), TyKind::ClassInterface(_)) =>
+                {
+                    format!("(*_{})", key.local)
+                }
+                _ => format!("_{}", key.local),
+            };
             self.line(&format!(
-                "    const void* {cache} = {}(((const {RT}obj_header*)_{})->ti, &{});",
+                "    const void* {cache} = {}(((const {RT}obj_header*){receiver})->ti, &{});",
                 ember_branding::runtime("itable_lookup"),
-                key.local,
                 interface_id_symbol(&key.interface),
             ));
         }
@@ -2842,7 +2849,7 @@ impl Emitter<'_> {
                     } else {
                         format!("{receiver}, {call_args}")
                     };
-                    let table_pointer = self.interface_cache_for_call(func, args).unwrap_or_else(|| {
+                    let table_pointer = self.interface_cache_for_call(func, args, body).unwrap_or_else(|| {
                         format!(
                             "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
                             ember_branding::runtime("itable_lookup"),
@@ -3354,22 +3361,20 @@ impl Emitter<'_> {
     }
 
     /// Return the hidden table local for a repeated class-interface call.
-    /// Only an unprojected copied parameter qualifies; other receivers keep
-    /// the direct lookup so a later reassignment or projection cannot leave a
-    /// stale concrete table behind.
-    fn interface_cache_for_call(&self, func: &FuncRef, args: &[Operand]) -> Option<String> {
+    /// An unprojected class-interface parameter qualifies directly; `mut I`
+    /// qualifies through its compiler-generated reborrow. Other receivers keep
+    /// the direct lookup so a projection cannot leave a stale table behind.
+    fn interface_cache_for_call(&self, func: &FuncRef, args: &[Operand], body: &Body) -> Option<String> {
         let FuncRef::Interface { interface, class_handle: true, .. } = func else {
             return None;
         };
         let Operand::Copy(place) = args.first()? else {
             return None;
         };
-        if !place.projection.is_empty() {
-            return None;
-        }
+        let local = interface_cache_parameter_root(body, place)?;
         self.interface_caches
             .get(&InterfaceCacheKey {
-                local: place.local.0 as usize,
+                local,
                 interface: interface.to_string(),
             })
             .cloned()
@@ -4042,11 +4047,48 @@ fn c_name(name: &str) -> String {
     ember_branding::mangled(name)
 }
 
+/// The parameter which supplies one stable class-interface handle to this
+/// receiver. A direct parameter is already the handle. A `mut I` parameter is
+/// reborrowed as a short-lived MIR local of the form `&mut (*arg)` before each
+/// call, so recover its original argument storage for the shared cache key.
+fn interface_cache_parameter_root(body: &Body, receiver: &Place) -> Option<usize> {
+    if !receiver.projection.is_empty() {
+        return None;
+    }
+    let local = receiver.local.0 as usize;
+    if body.locals.get(local).is_some_and(|decl| decl.kind == LocalKind::Arg) {
+        return Some(local);
+    }
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            let StmtKind::Assign {
+                place,
+                rvalue: Rvalue::Ref { place: source, mutable: true },
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if !place.projection.is_empty() || place.local.0 as usize != local {
+                continue;
+            }
+            if !matches!(source.projection.as_slice(), [Projection::Deref]) {
+                continue;
+            }
+            let root = source.local.0 as usize;
+            if body.locals.get(root).is_some_and(|decl| decl.kind == LocalKind::Arg) {
+                return Some(root);
+            }
+        }
+    }
+    None
+}
+
 /// `[DSP-3]` — cache a TypeInfo lookup when the same interface parameter is
-/// dispatched more than once. Restricting this first cache to function
-/// parameters is intentional: they are initialized before every entry path
-/// and cannot be rebound, so the hoisted table is valid without a control-flow
-/// proof or invalidation protocol for ordinary locals.
+/// dispatched more than once. Restricting this cache to function parameters is
+/// intentional: they are initialized before every entry path; `mut I` uses
+/// only the compiler-created reborrow of that same parameter. Ordinary locals
+/// and projections remain direct lookups until they have an equally explicit
+/// control-flow and invalidation proof.
 fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
     let mut counts = BTreeMap::<InterfaceCacheKey, usize>::new();
     for block in &body.blocks {
@@ -4064,17 +4106,10 @@ fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
             continue;
         };
         let Some(Operand::Copy(place)) = args.first() else { continue };
-        if !place.projection.is_empty()
-            || body
-                .locals
-                .get(place.local.0 as usize)
-                .is_none_or(|decl| decl.kind != LocalKind::Arg)
-        {
-            continue;
-        }
+        let Some(local) = interface_cache_parameter_root(body, place) else { continue };
         *counts
             .entry(InterfaceCacheKey {
-                local: place.local.0 as usize,
+                local,
                 interface: interface.to_string(),
             })
             .or_default() += 1;

@@ -8683,3 +8683,19 @@ Accumulator`, dynamically calls `bump`, and prints `42` in every profile. Its
 generated-C assertions pin the itable lookup, concrete access interval, and
 absence of retain. This closes a compiler gap in existing `[FN-1]`, `[OBJ-2]`,
 `[DSP-3]`, and `[EXC-1]` semantics; no ODR was needed.
+
+### 0.231 `[DSP-3]` mutable class-interface parameter caching — 2026-09-22
+
+The required repeated-handle lookup cache now includes `mut I` parameters.
+Each dynamic call uses a short-lived reborrow of the inout parameter, but the
+C backend identifies that exact `&mut (*arg)` MIR shape and keys the cache on
+the original parameter storage. The one hoisted lookup therefore uses the
+object pointer held by that parameter, while each dispatch still passes its
+ordinary reborrow to the adapter. Arbitrary locals and projections remain
+direct lookups; they have no equivalent invalidation proof.
+
+`class_interface_handle_mut_param_cache.em` calls `bump` twice through one
+`mut Accumulator` parameter, prints `42` in every profile, and requires
+exactly one `ember_itable_lookup` in generated C. This completes the same
+existing `[DSP-3]` caching requirement for the mutable-parameter form; no ODR
+or new semantics were introduced.
