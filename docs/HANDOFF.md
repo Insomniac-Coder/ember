@@ -8621,3 +8621,16 @@ conformance suite, UI snapshots, and generated-C warning gate pass. This
 completes the repeated-parameter caching requirement in `[DSP-3]`; extending
 the optimization to mutable ordinary locals is optional future work, not an
 ODR or a remaining semantic gap.
+
+### 0.227 `[TYP-16]` generic class-interface handles — 2026-09-22
+
+The one-word class-interface boundary now has direct generic coverage.
+`Project[i32]` materializes its specialized interface contract before `Pixel[i32]`
+is erased to the class-handle view, so method signatures, adapter identity, and
+the TypeInfo lookup all agree on the concrete type argument.
+
+`generic_class_interface_handle.em` constructs `Pixel[i32](42)`, passes it as
+`Project[i32]`, dynamically dispatches `project()`, and prints `42` in debug,
+release, and shipping while requiring `ember_itable_lookup` in emitted C. This
+is coverage for the `[TYP-16]` and `[OBJ-2]`/`[DSP-3]` composition already
+implemented by 0.225; no ODR, compiler defect, or phase-completion change.
