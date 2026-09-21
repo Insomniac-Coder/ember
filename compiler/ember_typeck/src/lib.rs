@@ -318,6 +318,9 @@ struct GenericStruct {
 #[derive(Clone)]
 struct GenericEnum {
     params: Vec<Symbol>,
+    /// Owner bounds are part of every public member's declaration contract,
+    /// ahead of the method's own binders.
+    generic_params: Vec<GenericParam>,
     variants: Vec<VariantDef>,
     repr: Ty,
     repr_is_explicit: bool,
@@ -1573,45 +1576,35 @@ impl<'a> Checker<'a> {
                         let Some(generic) = self.generic_structs.get(&qualified) else {
                             continue;
                         };
-                        let owner = canonical_generic_owner(qualified, generic.params.len());
-                        for method in &generic.methods {
-                            let Some(member) = decl.members.get(method.source.2) else {
-                                continue;
-                            };
-                            if member.vis.kind == ast::VisKind::Private {
-                                continue;
-                            }
-                            let ast::MemberKind::Fn(source) = &member.kind else {
-                                continue;
-                            };
-                            let mut parameters = Vec::with_capacity(
-                                method.params.len() + usize::from(method.receiver.is_some()),
-                            );
-                            if let Some(mode) = method.receiver {
-                                parameters.push(CallableDeclarationParameter {
-                                    mode,
-                                    ty: CallableDeclarationType::Canonical(owner.clone()),
-                                });
-                            }
-                            parameters.extend(method.params.iter().map(|(_, ty, mode, _)| {
-                                CallableDeclarationParameter {
-                                    mode: *mode,
-                                    ty: CallableDeclarationType::Resolved(*ty),
-                                }
-                            }));
-                            let mut generics = generic.generic_params.clone();
-                            generics.extend(method.generics.clone());
-                            declarations.push(self.callable_declaration(
-                                method.span,
-                                member_declaration_symbol(&format!("generic:{qualified}"), method.name),
-                                parameters,
-                                method.ret,
-                                method.borrows.clone(),
-                                &generics,
-                                source.is_unsafe,
-                                source.abi.clone(),
-                            ));
-                        }
+                        self.extend_generic_member_declarations(
+                            &mut declarations,
+                            qualified,
+                            &generic.generic_params,
+                            generic.params.len(),
+                            &generic.methods,
+                            &decl.members,
+                        );
+                    }
+                    ast::ItemKind::Enum(decl)
+                        if !decl.generics.is_empty()
+                            && item.vis.kind != ast::VisKind::Private =>
+                    {
+                        let qualified = if prefix.is_empty() {
+                            decl.name.name
+                        } else {
+                            Symbol::intern(&format!("{prefix}.{}", decl.name.name))
+                        };
+                        let Some(generic) = self.generic_enums.get(&qualified) else {
+                            continue;
+                        };
+                        self.extend_generic_member_declarations(
+                            &mut declarations,
+                            qualified,
+                            &generic.generic_params,
+                            generic.params.len(),
+                            &generic.methods,
+                            &decl.members,
+                        );
                     }
                     _ => {}
                 }
@@ -1619,6 +1612,58 @@ impl<'a> Checker<'a> {
         }
         declarations.sort_by(|left, right| left.symbol.cmp(&right.symbol));
         declarations
+    }
+
+    /// Public generic-owner members are declaration-only interface entries:
+    /// their source owner, not any concrete instance, supplies the receiver
+    /// identity and binder ordering.
+    fn extend_generic_member_declarations(
+        &self,
+        declarations: &mut Vec<CallableDeclaration>,
+        qualified: Symbol,
+        generic_params: &[GenericParam],
+        owner_param_count: usize,
+        methods: &[GenericMethod],
+        members: &[ast::Member],
+    ) {
+        let owner = canonical_generic_owner(qualified, owner_param_count);
+        for method in methods {
+            let Some(member) = members.get(method.source.2) else {
+                continue;
+            };
+            if member.vis.kind == ast::VisKind::Private {
+                continue;
+            }
+            let ast::MemberKind::Fn(source) = &member.kind else {
+                continue;
+            };
+            let mut parameters =
+                Vec::with_capacity(method.params.len() + usize::from(method.receiver.is_some()));
+            if let Some(mode) = method.receiver {
+                parameters.push(CallableDeclarationParameter {
+                    mode,
+                    ty: CallableDeclarationType::Canonical(owner.clone()),
+                });
+            }
+            parameters.extend(method.params.iter().map(|(_, ty, mode, _)| {
+                CallableDeclarationParameter {
+                    mode: *mode,
+                    ty: CallableDeclarationType::Resolved(*ty),
+                }
+            }));
+            let mut generics = generic_params.to_vec();
+            generics.extend(method.generics.clone());
+            declarations.push(self.callable_declaration(
+                method.span,
+                member_declaration_symbol(&format!("generic:{qualified}"), method.name),
+                parameters,
+                method.ret,
+                method.borrows.clone(),
+                &generics,
+                source.is_unsafe,
+                source.abi.clone(),
+            ));
+        }
     }
 
     fn signature_parameters(&self, signature: &Signature) -> Vec<CallableDeclarationParameter> {
@@ -2331,6 +2376,7 @@ impl<'a> Checker<'a> {
                 name,
                 GenericEnum {
                     params,
+                    generic_params,
                     variants,
                     repr,
                     repr_is_explicit,

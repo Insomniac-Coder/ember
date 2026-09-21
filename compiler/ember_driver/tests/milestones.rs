@@ -1945,6 +1945,87 @@ fn visible_member_declarations_preserve_generic_owner_interface_identity() {
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// `[TYP-16]` / `[MOD-2]` / `[BLD-2]` — a public generic-enum member is a
+/// source declaration even when no concrete enum instantiation is emitted.
+#[test]
+fn visible_generic_enum_member_declarations_invalidate_importers() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-generic-enum-interface-{}",
+        std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create generic-enum interface package");
+    std::fs::write(
+        test_root.join(&helper),
+        "from std.core import Eq\n\npub enum Message[T: Eq]:\n    Value(value: T)\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n",
+    )
+    .expect("write initial generic-enum helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import Message\n\nfn main():\n    println(1)\n",
+    )
+    .expect("write generic-enum importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for generic-enum interfaces");
+        assert!(
+            output.status.success(),
+            "{label} generic-enum interface check failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    check("initial");
+    let before_helper = cached_interface(&out_dir, "helper");
+    let before_root = cached_interface(&out_dir, "root");
+    let message = before_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.metadata.is_none()
+                && contract.signature.parameters.first().is_some_and(|parameter| {
+                    parameter.ty == "helper.Message[$P0]"
+                        && parameter.mode == CallableParameterMode::Borrow
+                })
+        })
+        .expect("generic-enum member declaration is serialized");
+    assert_eq!(message.signature.generics.len(), 2);
+    let initial_owner_bounds = message.signature.generics[0].bounds.clone();
+    assert_eq!(initial_owner_bounds, message.signature.generics[1].bounds);
+
+    std::fs::write(
+        test_root.join(&helper),
+        "from std.core import Eq\nfrom std.collections import Hash\n\npub enum Message[T: Hash]:\n    Value(value: T)\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n",
+    )
+    .expect("change generic-enum owner bound");
+    check("after generic-enum owner bound change");
+    let after_helper = cached_interface(&out_dir, "helper");
+    let after_root = cached_interface(&out_dir, "root");
+    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(before_root.cache_key, after_root.cache_key);
+    let message = after_helper
+        .callables
+        .values()
+        .find(|contract| {
+            contract.signature.parameters.first().is_some_and(|parameter| {
+                parameter.ty == "helper.Message[$P0]"
+                    && parameter.mode == CallableParameterMode::Borrow
+            })
+        })
+        .expect("changed generic-enum declaration remains serialized");
+    assert_ne!(initial_owner_bounds, message.signature.generics[0].bounds);
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 fn cached_interface(out_dir: &Path, module: &str) -> ModuleInterfaceArtifact {
     let directory = out_dir.join("debug").join("interface");
     for package in std::fs::read_dir(&directory).expect("interface cache has a package directory") {
