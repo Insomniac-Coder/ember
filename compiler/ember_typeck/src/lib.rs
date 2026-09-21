@@ -9443,10 +9443,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let def = self.types.enum_def(id);
         match path {
             [variant] => def.variant(variant.name).map(|(i, _)| (id, i)),
-            [enum_name, variant]
-                if def.name == enum_name.name
-                    || def.origin.as_ref().is_some_and(|(name, _)| *name == enum_name.name) =>
-            {
+            [enum_name, variant] => {
+                let resolved = self.resolve_name(enum_name.name);
+                if def.name != enum_name.name
+                    && def.name != resolved
+                    && !def.origin.as_ref().is_some_and(|(name, _)| {
+                        *name == enum_name.name || *name == resolved
+                    })
+                {
+                    return None;
+                }
                 def.variant(variant.name).map(|(i, _)| (id, i))
             }
             _ => None,
