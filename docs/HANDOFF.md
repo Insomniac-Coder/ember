@@ -8294,3 +8294,17 @@ with `E9010`; a companion test accepts the `l3014`, `unused`,
 `potential_cycle`, and `large_copy` key forms. This closes `LNT-CFG-1` without
 changing lint severity policy, the specification, an ADR, or an ODR. Phase
 accounting remains **1 of 9 complete** with Phases 2 and 3 active.
+
+### 0.205 `[TYP-22]` imported generic-enum interface defaults — 2026-09-21
+
+The cross-module generic-enum matrix now covers a public generic enum whose
+public interface supplies the only dispatchable method body. `Signal[i32]`
+implements `Answer` in its declaring module without restating `Answer.answer`;
+the importer moves `Signal[i32].Ready(7)` into `Box[dyn Answer]` and reaches
+the interface default through the helper-owned concrete adapter.
+
+`generic_enum_interface_default_imported.em` runs in debug, release, and
+shipping, prints `42`, and pins the concrete helper-owned vtable and forwarding
+slot in generated C. The focused run-pass suite passes. This is coverage for
+the existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]`
+composition; no compiler behavior, ODR, or phase-completion claim changes.
