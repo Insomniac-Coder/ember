@@ -8355,6 +8355,21 @@ its failing and fixed examples, which is necessary for a manifest diagnostic.
 successful corrected configuration. No language semantics or phase-completion
 claim changes.
 
+### 0.211 `[TYP-22]` imported generic-enum immutable interface borrows — 2026-09-21
+
+The cross-module generic-enum matrix now covers `ref dyn` dispatch. The
+importer retains `Signal[Token].Ready(Token(7))`, passes a shared erased view
+to a helper, and dispatches `Render.render` through the helper-owned concrete
+adapter. The payload's later drop proves that forming the borrowed dynamic view
+did not transfer ownership.
+
+`generic_enum_ref_interface_imported.em` runs in debug, release, and shipping,
+prints `42` then the retained payload's `7`, and pins the reused helper-owned
+concrete vtable and forwarding slot in generated C. The focused run-pass suite
+passes. This is coverage for existing `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
+`[DRP-6]`, and `[MOD-1]`--`[MOD-3]` composition; no ODR, compiler change, or
+phase-completion claim changes.
+
 ### 0.208 `[TYP-22]` imported generic-enum mutable interface boxes — 2026-09-21
 
 The cross-module generic-enum matrix now covers a mutable receiver through an
