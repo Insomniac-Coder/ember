@@ -726,7 +726,8 @@ impl Emitter<'_> {
         match self.types.kind(concrete) {
             TyKind::Class(id) => self.types.class_def(*id).name.to_string(),
             TyKind::Struct(id) => self.types.struct_def(*id).name.to_string(),
-            _ => unreachable!("only concrete class and struct adapters reach C emission"),
+            TyKind::Enum(id) => self.types.enum_def(*id).name.to_string(),
+            _ => unreachable!("only concrete class, struct, and enum adapters reach C emission"),
         }
     }
 
@@ -763,7 +764,10 @@ impl Emitter<'_> {
                     (concrete.clone(), concrete, false)
                 }
             };
-            let (drop, size, align) = if matches!(self.types.kind(adapter.concrete), TyKind::Struct(_)) {
+            let (drop, size, align) = if matches!(
+                self.types.kind(adapter.concrete),
+                TyKind::Struct(_) | TyKind::Enum(_)
+            ) {
                 let name = format!("{table}_drop");
                 let mut lines = Vec::new();
                 self.drop_lines(

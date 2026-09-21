@@ -1113,7 +1113,7 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
             }
             let supported_concrete = match types.kind(*concrete) {
                 TyKind::Class(_) => true,
-                _ => is_source_struct_payload(types, *concrete),
+                _ => is_source_value_payload(types, *concrete),
             };
             if source_inner != concrete || !supported_concrete {
                 fail(format!("{at} concrete metadata disagrees with its source type"));
@@ -1179,12 +1179,13 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
             continue;
         }
         let supported_concrete = matches!(types.kind(*concrete), TyKind::Class(_))
-            || is_source_struct_payload(types, *concrete);
-        if !supported_concrete
-            || !matches!(args.as_slice(), [Operand::Move(source)]
-                if place_ty(body, types, source) == *concrete)
-        {
-            fail(format!("{at} must move one concrete struct or class payload"));
+            || is_source_value_payload(types, *concrete);
+        let valid_payload = matches!(args.as_slice(), [Operand::Move(source)]
+            if place_ty(body, types, source) == *concrete)
+            || matches!(args.as_slice(), [Operand::Copy(source)]
+                if types.is_copy(*concrete) && place_ty(body, types, source) == *concrete);
+        if !supported_concrete || !valid_payload {
+            fail(format!("{at} must move one concrete struct, enum, or class payload"));
             continue;
         }
         if layout.len() != implementations.len() {
@@ -1211,10 +1212,15 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
     violations
 }
 
-fn is_source_struct_payload(types: &TypeTable, ty: Ty) -> bool {
-    matches!(types.kind(ty), TyKind::Struct(id)
-        if types.struct_def(*id).origin.is_none()
-            || types.struct_def(*id).declaring_module != usize::MAX)
+fn is_source_value_payload(types: &TypeTable, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Struct(id) => {
+            types.struct_def(*id).origin.is_none()
+                || types.struct_def(*id).declaring_module != usize::MAX
+        }
+        TyKind::Enum(_) => true,
+        _ => false,
+    }
 }
 
 /// Where a place lands, following its projections. A projection that does not

@@ -3707,6 +3707,7 @@ impl<'a> Checker<'a> {
             TyKind::Struct(id)
                 if self.types.struct_def(*id).origin.is_none()
                     || self.types.struct_def(*id).declaring_module != usize::MAX => {}
+            TyKind::Enum(_) => {}
             _ => return None,
         }
         if !self
