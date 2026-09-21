@@ -287,6 +287,15 @@ typedef struct ember_vtable ember_vtable;
 typedef struct ember_itable_entry ember_itable_entry;
 typedef struct ember_field_desc ember_field_desc;
 
+/* `[DSP-3]` — a class TypeInfo carries a small sorted compiler-owned list of
+ * interface identities and their concrete adapter tables. Both pointers are
+ * opaque to the runtime; generated C supplies the typed table cast only after
+ * lookup has selected the matching entry. */
+struct ember_itable_entry {
+    const void* interface_id;
+    const void* table;
+};
+
 struct ember_type_info {
     uint32_t size;
     uint32_t align;
@@ -347,6 +356,7 @@ void ember_weak_release(ember_obj_header* object);
 ember_obj_header* ember_weak_upgrade(ember_obj_header* object);
 void ember_rt_deinit(ember_obj_header* object);
 void* ember_downcast(ember_obj_header* object, const ember_type_info* target);
+const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id);
 
 static inline void ember_retain(ember_obj_header* object) {
     ember_obj_retain(object);

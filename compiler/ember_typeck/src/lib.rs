@@ -4058,20 +4058,32 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    /// Resolve a method call whose receiver is `ref dyn I` (or a compatible
-    /// multi-bound form). Inherent and concrete-interface calls continue to
-    /// use the ordinary method path; this helper is only the dynamic-vtable
-    /// boundary and therefore returns the chosen interface and stable slot.
+    /// Resolve a method call whose receiver is an erased interface carrier:
+    /// `ref dyn I`, `Box[dyn I]`, or `[OBJ-2]`'s one-word class handle `I`.
+    /// Inherent and concrete-interface calls continue to use the ordinary
+    /// method path; this helper is only the dynamic-vtable boundary and
+    /// therefore returns the chosen interface and stable slot.
     fn dyn_method(
         &self,
         receiver_ty: Ty,
         name: Symbol,
     ) -> Option<(Vec<Symbol>, Symbol, DefId, Mode, usize, Option<Symbol>)> {
-        let inner = match *self.types.kind(receiver_ty) {
-            TyKind::Ref { inner, .. } => inner,
-            _ => self.box_inner(receiver_ty)?,
+        let interfaces = match self.types.kind(receiver_ty).clone() {
+            // `[OBJ-2]` — the erased class handle itself remains one word;
+            // only its method lookup is dynamic through the object's TypeInfo.
+            TyKind::ClassInterface(interface) => vec![interface],
+            TyKind::Ref { inner, .. } => match self.types.kind(inner).clone() {
+                TyKind::Dyn { interfaces } => interfaces,
+                _ => return None,
+            },
+            _ => match self.box_inner(receiver_ty).and_then(|inner| match self.types.kind(inner).clone() {
+                TyKind::Dyn { interfaces } => Some(interfaces),
+                _ => None,
+            }) {
+                Some(interfaces) => interfaces,
+                None => return None,
+            },
         };
-        let TyKind::Dyn { interfaces } = self.types.kind(inner).clone() else { return None };
 
         let mut candidates = Vec::new();
         let mut all_methods = Vec::new();
@@ -4092,6 +4104,25 @@ impl<'a> Checker<'a> {
             .find(|candidate| candidate.1 != declaration)
             .map(|candidate| candidate.0);
         Some((interfaces, interface, declaration, receiver, slot, ambiguity))
+    }
+
+    /// Form the `[OBJ-2]` one-word class-handle view of a dyn-compatible
+    /// interface.  It is deliberately a distinct `TyKind` from `dyn I`: the
+    /// latter is unsized and needs a fat pointer, while this form is a counted
+    /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
+    fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
+        if let Some(reason) = self.dyn_incompatibility(interface) {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2050,
+                    span,
+                    format!("interface `{interface}` is not usable as a class-handle interface"),
+                )
+                .primary_label(reason),
+            );
+            return self.common.error;
+        }
+        self.types.intern(TyKind::ClassInterface(interface))
     }
 
     /// Turn a type/interface member into a signature. `self_ty` is `None`
@@ -4579,6 +4610,20 @@ impl<'a> Checker<'a> {
                     };
                     resolved.push((self.resolve_type(t), t.span));
                 }
+                // `[OBJ-2]` applies to generic interfaces as well: first
+                // materialize the written contract, then use its concrete
+                // identity as the erased, one-word class-handle type. This
+                // mirrors `resolve_interface_use`, rather than treating an
+                // interface application as an ordinary nominal type.
+                let interface = self.resolve_name(name);
+                if let Some(definition) = self.interfaces.get(&interface).cloned() {
+                    let args = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+                    let Some(interface) = self.instantiate_interface(interface, &definition, &args, ty.span)
+                    else {
+                        return self.common.error;
+                    };
+                    return self.class_interface_type(interface, ty.span);
+                }
                 self.resolve_type_application(name, &resolved, ty.span)
             }
 
@@ -4610,7 +4655,11 @@ impl<'a> Checker<'a> {
                 if name.is("ScopedArena") {
                     return self.scoped_arena_ty();
                 }
-                if let Some(&ty) = self.named_types.get(&self.resolve_name(name)) {
+                let resolved = self.resolve_name(name);
+                if self.interfaces.contains_key(&resolved) {
+                    return self.class_interface_type(resolved, ty.span);
+                }
+                if let Some(&ty) = self.named_types.get(&resolved) {
                     return ty;
                 }
                 self.error(
@@ -10518,6 +10567,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr {
                 ty: expected,
                 kind: ExprKind::Cast { expr: Box::new(expr), to: expected },
+                span,
+            };
+        }
+        // `[OBJ-2]`/`[DSP-3]` — an implementing class coerces to the one-word
+        // class-handle form of a dyn-compatible interface. Keep the same
+        // checked concrete adapter metadata as a `ref dyn` coercion: lowering
+        // uses it to populate the class's TypeInfo table, but the value itself
+        // stays the original counted object pointer.
+        if let (TyKind::Class(_), TyKind::ClassInterface(interface)) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && let Some(implementations) = self.dyn_concrete_adapter(expr.ty, &[*interface])
+        {
+            let span = expr.span;
+            let interfaces = vec![*interface];
+            let layout = self.dyn_vtable_layout(&interfaces);
+            return Expr {
+                ty: expected,
+                kind: ExprKind::InterfaceUpcast {
+                    concrete: expr.ty,
+                    interfaces,
+                    layout,
+                    implementations,
+                    expr: Box::new(expr),
+                },
                 span,
             };
         }

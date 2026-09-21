@@ -844,6 +844,21 @@ void* ember_downcast(ember_obj_header* object, const ember_type_info* target) {
     return NULL;
 }
 
+const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id) {
+    if (interface_id == NULL) {
+        return NULL;
+    }
+    for (const ember_type_info* current = type; current != NULL; current = current->base) {
+        for (uint32_t index = 0; index < current->itable_count; ++index) {
+            const ember_itable_entry* entry = &current->itables[index];
+            if (entry->interface_id == interface_id) {
+                return entry->table;
+            }
+        }
+    }
+    return NULL;
+}
+
 static void object_require_plain_access(ember_obj_header* object) {
     if (object == NULL || object->ti == NULL) {
         object_panic_text("access on invalid object");

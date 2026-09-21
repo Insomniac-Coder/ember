@@ -87,6 +87,18 @@ fn dyn_table_identity(interfaces: &[Symbol]) -> String {
     }
 }
 
+/// `[DSP-3]` — each compiler-known interface is identified in the runtime
+/// table by the address of a translation-unit static marker. The address is
+/// opaque to Ember code; it only needs stable identity within this emitted
+/// program, not a source-visible numeric representation.
+fn interface_id_symbol(interface: &str) -> String {
+    ember_branding::mangled(&format!("interface_id_{interface}"))
+}
+
+fn class_itable_symbol(class: &str) -> String {
+    ember_branding::mangled(&format!("itables_{class}"))
+}
+
 pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
@@ -115,6 +127,7 @@ pub fn emit(
         virtual_signatures: BTreeMap::new(),
         interface_layouts: BTreeMap::new(),
         interface_adapters: BTreeMap::new(),
+        class_interface_tables: BTreeMap::new(),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -212,6 +225,10 @@ struct Emitter<'a> {
     /// Concrete implementations observed at a checked borrowed coercion.
     /// These are compiler-owned adapter tables, not source-level virtual tables.
     interface_adapters: BTreeMap<(String, String), InterfaceAdapter>,
+    /// `[DSP-3]` tables that a concrete class exposes through its TypeInfo.
+    /// The key is an interface identity and the value retains the checked
+    /// concrete type used to name the corresponding adapter table.
+    class_interface_tables: BTreeMap<ClassId, BTreeMap<String, Ty>>,
 }
 
 #[derive(Clone)]
@@ -572,47 +589,87 @@ impl Emitter<'_> {
         for body in bodies {
             for block in &body.blocks {
                 for statement in &block.stmts {
-                    let StmtKind::Assign {
-                        rvalue:
-                            Rvalue::Cast {
-                                kind:
-                                    CastKind::InterfaceUpcast {
-                                        concrete,
-                                        interfaces,
-                                        layout,
-                                        implementations,
-                                    },
-                                ..
-                            },
-                        ..
-                    } = &statement.kind
-                    else {
-                        continue;
-                    };
-                    let layout = layout
-                        .iter()
-                        .map(|slot| {
-                            slot.as_ref().map(|slot| InterfaceMethod {
-                                params: slot.params.clone(),
-                                ret: slot.ret,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    let implementations = implementations
-                        .iter()
-                        .map(|implementation| {
-                            implementation.as_ref().map(|implementation| InterfaceAdapterMethod {
-                                symbol: implementation.symbol.clone(),
-                                receiver: implementation.receiver,
-                            })
-                        })
-                        .collect();
-                    self.register_interface_adapter(
-                        *concrete,
-                        dyn_table_identity(interfaces),
-                        layout,
-                        implementations,
-                    );
+                    match &statement.kind {
+                        StmtKind::Assign {
+                            rvalue:
+                                Rvalue::Cast {
+                                    kind:
+                                        CastKind::InterfaceUpcast {
+                                            concrete,
+                                            interfaces,
+                                            layout,
+                                            implementations,
+                                        },
+                                    ..
+                                },
+                            ..
+                        } => {
+                            self.register_interface_adapter(
+                                *concrete,
+                                dyn_table_identity(interfaces),
+                                layout
+                                    .iter()
+                                    .map(|slot| slot.as_ref().map(|slot| InterfaceMethod {
+                                        params: slot.params.clone(),
+                                        ret: slot.ret,
+                                    }))
+                                    .collect(),
+                                implementations
+                                    .iter()
+                                    .map(|implementation| implementation.as_ref().map(|implementation| {
+                                        InterfaceAdapterMethod {
+                                            symbol: implementation.symbol.clone(),
+                                            receiver: implementation.receiver,
+                                        }
+                                    }))
+                                    .collect(),
+                            );
+                        }
+                        StmtKind::Assign {
+                            rvalue:
+                                Rvalue::Cast {
+                                    kind:
+                                        CastKind::ClassInterfaceUpcast {
+                                            concrete,
+                                            interface,
+                                            layout,
+                                            implementations,
+                                        },
+                                    ..
+                                },
+                            ..
+                        } => {
+                            let identity = interface.to_string();
+                            self.register_interface_adapter(
+                                *concrete,
+                                identity.clone(),
+                                layout
+                                    .iter()
+                                    .map(|slot| slot.as_ref().map(|slot| InterfaceMethod {
+                                        params: slot.params.clone(),
+                                        ret: slot.ret,
+                                    }))
+                                    .collect(),
+                                implementations
+                                    .iter()
+                                    .map(|implementation| implementation.as_ref().map(|implementation| {
+                                        InterfaceAdapterMethod {
+                                            symbol: implementation.symbol.clone(),
+                                            receiver: implementation.receiver,
+                                        }
+                                    }))
+                                    .collect(),
+                            );
+                            let TyKind::Class(class) = self.types.kind(*concrete) else {
+                                unreachable!("verified class-interface cast has a class source");
+                            };
+                            self.class_interface_tables
+                                .entry(*class)
+                                .or_default()
+                                .insert(identity, *concrete);
+                        }
+                        _ => {}
+                    }
                 }
                 if let Terminator::Call {
                     func:
@@ -700,7 +757,19 @@ impl Emitter<'_> {
             self.line("    size_t align;");
             self.line("};");
         }
+        let class_handle_interfaces = self
+            .class_interface_tables
+            .values()
+            .flat_map(|tables| tables.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>();
         for (interface, methods) in self.interface_layouts.clone() {
+            if class_handle_interfaces.contains(&interface) {
+                self.line(&format!(
+                    "static const uint8_t {} = UINT8_C(0);",
+                    interface_id_symbol(&interface)
+                ));
+            }
             let table = ember_branding::vtable(&format!("dyn_{interface}"));
             self.line(&format!("struct {table} {{"));
             self.line("    void (*drop)(void*);");
@@ -1048,6 +1117,26 @@ impl Emitter<'_> {
                 ember_branding::runtime("type_info")
             ));
         }
+        for id in &classes {
+            let Some(tables) = self.class_interface_tables.get(id).cloned() else { continue };
+            if tables.is_empty() {
+                continue;
+            }
+            let class = self.types.class_def(*id).name.to_string();
+            let entries = class_itable_symbol(&class);
+            self.line(&format!(
+                "static const {} {entries}[] = {{",
+                ember_branding::runtime("itable_entry")
+            ));
+            for (interface, concrete) in tables {
+                let table = self.interface_adapter_table(concrete, &interface);
+                self.line(&format!(
+                    "    {{ &{}, &{table} }},",
+                    interface_id_symbol(&interface)
+                ));
+            }
+            self.line("};");
+        }
         for id in classes {
             let def = self.types.class_def(id);
             let object = ember_branding::object_struct(&def.name.to_string());
@@ -1100,8 +1189,21 @@ impl Emitter<'_> {
             } else {
                 self.line("    NULL,");
             }
-            self.line("    NULL,");
-            self.line("    UINT32_C(0),");
+            if let Some(table_count) = self
+                .class_interface_tables
+                .get(&id)
+                .map(|tables| tables.len())
+                .filter(|count| *count != 0)
+            {
+                self.line(&format!(
+                    "    {},",
+                    class_itable_symbol(&def.name.to_string())
+                ));
+                self.line(&format!("    UINT32_C({table_count}),"));
+            } else {
+                self.line("    NULL,");
+                self.line("    UINT32_C(0),");
+            }
             self.line("    NULL,");
             self.line("    UINT32_C(0)");
             self.line("};");
@@ -1220,6 +1322,13 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Class(_) => out.push(format!(
                 "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, {replacement}, {statically_predicted});"
+            )),
+            // An erased class-interface field is still a strong handle, but
+            // its concrete target is deliberately unknown to static analysis.
+            // The debug runtime receives the actual object header without
+            // pretending that its class was predicted from the declaration.
+            TyKind::ClassInterface(_) => out.push(format!(
+                "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, NULL, false);"
             )),
             TyKind::Vec { elem } => {
                 let index = *loop_counter;
@@ -1642,7 +1751,7 @@ impl Emitter<'_> {
             // duplicate.  The matching retain is emitted at the assignment
             // boundary; every ordinary class lifetime end releases one
             // strong reference through the runtime ABI.
-            TyKind::Class(_) => {
+            TyKind::Class(_) | TyKind::ClassInterface(_) => {
                 out.push(format!(
                     "{}(({}*){access});",
                     ember_branding::runtime("release"),
@@ -2196,7 +2305,7 @@ impl Emitter<'_> {
     /// handles receive the same ownership treatment as a direct handle.
     fn retain_lines_for_value(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
         match self.types.kind(ty) {
-            TyKind::Class(_) => {
+            TyKind::Class(_) | TyKind::ClassInterface(_) => {
                 out.push(format!(
                     "{}(({}*){});",
                     ember_branding::runtime("retain"),
@@ -2338,6 +2447,18 @@ impl Emitter<'_> {
                 }
             }
             Rvalue::Cast { kind: CastKind::ClassUpcast, operand: Operand::Copy(place), .. } => {
+                out.push(format!(
+                    "{}(({}*){});",
+                    ember_branding::runtime("retain"),
+                    ember_branding::runtime("obj_header"),
+                    self.place_in(place, body)
+                ));
+            }
+            Rvalue::Cast {
+                kind: CastKind::ClassInterfaceUpcast { .. },
+                operand: Operand::Copy(place),
+                ..
+            } => {
                 out.push(format!(
                     "{}(({}*){});",
                     ember_branding::runtime("retain"),
@@ -2647,11 +2768,23 @@ impl Emitter<'_> {
                     rendered.join(", ")
                 )
             }
-            FuncRef::Interface { interfaces, slot, .. } => {
+            FuncRef::Interface { interfaces, interface, slot, class_handle, .. } => {
                 let receiver = rendered.first().expect("interface call has a receiver");
                 let table_identity = dyn_table_identity(interfaces);
                 let table = ember_branding::vtable(&format!("dyn_{table_identity}"));
                 let args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
+                if *class_handle {
+                    let args = if args.is_empty() {
+                        receiver.clone()
+                    } else {
+                        format!("{receiver}, {args}")
+                    };
+                    return format!(
+                        "(((const struct {table}*){}(((const {RT}obj_header*)({receiver}))->ti, &{}))->slot{slot})({args})",
+                        ember_branding::runtime("itable_lookup"),
+                        interface_id_symbol(&interface.to_string()),
+                    );
+                }
                 let args = if args.is_empty() {
                     format!("{receiver}.data")
                 } else {
@@ -3399,6 +3532,7 @@ impl Emitter<'_> {
                         };
                         format!("({ty}){{ .data = (void*)({data}), .vtable = &{table} }}")
                     }
+                    CastKind::ClassInterfaceUpcast { .. } => format!("(({ty}){value})"),
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.
                     CastKind::Widen
@@ -3547,6 +3681,10 @@ impl Emitter<'_> {
                 "struct {}*",
                 ember_branding::object_struct(&self.types.class_def(*id).name.to_string())
             ),
+            // `[OBJ-2]` — the erased class interface remains exactly one
+            // object-header pointer. Its dynamic vtable is found through
+            // `type_info`, never carried in this value's representation.
+            TyKind::ClassInterface(_) => format!("{RT}obj_header*"),
             TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
             // `[COST-3]` — a range type is "not observable": erased to the
             // representation, with the construction site carrying the check.

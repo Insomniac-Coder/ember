@@ -1812,6 +1812,7 @@ impl<'a> Builder<'a> {
                         params,
                         ret: expr.ty,
                         layout: layout.clone(),
+                        class_handle: matches!(self.types.kind(receiver.ty), TyKind::ClassInterface(_)),
                     },
                     args: lowered_args,
                     dest: place,
@@ -4682,13 +4683,22 @@ impl<'a> Builder<'a> {
                         })
                     })
                     .collect();
-                Rvalue::Cast {
-                    kind: CastKind::InterfaceUpcast {
+                let kind = match self.types.kind(expr.ty) {
+                    TyKind::ClassInterface(interface) => CastKind::ClassInterfaceUpcast {
+                        concrete: *concrete,
+                        interface: *interface,
+                        layout: layout.clone(),
+                        implementations,
+                    },
+                    _ => CastKind::InterfaceUpcast {
                         concrete: *concrete,
                         interfaces: interfaces.clone(),
                         layout: layout.clone(),
                         implementations,
                     },
+                };
+                Rvalue::Cast {
+                    kind,
                     operand,
                     to: expr.ty,
                 }

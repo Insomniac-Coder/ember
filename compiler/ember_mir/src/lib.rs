@@ -960,6 +960,15 @@ pub enum CastKind {
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterMethod>>,
     },
+    /// `[OBJ-2]`/`[DSP-3]` — erase an implementing class handle to an
+    /// interface handle without constructing a fat pointer. The runtime
+    /// obtains this single interface table through the object's TypeInfo.
+    ClassInterfaceUpcast {
+        concrete: Ty,
+        interface: Symbol,
+        layout: Vec<Option<ember_hir::InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterMethod>>,
+    },
 }
 
 pub use ember_hir::{BinOp, Builtin, UnOp};
@@ -1161,13 +1170,13 @@ pub enum FuncRef {
     /// the stable base signature even when a derived override supplies the
     /// implementation.
     Virtual { owner: ember_types::ClassId, slot: usize },
-    /// `[TYP-22]` — a call through a `ref dyn I` carrier. The receiver is
-    /// represented by the first operand; the remaining operands use the
-    /// interface declaration's parameter types. `layout` carries every slot
-    /// so the C backend can emit the canonical table shape without reaching
-    /// back into type-checker-only interface definitions. A `None` slot is a
-    /// `Self: Sized` default: its ordinal is retained, but it has no dyn-call
-    /// ABI at this boundary.
+    /// `[TYP-22]`/`[OBJ-2]` — a call through either a `ref dyn I` carrier or
+    /// a one-word erased class-interface handle. The receiver is represented
+    /// by the first operand; `class_handle` selects the TypeInfo lookup path
+    /// required by `[DSP-3]`. `layout` carries every slot so the C backend can
+    /// emit the canonical table shape without reaching back into type-checker
+    /// data. A `None` slot is a `Self: Sized` default: its ordinal is retained,
+    /// but it has no dynamic-call ABI at this boundary.
     Interface {
         /// The complete ordered interface-bound list whose flattened table is
         /// read at this call site.
@@ -1177,6 +1186,7 @@ pub enum FuncRef {
         params: Vec<Ty>,
         ret: Ty,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
+        class_handle: bool,
     },
     /// `[TYP-22]` — allocate a concrete payload and return its owning
     /// two-word `Box[dyn I]` carrier.

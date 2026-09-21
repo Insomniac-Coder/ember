@@ -243,6 +243,11 @@ fn collect_strong_targets(
         TyKind::Class(class) => {
             targets.insert(*class);
         }
+        // An `[OBJ-2]` class-interface handle owns a real class object, but
+        // its erased declaration cannot name one statically. Keep it out of
+        // the concrete SCC graph; `contains_unknown_owner` records the
+        // conservative unknown edge below instead of inventing a target.
+        TyKind::ClassInterface(_) => {}
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
             if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
@@ -357,6 +362,7 @@ fn collect_weak_targets(
         | TyKind::Str
         | TyKind::Span { .. }
         | TyKind::Class(_)
+        | TyKind::ClassInterface(_)
         | TyKind::Range(_)
         | TyKind::Ref { .. }
         | TyKind::Ptr { .. }
@@ -385,7 +391,10 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         return false;
     }
     match types.kind(ty) {
-        TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } => true,
+        TyKind::Dyn { .. }
+        | TyKind::ClassInterface(_)
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. } => true,
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
             if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {

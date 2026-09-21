@@ -141,6 +141,13 @@ pub enum TyKind {
     /// The distinction from `Ptr` is semantic: copying a class handle retains
     /// and dropping one releases; it is not a raw-pointer operation.
     Class(ClassId),
+    /// `[OBJ-2]` — a class handle erased to one `dyn`-compatible interface.
+    ///
+    /// Unlike `Dyn`, this remains a sized counted handle: its concrete class
+    /// object retains the runtime header, and `[DSP-3]` obtains the interface
+    /// table from that header's type information. The interface identity is
+    /// retained so method lookup and coercion remain statically checked.
+    ClassInterface(Symbol),
     Enum(EnumId),
     /// `[RNG-1]` — a **nominal** numeric type over a representation,
     /// restricted to a range. `[RNG-2]` makes two of them distinct types even
@@ -774,6 +781,7 @@ impl TypeTable {
                     _ => a == b,
                 }
             }
+            (TyKind::ClassInterface(a), TyKind::ClassInterface(b)) => a == b,
             (TyKind::Tuple(a), TyKind::Tuple(b)) if a.len() == b.len() => {
                 a.iter()
                     .zip(b.iter())
@@ -1020,7 +1028,7 @@ impl TypeTable {
             // A class expression is a non-null handle. The heap object's
             // header and fields are described by `ClassDef`, not by the
             // source-level handle layout.
-            TyKind::Class(_) => Layout::scalar(self.pointer_size),
+            TyKind::Class(_) | TyKind::ClassInterface(_) => Layout::scalar(self.pointer_size),
             TyKind::Enum(id) => self.enum_layout(*id),
             // `[RNG-8]` — a range type erases to its representation, so
             // it is laid out as one and crosses an FFI boundary as one.
@@ -1113,7 +1121,7 @@ impl TypeTable {
             // `[OWN-7]` explicitly makes class handles Copy, with retain and
             // release emitted by the ownership/codegen stages rather than a
             // raw bitwise copy.
-            TyKind::Class(_) => true,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
             // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
             // is only its discriminant. `[ENM-4]` — a payload enum needs
             // `@derive(Copy)`, like a struct.
@@ -1169,7 +1177,7 @@ impl TypeTable {
             }
             // A class handle is non-null; zero bytes cannot manufacture a
             // valid live object handle.
-            TyKind::Class(_) => false,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             TyKind::Range(id) => {
                 let def = self.range_def(*id);
                 match (def.lo, def.hi) {
@@ -1217,7 +1225,7 @@ impl TypeTable {
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             // Dropping a class handle releases its strong reference.
-            TyKind::Class(_) => true,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
             TyKind::Enum(id) => {
                 let def = self.enum_def(*id);
                 def.has_drop
@@ -1249,7 +1257,7 @@ impl TypeTable {
             }
             // The handle itself is not a view; a projected field may be a
             // view and is classified when that field's type is inspected.
-            TyKind::Class(_) => false,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             TyKind::Dyn { .. } => false,
             TyKind::Enum(id) => self
                 .enum_def(*id)
@@ -1278,7 +1286,7 @@ impl TypeTable {
             }
             // Class handles are owning runtime values, not `@layout(c)`
             // value types. Opaque foreign handles have a separate boundary.
-            TyKind::Class(_) => false,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             TyKind::Dyn { .. } => false,
             _ => false,
         }
@@ -1366,6 +1374,7 @@ impl TypeTable {
             }
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Class(id) => self.class_def(*id).name.to_string(),
+            TyKind::ClassInterface(interface) => interface.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Param { name, .. } => name.to_string(),
@@ -1468,6 +1477,7 @@ impl TypeTable {
             ),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Class(id) => self.class_def(*id).name.to_string(),
+            TyKind::ClassInterface(interface) => interface.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Tuple(items) => {

@@ -717,6 +717,7 @@ mod tests {
                     params: Vec::new(),
                     ret: common.i32,
                 })],
+                class_handle: false,
             },
             args: Vec::new(),
             dest: Place::local(LocalId(0)),
@@ -985,7 +986,8 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 Rvalue::Cast {
                     kind:
                         crate::CastKind::ClassUpcastBorrowed
-                        | crate::CastKind::InterfaceUpcast { .. },
+                        | crate::CastKind::InterfaceUpcast { .. }
+                        | crate::CastKind::ClassInterfaceUpcast { .. },
                     ..
                 } => None,
                 Rvalue::Cast { .. } => Some("a cast"),
@@ -1069,6 +1071,65 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
 
     for (block_index, block) in body.blocks.iter().enumerate() {
         for statement in &block.stmts {
+            if let StmtKind::Assign {
+                place,
+                rvalue:
+                    Rvalue::Cast {
+                        kind:
+                            crate::CastKind::ClassInterfaceUpcast {
+                                concrete,
+                                interface,
+                                layout,
+                                implementations,
+                            },
+                        operand,
+                        to,
+                    },
+            } = &statement.kind
+            {
+                let at = format!("bb{block_index}: class interface upcast");
+                let destination = place_ty(body, types, place);
+                if *to != destination {
+                    fail(format!("{at} cast type disagrees with its destination place"));
+                    continue;
+                }
+                let source = match operand {
+                    Operand::Copy(source) | Operand::Move(source) => place_ty(body, types, source),
+                    Operand::Const(_) => {
+                        fail(format!("{at} must preserve a class handle, not a constant"));
+                        continue;
+                    }
+                };
+                if source != *concrete || !matches!(types.kind(source), TyKind::Class(_)) {
+                    fail(format!("{at} concrete metadata disagrees with its class source"));
+                    continue;
+                }
+                if !matches!(types.kind(destination), TyKind::ClassInterface(target) if target == interface) {
+                    fail(format!("{at} interface metadata disagrees with its target type"));
+                    continue;
+                }
+                if layout.len() != implementations.len() {
+                    fail(format!("{at} has mismatched table-layout and adapter lengths"));
+                    continue;
+                }
+                for (slot, (layout, implementation)) in layout.iter().zip(implementations).enumerate() {
+                    match (layout, implementation) {
+                        (None, None) => {}
+                        (Some(_), Some(implementation))
+                            if implementation.receiver != ember_hir::Mode::Owned => {}
+                        (None, Some(_)) => {
+                            fail(format!("{at} supplies an adapter for non-callable slot {slot}"));
+                        }
+                        (Some(_), None) => {
+                            fail(format!("{at} omits an adapter for callable slot {slot}"));
+                        }
+                        (Some(_), Some(_)) => {
+                            fail(format!("{at} supplies an owned receiver for slot {slot}"));
+                        }
+                    }
+                }
+                continue;
+            }
             let StmtKind::Assign {
                 place,
                 rvalue:

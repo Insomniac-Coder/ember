@@ -8585,3 +8585,22 @@ shipping. The conformance suite also requires `E2070` when two composed bounds
 offer the same method name. This closes an implementation gap in existing
 `[TYP-22]` and `[TYP-24]` semantics; no ODR was needed because `dyn_type :=
 "dyn" bound_list` already defines the surface.
+
+### 0.225 `[OBJ-2]`/`[DSP-3]` one-word class-interface handles — 2026-09-21
+
+A bare dyn-compatible interface in handle position now denotes the frozen
+one-word class-handle view rather than an unresolved nominal type. An
+implementing class coerces to that view, keeps ordinary strong-reference
+ownership, and dispatches through the concrete class's `TypeInfo` interface
+table. The runtime ABI now defines `ember_itable_entry` and performs the
+required linear lookup over `{interface_id, table*}` entries; generated C
+publishes only the checked adapter tables actually used by the compilation.
+
+`class_interface_handle.em` proves the path in debug, release, and shipping:
+`Pixel` reaches `Render.render()` through `ember_itable_lookup`, returns `42`,
+and asserts that the emitted TypeInfo uses an `ember_itable_entry` while the
+callee receives one `ember_obj_header*`, not an `ember_dyn` fat carrier. The
+full workspace, conformance suite, runtime-template check, and generated-C
+warning gate pass. This closes the functional representation and dispatch gap
+in `[OBJ-2]`/`[DSP-3]`; repeated-handle lookup caching remains a separate
+performance slice, not an ODR or semantic ambiguity.
