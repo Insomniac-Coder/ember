@@ -8462,6 +8462,22 @@ table and forwarding slot in emitted C. This is coverage for existing
 `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, and `[MOD-1]`--`[MOD-3]` composition, not a
 new defect, ODR, compiler change, or phase-completion claim.
 
+### 0.217 `[TYP-22]` non-`Copy` generic-interface default boxes — 2026-09-21
+
+The owned generic-interface default path now carries a non-`Copy` type argument
+end to end. The helper exposes `Token` with observable destruction and
+`Signal[T] implements Answer[T]`; the default takes a `T` argument. The
+importer boxes `Signal[Token]` as `Box[dyn Answer[Token]]`, dispatches the
+specialized default with a distinct `Token`, and observes the result and both
+destructors.
+
+`generic_enum_generic_interface_default_drop_imported.em` runs in debug,
+release, and shipping and prints `42`, then the consumed argument's `8`, then
+the boxed payload's `7`. It pins the concrete `Answer[Token]` table, forwarding
+slot, and box allocation in generated C. This is coverage for existing
+`[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[DRP-6]`, and `[MOD-1]`--`[MOD-3]`
+composition, not a new defect, ODR, compiler change, or phase-completion claim.
+
 ### 0.216 `[TYP-22]` mutable borrowed imported generic-interface defaults — 2026-09-21
 
 The receiver-mode matrix now covers a generic interface default with a mutable
