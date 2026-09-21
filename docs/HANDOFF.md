@@ -8076,3 +8076,19 @@ table and its default-method slot in every profile. This is an executable
 coverage addition for the frozen interface-default and `[TYP-22]` rules, not an
 ODR, compiler defect, or phase-completion claim. Phase accounting remains **1
 of 9 complete** with Phases 2 and 3 active.
+
+### 0.192 `[TYP-22]` multi-interface enum dynamic-box coverage — 2026-09-21
+
+One direct enum can now be exercised through separately registered dynamic
+adapters for two unrelated interfaces. `Signal implements Read, Write` is
+boxed once as `dyn Read` and once as `dyn Write`; each box selects only its
+corresponding concrete vtable and dispatch slot. This complements the inherited
+enum case by pinning independent interface implementation-table entries rather
+than a superinterface layout.
+
+`accept_dyn_interface_box_enum_multi_interface.em` prints `20` then `22` in
+debug, release, and shipping. Its generated-C assertions require both concrete
+tables and their distinct forwarding slots in every profile. This is coverage
+for the existing multi-interface `[TYP-22]` adapter model, not an ODR, compiler
+defect, or phase-completion claim. Phase accounting remains **1 of 9 complete**
+with Phases 2 and 3 active.
