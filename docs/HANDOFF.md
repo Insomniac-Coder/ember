@@ -8092,3 +8092,19 @@ tables and their distinct forwarding slots in every profile. This is coverage
 for the existing multi-interface `[TYP-22]` adapter model, not an ODR, compiler
 defect, or phase-completion claim. Phase accounting remains **1 of 9 complete**
 with Phases 2 and 3 active.
+
+### 0.193 `[TYP-22]` mutable enum dynamic-box dispatch coverage — 2026-09-21
+
+A direct enum interface method with a `mut self` receiver now has executable
+dynamic-box coverage. The concrete `Signal` adapter receives the erased mutable
+payload pointer and forwards it as `em_Signal*` to the enum method; it does not
+reuse the by-value receiver wrapper used by immutable enum slots. This pins the
+existing mutable receiver ABI without claiming enum-payload mutation syntax
+beyond the frozen method contract.
+
+`accept_dyn_interface_box_enum_mut.em` invokes `boxed.bump()` and produces
+`42` in debug, release, and shipping. Generated-C checks require the `Bump`
+slot in every profile; the debug output also shows its mutable `em_Signal*`
+forwarding cast. This is conformance coverage for `[TYP-22]`, not an ODR,
+compiler defect, or phase-completion claim. Phase accounting remains **1 of 9
+complete** with Phases 2 and 3 active.
