@@ -9127,3 +9127,17 @@ construction, Array insertion, and closure capture. The assertion rules out a
 fourth retain at the loop yield. This is conformance coverage for the explicitly
 named destructuring form in `[RC-2e]`, `[CTL-1]`, and `[CTL-2]`, not a new
 defect, ODR, or specification change.
+
+### 0.257 `[RC-2e]` iterator-destructured `Shared` owned capture — 2026-09-22
+
+The borrowed Span-iterator branch has the equivalent direct evidence. A
+`for token, _ in pairs.as_span().iter()` header binds its `Shared[Token]` leaf
+through the iterator's borrowed `Pair` payload. An `owned fn` capture reads the
+owner out of that borrowed leaf before environment construction.
+
+`accept_iterator_destructured_shared_handle_owned_capture_retains.em` prints
+`7` in debug, release, and shipping and requires exactly three retains: tuple
+construction, Array insertion, and closure capture. There is no iterator-yield
+retain. This is further coverage of `[RC-2e]`'s named iterator/destructuring
+shape and uses the same `[CTL-1]`/`[CTL-2]` borrowed-container contract; it
+does not report a defect, ODR, or specification change.
