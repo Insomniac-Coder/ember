@@ -9536,3 +9536,19 @@ in debug, release, and shipping. Generated-C assertions require weak retain,
 release, and upgrade operations. This covers existing `[CLS-4]`, `[HEAP-3]`–
 `[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; it is not an ODR
 or specification change.
+
+### 0.283 `[CLS-2]` generic-base `Weak[Shared[T]]` fields — 2026-09-22
+
+Generic base-class substitution preserves weak field ownership through the
+complete inherited object path. A derived generic constructor passes its weak
+argument through `super.init`; the concrete derived layout exposes the base
+field, and its field-drop glue releases the stored weak owner exactly through
+the instantiated object cleanup. The unrelated generic marker and derived
+field do not alter the weak observer or the explicit `Shared.get()` boundary.
+
+`tests/conformance/WK-11/accept_generic_base_shared_weak_field.em` constructs
+`Derived[bool]`, upgrades its inherited weak field, and prints `7` in debug,
+release, and shipping. Generated-C assertions require weak retain, release,
+and upgrade operations. This covers `[CLS-2]`, `[CLS-4]`, `[HEAP-3]`–
+`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition without an ODR or
+specification change.
