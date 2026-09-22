@@ -8982,3 +8982,16 @@ retains: the owned call, insertion into the source Array, and the independent
 class-to-interface conversion. This records coverage for existing `[RC-1]`,
 `[RC-2e]`, `[OBJ-2]`, and `[DSP-3]` behavior; no compiler correction, ODR, or
 specification change was required.
+
+### 0.248 `[RC-2e]` nested class handles from a loop element — 2026-09-22
+
+`[RC-2e]` explicitly includes value-type loop elements that contain class
+handles. The yielded `Entry` is borrowed for the loop, so reading
+`entry.token` into `consume(owned token: Token)` retains that nested handle at
+the call instead of applying a speculative retain/release to every iteration.
+
+`tests/conformance/RC-2e/accept_loop_struct_containing_class_handle_owned_parameter_retains.em`
+constructs an `Array[Entry]`, passes the nested `Token` through the owned call,
+and prints `7` in every profile. Its emitted-C count is three retains: initial
+wrapping, Array insertion, and the owned call. This is direct coverage of an
+existing `[RC-2e]` case with no defect, ODR, or specification change.
