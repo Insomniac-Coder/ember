@@ -8729,3 +8729,20 @@ release, and shipping. Its C assertions require exactly one itable lookup,
 one begin/end write interval, and the single retain required to initialize the
 owning field. This is coverage for the existing `[OBJ-2]`, `[DSP-3]`, and
 `[EXC-1]` composition; no ODR or compiler change was needed.
+
+### 0.234 `[DSP-3]` mutable class-interface field replacement — 2026-09-22
+
+The hidden itable cache remains intentionally limited to an unprojected,
+unchanged interface parameter (including its compiler-created `mut I`
+reborrow). A class-interface field is not a stable cache source: an intervening
+call may reach another handle to the containing object and replace that field,
+making a hoisted table stale. The compiler therefore performs a fresh lookup
+after a mutable field replacement rather than guessing non-aliasing from the
+immediate source expression.
+
+`class_interface_handle_field_cache_mut.em` calls through `holder.value`,
+replaces that interface field, then calls through it again and prints `42` in
+debug, release, and shipping. Its generated-C assertion requires exactly two
+itable lookups, pinning the no-stale-cache boundary. This is an invalidation
+regression for the existing `[DSP-3]` optimization, not a new ODR or language
+semantics.
