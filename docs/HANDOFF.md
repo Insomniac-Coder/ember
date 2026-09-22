@@ -10231,3 +10231,19 @@ retain/release pair for the Holder field, and the weak upgrade. This extends
 `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[FN-1]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.327 `[DSP-1]` mutable generic virtual replacement of class-owned weak fields — 2026-09-22
+
+A base-typed virtual call may transfer a `Weak[Token]` argument into a derived
+generic override. The override replaces its inherited field, drops the prior
+empty observer, retains the replacement, and upgrades only that replacement
+while the separate token owner remains live; the receiver's normal dynamic
+write interval surrounds the whole transition.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_weak_class_field_reassignment.em`
+prints `8` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot, base-typed `->slot0` dispatch, the write-access operation,
+and weak retain/release/upgrade paths. This extends `[TYP-16]`, `[CLS-2]`,
+`[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
+change.
