@@ -9307,3 +9307,26 @@ debug, release, and shipping. It requires generated C to call
 `ember_weak_upgrade` and pins the sole weak retain at construction. This fills
 the live-upgrade branch of `[TST-26]` for `[WK-11]`–`[WK-13]`; no ODR or
 specification change is involved.
+
+### 0.269 `[CELL-1]` shared `Cell` mutation through `ref Cell[T]` — 2026-09-22
+
+D-178 corrected receiver lookup for `ref Cell[T]`, but the mutation side of
+the same receiver shape exposed a lower-level defect. `Cell.set` type-checks as
+the explicitly permitted shared interior-mutation operation, then lowers to the
+private payload-field store required by `[CELL-2]`. C represents the enclosing
+ordinary shared reference as `const Cell*`, so the backend had emitted a store
+through that `const` pointer and its C compiler rejected the program.
+
+The C place renderer now recognizes only the compiler-created private `Cell[T]`
+wrapper while dereferencing an immutable reference and removes `const` at that
+boundary. It leaves every other `ref` dereference unchanged; the source type
+system still prevents payload access, so the special write remains reachable
+solely through the checked Cell operations. This preserves `[CELL-2]`'s direct
+load/store implementation with no runtime check or helper call.
+
+`tests/conformance/CELL-2/accept_cell_mutation_through_shared_ref.em` calls
+`set(get() + 1)` through `ref Cell[i32]`. It was rejected by the generated C
+compiler before the fix and now prints `42` in debug, release, and shipping;
+its emitted-C assertion requires the casted Cell store and excludes an
+`ember_cell` runtime helper. The frozen target is unambiguous, so D-179 is a
+compiler defect, not an ODR or specification change.

@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — shared `Cell` mutation emitted an invalid C write
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-179 | **`Cell.set` reached its compiler-known receiver through `ref Cell[T]`, but Cell lowering erased that operation into an ordinary MIR field assignment.** The C backend therefore emitted a store through `const Cell*`, which its C compiler correctly rejected even though `[CELL-1]` explicitly gives the shared `Cell` API permission to mutate its private payload. | `[CELL-1]`, `[CELL-2]`, `[TYP-14]` | **fixed** | C place rendering now removes `const` only while dereferencing a compiler-created `Cell[T]` wrapper. The wrapper's private, no-source-module identity makes this a compiler capability boundary; other shared references retain their C `const` representation, and source code cannot reach Cell's payload field. The focused `ref Cell` probe failed in all profiles before the correction and now prints `42` in debug, release, and shipping; its C assertion pins the casted Cell store and excludes a runtime Cell helper. The frozen target is explicit, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — borrowed `Shared` receivers skipped auto-dereference
 
 | # | Defect | Rule | Status | Fixed in |

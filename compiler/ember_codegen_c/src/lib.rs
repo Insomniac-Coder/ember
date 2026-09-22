@@ -1597,6 +1597,18 @@ impl Emitter<'_> {
         }
     }
 
+    /// The payload of a compiler-known `Cell[T]` wrapper. Unlike ordinary
+    /// source structs, its private generated definition belongs to no source
+    /// module; that makes this check a compiler-internal capability boundary,
+    /// not a spelling convention a program can forge.
+    fn cell_inner_id(&self, id: StructId) -> Option<Ty> {
+        let def = self.types.struct_def(id);
+        (def.declaring_module == usize::MAX
+            && def.name.as_str().starts_with("Cell_")
+            && def.fields.len() == 1)
+            .then_some(def.fields[0].ty)
+    }
+
     fn shared_type_info_symbol(&self, id: StructId) -> String {
         format!("{}_type_info", c_name(&self.types.struct_def(id).name.to_string()))
     }
@@ -3542,7 +3554,29 @@ impl Emitter<'_> {
                     TyKind::Ptr { .. } => out = format!("({out})[{i}]"),
                     _ => out.push_str(&format!("._0[{i}]")),
                 },
-                Projection::Deref => out = format!("(*{out})"),
+                Projection::Deref => {
+                    // `[CELL-1]`/`[CELL-2]` give `Cell` a deliberately narrow
+                    // interior-mutation boundary: its shared methods may
+                    // write the private payload even when the receiver came
+                    // through `ref Cell[T]`. `Cell` lowering becomes ordinary
+                    // MIR field assignments, so remove C's `const` exactly
+                    // while crossing that compiler-known wrapper. No source
+                    // program can expose the field, and every other shared
+                    // reference keeps its ordinary `const` representation.
+                    if matches!(
+                        self.types.kind(at.ty),
+                        TyKind::Ref { mutable: false, inner }
+                            if matches!(self.types.kind(*inner), TyKind::Struct(id)
+                                if self.cell_inner_id(*id).is_some())
+                    ) {
+                        let TyKind::Ref { inner, .. } = self.types.kind(at.ty) else {
+                            unreachable!("matched a reference above")
+                        };
+                        out = format!("(*(({}*){out}))", self.c_type(*inner));
+                    } else {
+                        out = format!("(*{out})");
+                    }
+                }
                 // A downcast writes nothing on its own; the `Field` after it
                 // names the variant and the member together.
                 Projection::Downcast(_) => {}
