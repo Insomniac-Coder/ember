@@ -9112,3 +9112,18 @@ debug, release, and shipping and require exactly two retains: Array insertion
 and closure capture. The frozen `[RC-2e]` rule names owned capture as an
 explicit escape and fixes its retain site, so D-177 is a compiler defect—not an
 ODR or specification change.
+
+### 0.256 `[RC-2e]` destructured `Shared` owned capture — 2026-09-22
+
+The same escape boundary now has direct tuple-pattern evidence. An
+`Array[(Shared[Token], i32)]` yields `token` as a borrowed leaf under
+`for token, _ in pairs`; its `owned fn` must read through that internal
+reference and retain the `Shared[Token]` when constructing the closure
+environment.
+
+`accept_loop_destructured_shared_handle_owned_capture_retains.em` prints `7`
+in debug, release, and shipping and requires exactly three retains: tuple
+construction, Array insertion, and closure capture. The assertion rules out a
+fourth retain at the loop yield. This is conformance coverage for the explicitly
+named destructuring form in `[RC-2e]`, `[CTL-1]`, and `[CTL-2]`, not a new
+defect, ODR, or specification change.
