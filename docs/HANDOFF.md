@@ -9601,3 +9601,20 @@ field lifecycle) plus one upgrade, proving the `ref dyn` coercion adds no weak
 ownership traffic. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; no ODR
 or specification change is needed.
+
+### 0.287 `[TYP-22]` mutable generic multi-interface dynamic boxes with weak fields — 2026-09-22
+
+One multi-interface dynamic box can carry both mutable and shared receiver
+slots for the same generic class payload. `Box[dyn Read + Bump]` dispatches
+the `mut self` `Bump` slot to update the original class field under its normal
+dynamic write-access interval, then dispatches the shared `Read` slot to
+upgrade the class's `Weak[Shared[Token]]` field and observe the payload through
+the explicit `.get()` boundary. Neither call creates another box allocation.
+
+`tests/conformance/TYP-22/accept_dyn_multi_interface_box_generic_class_mut_weak_field.em`
+prints `1` then `8` in debug, release, and shipping. Generated-C assertions
+require a write-access operation and weak upgrade while rejecting
+`ember_box_new_copy`; the emission contains exactly one write interval. This
+covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`, `[DRP-6]`, `[EXC-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; it is
+not an ODR or specification change.
