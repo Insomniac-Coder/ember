@@ -9442,3 +9442,20 @@ weak retain, release, and upgrade operations, and the emitted call retains the
 class weak field before entering the owned parameter. This is the `Weak[C]`
 counterpart to 0.275 and coverage of `[OBJ-3]`, `[HEAP-7]`, `[WK-11]`,
 `[WK-12]`, `[WK-14]`, and `[TST-26]`; it is not an ODR or specification change.
+
+### 0.277 `[WK-11]` returning a `Weak[Shared[T]]` class field — 2026-09-22
+
+Returning a `Weak[Shared[T]]` read from a borrowed class field is another
+explicit weak-copy boundary. The caller must receive an independent weak
+handle before the borrowed `Holder` parameter ends; otherwise a later Holder
+release could invalidate the returned observer. This changes no strong
+ownership: successful observation still requires a live independent `Shared`
+owner, `upgrade()`, and the explicit `.get()` payload boundary.
+
+`tests/conformance/WK-11/accept_shared_weak_class_field_return_copy.em`
+returns the field, upgrades the result, and prints `7` in debug, release, and
+shipping. Its generated-C assertions require weak retain, release, and upgrade
+operations; the emitted return path retains the field's weak handle before
+returning it. This fills the return form of the established `[WK-11]`,
+`[WK-12]`, `[WK-13]`, `[HEAP-4]`, and `[TST-26]` contract, without an ODR or
+specification change.
