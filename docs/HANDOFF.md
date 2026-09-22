@@ -9427,3 +9427,18 @@ retain before the call, the callee weak release, and `ember_weak_upgrade`.
 This fills the explicit weak-copy route in the existing `[WK-11]`, `[WK-12]`,
 `[WK-13]`, `[HEAP-4]`, and `[TST-26]` contract; it is coverage, not an ODR or
 specification change.
+
+### 0.276 `[WK-11]` owned weak copy from a `Weak[C]` class field — 2026-09-22
+
+`Weak[C]` has the same explicit weak-copy boundary while retaining its distinct
+class-owner representation. Passing a `Weak[Token]` field to `owned weak`
+retains the weak count for the callee, which upgrades it while the separate
+`Token` owner is live and releases the copied weak handle on return. It never
+adds a strong owner merely because the handle crossed the call boundary.
+
+`tests/conformance/WK-11/accept_class_weak_field_owned_argument_copy.em`
+prints `7` in debug, release, and shipping. Its generated-C assertions require
+weak retain, release, and upgrade operations, and the emitted call retains the
+class weak field before entering the owned parameter. This is the `Weak[C]`
+counterpart to 0.275 and coverage of `[OBJ-3]`, `[HEAP-7]`, `[WK-11]`,
+`[WK-12]`, `[WK-14]`, and `[TST-26]`; it is not an ODR or specification change.
