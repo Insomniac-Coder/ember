@@ -9567,3 +9567,20 @@ the weak retain/release/upgrade operations and reject `ember_box_new_copy`.
 This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`, `[DRP-6]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; no ODR
 or specification change is needed.
+
+### 0.285 `[TYP-22]` generic multi-interface dynamic boxes with weak fields — 2026-09-22
+
+The multi-interface carrier composes with the generic class and weak-owner
+paths. A `Pair[i32] implements Read, Write` is erased once to
+`Box[dyn Read + Write]`; both interface slots dispatch against that same class
+payload. Its `Weak[Shared[Token]]` field remains non-owning, upgrades only in
+the reading method, and still exposes the payload solely through `.get()`.
+Box destruction remains class-handle destruction rather than a copied payload
+allocation.
+
+`tests/conformance/TYP-22/accept_dyn_multi_interface_box_generic_class_shared_weak_field.em`
+prints `7` then `42` in debug, release, and shipping. Generated-C assertions
+require weak retain, release, and upgrade operations and reject
+`ember_box_new_copy`. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
+`[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]`
+composition; no ODR or specification change is needed.
