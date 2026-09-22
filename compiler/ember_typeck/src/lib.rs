@@ -14748,6 +14748,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             Some(_) => self.read_guard_through(receiver),
             None => receiver,
         };
+        // IV.4/IV.11 — ordinary references are auto-dereferenced before
+        // resolving a method.  Keep an erased interface reference intact: it
+        // is itself the dynamic-call carrier (`ref dyn I` / `ref I`), not a
+        // reference to a sized receiver whose method lookup can continue
+        // through the referent.  In particular, this reads a `ref Shared[T]`
+        // to its `Shared[T]` owner, but never reads through `Shared` to `T`:
+        // `[HEAP-4]` still requires the explicit `.get()` boundary below.
+        while let TyKind::Ref { inner, .. } = *self.types.kind(receiver.ty) {
+            if matches!(self.types.kind(inner), TyKind::Dyn { .. } | TyKind::ClassInterface(_)) {
+                break;
+            }
+            receiver = self.read_through(receiver);
+        }
         let explicit = self.resolve_method_type_args(generic_args);
         // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
         // auto-dereference to the object because that would make a dead

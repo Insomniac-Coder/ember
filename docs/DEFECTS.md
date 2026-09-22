@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — borrowed `Shared` receivers skipped auto-dereference
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-178 | **Method resolution recognized compiler-known `Shared[T]` only before removing an outer ordinary reference.** A normal closure that captured a loop-yielded `Shared[T]` by reference therefore saw `ref Shared[T]` and rejected `token.get()` with `E1010`, even though the language requires method receivers to auto-dereference ordinary `ref`/`ref mut` layers. | `[TYP-14]`, IV.11, `[HEAP-4]`, `[RC-2e]`, `[CLO-1]`, `[CLO-2]` | **fixed** | Method lookup now reads through ordinary reference layers before built-in or inherent lookup, while preserving `ref dyn`/class-interface values as their dynamic-call carriers. This reaches the `Shared[T]` owner but never reads through it to the payload, so `.get()` remains the explicit `[HEAP-4]` boundary. The focused normal-closure loop probe was rejected before the correction and now prints `7` in debug, release, and shipping; its generated C contains exactly one retain (the original Array insertion), proving the non-`owned` capture remains an `[RC-2e]` elision. The frozen target is explicit, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — owned closures captured borrowed loop references
 
 | # | Defect | Rule | Status | Fixed in |

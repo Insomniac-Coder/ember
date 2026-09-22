@@ -9141,3 +9141,26 @@ construction, Array insertion, and closure capture. There is no iterator-yield
 retain. This is further coverage of `[RC-2e]`'s named iterator/destructuring
 shape and uses the same `[CTL-1]`/`[CTL-2]` borrowed-container contract; it
 does not report a defect, ODR, or specification change.
+
+### 0.258 `[TYP-14]` normal closure capture of a borrowed `Shared` loop yield — 2026-09-22
+
+D-178 exposed a separate method-receiver gap behind D-177. A normal `fn`
+capture intentionally preserves a borrowed loop yield as `ref Shared[Token]`:
+unlike an `owned fn`, it is not an `[RC-2e]` escape and must not retain the
+owner. The type checker, however, checked its compiler-known `Shared` methods
+before auto-dereferencing that ordinary reference and incorrectly reported that
+`ref Shared[Token]` had no `.get()` method.
+
+IV.4 and IV.11 already require method receivers to strip ordinary `ref` and
+`ref mut` layers. Method lookup now does so before built-in and inherent lookup,
+but leaves `ref dyn I` and `ref I` class-interface values intact because those
+are the erased dynamic-call carriers. The adjustment stops at the `Shared`
+owner: it does not make `Shared` itself implicit, so `[HEAP-4]`'s explicit
+`.get()` boundary remains intact.
+
+`tests/conformance/RC-2e/accept_loop_shared_handle_borrowed_capture_elides_retain.em`
+captures a source Array loop yield in a normal closure and calls `.get()` from
+inside it. It now prints `7` in debug, release, and shipping and requires
+exactly one emitted retain—the source Array insertion—proving the closure
+capture remains borrowed. The frozen target decides this behavior completely,
+so D-178 is a compiler defect, not an ODR or a specification change.
