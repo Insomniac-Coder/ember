@@ -10358,3 +10358,13 @@ receiver derived from the method-duration class access. The complete
 conformance suite passes in debug, release, and shipping; these are
 implementation and evidence additions only, with no specification or ODR
 change.
+
+### 0.336 `[TYP-22]` dynamic-interface weak arguments — 2026-09-22
+
+Generic classes behind `Box[dyn Observe]` now have executable coverage for
+borrowed and `owned` `Weak[Shared[Token]]` arguments, including both live and
+expired control-block states. The four fixtures pin the concrete dynamic slot,
+the weak retain/release and upgrade paths, the `None` result after expiry, and
+the absence of a copied boxed payload. All profiles pass the complete
+conformance suite; this closes a `[TYP-22]`/`[IFC-1]`/`[WK-11]`–`[WK-13]`
+matrix gap without a specification change or ODR.
