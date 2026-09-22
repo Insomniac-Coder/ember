@@ -64,6 +64,10 @@ pub struct LocalDecl {
     /// report mutation of the loop's iterable as E3020/B2 instead of guessing
     /// from the compiler-private local's spelling.
     pub for_iterator: bool,
+    /// `[RC-2e]` — this local is the borrowed counted-handle yield of a source
+    /// `for` loop. An `owned fn` capture must copy the handle into its
+    /// environment instead of preserving the compiler-internal reference.
+    pub loop_borrowed_handle: bool,
 }
 
 #[derive(Debug)]

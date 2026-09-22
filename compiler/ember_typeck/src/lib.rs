@@ -7427,6 +7427,7 @@ impl<'a> Checker<'a> {
                         ty: *ty,
                         span: *span,
                         for_iterator: false,
+                        loop_borrowed_handle: false,
                     })
                     .collect();
                 let params = signature
@@ -7816,12 +7817,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .filter_map(|(def, ty, span)| {
                 let self_local = LocalId(1);
                 let locals = vec![
-                    LocalDecl { name: None, ty, span, for_iterator: false },
+                    LocalDecl {
+                        name: None,
+                        ty,
+                        span,
+                        for_iterator: false,
+                        loop_borrowed_handle: false,
+                    },
                     LocalDecl {
                         name: Some(Symbol::intern("self")),
                         ty,
                         span,
                         for_iterator: false,
+                        loop_borrowed_handle: false,
                     },
                 ];
                 let (value, class_owner) = match self.types.kind(ty) {
@@ -8695,7 +8703,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     fn declare(&mut self, name: Option<Symbol>, ty: Ty, span: Span) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
-        self.locals.push(LocalDecl { name, ty, span, for_iterator: false });
+        self.locals.push(LocalDecl {
+            name,
+            ty,
+            span,
+            for_iterator: false,
+            loop_borrowed_handle: false,
+        });
         if let Some(name) = name {
             self.scopes.last_mut().expect("a scope is open").insert(name, id);
         }
@@ -8795,9 +8809,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// a normal closure reads through its shared-borrow field, while an
     /// `owned fn` reads its directly stored move/copy capture.
     fn resolve_capture(&mut self, name: Symbol, span: Span) -> Option<Expr> {
-        let ((env_local, struct_id), captures_by_move) = {
+        let (source_ty, captures_by_move, owned_loop_borrowed_handle) = {
+            let watch = self.captures.as_ref()?;
+            (
+                *watch.outer.get(&name)?,
+                watch.captures_by_move,
+                watch.owned_loop_borrowed_handles.contains(&name),
+            )
+        };
+        let ty = if captures_by_move && owned_loop_borrowed_handle {
+            let TyKind::Ref { inner, .. } = *self.types.kind(source_ty) else {
+                unreachable!("a borrowed loop handle is a reference")
+            };
+            inner
+        } else {
+            source_ty
+        };
+        let (env_local, struct_id) = {
             let watch = self.captures.as_mut()?;
-            let ty = *watch.outer.get(&name)?;
             match watch.env {
                 None => {
                     if !watch.found.iter().any(|(n, _)| *n == name) {
@@ -8805,7 +8834,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     return Some(Expr { ty, kind: ExprKind::Error, span });
                 }
-                Some(env) => (env, watch.captures_by_move),
+                Some(env) => env,
             }
         };
         let index = self
@@ -9974,6 +10003,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             item_ty,
             pattern.span,
         );
+        self.locals[item_local.0 as usize].loop_borrowed_handle =
+            simple_binding && self.is_counted_owner_handle(elem);
         self.loop_labels.push(label.map(|l| l.name));
         let mut inner = vec![Stmt::Let {
             local: item_local,
@@ -10031,6 +10062,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }))
     }
 
+    fn is_counted_owner_handle(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Class(_) => true,
+            TyKind::Struct(id) => self.types.struct_def(*id).origin.as_ref().is_some_and(
+                |(name, arguments)| name.is("Shared") && arguments.len() == 1,
+            ),
+            _ => false,
+        }
+    }
+
+    fn is_borrowed_counted_owner_handle(&self, ty: Ty) -> bool {
+        let TyKind::Ref { inner, .. } = *self.types.kind(ty) else {
+            return false;
+        };
+        self.is_counted_owner_handle(inner)
+    }
+
     /// Bind a structured array-loop pattern through the reference that
     /// `[CTL-1]` yields. Each component remains a borrowed view of the source
     /// element; copying a class handle only occurs if a later expression asks
@@ -10061,6 +10109,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return;
                 };
                 let local = self.declare(Some(name.name), value.ty, pattern.span);
+                self.locals[local.0 as usize].loop_borrowed_handle =
+                    self.is_borrowed_counted_owner_handle(value.ty);
                 inner.push(Stmt::Let { local, init: Some(value) });
             }
             ast::PatternKind::Tuple(items) => {
@@ -10293,6 +10343,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut prologue = Vec::new();
         let payload_pattern = if simple_binding {
             let bound = self.declare(binding_name(pattern), item_ty, pattern.span);
+            self.locals[bound.0 as usize].loop_borrowed_handle =
+                self.is_borrowed_counted_owner_handle(item_ty);
             hir::Pattern {
                 ty: item_ty,
                 kind: hir::PatternKind::Bind { local: bound, sub: None },
@@ -15483,10 +15535,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .flat_map(|scope| scope.iter())
             .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
             .collect();
+        let owned_loop_borrowed_handles: HashSet<Symbol> = outer
+            .keys()
+            .filter(|name| {
+                self.lookup(**name).is_some_and(|local| {
+                    self.locals[local.0 as usize].loop_borrowed_handle
+                })
+            })
+            .copied()
+            .collect();
 
         let saved = self.sink.take();
         let probe = CaptureWatch {
             outer: outer.clone(),
+            owned_loop_borrowed_handles: owned_loop_borrowed_handles.clone(),
             found: Vec::new(),
             env: None,
             captures_by_move: lambda.is_owned,
@@ -15506,6 +15568,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if captured.is_empty() {
             let watch = CaptureWatch {
                 outer,
+                owned_loop_borrowed_handles,
                 found: Vec::new(),
                 env: None,
                 captures_by_move: lambda.is_owned,
@@ -15572,6 +15635,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let probe_ty = self.types.intern(TyKind::Struct(probe_id));
             let probe_watch = CaptureWatch {
                 outer: outer.clone(),
+                owned_loop_borrowed_handles: owned_loop_borrowed_handles.clone(),
                 found: captured.clone(),
                 env: Some((LocalId(0), probe_id)),
                 captures_by_move: lambda.is_owned,
@@ -15640,6 +15704,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let watch = CaptureWatch {
             outer,
+            owned_loop_borrowed_handles,
             found: captured.clone(),
             env: Some((LocalId(0), struct_id)),
             captures_by_move: lambda.is_owned,
@@ -15692,9 +15757,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut values = Vec::new();
         for (index, (name, ty)) in captured.iter().enumerate() {
             let Some(local) = self.lookup(*name) else { continue };
-            let place = Expr { ty: *ty, kind: ExprKind::Local(local), span };
+            let source_ty = self.locals[local.0 as usize].ty;
+            let place = Expr { ty: source_ty, kind: ExprKind::Local(local), span };
             if lambda.is_owned {
-                values.push(place);
+                values.push(if source_ty == *ty { place } else { self.read_through(place) });
             } else {
                 let mutable = mutable_capture_fields.contains(&index);
                 let reference = self.types.intern(TyKind::Ref { mutable, inner: *ty });
@@ -20540,6 +20606,10 @@ struct CaptureWatch {
     /// and not `LocalId`s, because the enclosing locals are swapped out while
     /// the closure body is checked and an id into them would dangle.
     outer: HashMap<Symbol, Ty>,
+    /// Names whose outer local is a borrowed loop yield of a class or Shared
+    /// handle. `[RC-2e]` requires an owned closure to capture the owner value,
+    /// retaining it at that capture boundary instead of storing this reference.
+    owned_loop_borrowed_handles: HashSet<Symbol>,
     /// Pass one: the captures discovered, in the order first mentioned. That
     /// order is the environment's field order.
     found: Vec<(Symbol, Ty)>,

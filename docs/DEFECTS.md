@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — owned closures captured borrowed loop references
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-177 | **An `owned fn` directly capturing a class or `Shared[T]` handle yielded by a source `for` loop preserved the compiler-internal `ref` instead of copying the handle into its owning environment.** A `Shared` capture consequently failed method lookup as `ref Shared[T]`; a class capture could store a reference whose loop/container lifetime ends before the closure is used. | `[RC-1]`, `[RC-2e]`, `[CLO-1]`, `[CLO-2]`, `[TYP-14]` | **fixed** | HIR marks borrowed counted-handle loop yields. During `owned fn` capture only, type checking reads through that marked reference so the environment stores the class/Shared owner, while ordinary explicit reference captures keep their reference type. The normal aggregate copy emits the retain at environment construction. The focused Shared probe was rejected before the correction and now prints `7`; its class companion does likewise. Both all-profile cases pin exactly two retains—source Array insertion and capture. `[RC-2e]` explicitly requires this escape and retain site, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — loop tuple patterns lost their bindings
 
 | # | Defect | Rule | Status | Fixed in |

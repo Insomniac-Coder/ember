@@ -9088,3 +9088,25 @@ been destroyed. It prints `7` in every profile and requires exactly two
 retains: source insertion and the return boundary. This is coverage of existing
 `[HEAP-3]`, `[HEAP-4]`, `[HEAP-6]`, `[RC-1]`, and `[RC-2e]` behavior, not a
 defect, ODR, or specification change.
+
+### 0.255 `[RC-2e]` direct owned-loop capture — 2026-09-22
+
+D-177 closed a capture-boundary omission. A simple Array loop names a borrowed
+reference internally. `owned fn` capture previously stored that internal
+reference directly, so `token.get()` failed because the closure saw `ref
+Shared[Token]` rather than the explicitly captured `Shared[Token]`. The same
+route made direct class-handle capture preserve a short-lived reference instead
+of acquiring the closure's owning handle.
+
+HIR now marks borrowed class/`Shared` loop yields. Only an `owned fn` capture
+of that marked local reads through the internal reference and stores the owner
+value in its environment; ordinary reference captures retain their existing
+reference semantics. The normal aggregate copy then emits the required retain
+at closure construction.
+
+`accept_loop_shared_handle_owned_capture_retains.em` and
+`accept_loop_class_handle_direct_owned_capture_retains.em` each print `7` in
+debug, release, and shipping and require exactly two retains: Array insertion
+and closure capture. The frozen `[RC-2e]` rule names owned capture as an
+explicit escape and fixes its retain site, so D-177 is a compiler defect—not an
+ODR or specification change.
