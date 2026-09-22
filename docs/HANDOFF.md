@@ -9330,3 +9330,18 @@ compiler before the fix and now prints `42` in debug, release, and shipping;
 its emitted-C assertion requires the casted Cell store and excludes an
 `ember_cell` runtime helper. The frozen target is unambiguous, so D-179 is a
 compiler defect, not an ODR or specification change.
+
+### 0.270 `[CELL-1]` shared `Cell.replace` through `ref Cell[T]` — 2026-09-22
+
+The `replace` route shares D-179's interior-mutation boundary but adds the
+owned-result half of `[CELL-1]`: it moves the old payload to the caller before
+storing the supplied replacement. A shared reference to the wrapper must not
+turn that operation into an ordinary shared-reference write or a runtime
+operation.
+
+`tests/conformance/CELL-1/accept_cell_replace_through_shared_ref.em` replaces
+`7` with `42` through `ref Cell[i32]`, then observes both values in debug,
+release, and shipping. Its generated C contains the compiler-only casted Cell
+store and no `ember_cell` helper. This is coverage of D-179 under the existing
+`[CELL-1]`, `[CELL-2]`, and `[TYP-14]` contract; no ODR or specification change
+is involved.
