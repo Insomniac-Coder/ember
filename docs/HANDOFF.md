@@ -10379,3 +10379,13 @@ the owned observer cleanup. The four `[TYP-22]` fixtures pin the dynamic
 adapter slot, weak retain/release/upgrade paths, and the live/`None` results;
 the complete conformance suite passes in all profiles without a specification
 change or ODR.
+
+### 0.338 `[TYP-22]` complete dynamic-carrier weak argument modes — 2026-09-22
+
+Generic classes behind borrowed `ref dyn` and mutable `ref mut dyn` carriers
+now cover both borrowed and `owned` `Weak[Shared[Token]]` arguments while the
+payload is live and after it expires. The eight dynamic-interface fixtures pin
+the adapter slot, mutable write-access boundary, weak retain/release/upgrade
+paths, owned cleanup, and the expected `Some`/`None` result. The complete
+conformance suite passes in all profiles; this closes the defined `[TYP-22]`
+argument-mode matrix without a specification change or ODR.
