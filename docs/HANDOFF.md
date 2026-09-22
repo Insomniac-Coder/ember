@@ -9410,3 +9410,20 @@ assertions require the retain, release, and upgrade weak-runtime paths. This
 is the `Weak[Shared[T]]` complement to 0.273 and coverage of the existing
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` rules; it creates no
 ODR or specification change.
+
+### 0.275 `[WK-11]` owned weak copy from a `Weak[Shared[T]]` class field — 2026-09-22
+
+An omitted parameter mode is borrowed, so it must not manufacture a weak
+owner. The corresponding explicit `owned` boundary does: passing a
+`Weak[Shared[T]]` class field to `owned weak` retains the field's weak handle
+for the callee, which then releases that independent weak owner on return.
+The callee may upgrade while a separate strong owner is live, but its payload
+observation still goes only through `Shared.get()`.
+
+`tests/conformance/WK-11/accept_shared_weak_class_field_argument_copy.em`
+passes the stored weak field to an owned parameter, upgrades it, and prints `7`
+in debug, release, and shipping. Its emitted C contains the distinct weak
+retain before the call, the callee weak release, and `ember_weak_upgrade`.
+This fills the explicit weak-copy route in the existing `[WK-11]`, `[WK-12]`,
+`[WK-13]`, `[HEAP-4]`, and `[TST-26]` contract; it is coverage, not an ODR or
+specification change.
