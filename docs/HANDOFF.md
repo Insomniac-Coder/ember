@@ -9769,3 +9769,18 @@ for the Holder field only, and the weak upgrade. This extends `[TYP-16]`,
 `[CLS-2]`, `[CLS-4]`, `[DSP-1]`, `[FN-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.297 `[TYP-22]` dynamic interface returns of generic weak fields — 2026-09-22
+
+An object-safe interface slot may return `Weak[Shared[Token]]` by value from a
+generic class carried in `Box[dyn Observe]`. The dynamic adapter copies the weak
+observer for the caller; it does not copy the payload or allocate a second box.
+The caller upgrades the returned observer only while an independent `Shared`
+owner is live, then crosses the explicit `.get()` boundary to read the payload.
+
+`tests/conformance/TYP-22/accept_dyn_interface_box_generic_class_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions pin the
+concrete dynamic adapter slot and require weak retain/release/upgrade operations
+while rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`,
+`[IFC-1]`, `[CLS-4]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`,
+and `[TST-26]` coverage without an ODR or specification change.
