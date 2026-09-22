@@ -130,6 +130,10 @@ pub fn emit(
         class_interface_tables: BTreeMap::new(),
         class_interface_call_interfaces: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
+        direct_param_modes: bodies
+            .iter()
+            .map(|body| (body.symbol.clone(), body.param_modes.clone()))
+            .collect(),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -237,6 +241,10 @@ struct Emitter<'a> {
     /// Per-body hidden caches for repeated interface calls through an
     /// unchanged class-interface parameter.
     interface_caches: BTreeMap<InterfaceCacheKey, String>,
+    /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
+    /// parameter creates another class-handle owner, so its retain must be
+    /// emitted before the call transfers that new owner to the callee.
+    direct_param_modes: BTreeMap<String, Vec<ParameterMode>>,
 }
 
 #[derive(Clone)]
@@ -2711,6 +2719,30 @@ impl Emitter<'_> {
                 }
             }
             Terminator::Call { func, args, dest, next } => {
+                // `[RC-1]`/`[FN-1]` — a class handle is `Copy`, but its C
+                // representation is only one pointer word. Passing a copied
+                // handle to an owned direct parameter therefore needs an
+                // explicit retain before the callee becomes responsible for
+                // releasing its parameter. A moved operand transfers an
+                // existing owner and deliberately does not retain.
+                if let FuncRef::Direct { symbol, .. } = func
+                    && let Some(modes) = self.direct_param_modes.get(symbol)
+                {
+                    let mut retains = Vec::new();
+                    for (argument, mode) in args.iter().zip(modes) {
+                        if *mode != ParameterMode::Owned {
+                            continue;
+                        }
+                        let Operand::Copy(place) = argument else {
+                            continue;
+                        };
+                        let value = self.place_in(place, body);
+                        self.retain_lines_for_value(&value, self.place_ty(place, body), &mut retains);
+                    }
+                    for line in retains {
+                        self.line(&format!("    {line}"));
+                    }
+                }
                 let call = self.call_expression(func, args, body);
                 let dest_ty = self.place_ty(dest, body);
                 if self.is_void(dest_ty) {

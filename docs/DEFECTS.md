@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — copied class handles crossed owned direct calls without a retain
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-172 | **The C backend passed a copied class handle directly to an `owned` direct parameter without retaining it.** MIR correctly represented `consume(token)` from a borrowed loop yield as `copy (*token)`, and the callee correctly released its owned parameter, but the C call copied only the pointer word. The caller's Array then released the sole reference at loop exit, producing a runtime `release of object with no strong references` panic. | `[RC-1]`, `[RC-2e]`, `[FN-1]`, `[OWN-2]` | **fixed** | The backend now reads the already-verified parameter-mode metadata for direct calls and retains every copied owning argument before transferring it to an `owned` parameter. Moved arguments remain transfers and do not retain. `accept_loop_class_handle_owned_parameter_retains.em` printed `7` and then panicked before the correction; it now runs in debug, release, and shipping and pins exactly two retains: Array insertion and the owned-call boundary. The adopted rules specify both the retain site and callee cleanup, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — class destructors could publish their handle through `owned fn`
 
 | # | Defect | Rule | Status | Fixed in |

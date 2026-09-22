@@ -8876,3 +8876,23 @@ three retains: source insertion, materializing `copy`, and closure-environment
 capture. The full conformance suite passes. This is coverage of the established
 `[RC-2e]` owned-capture exception and requires neither a compiler correction
 nor an ODR.
+
+### 0.242 `[RC-2e]` retain at a loop handle's owned-call boundary — 2026-09-22
+
+The direct form of `[RC-2e]`'s excluded `owned`-parameter use exposed D-172.
+`for token in tokens: consume(token)` type-checked and lowered as a read-through
+of the borrowed loop reference, but C generation copied that class pointer into
+the callee without retaining it. `consume` correctly released its owned
+parameter, leaving the Array's later cleanup to underflow the strong count.
+
+The C backend now carries the existing direct callee parameter-mode metadata
+and, for each copied `owned` argument, emits the normal recursive class-handle
+retain before the call. Moved arguments remain ownership transfers and receive
+no retain. `tests/conformance/RC-2e/accept_loop_class_handle_owned_parameter_retains.em`
+was red before the correction (it printed `7` then panicked) and now prints `7`
+in debug, release, and shipping while requiring exactly two emitted retains:
+the initial Array insertion and the owned-call boundary. `cargo test -p
+ember_driver --test milestones the_conformance_suite_runs -- --nocapture` and
+`cargo test -p ember_codegen_c` pass. The frozen `[RC-1]`, `[RC-2e]`, `[FN-1]`,
+and `[OWN-2]` rules already define this behavior, so D-172 is a compiler defect,
+not an ODR or a specification change.
