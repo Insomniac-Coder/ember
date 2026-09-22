@@ -9505,3 +9505,19 @@ assertions require weak retain, release, and upgrade operations. This is the
 `Weak[C]` counterpart to 0.279 and coverage of `[OBJ-3]`, `[HEAP-7]`,
 `[WK-11]`, `[WK-12]`, `[WK-14]`, and `[TST-26]`; it is not an ODR or
 specification change.
+
+### 0.281 `[FN-1]` borrowed `Weak[Shared[T]]` class-field arguments — 2026-09-22
+
+The omitted parameter mode is borrowed, not an implicit weak-owner copy. A
+`Weak[Shared[T]]` field passed to such a parameter is used directly for
+upgrade; the call boundary must not retain or release a temporary weak handle.
+The enclosing class field remains the sole weak owner, while a separate
+`Shared[T]` owner keeps the target live for the observation.
+
+`tests/conformance/WK-11/accept_shared_weak_field_borrowed_argument_elides_copy.em`
+prints `7` in debug, release, and shipping. Its generated-C assertions require
+exactly one weak retain and one weak release (the field's construction and
+destruction) plus one upgrade, proving the borrowed call adds no weak-count
+traffic. This is coverage of existing `[FN-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-13]`, and `[TST-26]` rules; it creates no ODR or specification
+change.
