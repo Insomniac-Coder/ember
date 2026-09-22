@@ -9829,3 +9829,19 @@ concrete adapter slot and require weak retain/release/upgrade operations. This
 extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[BRW-1]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.301 `[TYP-22]` borrowed mutable dynamic-interface returns of generic weak fields — 2026-09-22
+
+A `ref mut dyn Revise` carrier may invoke a generic class's mutable interface
+slot, update its private field under the usual dynamic write interval, and
+return a copied `Weak[Shared[Token]]` field. The receiver remains a borrow; only
+the returned weak observer gains caller-owned control-block lifetime after the
+dynamic call ends.
+
+`tests/conformance/TYP-22/accept_ref_mut_dyn_generic_class_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions pin the
+concrete mutable adapter slot, write-access operation, and weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
+`[IFC-1]`, `[CLS-4]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
+change.
