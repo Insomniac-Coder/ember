@@ -9475,3 +9475,18 @@ the emitted return path retains the class weak field before returning it. This
 is the `Weak[C]` counterpart to 0.277 and coverage of `[OBJ-3]`, `[HEAP-7]`,
 `[WK-11]`, `[WK-12]`, `[WK-14]`, and `[TST-26]`, without an ODR or specification
 change.
+
+### 0.279 `[WK-12]` expired `Weak[Shared[T]]` returned from a class field — 2026-09-22
+
+The field-return copy must keep only the weak control-block observation alive.
+After a helper constructs a `Shared[Token]`, stores `Weak(strong)` in a class
+field, and returns that field, normal scope cleanup releases both Holder and
+the final strong owner. The returned weak value remains valid but expired:
+upgrade returns `None` and cannot resurrect the destroyed payload.
+
+`tests/conformance/WK-12/accept_expired_shared_weak_class_field_return_copy.em`
+prints `7` on the required `None` branch in debug, release, and shipping. Its
+generated-C assertions require weak retain, release, and upgrade operations.
+This covers the field-return form of `[WK-11]`–`[WK-13]`, `[HEAP-3]`,
+`[HEAP-6]`, `[HEAP-7]`, `[OBJ-3]`, and `[TST-26]`; it is coverage, not an ODR
+or specification change.
