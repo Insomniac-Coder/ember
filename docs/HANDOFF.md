@@ -10417,3 +10417,12 @@ while the target is live and after it expires. The four fixtures verify the
 ordered composed slots, base-field dispatch, owned observer cleanup, and the
 expected `Some`/`None` results. This closes the defined generic-base composed
 argument matrix without a specification change or ODR.
+
+### 0.342 `[TYP-22]` generic-base composed carrier weak arguments — 2026-09-22
+
+The generic-base matrix now reaches borrowed `ref dyn Observe + Bump` and
+mutable `ref mut dyn Observe + Bump` carriers as well. Live and expired
+`Weak[Shared[Token]]` arguments cover the ordered adapter slots, inherited
+counter mutation, write-access boundaries, owned observer cleanup, and the
+expected `Some`/`None` results. These four fixtures complete the defined
+generic-base carrier argument modes without a specification change or ODR.
