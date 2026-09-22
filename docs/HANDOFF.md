@@ -8966,3 +8966,19 @@ now passes in every profile. Its three retains are source insertion, the
 Worker-to-Consumer upcast used to select dispatch, and the virtual owned-call
 boundary. This is D-175 under the explicit `[FN-1]`, `[DSP-2]`, `[RC-1]`, and
 `[RC-2e]` rules, not an ODR or specification change.
+
+### 0.247 `[OBJ-2]` owned arguments through class-interface dispatch — 2026-09-22
+
+The one-word class-interface path is now covered at the same `[RC-2e]` escape
+boundary as direct, indirect, `ref dyn`, and virtual calls. `Consume` is a
+bare interface parameter, so its dispatch uses the class `TypeInfo` interface
+table rather than the separate `ref dyn` carrier. Passing a loop-yielded
+`Token` to `Consume.consume(self, owned token: Token)` retains at the call
+boundary; the implementation then releases the parameter normally.
+
+`tests/conformance/RC-2e/accept_loop_class_handle_owned_class_interface_parameter_retains.em`
+prints `7` in debug, release, and shipping and requires exactly three emitted
+retains: the owned call, insertion into the source Array, and the independent
+class-to-interface conversion. This records coverage for existing `[RC-1]`,
+`[RC-2e]`, `[OBJ-2]`, and `[DSP-3]` behavior; no compiler correction, ODR, or
+specification change was required.
