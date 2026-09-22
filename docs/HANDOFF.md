@@ -9908,3 +9908,18 @@ concrete dynamic adapter and weak retain/release/upgrade operations while
 rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
 `[CLS-4]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and
 `[TST-26]` coverage without an ODR or specification change.
+
+### 0.306 `[TYP-22]` expired dynamic returns of generic class-owned weak fields — 2026-09-22
+
+A `Weak[Token]` returned from a generic class through `Box[dyn Observe]` must
+remain a valid but non-owning control-block handle after the box payload and the
+final `Token` owner leave the helper. Its later `upgrade()` correctly takes
+`None`; the adapter must not retain either class owner or reconstruct a token
+handle from the expired observer.
+
+`tests/conformance/TYP-22/accept_expired_dyn_interface_box_generic_class_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+concrete dynamic adapter and weak retain/release/upgrade operations while
+rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
+`[CLS-4]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and
+`[TST-26]` coverage without an ODR or specification change.
