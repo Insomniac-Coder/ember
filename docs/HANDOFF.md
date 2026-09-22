@@ -10368,3 +10368,14 @@ the weak retain/release and upgrade paths, the `None` result after expiry, and
 the absence of a copied boxed payload. All profiles pass the complete
 conformance suite; this closes a `[TYP-22]`/`[IFC-1]`/`[WK-11]`–`[WK-13]`
 matrix gap without a specification change or ODR.
+
+### 0.337 `[TYP-22]` borrowed and mutable dynamic-carrier weak arguments — 2026-09-22
+
+The dynamic-interface argument matrix now covers generic classes through both
+borrowed `ref dyn` and mutable `ref mut dyn` carriers. Borrowed and owned
+`Weak[Shared[Token]]` arguments are each exercised while live and after the
+payload expires, including the mutable receiver's write-access interval and
+the owned observer cleanup. The four `[TYP-22]` fixtures pin the dynamic
+adapter slot, weak retain/release/upgrade paths, and the live/`None` results;
+the complete conformance suite passes in all profiles without a specification
+change or ODR.
