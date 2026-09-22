@@ -9164,3 +9164,19 @@ inside it. It now prints `7` in debug, release, and shipping and requires
 exactly one emitted retain—the source Array insertion—proving the closure
 capture remains borrowed. The frozen target decides this behavior completely,
 so D-178 is a compiler defect, not an ODR or a specification change.
+
+### 0.259 `[WK-11]` normal closure capture of a borrowed `Weak` loop yield — 2026-09-22
+
+The reference-receiver correction in D-178 also has direct weak-owner evidence.
+A normal closure captures an `Array[Weak[Token]]` loop yield by reference; its
+call to `.upgrade()` must read through that ordinary `ref Weak[Token]` receiver
+without copying the weak owner. The dynamic `Weak` operation remains explicit:
+the auto-dereference reaches the weak handle itself, not the observed class.
+
+`tests/conformance/WK-11/accept_loop_weak_handle_borrowed_capture_elides_retain.em`
+prints `7` in debug, release, and shipping. It requires exactly two emitted
+weak retains and two weak releases—construction and Array insertion/cleanup—so
+the loop and normal closure introduce no weak-count traffic. This is regression
+coverage for D-178 under the already explicit `[TYP-14]`, `[CTL-1]`, `[CTL-2]`,
+`[WK-11]`, `[WK-12]`, `[CLO-1]`, and `[CLO-2]` contract; no ODR or
+specification change is involved.
