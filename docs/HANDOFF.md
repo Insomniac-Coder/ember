@@ -10247,3 +10247,17 @@ and weak retain/release/upgrade paths. This extends `[TYP-16]`, `[CLS-2]`,
 `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.328 `[DSP-1]` mutable generic virtual dispatch after class-owned weak expiry — 2026-09-22
+
+A base-typed generic handle may dispatch a mutable virtual slot after its
+inherited `Weak[Token]` field has expired. The derived override still updates
+its inherited count under the ordinary write interval, but the weak upgrade
+takes `None` and does not resurrect the former class owner.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_expired_weak_class_field_dispatch.em`
+prints `2` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot, base-typed `->slot0` dispatch, the write-access operation,
+and the weak upgrade. This extends `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`,
+`[DSP-1]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`,
+and `[TST-26]` coverage without an ODR or specification change.
