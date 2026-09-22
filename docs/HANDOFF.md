@@ -9393,3 +9393,20 @@ debug, release, and shipping. Its generated-C assertions require weak retain,
 release, and upgrade calls. This fills the mutable class-field form of the
 existing `[WK-11]`, `[WK-12]`, `[WK-14]`, `[HEAP-7]`, and `[TST-26]` contract;
 it is coverage, not an ODR or a specification change.
+
+### 0.274 `[WK-11]` replacing an empty `Weak[Shared[T]]` class field — 2026-09-22
+
+The generalized weak-owner form has the matching class-storage boundary. A
+class field holding `Weak[Shared[T]]` may replace its empty value with an
+observer of a live `Shared[T]`; the field gains and later drops only a weak
+count. After upgrade, the result is still a `Shared[T]` owner rather than a
+payload reference, so observing its value requires the explicit `.get()`
+operation from `[HEAP-4]`.
+
+`tests/conformance/WK-11/accept_shared_weak_class_field_reassignment.em`
+initialises an empty weak field, replaces it with `Weak(strong)`, upgrades it,
+and prints `42` through `.get()` in debug, release, and shipping. Generated-C
+assertions require the retain, release, and upgrade weak-runtime paths. This
+is the `Weak[Shared[T]]` complement to 0.273 and coverage of the existing
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` rules; it creates no
+ODR or specification change.
