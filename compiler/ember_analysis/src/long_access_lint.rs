@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{Body, FuncRef, LocalId, Operand, Place, Rvalue, StmtKind, Terminator};
-use ember_types::{ClassId, TypeTable};
+use ember_types::{ClassId, ClassOpenness, TypeTable};
 
 /// Emit the opt-in `[EXC-7]` lint for each reachable dynamic call that occurs
 /// while its enclosing `mut self` access remains live.
@@ -35,6 +35,13 @@ fn lint_body(body: &Body, types: &TypeTable, sink: &mut Sink) {
     let Some(access) = entry_class_access(body) else {
         return;
     };
+    // `[EXC-7]` is about dispatch that may re-enter an *open* hierarchy. An
+    // erased `ref dyn` call from a final class still has an indirect ABI, but
+    // no unknown subclass can override its behavior, so it is not this lint's
+    // long-term-access hazard.
+    if types.class_def(access.class).openness == ClassOpenness::Final {
+        return;
+    }
     let mut pending = vec![(0usize, false)];
     let mut visited = HashSet::new();
     let mut reported = HashSet::new();

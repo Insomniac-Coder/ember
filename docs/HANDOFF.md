@@ -10324,3 +10324,13 @@ advisory and off by default; `tests/conformance/EXC-7/` covers both call forms
 in debug, release, and shipping, and `docs/errors/L3013.md` runs a warning
 example plus a compiling receiver-mode fix. This closes an implementation gap,
 not an ambiguity, so no ODR was created.
+
+### 0.333 `[EXC-7]` final classes do not falsely warn through `ref dyn` — 2026-09-22
+
+`L3013` applies only where an open or abstract class hierarchy can be re-entered.
+A final class used as `ref dyn I` still has an indirect table-call ABI, but it
+cannot acquire an unknown subclass override; treating that implementation detail
+as an open hierarchy produced a false warning. The lint now returns before
+traversing a final class body's access interval. Focused regressions cover both
+final-class `virtual` spelling and the erased dynamic call, alongside the open
+hierarchy positives. No specification or owner decision changed.
