@@ -9706,3 +9706,20 @@ and weak upgrade. This extends the existing `[TYP-16]`, `[CLS-2]`, `[CLS-4]`,
 `[DSP-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
 `[TST-26]` coverage; the rules are explicit, so it requires no ODR or
 specification change.
+
+### 0.293 `[DSP-1]` mutable generic virtual replacement of an inherited weak field — 2026-09-22
+
+A base-typed virtual call may transfer a `Weak[Shared[Token]]` argument into a
+derived generic override. The override replaces its inherited field, dropping
+the old empty observer, retaining the new weak observer, and then upgrades only
+that replacement while its independent `Shared` owner remains live. The mutable
+receiver's write interval surrounds both the replacement and the following
+field read without changing the observer into a strong edge.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_weak_field_reassignment.em`
+prints `8` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot and base-typed `->slot0` dispatch, the write-access
+boundary, and weak retain/release/upgrade paths. This extends the existing
+`[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[DSP-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
+change.
