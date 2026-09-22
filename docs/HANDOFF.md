@@ -9180,3 +9180,21 @@ the loop and normal closure introduce no weak-count traffic. This is regression
 coverage for D-178 under the already explicit `[TYP-14]`, `[CTL-1]`, `[CTL-2]`,
 `[WK-11]`, `[WK-12]`, `[CLO-1]`, and `[CLO-2]` contract; no ODR or
 specification change is involved.
+
+### 0.260 `[WK-13]` normal closure capture of a borrowed `Weak[Shared[T]]` loop yield — 2026-09-22
+
+The generalized weak-owner form has the same borrowed-capture boundary. A
+normal closure captures a `Weak[Shared[Token]]` loop yield by reference, calls
+`.upgrade()`, then uses the returned strong owner through its explicit
+`.get()` boundary. This covers both receiver stages: auto-dereference exposes
+the weak owner for its operation, while `[HEAP-4]` still prevents an implicit
+read through the upgraded `Shared[Token]` payload.
+
+`tests/conformance/WK-11/accept_loop_shared_weak_borrowed_capture_elides_retain.em`
+prints `7` in debug, release, and shipping. It requires exactly two emitted
+weak retains and two weak releases, proving construction and Array storage are
+the only weak-count boundaries; neither loop iteration nor normal closure
+capture manufactures another weak owner. This is coverage of D-178's
+already-defined receiver correction across `[HEAP-3]`, `[HEAP-4]`, `[HEAP-7]`,
+`[WK-11]`–`[WK-13]`, `[CTL-1]`, `[CTL-2]`, and `[TYP-14]`, not an ODR or a
+specification change.
