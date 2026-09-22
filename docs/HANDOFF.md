@@ -10426,3 +10426,12 @@ mutable `ref mut dyn Observe + Bump` carriers as well. Live and expired
 counter mutation, write-access boundaries, owned observer cleanup, and the
 expected `Some`/`None` results. These four fixtures complete the defined
 generic-base carrier argument modes without a specification change or ODR.
+
+### 0.343 `[TYP-22]` inherited-class composed dynamic weak arguments — 2026-09-22
+
+Composed `Box[dyn Observe + Bump]` carriers now cover inherited non-generic
+class payloads with borrowed and `owned` `Weak[Shared[Token]]` arguments in
+both live and expired states. The four fixtures verify ordered adapter slots,
+base-class mutation, observer retain/release and cleanup, and the expected
+`Some`/`None` outcomes. This completes the defined inherited-class argument
+matrix without a specification change or ODR.
