@@ -9256,3 +9256,15 @@ is required because this nested mutable-reference argument does not infer the
 generic parameter at the current call boundary. This is coverage for the
 existing `[TYP-14]`, `[TYP-17]`, `[TYP-18]`, and `[BRW-1]` contract, without an
 ODR or specification change.
+
+### 0.265 `[DRP-6]` payload methods through `ref Box[T]` — 2026-09-22
+
+Receiver adjustment composes across the ordinary reference and unique-owner
+layers. A `ref Box[Token]` must first read through the reference and then apply
+the existing Box payload auto-dereference for an inherent `Token` method; this
+does not expose an extra public Box API or alter Box's ownership boundary.
+
+`tests/conformance/DRP-6/accept_box_method_through_shared_ref.em` calls
+`.read()` through `ref Box[Token]` and prints `7` in debug, release, and
+shipping. It is direct regression coverage for the `[TYP-14]` receiver sequence
+and existing `[DRP-6]` Box behavior, with no ODR or specification change.
