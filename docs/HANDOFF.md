@@ -10215,3 +10215,19 @@ and weak retain/release/upgrade operations. This extends `[TYP-16]`, `[CLS-2]`,
 `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.326 `[DSP-1]` borrowed generic virtual arguments of class-owned weak fields — 2026-09-22
+
+The default parameter mode remains borrowed across a generic base-typed virtual
+call. Passing a `Weak[Token]` field from another class to the derived override
+reuses that field's observer rather than adding a weak retain/release pair at
+the dispatch boundary; the override may upgrade it only against the separate
+live token owner.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_borrowed_weak_class_field_argument.em`
+prints `7` in debug, release, and shipping. Its generated-C checks require the
+derived virtual slot and base-typed `->slot0` call, exactly one weak
+retain/release pair for the Holder field, and the weak upgrade. This extends
+`[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[FN-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
+ODR or specification change.
