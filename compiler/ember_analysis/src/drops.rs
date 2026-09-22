@@ -31,7 +31,7 @@ use ember_mir::{
     Terminator,
 };
 use ember_span::Span;
-use ember_types::{Ty, TypeTable, TyKind};
+use ember_types::{StructId, Ty, TypeTable, TyKind};
 
 /// Possible states of one move path at a program point.
 ///
@@ -442,13 +442,23 @@ fn drop_self(body: &Body, types: &TypeTable) -> Option<LocalId> {
 /// container/field/retained-token escape without treating an ordinary helper
 /// call as an escape.
 pub fn check_drop_self_escapes_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
+    let owned_closure_environments: BTreeSet<StructId> = bodies
+        .iter()
+        .filter(|body| body.closure_captures_by_move)
+        .filter_map(|body| body.closure_environment)
+        .collect();
     bodies
         .iter()
-        .map(|body| check_drop_self_escapes(body, types, sink))
+        .map(|body| check_drop_self_escapes(body, types, &owned_closure_environments, sink))
         .sum()
 }
 
-fn check_drop_self_escapes(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
+fn check_drop_self_escapes(
+    body: &Body,
+    types: &TypeTable,
+    owned_closure_environments: &BTreeSet<StructId>,
+    sink: &mut Sink,
+) -> usize {
     let Some(self_local) = drop_self(body, types) else {
         return 0;
     };
@@ -488,8 +498,13 @@ fn check_drop_self_escapes(body: &Body, types: &TypeTable, sink: &mut Sink) -> u
         for stmt in &block.stmts {
             if let StmtKind::Assign { place, rvalue } = &stmt.kind {
                 if rvalue_copies_drop_self(rvalue, &aliases, self_local)
-                    && !place.projection.is_empty()
-                    && !is_self_interior(place, self_local)
+                    && ((!place.projection.is_empty() && !is_self_interior(place, self_local))
+                        || is_owned_closure_environment_local(
+                            body,
+                            types,
+                            place.local,
+                            owned_closure_environments,
+                        ))
                 {
                     report_drop_self_escape(sink, stmt.span);
                     errors += 1;
@@ -519,6 +534,21 @@ fn check_drop_self_escapes(body: &Body, types: &TypeTable, sink: &mut Sink) -> u
         }
     }
     errors
+}
+
+/// An `owned fn` environment owns every captured field and can escape its
+/// creator. Its compiler-internal struct identity is the exact fact needed to
+/// distinguish it from an ordinary aggregate local.
+fn is_owned_closure_environment_local(
+    body: &Body,
+    types: &TypeTable,
+    local: LocalId,
+    owned_closure_environments: &BTreeSet<StructId>,
+) -> bool {
+    let Some(decl) = body.locals.get(local.0 as usize) else {
+        return false;
+    };
+    matches!(types.kind(decl.ty), TyKind::Struct(id) if owned_closure_environments.contains(id))
 }
 
 /// The builtins that retain an argument in storage beyond the call itself.

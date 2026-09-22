@@ -8809,3 +8809,23 @@ assigns compiler-invisible cases to `[OBJ-5]`.
 all profiles) and now report `E3016` for storing `self` into an `Array[Token]`
 and another class object's field in debug, release, and shipping. This closes
 D-170. The adopted source is explicit, so no ODR was needed.
+
+### 0.238 `[CLS-7a]` destructor `owned fn` capture — 2026-09-22
+
+The initial D-170 check covered projected storage and compiler-known storage
+builtins, but an `owned fn` capture becomes a synthetic aggregate assignment:
+`task = closure_env(copy self_alias)`. Because the destination is an ordinary
+local before code generation, it bypassed the projected-place check even though
+the environment itself owns the captured class handle and can outlive the
+destructor.
+
+The analysis now gathers the compiler-internal struct identities created for
+owned closure environments. A copy of the destructor receiver (or an alias) to
+one of those exact environments reports `E3016`; an ordinary aggregate local
+does not. This uses the existing metadata that `[LT-42]` already verifies, so
+it introduces neither a source-level closure rule nor an ABI fact.
+
+`tests/compile-fail/class_drop_self_escape_owned_capture.em` was accepted before
+the correction and now rejects its alias-and-capture route in debug, release,
+and shipping. The frozen `[CLS-7a]` rule names owned-function capture directly;
+this is D-171, an implementation fix, not an ODR.

@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — class destructors could publish their handle through `owned fn`
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-171 | **The initial class-destructor escape pass missed `owned fn` captures.** `copy = self; task = owned fn() => println(copy)` lowers to a compiler-generated environment struct containing the copied class handle, and the earlier field/container check treated that aggregate destination as an ordinary local. The closure can escape its creator, so this was a statically visible resurrection path accepted by the compiler. | `[CLS-7a]`, `[OBJ-5]` | **fixed** | The pass now gathers the compiler-internal identities of owned closure environments and recognizes an aggregate write to one as publication. It still leaves ordinary aggregate locals alone. `class_drop_self_escape_owned_capture.em` was accepted before the correction and now reports `E3016` through the alias-and-capture route in debug, release, and shipping. The adopted rule explicitly names an `owned fn` capture, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — class destructors could publish their own handle
 
 | # | Defect | Rule | Status | Fixed in |
