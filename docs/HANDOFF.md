@@ -8829,3 +8829,19 @@ it introduces neither a source-level closure rule nor an ABI fact.
 the correction and now rejects its alias-and-capture route in debug, release,
 and shipping. The frozen `[CLS-7a]` rule names owned-function capture directly;
 this is D-171, an implementation fix, not an ODR.
+
+### 0.239 `[RC-2e]` loop-borrowed class handles — 2026-09-22
+
+The borrowed-yield contract for `for token in tokens` where `tokens` is an
+`Array[Token]` had no direct conformance fixture. That made it possible for a
+future lowering change to quietly materialize an owning temporary for every
+iteration, even though `[RC-2e]` makes the absence of per-iteration retain and
+release a guaranteed, testable elision.
+
+`tests/conformance/RC-2e/accept_loop_borrows_class_handles.em` now constructs
+one `Token`, stores it in an `Array`, and reads it through a source `for` loop.
+It runs in debug, release, and shipping, prints `7`, and requires exactly one
+emitted `ember_retain`: the ownership transfer into the Array. The loop body
+does not retain the yielded handle. The full conformance suite passes. This is
+coverage for existing `[RC-1]`, `[RC-2e]`, `[CTL-1]`, and `[CTL-2]`, not a new
+semantics decision, defect, or ODR.
