@@ -9459,3 +9459,19 @@ operations; the emitted return path retains the field's weak handle before
 returning it. This fills the return form of the established `[WK-11]`,
 `[WK-12]`, `[WK-13]`, `[HEAP-4]`, and `[TST-26]` contract, without an ODR or
 specification change.
+
+### 0.278 `[WK-11]` returning a `Weak[C]` class field — 2026-09-22
+
+The class-owner weak representation has the same return-copy boundary. Reading
+`Weak[Token]` from a borrowed Holder and returning it retains a caller-owned
+weak handle before the parameter ends. That result remains non-owning: it can
+upgrade only because a separate `Token` strong owner is live, and no class
+handle is retained merely for the weak return.
+
+`tests/conformance/WK-11/accept_class_weak_field_return_copy.em` returns the
+field, upgrades the returned weak handle, and prints `7` in debug, release, and
+shipping. Generated-C assertions require weak retain, release, and upgrade;
+the emitted return path retains the class weak field before returning it. This
+is the `Weak[C]` counterpart to 0.277 and coverage of `[OBJ-3]`, `[HEAP-7]`,
+`[WK-11]`, `[WK-12]`, `[WK-14]`, and `[TST-26]`, without an ODR or specification
+change.
