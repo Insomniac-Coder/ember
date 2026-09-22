@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — field lookup skipped ordinary reference auto-dereference
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-180 | **Field lookup adjusted `RefCell` guards and `Box[T]` values, but not ordinary `ref T` / `ref mut T` values before selecting a field owner.** Thus `Shared.get()` correctly returned `ref Token`, while the explicitly valid `live.get().value` attempted to find `value` on `ref Token` and failed with `E2020`. | `[TYP-14]`, `[HEAP-4]`, `[WK-12]`, `[TST-26]` | **fixed** | Field selection now reads through ordinary reference layers before nominal-field lookup, using the same adjustment already required for method receivers. It does not read through `Shared[T]` itself: `.get()` remains the explicit `[HEAP-4]` payload boundary. The focused class-held `Weak[Shared[Token]]` case failed before the correction and now prints `7` in debug, release, and shipping; its generated C assertion confirms the weak upgrade path. The frozen target is explicit, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — shared `Cell` mutation emitted an invalid C write
 
 | # | Defect | Rule | Status | Fixed in |

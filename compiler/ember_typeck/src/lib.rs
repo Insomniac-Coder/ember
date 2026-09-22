@@ -11451,6 +11451,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     Some(_) => self.read_guard_through(base),
                     None => base,
                 };
+                // `[TYP-14]` makes field access a value context for every
+                // `ref T` / `ref mut T` expression, including a temporary
+                // returned by a method such as `shared.get().field`. The
+                // method-receiver path already reads ordinary references
+                // before lookup; fields require the same adjustment before
+                // selecting their owner definition.
+                while matches!(self.types.kind(base.ty), TyKind::Ref { .. }) {
+                    base = self.read_through(base);
+                }
                 // IX.1 — field lookup auto-dereferences Box owners. Repeat
                 // for nested boxes; every generated dereference remains
                 // rooted at the owner place for borrow and move analysis.

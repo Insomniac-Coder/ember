@@ -9359,3 +9359,21 @@ generated-C assertion pins the direct casted store and rejects an `ember_cell`
 runtime helper. This completes the shared-reference coverage of Cell's three
 mutation operations for the existing `[CELL-1]`, `[CELL-2]`, and `[TYP-14]`
 rules; no ODR or specification change is involved.
+
+### 0.272 `[TYP-14]` field access on a reference returned by `Shared.get()` — 2026-09-22
+
+Ordinary reference adjustment applies to field selection as well as method
+selection. `Shared.get()` deliberately returns `ref T`; a following field
+access such as `live.get().value` must therefore read through that reference to
+select `Token.value`. This adjustment stops at the reference: it does not read
+through the `Shared[Token]` owner, whose payload remains available only through
+the explicit `[HEAP-4]` `.get()` operation.
+
+The field checker previously handled `RefCell` guards and `Box[T]`, but skipped
+ordinary `ref` layers. `tests/conformance/WK-12/accept_shared_weak_class_field_upgrade.em`
+stores `Weak[Shared[Token]]` in a class field, upgrades the borrowed field while
+a separate strong owner is live, then evaluates `live.get().value`. It failed
+with `E2020` before the correction and now prints `7` in debug, release, and
+shipping; the generated-C assertion requires `ember_weak_upgrade`. The frozen
+target makes this D-180 an implementation defect, not an ODR or specification
+change.
