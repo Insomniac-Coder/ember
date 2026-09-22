@@ -9650,3 +9650,19 @@ weak retain, release, and upgrade operations and reject `ember_box_new_copy`.
 This covers `[TYP-16]`, `[TYP-22]`, `[CLS-2]`, `[CLS-4]`, `[DRP-6]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition without
 an ODR or specification change.
+
+### 0.290 `[DSP-1]` generic virtual dispatch through inherited weak fields — 2026-09-22
+
+Virtual class dispatch has the parallel generic-base ownership path. A
+`Derived[bool]` initializes `Base[bool]`'s `Weak[Shared[Token]]` field through
+`super.init`, then converts to a `Base[bool]` handle. The base-typed virtual
+call selects the derived slot, whose receiver still reads the inherited weak
+field and crosses the explicit `.get()` payload boundary. The upcast preserves
+the one class allocation and ordinary weak field cleanup.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_weak_field_dispatch.em`
+prints `8` in debug, release, and shipping. Generated-C assertions pin the
+derived virtual-slot adapter and the base-typed `->slot0` call, plus the weak
+upgrade/release paths. This covers existing `[TYP-16]`, `[CLS-2]`, `[CLS-4]`,
+`[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]`
+composition; no ODR or specification change is needed.
