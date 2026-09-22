@@ -10107,3 +10107,19 @@ concrete dynamic adapter and weak retain/release/upgrade operations. This
 extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`,
 `[BRW-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]`
 coverage without an ODR or specification change.
+
+### 0.319 `[TYP-22]` mutable borrowed dynamic returns of inherited generic class-owned weak fields — 2026-09-22
+
+A `ref mut dyn Revise` carrier may update a generic-base counter and return an
+inherited `Weak[Token]` field. The derived handle remains borrowed, the write
+interval ends with the dynamic call, and the copied observer alone has the
+independent control-block lifetime needed to upgrade against the live token
+owner.
+
+`tests/conformance/TYP-22/accept_ref_mut_dyn_generic_base_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+concrete mutable adapter, the write-access operation, and weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
+`[IFC-1]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[BRW-1]`, `[EXC-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
+ODR or specification change.
