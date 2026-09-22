@@ -9198,3 +9198,19 @@ capture manufactures another weak owner. This is coverage of D-178's
 already-defined receiver correction across `[HEAP-3]`, `[HEAP-4]`, `[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, `[CTL-1]`, `[CTL-2]`, and `[TYP-14]`, not an ODR or a
 specification change.
+
+### 0.261 `[HEAP-5]` borrowed loop captures cannot gain mutable `Shared` access — 2026-09-22
+
+Receiver auto-dereference must not widen a borrow. A normal closure over a
+source `Array[Shared[Token]]` loop yield correctly sees the `Shared` method
+surface after D-178, but its captured `ref Shared[Token]` remains a shared
+reference. Therefore `.get_mut()` must reach the ordinary shared-reference
+write rejection, rather than failing pre-resolution with a missing-method
+error or silently forming a mutable payload borrow.
+
+`tests/conformance/RC-2e/reject_loop_shared_handle_borrowed_capture_get_mut.em`
+is rejected with `E3021 cannot write through a shared reference` in debug,
+release, and shipping, with no `E1010` missing-method diagnostic. This pins the
+required sequence: `[TYP-14]` exposes the receiver method, while `[HEAP-5]`
+and the existing borrow rules refuse the mutation. It is regression coverage
+for D-178 and requires no ODR or specification change.
