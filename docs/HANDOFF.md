@@ -9584,3 +9584,20 @@ require weak retain, release, and upgrade operations and reject
 `ember_box_new_copy`. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
 `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]`
 composition; no ODR or specification change is needed.
+
+### 0.286 `[TYP-22]` borrowed generic multi-interface adapters with weak fields — 2026-09-22
+
+The borrowed carrier is the complement to the multi-interface dynamic box. An
+explicit `ref Pair[i32]` coerces to `ref dyn Read + Write`, invokes both
+concrete adapter slots, and adds no owner copy at the call boundary. The generic
+class remains the sole owner of its `Weak[Shared[Token]]` field; upgrading that
+field in the `Read` slot still requires the independent `Shared` owner and the
+explicit `.get()` payload boundary.
+
+`tests/conformance/TYP-22/accept_ref_dyn_multi_interface_generic_class_shared_weak_field.em`
+calls both slots and prints `49` in debug, release, and shipping. Its
+generated-C assertions require exactly one weak retain and release (the class
+field lifecycle) plus one upgrade, proving the `ref dyn` coercion adds no weak
+ownership traffic. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; no ODR
+or specification change is needed.
