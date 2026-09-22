@@ -8845,3 +8845,18 @@ emitted `ember_retain`: the ownership transfer into the Array. The loop body
 does not retain the yielded handle. The full conformance suite passes. This is
 coverage for existing `[RC-1]`, `[RC-2e]`, `[CTL-1]`, and `[CTL-2]`, not a new
 semantics decision, defect, or ODR.
+
+### 0.240 `[RC-2e]` retain at loop-handle publication — 2026-09-22
+
+The companion boundary to borrowed loop yields is now explicit. A class handle
+read from `tokens` has no independent owner at the loop head, but
+`copies.push(token)` stores it into a second `Array` and must retain exactly at
+that storage operation. Treating the yielded handle as borrowed beyond this
+point would leave `copies` dangling when the source Array is destroyed.
+
+`tests/conformance/RC-2e/accept_loop_class_handle_publication_retains.em`
+constructs one `Token`, copies it from `tokens` to `copies` inside a source
+`for` loop, and prints `7` in every profile. Its generated-C assertion requires
+two retains: source insertion and destination publication, with no implicit
+per-iteration retain. This is coverage for the explicit `[RC-2e]` exception,
+not a new semantics decision, defect, or ODR.
