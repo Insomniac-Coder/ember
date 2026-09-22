@@ -10408,3 +10408,12 @@ Live and expired `Weak[Shared[Token]]` arguments exercise the ordered
 multi-interface slots, the mutable write interval, owned observer cleanup, and
 the expected `Some`/`None` results. These four fixtures complete the defined
 multi-interface carrier argument modes without a specification change or ODR.
+
+### 0.341 `[TYP-22]` generic-base composed dynamic weak arguments — 2026-09-22
+
+Generic derived classes with inherited base state now cover borrowed and
+`owned` `Weak[Shared[Token]]` arguments through `Box[dyn Observe + Bump]`, both
+while the target is live and after it expires. The four fixtures verify the
+ordered composed slots, base-field dispatch, owned observer cleanup, and the
+expected `Some`/`None` results. This closes the defined generic-base composed
+argument matrix without a specification change or ODR.
