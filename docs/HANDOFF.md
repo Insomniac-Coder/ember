@@ -10168,3 +10168,18 @@ derived virtual slot, base-typed `->slot0` dispatch, and weak
 retain/release/upgrade operations. This extends `[TYP-16]`, `[CLS-2]`,
 `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`,
 and `[TST-26]` coverage without an ODR or specification change.
+
+### 0.323 `[DSP-1]` expired generic virtual returns of class-owned weak fields — 2026-09-22
+
+A `Weak[Token]` returned through a generic virtual slot may outlive the derived
+receiver and its final token owner only as a control-block reference. After the
+helper exits, the observer remains valid but expired: the base-typed virtual
+dispatch must not reconstruct or retain the class owner during its later
+`upgrade()`.
+
+`tests/conformance/TYP-16/accept_expired_generic_class_virtual_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot, base-typed `->slot0` dispatch, and weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[CLS-2]`,
+`[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`,
+and `[TST-26]` coverage without an ODR or specification change.
