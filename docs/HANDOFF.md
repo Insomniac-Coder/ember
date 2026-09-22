@@ -9521,3 +9521,18 @@ destruction) plus one upgrade, proving the borrowed call adds no weak-count
 traffic. This is coverage of existing `[FN-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, and `[TST-26]` rules; it creates no ODR or specification
 change.
+
+### 0.282 `[CLS-4]` generic class fields holding `Weak[Shared[T]]` — 2026-09-22
+
+Generic-class monomorphization preserves weak field ownership independently of
+the class's unrelated type arguments. A concrete `Holder[bool]` stores
+`Weak[Shared[Token]]`, retains the weak handle when constructing its field,
+releases it through its instantiated field-drop glue, and upgrades it while a
+separate `Shared[Token]` owner remains live. The generic marker does not turn
+the weak observer into a strong owner or bypass `Shared.get()`.
+
+`tests/conformance/WK-11/accept_generic_class_shared_weak_field.em` prints `7`
+in debug, release, and shipping. Generated-C assertions require weak retain,
+release, and upgrade operations. This covers existing `[CLS-4]`, `[HEAP-3]`–
+`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; it is not an ODR
+or specification change.
