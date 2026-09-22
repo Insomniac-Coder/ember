@@ -9214,3 +9214,17 @@ release, and shipping, with no `E1010` missing-method diagnostic. This pins the
 required sequence: `[TYP-14]` exposes the receiver method, while `[HEAP-5]`
 and the existing borrow rules refuse the mutation. It is regression coverage
 for D-178 and requires no ODR or specification change.
+
+### 0.262 `[TYP-14]` normal closure capture of a borrowed class loop yield — 2026-09-22
+
+D-178's receiver correction is not `Shared`-specific. A normal closure over an
+`Array[Token]` loop captures the class handle as an ordinary borrowed reference;
+calling the class's inherent `.read()` method must auto-dereference that
+receiver for lookup and dispatch without upgrading it to an independent owner.
+
+`tests/conformance/RC-2e/accept_loop_class_handle_borrowed_capture_auto_derefs_method.em`
+prints `7` in debug, release, and shipping and requires exactly one strong
+retain, from initial Array insertion. The normal closure and inherent method
+call add no retain. This covers the ordinary nominal-receiver form of the
+explicit `[TYP-14]`, `[RC-2e]`, `[CLO-1]`, and `[CLO-2]` rules; it is coverage,
+not an ODR or specification change.
