@@ -9268,3 +9268,15 @@ does not expose an extra public Box API or alter Box's ownership boundary.
 `.read()` through `ref Box[Token]` and prints `7` in debug, release, and
 shipping. It is direct regression coverage for the `[TYP-14]` receiver sequence
 and existing `[DRP-6]` Box behavior, with no ODR or specification change.
+
+### 0.266 `[CELL-1]` compiler-known methods through `ref Cell[T]` — 2026-09-22
+
+Compiler-known receiver paths follow the same ordinary-reference rule. A
+`ref Cell[i32]` receiver must read through to the `Cell` before resolving
+`.get()`; that adjustment reaches the Cell object only and does not expose its
+payload outside the established `Cell` API.
+
+`tests/conformance/CELL-1/accept_cell_method_through_shared_ref.em` reads a
+Cell through `ref Cell[i32]` and prints `7` in debug, release, and shipping.
+This is direct coverage for `[TYP-14]` with `[CELL-1]`/`[CELL-2]`, not an ODR
+or specification change.
