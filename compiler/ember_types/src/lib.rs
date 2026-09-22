@@ -237,6 +237,8 @@ pub struct FieldDef {
     pub ty_span: Span,
     /// `[STR-2]` — whether the declaration supplied a default.
     pub has_default: bool,
+    /// The source `let` modifier. `[CLS-9]` applies it to class fields.
+    pub is_let: bool,
     /// `[MOD-7]` — declared `pub(read)` or `pub(package, read)`: readable
     /// wherever its visibility allows, writable only from the declaring
     /// module.
@@ -1675,6 +1677,7 @@ mod tests {
             span: Span::DUMMY,
             ty_span: Span::DUMMY,
             has_default: false,
+            is_let: false,
             read_only_outside: false,
             vis: FieldVis::Public,
         }

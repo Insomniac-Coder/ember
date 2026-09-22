@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — `let` class fields lost their immutability after parsing
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-169 | **The parser recorded a class field’s `let` modifier, but type collection discarded it before the class metadata was built.** Consequently the assignment checker could not distinguish an immutable binding from an ordinary field, and `mut self` methods silently reassigned `let` fields after initialization. | `[CLS-9]`, `[CLS-9a]`, `[TYP-16]` | **fixed** | Field metadata now carries the `let` fact from source collection through generic-class substitution. Direct assignment and augmented assignment to that binding outside the declaring constructor emit `E1010`; constructor initialization remains valid, and a mutable borrow or method call through the contained non-`Copy` value remains valid. `class_let_field_reassign.em` and `generic_class_let_field_reassign.em` were accepted before the correction and now reject the ordinary and materialized-generic forms in debug, release, and shipping. `class_let_field_mutate_through.em` keeps the legal constructor initialization and mutate-through behavior runnable in every profile. The existing rules define this boundary completely, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — same-method class-field reborrows duplicated a runtime access
 
 | # | Defect | Rule | Status | Fixed in |

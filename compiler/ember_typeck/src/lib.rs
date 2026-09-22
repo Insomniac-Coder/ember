@@ -2278,6 +2278,7 @@ impl<'a> Checker<'a> {
                         span: member.span,
                         ty_span: field.ty.span,
                         has_default: field.default.is_some(),
+                        is_let: field.is_let,
                         read_only_outside: member.read_only_outside,
                         vis: field_vis(member.vis.kind),
                     }),
@@ -2423,6 +2424,7 @@ impl<'a> Checker<'a> {
                         span: member.span,
                         ty_span: field.ty.span,
                         has_default: field.default.is_some(),
+                        is_let: field.is_let,
                         read_only_outside: member.read_only_outside,
                         vis: field_vis(member.vis.kind),
                     }),
@@ -2725,6 +2727,7 @@ impl<'a> Checker<'a> {
                                     span: member.span,
                                     ty_span: field.ty.span,
                                     has_default: field.default.is_some(),
+                                    is_let: field.is_let,
                                     read_only_outside: member.read_only_outside,
                                     vis: field_vis(member.vis.kind),
                                 });
@@ -2822,6 +2825,7 @@ impl<'a> Checker<'a> {
                                 span: member.span,
                                 ty_span: field.ty.span,
                                 has_default: field.default.is_some(),
+                                is_let: field.is_let,
                                 read_only_outside: member.read_only_outside,
                                 vis: field_vis(member.vis.kind),
                             }),
@@ -3117,6 +3121,7 @@ impl<'a> Checker<'a> {
                     span: field.span,
                     ty_span: field.ty.span,
                     has_default: false,
+                    is_let: false,
                     // `[MOD-7]`: "`read` applies to fields of structs and
                     // classes only" — a variant payload is neither, and a
                     // variant's payload is as visible as the enum.
@@ -5643,6 +5648,7 @@ impl<'a> Checker<'a> {
                 span: field.span,
                 ty_span: field.ty_span,
                 has_default: field.has_default,
+                is_let: field.is_let,
                 read_only_outside: field.read_only_outside,
                 vis: field.vis,
             })
@@ -5841,6 +5847,7 @@ impl<'a> Checker<'a> {
                         span: field.span,
                         ty_span: field.ty_span,
                         has_default: field.has_default,
+                        is_let: field.is_let,
                         read_only_outside: field.read_only_outside,
                         vis: field.vis,
                     })
@@ -6046,6 +6053,7 @@ impl<'a> Checker<'a> {
                 span: field.span,
                 ty_span: field.ty_span,
                 has_default: field.has_default,
+                is_let: field.is_let,
                 read_only_outside: field.read_only_outside,
                 vis: field.vis,
             })
@@ -6273,6 +6281,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6282,6 +6291,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6293,6 +6303,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }]
@@ -6340,6 +6351,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6395,6 +6407,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6498,6 +6511,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6547,6 +6561,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6593,6 +6608,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6723,6 +6739,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6732,6 +6749,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6741,6 +6759,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6750,6 +6769,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6801,6 +6821,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6846,6 +6867,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }, FieldDef {
@@ -6857,6 +6879,7 @@ impl<'a> Checker<'a> {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
@@ -6899,6 +6922,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6908,6 +6932,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6952,6 +6977,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6961,6 +6987,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6970,6 +6997,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -6979,6 +7007,7 @@ impl<'a> Checker<'a> {
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 },
@@ -7032,6 +7061,7 @@ impl<'a> Checker<'a> {
                         span: Span::DUMMY,
                         ty_span: Span::DUMMY,
                         has_default: false,
+                        is_let: false,
                         read_only_outside: false,
                         vis: FieldVis::Public,
                     })
@@ -14119,7 +14149,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             match &current.kind {
                 ExprKind::Field { base, index } => {
                     if let TyKind::Class(id) = *self.types.kind(base.ty) {
-                        if self.class_init_field_index(place).is_none()
+                        let field = self.types.class_field_at_info(id, *index).map(
+                            |(owner_id, field)| {
+                                (
+                                    owner_id,
+                                    field.name,
+                                    field.is_let,
+                                    field.read_only_outside,
+                                )
+                            },
+                        );
+                        // `[CLS-9]` — only assignment to the binding itself is
+                        // restricted. A `ref mut` or a `mut` call through the
+                        // field reaches this helper through another entry
+                        // point and remains permitted by `[CLS-9a]`.
+                        let reassigns_let_field = allow_instantaneous_class_field
+                            && std::ptr::eq(current, place)
+                            && field.is_some_and(|(_, _, is_let, _)| is_let)
+                            && self.class_init_field_index(current).is_none();
+                        if reassigns_let_field {
+                            let (owner_id, field_name, _, _) =
+                                field.expect("a reassignable class field has metadata");
+                            let owner = self.types.class_def(owner_id).name;
+                            self.error(
+                                codes::E1010,
+                                span,
+                                format!(
+                                    "cannot assign to `let` field `{owner}.{field_name}` outside its `init`"
+                                ),
+                            );
+                        } else if self.class_init_field_index(place).is_none()
                             && self.class_method_field_index(current).is_none()
                             && !(allow_class_mut_argument && self.class_mut_argument_supported(place))
                             && !(allow_instantaneous_class_field
@@ -14131,13 +14190,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 "mutable class-field access requires a `mut self` class method in this phase",
                             );
                         }
-                        if let Some((owner_id, field)) = self.types.class_field_at_info(id, *index) {
-                            if field.read_only_outside
+                        if let Some((owner_id, field_name, _, read_only_outside)) = field {
+                            if !reassigns_let_field
+                                && read_only_outside
                                 && self.types.class_def(owner_id).declaring_module
                                     != self.current_module
                             {
                                 let owner = self.types.class_def(owner_id).name.to_string();
-                                let field = field.name.to_string();
+                                let field = field_name.to_string();
                                 self.sink.emit(
                                     Diagnostic::error(
                                         codes::E1050,
@@ -15349,6 +15409,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     ty_span: Span::DUMMY,
                     has_default: false,
+                    is_let: false,
                     read_only_outside: false,
                     vis: FieldVis::Private,
                 })
@@ -15414,6 +15475,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             })

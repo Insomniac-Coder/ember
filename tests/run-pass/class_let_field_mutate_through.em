@@ -15,11 +15,13 @@ class Counter:
 class Holder:
     let counter: Counter
 
+    fn init(mut self, value: i32):
+        self.counter = Counter(value)
+
     fn bump_counter(mut self):
         self.counter.bump()
 
 fn main():
-    counter = Counter(41)
-    holder = Holder(counter)
+    holder = Holder(41)
     holder.bump_counter()
     println(holder.counter.value)

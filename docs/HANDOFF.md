@@ -8765,3 +8765,23 @@ exclusivity panic; it now prints `42` in debug, release, and shipping and
 requires exactly two generated-C begin/end calls: `Holder.bump_counter` and
 `Counter.bump`. This closes D-168 under existing `[CLS-9a]`, `[EXC-1]`,
 `[EXC-4]`, and `[EXC-5]`; the frozen source is explicit, so no ODR was needed.
+
+### 0.236 `[CLS-9]` class `let` field immutability — 2026-09-22
+
+`let` was previously a parser and formatter fact only: class collection did
+not retain it in `FieldDef`, so the assignment checker treated a `let` field as
+an ordinary mutable binding after construction. A `mut self` method could
+therefore silently replace a field that `[CLS-9]` permits only `init` to
+assign.
+
+The class-field metadata now carries that fact through ordinary collection and
+generic-class substitution. Assignment checking rejects only a direct
+reassignment of the `let` binding outside the class constructor. It deliberately
+does not reject a mutable borrow or method call through that field, preserving
+`[CLS-9a]`'s rule that the stored non-`Copy` object is still mutable through a
+declaring-class `mut self` method. `class_let_field_reassign.em` and
+`generic_class_let_field_reassign.em` were accepted before the correction and
+now reject with `E1010` in debug, release, and shipping. The existing
+`class_let_field_mutate_through.em` now also uses an explicit `init` assignment
+and still prints `42` with the D-168 access-count assertion. This closes D-169;
+the frozen source is explicit, so no ODR was needed.

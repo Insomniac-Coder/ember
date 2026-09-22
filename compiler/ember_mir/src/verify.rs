@@ -1475,6 +1475,7 @@ mod view_invariant_tests {
                 span: Span::DUMMY,
                 ty_span: Span::DUMMY,
                 has_default: false,
+                is_let: false,
                 read_only_outside: false,
                 vis: FieldVis::Private,
             }],
