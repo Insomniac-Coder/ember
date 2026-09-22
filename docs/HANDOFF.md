@@ -9294,3 +9294,16 @@ null runtime operands make its count operations harmless.
 retain for the copy and two weak releases for the two empty local drops. This
 fills the explicit empty/copy branch of `[TST-26]` under `[WK-11]`–`[WK-13]`
 without an ODR or specification change.
+
+### 0.268 `[TST-26]` live `Weak[Shared[T]]` upgrade — 2026-09-22
+
+The counterpart live-owner branch is now direct evidence rather than an
+incidental path through a larger test. A `Weak[Shared[Token]]` created from a
+live `Shared[Token]` upgrades to a strong owner of that same allocation, and
+the returned owner exposes the payload only through `.get()`.
+
+`tests/conformance/WK-12/accept_live_shared_weak_upgrade.em` prints `7` in
+debug, release, and shipping. It requires generated C to call
+`ember_weak_upgrade` and pins the sole weak retain at construction. This fills
+the live-upgrade branch of `[TST-26]` for `[WK-11]`–`[WK-13]`; no ODR or
+specification change is involved.
