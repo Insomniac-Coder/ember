@@ -10346,3 +10346,15 @@ weak retain/release boundary, and the live or expired `upgrade()` result. The
 four new `[TYP-16]` fixtures close these `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-14]`, and `[TST-26]` matrix gaps without changing the language
 specification or creating an ODR.
+
+### 0.335 `[DSP-1]` expired mutable weak replacement and `[EXC-7]` erased mutable receiver — 2026-09-22
+
+The mutable virtual replacement matrix now covers expired direct class weak
+handles as well as expired `Weak[Shared[Token]]` observers. Both assignments
+release only the previous observer, retain the replacement, and upgrade the
+new target through the derived generic vtable slot. A companion `[EXC-7]`
+fixture proves that the opt-in `L3013` lint also follows a `ref mut dyn`
+receiver derived from the method-duration class access. The complete
+conformance suite passes in debug, release, and shipping; these are
+implementation and evidence additions only, with no specification or ODR
+change.
