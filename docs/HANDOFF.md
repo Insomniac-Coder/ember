@@ -8699,3 +8699,18 @@ direct lookups; they have no equivalent invalidation proof.
 exactly one `ember_itable_lookup` in generated C. This completes the same
 existing `[DSP-3]` caching requirement for the mutable-parameter form; no ODR
 or new semantics were introduced.
+
+### 0.232 `[TYP-16]` generic mutable class-interface parameters — 2026-09-22
+
+Generic class-interface specialization composes with the existing inout
+handle path. `mut I[T]` borrows the concrete `Class[T]` storage before erasing
+it to the specialized one-word `ref mut I[T]` handle, retaining the concrete
+adapter identity needed by dynamic dispatch. The emitted call still performs
+one TypeInfo itable lookup and requires neither retain nor a fat carrier.
+
+`generic_class_interface_handle_mut_param.em` passes `Counter[i32]` as
+`mut Accumulator[i32]`, calls its mutating interface method, and prints `42`
+in debug, release, and shipping. Its generated-C assertions pin the lookup
+and absence of retain. This is coverage for the existing `[TYP-16]`,
+`[FN-1]`, `[OBJ-2]`, and `[DSP-3]` composition; no ODR or compiler change was
+needed.
