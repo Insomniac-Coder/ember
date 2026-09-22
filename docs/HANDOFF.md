@@ -10277,3 +10277,18 @@ derived virtual slot and base-typed `->slot0` call, exactly two weak retains
 This extends `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`,
 `[OWN-2]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]`
 coverage without an ODR or specification change.
+
+### 0.330 `[DSP-1]` mutable generic virtual replacement of live class-owned weak fields — 2026-09-22
+
+A base-typed mutable virtual call may replace a live inherited `Weak[Token]`
+field in a generic derived override. The assignment releases only the field's
+observer, retains the replacement, and leaves an independent outside observer
+to the previous live token usable after the virtual call returns.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_live_weak_class_field_reassignment.em`
+prints `8` and `5` in debug, release, and shipping. Generated-C assertions
+require derived virtual dispatch, the dynamic write interval, and the weak
+retain/release/upgrade paths. This extends `[TYP-16]`, `[CLS-2]`, `[CLS-4]`,
+`[OBJ-3]`, `[DSP-1]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
+change.
