@@ -9892,3 +9892,19 @@ retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
 `[IFC-1]`, `[CLS-4]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.305 `[TYP-22]` dynamic returns of generic class-owned weak fields — 2026-09-22
+
+The generalized `Weak[O]` owner family also composes with an object-safe return
+slot. A generic class carried in `Box[dyn Observe]` returns a copied
+`Weak[Token]` field, where `Token` is itself a class owner rather than a
+`Shared[T]` allocation. The returned observer remains separate from both the
+box and its live token owner, and upgrades to the class handle only while that
+owner persists.
+
+`tests/conformance/TYP-22/accept_dyn_interface_box_generic_class_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+concrete dynamic adapter and weak retain/release/upgrade operations while
+rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
+`[CLS-4]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and
+`[TST-26]` coverage without an ODR or specification change.
