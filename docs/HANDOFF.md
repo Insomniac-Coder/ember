@@ -10307,3 +10307,20 @@ initialization and owned argument), parameter cleanup, and weak upgrade. This
 extends `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[OWN-2]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.332 `[EXC-7]` long-term class access across re-entrant dispatch — 2026-09-22
+
+`L3013` was registered but had no producer, conformance coverage, or executable
+error page. It is now an opt-in `[MAN-3]` lint (`l3013 = "warn"`) over a
+mutable class method's explicit entry access: it warns when that method keeps
+its receiver live across a same-hierarchy virtual call or an interface call
+whose `ref dyn` receiver derives from the active class receiver. Short mutable
+argument intervals, direct calls, and unrelated class hierarchies remain
+outside its scope.
+
+The current compiler has no `[EFF-1]` call-graph proof to exempt a call, so the
+lint conservatively warns for the applicable virtual and dynamic cases. It is
+advisory and off by default; `tests/conformance/EXC-7/` covers both call forms
+in debug, release, and shipping, and `docs/errors/L3013.md` runs a warning
+example plus a compiling receiver-mode fix. This closes an implementation gap,
+not an ambiguity, so no ODR was created.

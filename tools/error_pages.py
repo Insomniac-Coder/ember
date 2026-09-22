@@ -44,6 +44,10 @@ BASELINE = ROOT / "tools" / "error_pages_baseline.json"
 # a corrected manifest for the latter. Error pages are otherwise compiled in
 # an empty temporary package.
 PAGE_MANIFESTS = {
+    "L3013": {
+        "fails": '[lints]\nl3013 = "warn"\n',
+        "fixed": '[lints]\nl3013 = "warn"\n',
+    },
     "L3014": {
         "fails": '[lints]\nl3014 = "warn"\n',
         "fixed": '[lints]\nl3014 = "warn"\n',

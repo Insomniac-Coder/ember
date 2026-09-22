@@ -12,6 +12,7 @@ pub mod definite_init;
 pub mod drops;
 pub mod facts;
 pub mod loop_access;
+pub mod long_access_lint;
 pub mod regions;
 pub mod unused;
 
@@ -21,6 +22,7 @@ pub use borrows::{
 };
 pub use access::elide_static_accesses_all;
 pub use loop_access::hoist_loop_accesses_all;
+pub use long_access_lint::lint_long_term_access_across_dynamic_calls_all;
 pub use cycles::{
     inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,
     OwnershipInspection,

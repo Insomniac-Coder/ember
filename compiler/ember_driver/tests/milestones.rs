@@ -343,7 +343,7 @@ fn known_manifest_lints_are_accepted() {
     let source = package.join(ember_branding::source_file("main"));
     std::fs::write(
         package.join(MANIFEST),
-        "[lints]\nl3014 = \"warn\"\nunused = \"warn\"\npotential_cycle = \"warn\"\nlarge_copy = { level = \"warn\", threshold = 256 }\n",
+        "[lints]\nl3013 = \"warn\"\nl3014 = \"warn\"\nunused = \"warn\"\npotential_cycle = \"warn\"\nlarge_copy = { level = \"warn\", threshold = 256 }\n",
     )
     .expect("manifest is writable");
     std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
@@ -354,6 +354,68 @@ fn known_manifest_lints_are_accepted() {
     assert_eq!(
         checked.exit, 0,
         "known manifest lints were rejected:\n{}",
+        checked.stderr
+    );
+}
+
+/// `[EXC-7]` — the opt-in `L3013` warning must identify a long-term mutable
+/// class access that remains live across a virtual call in the same open
+/// hierarchy. The warning is advisory, so the otherwise-valid program still
+/// checks successfully.
+#[test]
+fn enabled_l3013_warns_for_live_class_access_across_virtual_call() {
+    let root = workspace_root();
+    let package = temporary_directory("l3013-virtual-access");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[lints]\nl3013 = \"warn\"\n",
+    )
+    .expect("manifest is writable");
+    std::fs::write(
+        &source,
+        "open class Base:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    virtual fn ping(self) -> i32:\n        return self.value\n\n    virtual fn relay(mut self) -> i32:\n        return self.ping()\n\nclass Derived(Base):\n    fn init(mut self):\n        super.init()\n\n    override fn ping(self) -> i32:\n        return self.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
+    )
+    .expect("source is writable");
+
+    let source_arg = source.to_string_lossy().into_owned();
+    let checked = ember(&["check", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_eq!(checked.exit, 0, "program did not check:\n{}", checked.stderr);
+    let rendered = without_source_echo(&checked.stderr);
+    assert!(
+        rendered.contains("warning[L3013]"),
+        "enabled L3013 was not emitted:\n{}",
+        checked.stderr
+    );
+    assert!(
+        rendered.contains("long-term access to `self` is live across this call"),
+        "L3013 did not identify the live class access and call:\n{}",
+        checked.stderr
+    );
+}
+
+/// `[EXC-7]` — `L3013` is advisory and disabled until a package explicitly
+/// elects to receive it. The identical re-entrant virtual call must therefore
+/// remain quiet without an `[lints]` setting.
+#[test]
+fn l3013_is_disabled_without_a_manifest_setting() {
+    let root = workspace_root();
+    let package = temporary_directory("l3013-default-off");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        &source,
+        "open class Base:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    virtual fn ping(self) -> i32:\n        return self.value\n\n    virtual fn relay(mut self) -> i32:\n        return self.ping()\n\nclass Derived(Base):\n    fn init(mut self):\n        super.init()\n\n    override fn ping(self) -> i32:\n        return self.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
+    )
+    .expect("source is writable");
+
+    let source_arg = source.to_string_lossy().into_owned();
+    let checked = ember(&["check", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_eq!(checked.exit, 0, "program did not check:\n{}", checked.stderr);
+    assert!(
+        !without_source_echo(&checked.stderr).contains("L3013"),
+        "default-disabled L3013 was emitted:\n{}",
         checked.stderr
     );
 }

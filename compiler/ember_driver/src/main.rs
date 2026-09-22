@@ -419,7 +419,7 @@ fn cycle_analysis(
         return Ok(ExitCode::FAILURE);
     }
 
-    let lint_return_intersection = manifest_enables_l3014(&root_dir, &mut map, &mut sink);
+    let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -433,7 +433,7 @@ fn cycle_analysis(
         &common,
         &mut sink,
         overflow_policy(Profile::Debug),
-        lint_return_intersection,
+        lint_settings.return_intersection,
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -1893,7 +1893,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let lint_return_intersection = manifest_enables_l3014(&root_dir, &mut map, &mut sink);
+    let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -1908,7 +1908,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &common,
         &mut sink,
         overflow_policy(options.profile),
-        lint_return_intersection,
+        lint_settings.return_intersection,
     );
     let program = &checked.program;
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
@@ -1966,6 +1966,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
+    // `[EXC-7]` — this advisory lint is opt-in. It consumes the explicit
+    // method-duration dynamic-access intervals before later optimization may
+    // elide or hoist an unrelated short interval.
+    if lint_settings.long_term_access_across_dynamic_call && !sink.has_errors() {
+        ember_analysis::lint_long_term_access_across_dynamic_calls_all(
+            &bodies,
+            &types,
+            &mut sink,
+        );
+    }
     if !sink.has_errors() {
         verify_callable_regions_or_panic(&bodies, &types);
     }
@@ -2122,17 +2132,27 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 /// lint name outside the registry. The manifest is loaded into the source map,
 /// so an `E9010` points at the offending manifest entry rather than at an
 /// unrelated invoking source file.
-fn manifest_enables_l3014(start: &Path, map: &mut SourceMap, sink: &mut Sink) -> bool {
+#[derive(Copy, Clone, Default)]
+struct ManifestLintSettings {
+    return_intersection: bool,
+    long_term_access_across_dynamic_call: bool,
+}
+
+fn manifest_lint_settings(
+    start: &Path,
+    map: &mut SourceMap,
+    sink: &mut Sink,
+) -> ManifestLintSettings {
     let mut directory = Some(start);
     while let Some(candidate) = directory {
         let path = candidate.join(ember_branding::MANIFEST);
         if path.is_file() {
             let Ok(manifest_file) = map.load(&path) else {
-                return false;
+                return ManifestLintSettings::default();
             };
             let text = map.file(manifest_file).text.clone();
             let mut in_lints = false;
-            let mut l3014_enabled = false;
+            let mut settings = ManifestLintSettings::default();
             let mut line_start = 0usize;
             for raw_line in text.lines() {
                 let line = raw_line.split('#').next().unwrap_or("").trim();
@@ -2152,18 +2172,21 @@ fn manifest_enables_l3014(start: &Path, map: &mut SourceMap, sink: &mut Sink) ->
                                 format!("unknown lint `{key}` in `[lints]`"),
                             ));
                         } else if key.eq_ignore_ascii_case("l3014") {
-                            l3014_enabled |=
+                            settings.return_intersection |=
+                                matches!(value.trim().trim_matches('"'), "warn" | "deny");
+                        } else if key.eq_ignore_ascii_case("l3013") {
+                            settings.long_term_access_across_dynamic_call |=
                                 matches!(value.trim().trim_matches('"'), "warn" | "deny");
                         }
                     }
                 }
                 line_start += raw_line.len() + 1;
             }
-            return l3014_enabled;
+            return settings;
         }
         directory = candidate.parent();
     }
-    false
+    ManifestLintSettings::default()
 }
 
 /// `[MAN-3]` accepts every registered `L` code by its rendered spelling, plus
