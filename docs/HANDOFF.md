@@ -8860,3 +8860,19 @@ constructs one `Token`, copies it from `tokens` to `copies` inside a source
 two retains: source insertion and destination publication, with no implicit
 per-iteration retain. This is coverage for the explicit `[RC-2e]` exception,
 not a new semantics decision, defect, or ODR.
+
+### 0.241 `[RC-2e]` retain into an owned function from a loop — 2026-09-22
+
+The owned-closure boundary for a class handle yielded by a source `for` loop
+now has direct conformance coverage. The yield is a borrowed `ref Token`, so
+the loop body first materializes the independent owning `copy: Token = token`;
+capturing that value in an `owned fn` then retains it for the closure
+environment. These are explicit ownership transitions, not an implicit retain
+for loop iteration.
+
+`tests/conformance/RC-2e/accept_loop_class_handle_owned_capture_retains.em`
+prints `7` in debug, release, and shipping. Its generated-C assertion requires
+three retains: source insertion, materializing `copy`, and closure-environment
+capture. The full conformance suite passes. This is coverage of the established
+`[RC-2e]` owned-capture exception and requires neither a compiler correction
+nor an ODR.
