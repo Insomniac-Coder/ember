@@ -300,10 +300,11 @@ Where behaviour cannot be observed from output, **assert on the emitted C**
 ## 5. The H1 callable-boundary precision matrix is next
 
 **The first `@latebound` slice is implemented and verified in the current
-worktree.** Continue according to `MIGRATION-0.9.7.md`, before starting
-unrelated Phase 2 matrices. Preserve the ordinary-library status of
-`std.borrow.with_views*`; extend the compiler-only callable-boundary fact
-through the remaining freshness, FFI, and separate-compilation cases. Static-
+worktree.** Continue according to `MIGRATION-0.9.8.md`; use
+`MIGRATION-0.9.7.md` for the inherited `@latebound` precision matrix. Preserve
+the ordinary-library status of `std.borrow.with_views*`; extend the
+compiler-only callable-boundary fact through the remaining freshness, FFI, and
+separate-compilation cases. Static-
 independent capture-free callback results now have direct positive coverage,
 and owned-capture publication has direct negative coverage. Separate sequential
 invocation reuse, local callback-value escape, and all shared/mutable helper

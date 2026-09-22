@@ -975,18 +975,20 @@ advancing to later phases.
 
 Read first:
 
-1. `docs/spec-source/ember-spec.md` and frozen `0.9.7_Hardened_1` — especially
-   `[FN-6b]`, `[LT-7]`, `[LT-8]`–`[LT-10]`, and the target's compiler-only
-   callable-boundary and runtime-erasure requirements;
-2. `docs/MIGRATION-0.9.7.md`, then this §0 and §§0.28–0.35;
+1. `docs/spec-source/ember-spec.md` and frozen `0.9.8_Hardened_2` — especially
+   the inherited callable-boundary rules plus `[HEAP-3]`–`[HEAP-7]` and
+   `[WK-11]`–`[WK-14]`;
+2. `docs/MIGRATION-0.9.8.md`; use `docs/MIGRATION-0.9.7.md` for the inherited
+   `@latebound` callable-boundary precision matrix, then this §0 and §§0.28–0.35;
 3. `docs/DECISIONS.md`, `docs/DEFECTS.md`, `docs/DEVIATIONS.md`, and
    `docs/BACKLOG.md`;
 4. the current fact definitions and producers in `compiler/ember_types`,
    `compiler/ember_typeck`, `compiler/ember_analysis`, HIR/MIR lowering and
    `compiler/ember_mir/src/verify.rs`.
 
-First implement the `@latebound` callable-boundary fact in the order recorded
-by `MIGRATION-0.9.7.md`; only then resume unrelated region-vector matrices.
+Implement the current frozen target in the order recorded by
+`MIGRATION-0.9.8.md`; retain the inherited `@latebound` callable-boundary work
+and its order from `MIGRATION-0.9.7.md`.
 Resume diagnostic shapes only as their real class, thread, effect, closure, and
 disjointness mechanisms become reachable. `VER-096-1` is complete, but a
 version selector or a target document alone is not H1 adoption or conformance.
