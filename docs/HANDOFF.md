@@ -10139,3 +10139,18 @@ retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
 `[IFC-1]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[BRW-1]`, `[EXC-1]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.321 `[TYP-22]` borrowed multi-interface dynamic returns of inherited generic class-owned weak fields — 2026-09-22
+
+A `ref mut dyn Observe + Bump` carrier may mutate an inherited generic-base
+counter through its mutable slot and then return the inherited `Weak[Token]`
+field through its separate shared slot. The derived class stays borrowed across
+both calls; only the weak observer is copied for the caller's later upgrade.
+
+`tests/conformance/TYP-22/accept_ref_mut_dyn_multi_interface_generic_base_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions pin both
+ordered multi-interface adapter slots, the write-access operation, and weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
+`[IFC-1]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[BRW-1]`, `[EXC-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
+ODR or specification change.
