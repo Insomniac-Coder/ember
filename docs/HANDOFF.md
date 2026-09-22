@@ -9280,3 +9280,17 @@ payload outside the established `Cell` API.
 Cell through `ref Cell[i32]` and prints `7` in debug, release, and shipping.
 This is direct coverage for `[TYP-14]` with `[CELL-1]`/`[CELL-2]`, not an ODR
 or specification change.
+
+### 0.267 `[TST-26]` empty copied `Weak[Shared[T]]` — 2026-09-22
+
+The weak-owner matrix now separately proves the empty-handle branch. An
+explicit `Weak[Shared[Token]].empty()` may be copied and later upgraded; both
+handles remain empty, so upgrade returns `None` and no `Shared` allocation is
+created. Copying still follows the normal weak-handle lowering path, while
+null runtime operands make its count operations harmless.
+
+`tests/conformance/WK-11/accept_empty_shared_weak_copy_and_upgrade.em` prints
+`42` in debug, release, and shipping. Its generated-C assertions pin one weak
+retain for the copy and two weak releases for the two empty local drops. This
+fills the explicit empty/copy branch of `[TST-26]` under `[WK-11]`–`[WK-13]`
+without an ODR or specification change.
