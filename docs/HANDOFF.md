@@ -10334,3 +10334,15 @@ as an open hierarchy produced a false warning. The lint now returns before
 traversing a final class body's access interval. Focused regressions cover both
 final-class `virtual` spelling and the erased dynamic call, alongside the open
 hierarchy positives. No specification or owner decision changed.
+
+### 0.334 `[DSP-1]` completed generic virtual weak-observer ownership matrix — 2026-09-22
+
+The remaining generic base-typed virtual weak-observer combinations now have
+executable all-profile coverage. Borrowed and owned `Weak[Token]` and
+`Weak[Shared[Token]]` fields are covered in both live and expired arguments, and
+mutable virtual returns cover both live and expired `Weak[Shared[Token]]` fields.
+Each case pins the derived vtable slot, the `->slot0` dispatch, the expected
+weak retain/release boundary, and the live or expired `upgrade()` result. The
+four new `[TYP-16]` fixtures close these `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-14]`, and `[TST-26]` matrix gaps without changing the language
+specification or creating an ODR.
