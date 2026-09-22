@@ -9618,3 +9618,19 @@ require a write-access operation and weak upgrade while rejecting
 covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`, `[DRP-6]`, `[EXC-1]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition; it is
 not an ODR or specification change.
+
+### 0.288 `[TYP-22]` borrowed mutable generic multi-interface adapters with weak fields — 2026-09-22
+
+The same mutable-plus-shared interface composition works through the borrowed
+carrier. An explicit `ref mut Counter[bool]` coerces to `ref mut dyn Read +
+Bump`; the mutable slot changes the original class field, then the shared slot
+upgrades that class's `Weak[Shared[Token]]` field and observes the payload
+through `.get()`. The coercion is a borrow, so the class remains the sole owner
+of its weak field and no retain/release pair appears at the dynamic boundary.
+
+`tests/conformance/TYP-22/accept_ref_mut_dyn_multi_interface_generic_class_weak_field.em`
+prints `8` in debug, release, and shipping. Generated-C assertions require one
+write-access operation and exactly the class field's one weak retain/release,
+plus one weak upgrade. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
+`[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
+`[TST-26]` composition; no ODR or specification change is needed.
