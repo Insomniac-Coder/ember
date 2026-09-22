@@ -530,6 +530,16 @@ impl<'a> Builder<'a> {
                 }),
             None => None,
         };
+        // `[EXC-5]` — borrowing a field through this method's own `mut self`
+        // is a reborrow of the interval opened at entry, not a second access
+        // to the containing object.  The callee still opens its receiver's
+        // separate interval; suppress only an exactly identical caller-side
+        // place so unrelated class arguments retain their normal boundary.
+        let access = if self.class_access.as_ref() == access.as_ref() {
+            None
+        } else {
+            access
+        };
         (Operand::Copy(Place::local(temp)), access)
     }
 

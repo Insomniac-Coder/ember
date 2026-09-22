@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — same-method class-field reborrows duplicated a runtime access
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-168 | **A `mut self` method that invoked a mutating method through one of its class-valued fields opened the containing object's write access both at method entry and again around the field call.** The runtime correctly rejected those overlapping intervals, even though the field call is a reborrow through the same receiver and must be permitted. | `[CLS-9a]`, `[EXC-1]`, `[EXC-4]`, `[EXC-5]` | **fixed** | Mutable-argument lowering now recognizes when its derived caller-side access place is exactly the method's already-active class access and leaves that outer interval in place. It still opens a distinct access for another class object and the callee still opens its receiver's own interval. `class_let_field_mutate_through.em` was red before the correction with an exclusivity violation and now prints `42` in debug, release, and shipping; generated C contains exactly two matching begin/end accesses: one for `Holder.bump_counter` and one for `Counter.bump`. The frozen rules explicitly define same-method reborrows and mutation through a `let` class field, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-21 — generic interfaces could not be specialized for `dyn`
 
 | # | Defect | Rule | Status | Fixed in |

@@ -8746,3 +8746,22 @@ debug, release, and shipping. Its generated-C assertion requires exactly two
 itable lookups, pinning the no-stale-cache boundary. This is an invalidation
 regression for the existing `[DSP-3]` optimization, not a new ODR or language
 semantics.
+
+### 0.235 `[EXC-5]` same-method class-field reborrows — 2026-09-22
+
+The duration-wide write access opened for a `mut self` class method now remains
+the containing-object boundary while that method invokes a mutating method
+through its own class-valued field. Lowering previously opened an identical
+second `Holder` interval around `self.counter.bump()`, which the runtime
+correctly rejected as an overlap. That second interval is not an independent
+borrow: it is `[EXC-5]`'s permitted reborrow through the method receiver.
+
+Mutable-argument lowering therefore compares the derived caller-side access
+place with the method's active class-access place and suppresses only an exact
+match. A different class object still receives its ordinary caller interval,
+and the callee still opens the separate interval for the field object itself.
+`class_let_field_mutate_through.em` was red before this correction with an
+exclusivity panic; it now prints `42` in debug, release, and shipping and
+requires exactly two generated-C begin/end calls: `Holder.bump_counter` and
+`Counter.bump`. This closes D-168 under existing `[CLS-9a]`, `[EXC-1]`,
+`[EXC-4]`, and `[EXC-5]`; the frozen source is explicit, so no ODR was needed.
