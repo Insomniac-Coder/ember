@@ -9377,3 +9377,19 @@ with `E2020` before the correction and now prints `7` in debug, release, and
 shipping; the generated-C assertion requires `ember_weak_upgrade`. The frozen
 target makes this D-180 an implementation defect, not an ODR or specification
 change.
+
+### 0.273 `[WK-11]` replacing an empty class weak field — 2026-09-22
+
+Weak ownership remains ordinary ownership of the weak handle even when the
+handle lives in a class field. A field initialised with `Weak[C].empty()` may be
+replaced with `Weak(strong)`: assignment releases the old empty weak value,
+retains the new weak value for the field, and leaves `strong` as the only
+strong-owner source. The later upgrade observes that class while the owner is
+live; it does not turn the stored weak edge into a strong cycle.
+
+`tests/conformance/WK-11/accept_class_weak_field_reassignment.em` initialises
+an empty `Weak[Token]` field, replaces it, upgrades it, and prints `42` in
+debug, release, and shipping. Its generated-C assertions require weak retain,
+release, and upgrade calls. This fills the mutable class-field form of the
+existing `[WK-11]`, `[WK-12]`, `[WK-14]`, `[HEAP-7]`, and `[TST-26]` contract;
+it is coverage, not an ODR or a specification change.
