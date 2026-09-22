@@ -8714,3 +8714,18 @@ in debug, release, and shipping. Its generated-C assertions pin the lookup
 and absence of retain. This is coverage for the existing `[TYP-16]`,
 `[FN-1]`, `[OBJ-2]`, and `[DSP-3]` composition; no ODR or compiler change was
 needed.
+
+### 0.233 `[OBJ-2]` class-interface field mutation — 2026-09-22
+
+A class field typed as a bare class interface remains a stored one-word
+handle at a mutating dynamic call. The call borrows that field storage for the
+adapter boundary; it does not materialize or retain a temporary interface
+carrier. The existing concrete class method owns the one dynamic write-access
+interval around its mutation.
+
+`class_interface_handle_field_mut.em` stores `Counter` in a `Holder.value:
+Accumulator` field, invokes `holder.value.bump()`, and prints `42` in debug,
+release, and shipping. Its C assertions require exactly one itable lookup,
+one begin/end write interval, and the single retain required to initialize the
+owning field. This is coverage for the existing `[OBJ-2]`, `[DSP-3]`, and
+`[EXC-1]` composition; no ODR or compiler change was needed.
