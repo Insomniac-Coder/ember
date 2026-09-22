@@ -9241,3 +9241,18 @@ calls the bound method through `ref Good` and prints `47` in debug, release,
 and shipping. This gives `[TYP-14]`, `[TYP-17]`, and `[TYP-18]` direct
 conformance coverage for the generic receiver route and is neither a new
 defect nor an ODR.
+
+### 0.264 `[TYP-17]` bounded mutable methods through `ref mut T` — 2026-09-22
+
+The mutable generic route now has the matching executable boundary. A `mut`
+parameter binding holding `ref mut T` reads through to `T` for bound lookup,
+then preserves the selected `mut self` receiver adjustment; it must mutate the
+original referent rather than a temporary or an independent copy.
+
+`tests/conformance/TYP-18/accept_generic_bounded_mut_method_through_mut_ref.em`
+binds a `ref mut Counter`, calls `bump_once[Counter]`, and observes `42` through
+the same reference in debug, release, and shipping. The explicit type argument
+is required because this nested mutable-reference argument does not infer the
+generic parameter at the current call boundary. This is coverage for the
+existing `[TYP-14]`, `[TYP-17]`, `[TYP-18]`, and `[BRW-1]` contract, without an
+ODR or specification change.
