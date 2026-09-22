@@ -10435,3 +10435,13 @@ both live and expired states. The four fixtures verify ordered adapter slots,
 base-class mutation, observer retain/release and cleanup, and the expected
 `Some`/`None` outcomes. This completes the defined inherited-class argument
 matrix without a specification change or ODR.
+
+### 0.344 `[TYP-22]` borrowed mutable composed weak arguments — 2026-09-22
+
+The composed carrier matrix now includes the previously missing borrowed
+`Weak[Shared[Token]]` mode on `ref mut dyn Observe + Bump`, for both direct
+generic classes and generic-base-derived classes while live and after expiry.
+The four fixtures verify mutable access intervals, inherited counter updates,
+weak upgrade `Some`/`None`, and the absence of an owned observer copy. This is
+coverage of the existing `[FN-1]`/`[TYP-22]` rules, without a specification
+change or ODR.
