@@ -9689,3 +9689,20 @@ derived virtual slot and base-typed `->slot0` dispatch, a write-access operation
 and the weak upgrade. The focused MIR verifier tests prove that an open access
 at `Return` remains invalid while one confined to `Unreachable` is valid. No
 specification change, ADR, ODR, owner decision, or version change is needed.
+
+### 0.292 `[DSP-1]` mutable generic virtual dispatch after weak expiry — 2026-09-22
+
+The same generic mutable virtual slot must also preserve the expired-observer
+path. A helper returns `Weak[Shared[Token]]` after its only `Shared` owner has
+left scope; the inherited field retains that valid weak observer. Calling the
+derived slot through a `Base[bool]` handle still opens its normal write access,
+increments the inherited count, and takes `None` from `upgrade()` without
+resurrecting the former owner.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_expired_weak_field_dispatch.em`
+prints `2` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot, the base-typed `->slot0` call, the mutable access boundary,
+and weak upgrade. This extends the existing `[TYP-16]`, `[CLS-2]`, `[CLS-4]`,
+`[DSP-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
+`[TST-26]` coverage; the rules are explicit, so it requires no ODR or
+specification change.
