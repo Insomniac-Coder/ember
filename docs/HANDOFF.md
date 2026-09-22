@@ -8896,3 +8896,17 @@ ember_driver --test milestones the_conformance_suite_runs -- --nocapture` and
 `cargo test -p ember_codegen_c` pass. The frozen `[RC-1]`, `[RC-2e]`, `[FN-1]`,
 and `[OWN-2]` rules already define this behavior, so D-172 is a compiler defect,
 not an ODR or a specification change.
+
+### 0.243 `[RC-2e]` retain at a loop handle's return boundary — 2026-09-22
+
+The remaining explicit escape route in `[RC-2e]` is return. A loop yield is a
+borrowed class handle, so `return token` must create the caller's independent
+strong reference before cleanup of the source container releases its element.
+
+`tests/conformance/RC-2e/accept_loop_class_handle_return_retains.em` passes an
+owned `Array[Token]` to `first`, returns its borrowed loop yield, then reads the
+result in the caller. It prints `7` in debug, release, and shipping and requires
+two emitted retains: source insertion and the return boundary. The generated
+C retains the result before releasing the parameter Array, proving there is no
+post-cleanup use. This is direct coverage of established `[RC-2e]`, `[RC-1]`,
+and `[CTL-2]`, not a defect or ODR.
