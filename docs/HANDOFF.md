@@ -8948,3 +8948,21 @@ before the correction (it printed `7` then panicked) and now prints `7` in all
 profiles with exactly two emitted retains. This closes D-174 under existing
 `[FN-1]`, `[TYP-22]`, `[RC-1]`, and `[RC-2e]`; no ODR or specification change
 is involved.
+
+### 0.246 `[DSP-2]` owned arguments through virtual dispatch — 2026-09-22
+
+D-175 completed the third callable boundary. `FuncRef::Virtual` retained just
+its class-table owner and slot, so although the virtual method declaration had
+an `owned Token` parameter, the C backend had no mode fact with which to retain
+a copied loop yield. The override released its owned argument as required and
+the loop's Array subsequently underflowed that same reference.
+
+Virtual call records now retain the checked full parameter-mode vector as
+compiler metadata; it is not a C-vtable ABI change. The backend emits a retain
+only when a copied argument corresponds to an `owned` mode, and continues to
+treat moves as transfers.
+`accept_loop_class_handle_owned_virtual_parameter_retains.em` was red before the correction (it printed `7` then panicked) and
+now passes in every profile. Its three retains are source insertion, the
+Worker-to-Consumer upcast used to select dispatch, and the virtual owned-call
+boundary. This is D-175 under the explicit `[FN-1]`, `[DSP-2]`, `[RC-1]`, and
+`[RC-2e]` rules, not an ODR or specification change.

@@ -1756,7 +1756,11 @@ impl<'a> Builder<'a> {
                 }
                 let next = self.new_block();
                 let func = match (function.class_owner, function.class_virtual_slot) {
-                    (Some(owner), Some(slot)) => FuncRef::Virtual { owner, slot },
+                    (Some(owner), Some(slot)) => FuncRef::Virtual {
+                        owner,
+                        slot,
+                        param_modes: modes.clone(),
+                    },
                     _ => FuncRef::Direct { symbol, latebound: *latebound },
                 };
                 self.terminate(Terminator::Call {

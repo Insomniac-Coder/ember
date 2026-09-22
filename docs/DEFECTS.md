@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — virtual calls discarded owned parameter modes
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-175 | **Virtual call records retained only a vtable owner and slot.** A virtual method's declaration could take an `owned Token`, and lowering correctly supplied its copied class handle, but C generation had no mode metadata to retain it before the vtable call. The override correctly released its owned parameter and then the loop's Array cleanup underflowed the same strong reference. | `[FN-1]`, `[DSP-2]`, `[RC-1]`, `[RC-2e]` | **fixed** | Virtual call records now carry the already checked full parameter-mode vector, including the receiver, solely as compiler metadata. The C backend retains copied explicit owned arguments before dispatch; moved arguments still transfer. `accept_loop_class_handle_owned_virtual_parameter_retains.em` printed `7` then panicked before the correction and now passes in every profile, pinning the three retains from source insertion, the Worker-to-Consumer upcast, and the virtual owned-call transfer. The rules define the virtual ABI and ownership transfer unambiguously, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — dynamic interface calls discarded owned parameter modes
 
 | # | Defect | Rule | Status | Fixed in |

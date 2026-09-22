@@ -1169,7 +1169,14 @@ pub enum FuncRef {
     /// the declaration that established the slot, so the C backend can use
     /// the stable base signature even when a derived override supplies the
     /// implementation.
-    Virtual { owner: ember_types::ClassId, slot: usize },
+    Virtual {
+        owner: ember_types::ClassId,
+        slot: usize,
+        /// The complete method parameter-mode vector, including the receiver.
+        /// It keeps ownership transfers visible to the C backend at a vtable
+        /// boundary without making parameter modes part of the C table ABI.
+        param_modes: Vec<ParameterMode>,
+    },
     /// `[TYP-22]`/`[OBJ-2]` — a call through either a `ref dyn I` carrier or
     /// a one-word erased class-interface handle. The receiver is represented
     /// by the first operand; `class_handle` selects the TypeInfo lookup path
@@ -1482,7 +1489,7 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                     (if *latebound { "@latebound " } else { "" }, symbol.clone())
                 }
                 FuncRef::Builtin { which, .. } => ("", which.name().to_string()),
-                FuncRef::Virtual { owner, slot } => {
+                FuncRef::Virtual { owner, slot, .. } => {
                     ("@virtual ", format!("class#{}::slot{}", owner.0, slot))
                 }
                 FuncRef::Interface { interface, slot, .. } => {

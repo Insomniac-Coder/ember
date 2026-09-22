@@ -2855,6 +2855,9 @@ impl Emitter<'_> {
                 .checked_sub(1)
                 .and_then(|parameter| param_modes.get(parameter))
                 .is_some_and(|mode| *mode == ParameterMode::Owned),
+            FuncRef::Virtual { param_modes, .. } => param_modes
+                .get(index)
+                .is_some_and(|mode| *mode == ParameterMode::Owned),
             _ => false,
         }
     }
@@ -2863,7 +2866,7 @@ impl Emitter<'_> {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
             FuncRef::Direct { symbol, .. } => format!("{symbol}({})", rendered.join(", ")),
-            FuncRef::Virtual { owner, slot } => {
+            FuncRef::Virtual { owner, slot, .. } => {
                 let signature = self
                     .virtual_signatures
                     .get(&(*owner, *slot))
