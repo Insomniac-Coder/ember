@@ -2725,23 +2725,19 @@ impl Emitter<'_> {
                 // explicit retain before the callee becomes responsible for
                 // releasing its parameter. A moved operand transfers an
                 // existing owner and deliberately does not retain.
-                if let FuncRef::Direct { symbol, .. } = func
-                    && let Some(modes) = self.direct_param_modes.get(symbol)
-                {
-                    let mut retains = Vec::new();
-                    for (argument, mode) in args.iter().zip(modes) {
-                        if *mode != ParameterMode::Owned {
-                            continue;
-                        }
-                        let Operand::Copy(place) = argument else {
-                            continue;
-                        };
-                        let value = self.place_in(place, body);
-                        self.retain_lines_for_value(&value, self.place_ty(place, body), &mut retains);
+                let mut retains = Vec::new();
+                for (index, argument) in args.iter().enumerate() {
+                    if !self.call_argument_is_owned(func, index, body) {
+                        continue;
                     }
-                    for line in retains {
-                        self.line(&format!("    {line}"));
-                    }
+                    let Operand::Copy(place) = argument else {
+                        continue;
+                    };
+                    let value = self.place_in(place, body);
+                    self.retain_lines_for_value(&value, self.place_ty(place, body), &mut retains);
+                }
+                for line in retains {
+                    self.line(&format!("    {line}"));
                 }
                 let call = self.call_expression(func, args, body);
                 let dest_ty = self.place_ty(dest, body);
@@ -2831,6 +2827,31 @@ impl Emitter<'_> {
             format!("(*{operand})")
         } else {
             format!("({operand})")
+        }
+    }
+
+    /// Whether a call consumes this explicit argument. Direct-call modes cross
+    /// the backend boundary in `Body`; an indirect call carries a function
+    /// value whose type retains the same mode vector under `[FN-6a]`.
+    fn call_argument_is_owned(&self, func: &FuncRef, index: usize, body: &Body) -> bool {
+        match func {
+            FuncRef::Direct { symbol, .. } => self
+                .direct_param_modes
+                .get(symbol)
+                .and_then(|modes| modes.get(index))
+                .is_some_and(|mode| *mode == ParameterMode::Owned),
+            FuncRef::Indirect { operand, .. } => {
+                let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+                    return false;
+                };
+                let TyKind::Fn { params, .. } = self.types.kind(self.place_ty(place, body)) else {
+                    return false;
+                };
+                params
+                    .get(index)
+                    .is_some_and(|parameter| parameter.mode == FnParamMode::Owned)
+            }
+            _ => false,
         }
     }
 

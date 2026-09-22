@@ -8910,3 +8910,22 @@ two emitted retains: source insertion and the return boundary. The generated
 C retains the result before releasing the parameter Array, proving there is no
 post-cleanup use. This is direct coverage of established `[RC-2e]`, `[RC-1]`,
 and `[CTL-2]`, not a defect or ODR.
+
+### 0.244 `[FN-6a]` owned arguments through an indirect callable — 2026-09-22
+
+The function-value equivalent of D-172 exposed D-173. The indirect-call MIR
+lowerer used the callable mode only for `mut` arguments; its fallback treated
+an `owned` argument as borrowed. That both erased the move of a move-only value
+and left a copied class handle without the retain required before an owned
+callee releases it.
+
+Indirect lowering now calls `lower_operand` for a declared `owned` callable
+parameter. The C backend obtains the matching mode vector from the function
+value's `fn(...)` type, retains copied owning arguments before the call, and
+still leaves a moved operand as a transfer.
+`accept_loop_class_handle_owned_indirect_parameter_retains.em` was red before the correction (it printed `7`
+then panicked) and now requires exactly two retains in every profile.
+`accept_owned_indirect_parameter_is_transferred.em` separately proves that a
+move-only `Resource` has exactly one destructor invocation. This closes D-173
+under the unambiguous `[FN-1]`, `[FN-6a]`, `[OWN-2]`, `[OWN-3]`, `[RC-1]`, and
+`[RC-2e]` contracts; it is neither an ODR nor a specification change.

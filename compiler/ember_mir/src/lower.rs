@@ -1894,6 +1894,11 @@ impl<'a> Builder<'a> {
                                 class_accesses.push(place);
                             }
                             operand
+                        } else if matches!(
+                            callable_modes.as_ref().and_then(|modes| modes.get(index)),
+                            Some(ember_types::FnParamMode::Owned)
+                        ) {
+                            self.lower_operand(a)
                         } else {
                             self.lower_operand_borrowed(a)
                         }

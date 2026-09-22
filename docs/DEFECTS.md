@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — indirect calls erased `owned` argument semantics
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-173 | **Indirect-call lowering preserved `mut` parameter modes but treated every other argument as borrowed.** An `fn(owned T)` value therefore copied a move-only argument instead of transferring it, and passed a copied class handle without retaining it. The latter made `operation(token)` from a class-handle loop yield print successfully then underflow the reference count when the Array cleaned up; the former could run a move-only value's destructor in both caller and callee. | `[FN-1]`, `[FN-6a]`, `[OWN-2]`, `[OWN-3]`, `[RC-1]`, `[RC-2e]` | **fixed** | MIR lowering now uses the callable type's `owned` parameter mode to preserve the normal move-or-copy operand. The C backend reads the same mode vector from the indirect callee's function type and retains copied owning arguments before the call; moved arguments stay transfers. `accept_loop_class_handle_owned_indirect_parameter_retains.em` was red before the correction (it printed `7` then panicked) and now passes in every profile with the two required retains. `accept_owned_indirect_parameter_is_transferred.em` proves a move-only `Resource` reaches exactly one destructor. The rules explicitly require ordinary ownership modes to survive callable indirection, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — copied class handles crossed owned direct calls without a retain
 
 | # | Defect | Rule | Status | Fixed in |
