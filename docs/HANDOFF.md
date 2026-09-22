@@ -9968,6 +9968,21 @@ retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
 `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
 change.
 
+### 0.331 `[DSP-1]` owned expired generic virtual arguments of class-owned weak fields — 2026-09-22
+
+An `owned Weak[Token]` parameter crossing a generic base-typed virtual call
+may originate from a class field whose former strong target has already expired.
+The derived override receives and later destroys its independent weak observer,
+but `upgrade()` follows `None` and does not resurrect the prior owner.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_owned_expired_weak_class_field_argument.em`
+prints `0` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot, base-typed `->slot0` call, exactly two weak retains (field
+initialization and owned argument), parameter cleanup, and weak upgrade. This
+extends `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DSP-1]`, `[OWN-2]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an
+ODR or specification change.
+
 ### 0.310 `[TYP-22]` expired mutable borrowed dynamic returns of generic class-owned weak fields — 2026-09-22
 
 A `ref mut dyn Revise` helper may mutate a generic class and return a copied
