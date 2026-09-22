@@ -9723,3 +9723,18 @@ boundary, and weak retain/release/upgrade paths. This extends the existing
 `[TYP-16]`, `[CLS-2]`, `[CLS-4]`, `[DSP-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.294 `[DSP-1]` generic virtual return of an inherited weak field — 2026-09-22
+
+A virtual return can copy an inherited `Weak[Shared[Token]]` field across a
+generic base-typed dispatch boundary. The derived override returns an
+independent weak observer rather than a payload or a borrowed field reference;
+the caller may then upgrade it while the separate `Shared` owner is live and
+observe the payload only through `.get()`.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot and base-typed `->slot0` dispatch plus weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[CLS-2]`,
+`[CLS-4]`, `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
+`[TST-26]` coverage without an ODR or specification change.
