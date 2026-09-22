@@ -9037,3 +9037,17 @@ and two `ember_weak_release` operations. The count proves iteration itself
 does not add weak-count traffic. This is coverage for existing `[CTL-1]`,
 `[CTL-2]`, `[WK-11]`, and `[WK-12]` behavior; no defect, ODR, or specification
 change was found.
+
+### 0.251 `[RC-2e]` Shared handles at an owned loop-call boundary — 2026-09-22
+
+`[RC-2e]` names `Shared[T]` alongside class handles. A borrowed Array loop
+yield must not increment the `Shared` strong count unconditionally, but passing
+that yield to `consume(owned token: Shared[Token])` must retain at the call so
+the callee can release its owned parameter independently of the Array.
+
+`tests/conformance/RC-2e/accept_loop_shared_handle_owned_parameter_retains.em`
+constructs one `Shared[Token]`, stores it in an Array, and prints `7` in every
+profile. Its two emitted retains are exactly Array insertion and the owned-call
+transfer; no loop-top retain is present. This is direct coverage of existing
+`[HEAP-3]`, `[HEAP-4]`, `[HEAP-6]`, `[RC-1]`, and `[RC-2e]` behavior, without a
+defect, ODR, or specification change.
