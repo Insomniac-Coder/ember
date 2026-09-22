@@ -9051,3 +9051,15 @@ profile. Its two emitted retains are exactly Array insertion and the owned-call
 transfer; no loop-top retain is present. This is direct coverage of existing
 `[HEAP-3]`, `[HEAP-4]`, `[HEAP-6]`, `[RC-1]`, and `[RC-2e]` behavior, without a
 defect, ODR, or specification change.
+
+### 0.252 `[RC-2e]` Shared fields projected from loop values — 2026-09-22
+
+The corresponding value-type shape is also covered: a copied `Entry` contains
+`Shared[Token]`, and an Array loop borrows each `Entry`. Passing
+`entry.token` to an owned parameter must retain the projected Shared field at
+the call boundary without granting the loop variable unconditional ownership.
+
+`tests/conformance/RC-2e/accept_loop_struct_containing_shared_handle_owned_parameter_retains.em`
+prints `7` in every profile. It extends the existing class-handle wrapper case
+to the `Shared[T]` form explicitly named by `[RC-2e]`; no compiler defect,
+ODR, or specification change was found.
