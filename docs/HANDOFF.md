@@ -9845,3 +9845,19 @@ retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
 `[IFC-1]`, `[CLS-4]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.302 `[TYP-22]` multi-interface dynamic returns of generic weak fields — 2026-09-22
+
+One `Box[dyn Observe + Bump]` carrier may use its shared `Observe` slot to
+return a copied `Weak[Shared[Token]]` field from a generic class, then invoke
+its distinct mutable `Bump` slot. The returned observer remains independently
+usable across the later call; only `bump()` opens the normal dynamic write
+interval, and no payload or box copy occurs at either dispatch boundary.
+
+`tests/conformance/TYP-22/accept_dyn_multi_interface_box_generic_class_weak_field_return.em`
+prints `1` and `7` in debug, release, and shipping. Generated-C assertions pin
+both ordered multi-interface adapter slots, the write-access operation, and the
+weak retain/release/upgrade paths while rejecting `ember_box_new_copy`. This
+extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[DRP-6]`, `[EXC-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
+ODR or specification change.
