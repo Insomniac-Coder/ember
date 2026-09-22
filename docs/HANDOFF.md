@@ -9490,3 +9490,18 @@ generated-C assertions require weak retain, release, and upgrade operations.
 This covers the field-return form of `[WK-11]`–`[WK-13]`, `[HEAP-3]`,
 `[HEAP-6]`, `[HEAP-7]`, `[OBJ-3]`, and `[TST-26]`; it is coverage, not an ODR
 or specification change.
+
+### 0.280 `[WK-12]` expired `Weak[C]` returned from a class field — 2026-09-22
+
+The class-owner weak representation has the same no-resurrection requirement.
+A helper constructs `Token`, stores `Weak(strong)` in a class field, and returns
+that field. The return retains a weak observation for the caller; Holder and
+the final class owner then drop normally, so the later upgrade must be `None`
+rather than a dangling pointer or a resurrected class handle.
+
+`tests/conformance/WK-12/accept_expired_class_weak_field_return_copy.em`
+prints `7` on the expired branch in debug, release, and shipping. Generated-C
+assertions require weak retain, release, and upgrade operations. This is the
+`Weak[C]` counterpart to 0.279 and coverage of `[OBJ-3]`, `[HEAP-7]`,
+`[WK-11]`, `[WK-12]`, `[WK-14]`, and `[TST-26]`; it is not an ODR or
+specification change.
