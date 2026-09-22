@@ -9022,3 +9022,18 @@ pins its eight retains across tuple and `Option` construction, pattern binding,
 and the owned calls. The frozen `[CTL-1]`, `[CTL-2]`, `[RC-1]`, `[RC-2e]`, and
 `[TYP-14]` rules already define that behavior, so D-176 requires no ODR or
 specification change.
+
+### 0.250 `[WK-11]` weak handles through a borrowed loop — 2026-09-22
+
+Weak handles now have direct loop-borrow coverage. An `Array[Weak[Token]]`
+remains borrowed for the loop, so `observed` is a view of its stored weak
+handle, not a newly copied weak owner. Constructing `Weak(token)` and storing
+it in the Array are the only weak-count increments; `observed.upgrade()` can
+then obtain the live strong `Token` normally.
+
+`tests/conformance/WK-11/accept_loop_borrows_weak_handles.em` prints `7` in
+debug, release, and shipping and pins exactly two emitted `ember_weak_retain`
+and two `ember_weak_release` operations. The count proves iteration itself
+does not add weak-count traffic. This is coverage for existing `[CTL-1]`,
+`[CTL-2]`, `[WK-11]`, and `[WK-12]` behavior; no defect, ODR, or specification
+change was found.
