@@ -8785,3 +8785,27 @@ now reject with `E1010` in debug, release, and shipping. The existing
 `class_let_field_mutate_through.em` now also uses an explicit `init` assignment
 and still prints `42` with the D-168 access-count assertion. This closes D-169;
 the frozen source is explicit, so no ODR was needed.
+
+### 0.237 `[CLS-7a]` class destructor self-escape rejection — 2026-09-22
+
+The accepted program `items.push(self)` inside a class `drop(mut self)`
+published a new strong handle while that same object was deinitialising. The
+runtime's `[OBJ-5]` count checks still defend this path, but the frozen
+`[CLS-7a]` rule also requires the compiler to reject statically visible
+publication into a container. `E3016` already named that error but no class
+destructor analysis emitted it.
+
+The new pass recognizes a nominal destructor receiver, follows copies of its
+dereferenced class handle through locals and CFG joins, and rejects writes into
+another object’s field. Compiler-known storage builtins carry the exact same
+publication fact, so `Array.push` and the established `Cell`, arena,
+`MaybeUninit`, `Box`, `Shared`, and `mem.forget` routes are covered without
+guessing about ordinary helper calls. Virtual, interface, function-value, and
+otherwise opaque bodies stay with the runtime resurrection check, as `[CLS-7a]`
+assigns compiler-invisible cases to `[OBJ-5]`.
+
+`tests/compile-fail/class_drop_self_escape.em` and
+`class_drop_self_escape_field.em` were red before the correction (accepted in
+all profiles) and now report `E3016` for storing `self` into an `Array[Token]`
+and another class object's field in debug, release, and shipping. This closes
+D-170. The adopted source is explicit, so no ODR was needed.

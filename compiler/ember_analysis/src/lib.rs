@@ -31,5 +31,7 @@ pub use definite_init::{
     check_all_with_facts as check_definite_init_all_with_facts, check_definite_init,
     check_definite_init_with_facts, verify_initialization_facts, verify_initialization_facts_all,
 };
-pub use drops::{elaborate as elaborate_drops, elaborate_all as elaborate_drops_all};
+pub use drops::{
+    check_drop_self_escapes_all, elaborate as elaborate_drops, elaborate_all as elaborate_drops_all,
+};
 pub use unused::check_all as check_unused_all;

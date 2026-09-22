@@ -1960,6 +1960,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &types,
         options,
     )?;
+    // `[CLS-7a]` — reject a class destructor's own handle entering visible
+    // storage before code generation can expose a resurrection path.
+    ember_analysis::check_drop_self_escapes_all(&bodies, &types, &mut sink);
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);

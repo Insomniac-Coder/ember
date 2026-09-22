@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — class destructors could publish their own handle
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-170 | **The compiler defined `E3016` but never ran a class-destructor escape check.** Because class handles are `Copy`, `items.push(self)` inside `drop(mut self)` bypassed the move checker and was accepted, leaving the runtime as the only resurrection defense. | `[CLS-7a]`, `[OBJ-5]` | **fixed** | The analysis now recognizes nominal `drop` methods, tracks copies of their receiver handle through locals and control flow, and rejects a copy written into another object’s field or passed to a compiler-known storage operation. The latter covers `Array.push`, `Cell` replacement, arena storage, `MaybeUninit.write`, `Box`, `Shared`, and `mem.forget`; opaque dispatch remains the runtime case required by `[OBJ-5]`. `class_drop_self_escape.em` and `class_drop_self_escape_field.em` were accepted before the correction and now report `E3016` for publication into an `Array[Token]` and another class object’s field, in debug, release, and shipping. The adopted rules already draw this boundary, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — `let` class fields lost their immutability after parsing
 
 | # | Defect | Rule | Status | Fixed in |

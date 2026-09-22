@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
-    Body, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue, Stmt, StmtKind,
+    Body, FuncRef, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue, Stmt, StmtKind,
     Terminator,
 };
 use ember_span::Span;
@@ -423,12 +423,206 @@ fn drop_self(body: &Body, types: &TypeTable) -> Option<LocalId> {
         TyKind::Ref { inner, .. } => *inner,
         _ => decl.ty,
     };
-    let has_drop = match types.kind(inner) {
-        TyKind::Struct(id) => types.struct_def(*id).has_drop,
-        TyKind::Enum(id) => types.enum_def(*id).has_drop,
-        _ => false,
+    // `drop` is a special method name. It has no overloadable free-function
+    // meaning here: a receiver named `self` of a nominal owner is exactly the
+    // destructor body, including a class whose `has_drop` bit is being
+    // materialized alongside its method bodies.
+    matches!(types.kind(inner), TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Class(_))
+        .then_some(LocalId(1))
+}
+
+/// `[CLS-7a]` — reject a destructor that makes its own class handle outlive
+/// the call.
+///
+/// A class handle is `Copy`, so the ordinary move checker intentionally does
+/// not see `items.push(self)`. Publishing that copy is nevertheless forbidden:
+/// it could retain the object while its deinitialisation is in progress. The
+/// Compiler-known containers carry their publication fact directly in their
+/// builtin operation. Reusing that fact lets this pass reject a visible
+/// container/field/retained-token escape without treating an ordinary helper
+/// call as an escape.
+pub fn check_drop_self_escapes_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
+    bodies
+        .iter()
+        .map(|body| check_drop_self_escapes(body, types, sink))
+        .sum()
+}
+
+fn check_drop_self_escapes(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
+    let Some(self_local) = drop_self(body, types) else {
+        return 0;
     };
-    has_drop.then_some(LocalId(1))
+
+    // A handle can first be copied into a local, then handed to the publishing
+    // call. Track those aliases through the CFG; joining with union is
+    // conservative and keeps the check valid across branches.
+    let mut entries: Vec<Option<BTreeSet<LocalId>>> = vec![None; body.blocks.len()];
+    if body.blocks.is_empty() {
+        return 0;
+    }
+    entries[0] = Some(BTreeSet::new());
+    let mut worklist = vec![0usize];
+    while let Some(index) = worklist.pop() {
+        let Some(entry) = entries[index].clone() else {
+            continue;
+        };
+        let exit = self_handle_aliases_after(&body.blocks[index], entry, self_local);
+        for successor in successors(body, index) {
+            let merged = match &entries[successor] {
+                Some(existing) => existing.union(&exit).copied().collect(),
+                None => exit.clone(),
+            };
+            if entries[successor].as_ref() == Some(&merged) {
+                continue;
+            }
+            entries[successor] = Some(merged);
+            worklist.push(successor);
+        }
+    }
+
+    let mut errors = 0;
+    for (index, block) in body.blocks.iter().enumerate() {
+        let Some(mut aliases) = entries[index].clone() else {
+            continue;
+        };
+        for stmt in &block.stmts {
+            if let StmtKind::Assign { place, rvalue } = &stmt.kind {
+                if rvalue_copies_drop_self(rvalue, &aliases, self_local)
+                    && !place.projection.is_empty()
+                    && !is_self_interior(place, self_local)
+                {
+                    report_drop_self_escape(sink, stmt.span);
+                    errors += 1;
+                }
+                update_self_handle_aliases(place, rvalue, &mut aliases, self_local);
+            }
+            if let StmtKind::StorageDead(local) = stmt.kind {
+                aliases.remove(&local);
+            }
+        }
+
+        if let Terminator::Call {
+            func: FuncRef::Builtin { which, .. },
+            args,
+            ..
+        } = &block.terminator
+        {
+            for argument in builtin_publishing_arguments(*which) {
+                if args
+                    .get(*argument)
+                    .is_some_and(|argument| operand_is_drop_self(argument, &aliases, self_local))
+                {
+                    report_drop_self_escape(sink, block.terminator_span);
+                    errors += 1;
+                }
+            }
+        }
+    }
+    errors
+}
+
+/// The builtins that retain an argument in storage beyond the call itself.
+/// Their ordinary signatures do not have a materialized callable body, but
+/// their semantics are as precise as a verified `Publish` summary.
+fn builtin_publishing_arguments(which: ember_mir::Builtin) -> &'static [usize] {
+    match which {
+        ember_mir::Builtin::ArrayPush
+        | ember_mir::Builtin::CellSet
+        | ember_mir::Builtin::CellReplace
+        | ember_mir::Builtin::MaybeUninitWrite { .. }
+        | ember_mir::Builtin::ArenaAlloc { .. }
+        | ember_mir::Builtin::FixedArenaAlloc { .. }
+        | ember_mir::Builtin::ScopedArenaAlloc { .. }
+        | ember_mir::Builtin::ArenaArrayPush { .. } => &[1],
+        ember_mir::Builtin::MaybeUninitWriteAt { .. }
+        | ember_mir::Builtin::ArenaArrayInsert { .. } => &[2],
+        ember_mir::Builtin::ArenaMapInsert { .. } => &[2, 3],
+        ember_mir::Builtin::BoxNew { .. }
+        | ember_mir::Builtin::SharedNew { .. }
+        | ember_mir::Builtin::MemForget { .. } => &[0],
+        _ => &[],
+    }
+}
+
+fn self_handle_aliases_after(
+    block: &ember_mir::BasicBlock,
+    mut aliases: BTreeSet<LocalId>,
+    self_local: LocalId,
+) -> BTreeSet<LocalId> {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Assign { place, rvalue } => {
+                update_self_handle_aliases(place, rvalue, &mut aliases, self_local);
+            }
+            StmtKind::StorageDead(local) => {
+                aliases.remove(local);
+            }
+            _ => {}
+        }
+    }
+    if let Terminator::Call { dest, .. } = &block.terminator
+        && dest.projection.is_empty()
+    {
+        aliases.remove(&dest.local);
+    }
+    aliases
+}
+
+fn update_self_handle_aliases(
+    place: &Place,
+    rvalue: &Rvalue,
+    aliases: &mut BTreeSet<LocalId>,
+    self_local: LocalId,
+) {
+    if !place.projection.is_empty() {
+        return;
+    }
+    aliases.remove(&place.local);
+    if rvalue_copies_drop_self(rvalue, aliases, self_local) {
+        aliases.insert(place.local);
+    }
+}
+
+fn rvalue_copies_drop_self(
+    rvalue: &Rvalue,
+    aliases: &BTreeSet<LocalId>,
+    self_local: LocalId,
+) -> bool {
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+            operand_is_drop_self(operand, aliases, self_local)
+        }
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            operand_is_drop_self(lhs, aliases, self_local)
+                || operand_is_drop_self(rhs, aliases, self_local)
+        }
+        Rvalue::Aggregate { operands, .. } => operands
+            .iter()
+            .any(|operand| operand_is_drop_self(operand, aliases, self_local)),
+        Rvalue::Repeat { value, .. } => operand_is_drop_self(value, aliases, self_local),
+        Rvalue::Discriminant(_) | Rvalue::Ref { .. } => false,
+    }
+}
+
+fn operand_is_drop_self(
+    operand: &Operand,
+    aliases: &BTreeSet<LocalId>,
+    self_local: LocalId,
+) -> bool {
+    let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+        return false;
+    };
+    (place.local == self_local && place.projection == [Projection::Deref])
+        || (aliases.contains(&place.local) && place.projection.is_empty())
+}
+
+fn report_drop_self_escape(sink: &mut Sink, span: Span) {
+    sink.emit_classified(
+        Diagnostic::error(codes::E3016, span, "`self` escapes its own drop")
+            .primary_label("published here")
+            .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
+            .help("move the data out with `mem.take` instead"),
+    );
 }
 
 /// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
