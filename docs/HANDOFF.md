@@ -9815,3 +9815,17 @@ retain/release/upgrade operations while rejecting `ember_box_new_copy`. This
 extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[EXC-1]`, `[DRP-6]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.300 `[TYP-22]` borrowed dynamic-interface returns of generic weak fields — 2026-09-22
+
+A `ref dyn Observe` carrier borrows a generic class handle while its object-safe
+slot returns a copied `Weak[Shared[Token]]` field. The dynamic call does not
+copy the class owner; the returned weak observer alone gains the independent
+control-block ownership needed for the caller's later `upgrade()`.
+
+`tests/conformance/TYP-22/accept_ref_dyn_generic_class_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions pin the
+concrete adapter slot and require weak retain/release/upgrade operations. This
+extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[BRW-1]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
+ODR or specification change.
