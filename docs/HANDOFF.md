@@ -9063,3 +9063,15 @@ the call boundary without granting the loop variable unconditional ownership.
 prints `7` in every profile. It extends the existing class-handle wrapper case
 to the `Shared[T]` form explicitly named by `[RC-2e]`; no compiler defect,
 ODR, or specification change was found.
+
+### 0.253 `[RC-2e]` Shared loop-yield publication — 2026-09-22
+
+An Array loop yields `Shared[Token]` as a borrowed handle. Publishing that
+handle into a second Array is an explicit `[RC-2e]` escape: the destination
+must acquire its own strong count at `copies.push(token)`, while the loop head
+itself remains free of retain/release traffic.
+
+`tests/conformance/RC-2e/accept_loop_shared_handle_publication_retains.em`
+stores a loop yield in a second Array and prints `7` from its retained copy in
+every profile. This covers the existing `Shared[T]` form of `[RC-2e]` storage
+publication; no defect, ODR, or specification change was found.
