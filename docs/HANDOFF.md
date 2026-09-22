@@ -8929,3 +8929,22 @@ then panicked) and now requires exactly two retains in every profile.
 move-only `Resource` has exactly one destructor invocation. This closes D-173
 under the unambiguous `[FN-1]`, `[FN-6a]`, `[OWN-2]`, `[OWN-3]`, `[RC-1]`, and
 `[RC-2e]` contracts; it is neither an ODR nor a specification change.
+
+### 0.245 `[TYP-22]` owned arguments through dynamic interface dispatch — 2026-09-22
+
+D-174 completed the same ownership boundary for erased interface calls. The
+type checker and interface-call lowerer correctly recognized `owned token`,
+but `FuncRef::Interface` carried only explicit parameter types. The C dispatch
+therefore copied a class handle into the implementation without retaining it;
+that callee correctly released its owned parameter and the source Array then
+underflowed its count during loop cleanup.
+
+`FuncRef::Interface` now carries the checked explicit parameter-mode vector,
+and MIR verification rejects a vector whose length does not match the slot
+types. At code generation the erased receiver stays outside that vector, while
+each copied explicit `owned` argument gets the normal retain before the table
+call. `accept_loop_class_handle_owned_interface_parameter_retains.em` was red
+before the correction (it printed `7` then panicked) and now prints `7` in all
+profiles with exactly two emitted retains. This closes D-174 under existing
+`[FN-1]`, `[TYP-22]`, `[RC-1]`, and `[RC-2e]`; no ODR or specification change
+is involved.

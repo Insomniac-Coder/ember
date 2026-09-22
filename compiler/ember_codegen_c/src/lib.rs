@@ -2851,6 +2851,10 @@ impl Emitter<'_> {
                     .get(index)
                     .is_some_and(|parameter| parameter.mode == FnParamMode::Owned)
             }
+            FuncRef::Interface { param_modes, .. } => index
+                .checked_sub(1)
+                .and_then(|parameter| param_modes.get(parameter))
+                .is_some_and(|mode| *mode == ParameterMode::Owned),
             _ => false,
         }
     }

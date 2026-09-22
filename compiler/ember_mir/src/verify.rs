@@ -116,7 +116,7 @@ impl Verifier<'_> {
     /// body reach C emission, where a mismatched function-pointer cast would
     /// be undefined behaviour rather than a recoverable compiler failure.
     fn interface_call(&mut self, func: &FuncRef, at: &str) {
-        let FuncRef::Interface { slot, params, ret, layout, .. } = func else {
+        let FuncRef::Interface { slot, params, param_modes, ret, layout, .. } = func else {
             return;
         };
         let Some(signature) = layout.get(*slot).and_then(|signature| signature.as_ref()) else {
@@ -126,6 +126,13 @@ impl Verifier<'_> {
         if signature.params != *params || signature.ret != *ret {
             self.fail(format!(
                 "{at}: dynamic interface call signature disagrees with its table slot {slot}"
+            ));
+        }
+        if param_modes.len() != params.len() {
+            self.fail(format!(
+                "{at}: dynamic interface call slot {slot} carries {} parameter modes for {} parameters",
+                param_modes.len(),
+                params.len()
             ));
         }
     }
@@ -712,6 +719,7 @@ mod tests {
                 interface: ember_span::Symbol::intern("Drawable"),
                 slot: 1,
                 params: Vec::new(),
+                param_modes: Vec::new(),
                 ret: common.i32,
                 layout: vec![Some(ember_hir::InterfaceSlot {
                     params: Vec::new(),

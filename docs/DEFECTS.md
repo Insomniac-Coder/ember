@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — dynamic interface calls discarded owned parameter modes
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-174 | **MIR carried an interface slot's parameter types to C dispatch but not its parameter modes.** Type checking and MIR lowering knew that `Consume.consume(self, owned token: Token)` consumes `token`, but the erased C call had no retain for its copied class-handle argument. The implementation then correctly released its parameter, after which loop cleanup underflowed the Array's sole reference. | `[FN-1]`, `[TYP-22]`, `[RC-1]`, `[RC-2e]` | **fixed** | Dynamic interface call records now retain the checked explicit-parameter mode vector alongside the slot's type signature; the MIR verifier rejects a mismatched vector, and C generation retains every copied `owned` argument at the erased call boundary. `accept_loop_class_handle_owned_interface_parameter_retains.em` printed `7` and then panicked before the correction; it now passes in debug, release, and shipping and pins exactly two retains: source insertion and dynamic owned-call transfer. The specification already requires dynamic calls to preserve the declaration's ownership modes, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — indirect calls erased `owned` argument semantics
 
 | # | Defect | Rule | Status | Fixed in |

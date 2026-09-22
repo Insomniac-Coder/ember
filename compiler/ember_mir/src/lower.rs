@@ -1840,6 +1840,7 @@ impl<'a> Builder<'a> {
                         interface: *interface,
                         slot: *slot,
                         params,
+                        param_modes: modes.clone(),
                         ret: expr.ty,
                         layout: layout.clone(),
                         class_handle: class_handle_receiver,

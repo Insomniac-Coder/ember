@@ -1184,6 +1184,10 @@ pub enum FuncRef {
         interface: ember_span::Symbol,
         slot: usize,
         params: Vec<Ty>,
+        /// The modes of the explicit slot parameters, in the same order as
+        /// `params`. The receiver belongs to the erased dispatch ABI rather
+        /// than this source-level parameter vector.
+        param_modes: Vec<ParameterMode>,
         ret: Ty,
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         class_handle: bool,
