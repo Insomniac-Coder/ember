@@ -9075,3 +9075,16 @@ itself remains free of retain/release traffic.
 stores a loop yield in a second Array and prints `7` from its retained copy in
 every profile. This covers the existing `Shared[T]` form of `[RC-2e]` storage
 publication; no defect, ODR, or specification change was found.
+
+### 0.254 `[RC-2e]` Shared loop-yield return — 2026-09-22
+
+Returning a borrowed `Shared[Token]` from a loop whose Array parameter is owned
+by the callee is another explicit `[RC-2e]` escape. The result must acquire its
+own strong count before the parameter Array cleans up its element.
+
+`tests/conformance/RC-2e/accept_loop_shared_handle_return_retains.em` returns
+the first loop yield, then reads the returned owner after the source Array has
+been destroyed. It prints `7` in every profile and requires exactly two
+retains: source insertion and the return boundary. This is coverage of existing
+`[HEAP-3]`, `[HEAP-4]`, `[HEAP-6]`, `[RC-1]`, and `[RC-2e]` behavior, not a
+defect, ODR, or specification change.
