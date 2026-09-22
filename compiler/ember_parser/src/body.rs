@@ -429,7 +429,28 @@ impl Parser<'_> {
 
     fn parse_for(&mut self, label: Option<Ident>) -> StmtKind {
         self.expect_kw(Kw::For);
-        let pattern = self.parse_pattern();
+        // `[CTL-1]` permits the concise tuple form `for a, b in pairs`.
+        // Elsewhere tuple patterns carry their own parentheses, but `for`
+        // owns this header grammar and the comma cannot introduce an
+        // expression before the required `in`.
+        let first = self.parse_pattern();
+        let pattern = if self.eat_punct(Punct::Comma) {
+            let start = first.span;
+            let mut items = vec![first];
+            loop {
+                items.push(self.parse_pattern());
+                if !self.eat_punct(Punct::Comma) {
+                    break;
+                }
+            }
+            Pattern {
+                id: self.next_id(),
+                kind: PatternKind::Tuple(items),
+                span: start.to(self.prev_span()),
+            }
+        } else {
+            first
+        };
         self.expect_kw(Kw::In);
         let iter = self.parse_consumable_expr();
         self.expect_punct(Punct::Colon);

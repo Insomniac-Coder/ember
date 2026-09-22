@@ -8995,3 +8995,25 @@ constructs an `Array[Entry]`, passes the nested `Token` through the owned call,
 and prints `7` in every profile. Its emitted-C count is three retains: initial
 wrapping, Array insertion, and the owned call. This is direct coverage of an
 existing `[RC-2e]` case with no defect, ODR, or specification change.
+
+### 0.249 `[CTL-1]` destructured loop handles — 2026-09-22
+
+D-176 closed two implementation omissions in the existing tuple-loop form.
+The parser stopped at the first pattern, rejecting the frozen concise spelling
+`for left, right in pairs`; parenthesized input reached lowering, but neither
+the Array nor borrowed-iterator path introduced locals for the tuple leaves.
+
+The parser now normalizes the header list to a tuple pattern. Both lowering
+paths keep the yielded element as a private `ref` and bind each component as a
+reference into it. That makes the loop borrow explicit in HIR and preserves
+`[RC-2e]`: class handles receive a retain only if a later use gives one away,
+such as an `owned` call.
+
+`accept_loop_destructured_class_handles_owned_parameters_retain.em` covers
+direct Array iteration, while
+`accept_iterator_destructured_class_handles_owned_parameters_retain.em` covers
+the `SpanIter` path. Both print `7`, `8` in debug, release, and shipping and
+require exactly six retains: two initial objects, two Array transfers, and two
+owned-call boundaries. The frozen `[CTL-1]`, `[CTL-2]`, `[RC-1]`, `[RC-2e]`,
+and `[TYP-14]` rules already define that behavior, so D-176 requires no ODR or
+specification change.

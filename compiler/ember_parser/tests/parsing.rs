@@ -216,6 +216,13 @@ fn loops_take_labels_and_an_else() {
 }
 
 #[test]
+fn a_for_header_accepts_an_unparenthesized_tuple_pattern() {
+    // `[CTL-1]` spells a destructuring loop as `for a, b in pairs`.
+    let out = dump("fn f(pairs: Array[(i32, i32)]):\n    for left, right in pairs: pass\n");
+    assert!(out.contains("For (left, right)"), "{out}");
+}
+
+#[test]
 fn a_pattern_condition_parses() {
     // `if Some(p) = h:` — condition := pattern "=" expression
     let out = dump("fn f():\n    if Some(p) = h:\n        pass\n");

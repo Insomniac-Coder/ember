@@ -52,6 +52,14 @@ Status is one of **fixed**, **open**, or **won't fix** with the reason.
 
 ---
 
+## 2026-09-22 — loop tuple patterns lost their bindings
+
+| # | Defect | Rule | Status | Fixed in |
+|---|---|---|---|---|
+| D-176 | **The `for` parser stopped after its first pattern, so the specified `for a, b in q` syntax produced an unexpected-comma error.** Parenthesizing the tuple only reached a second defect: array and borrowed-iterator lowering created one anonymous item local but never introduced the tuple's leaf bindings, making `a` and `b` unknown in the body. | `[CTL-1]`, `[CTL-2]`, `[RC-1]`, `[RC-2e]`, `[TYP-14]` | **fixed** | `for` headers now normalize a comma-separated pattern list to a tuple pattern. Array and borrowed-iterator lowering retain their hidden reference to the element and create leaf locals as references into it, preserving the required borrow for the whole loop and retaining class handles only at an explicit owned use. Both `accept_loop_destructured_class_handles_owned_parameters_retain.em` and `accept_iterator_destructured_class_handles_owned_parameters_retain.em` were rejected before the correction; each now prints `7`, `8` in every profile and pins six retains: two source values, two Array transfers, and the two owned-call boundaries. `[CTL-1]` specifies both the syntax and borrowed-yield meaning, so no specification change, ADR, ODR, owner decision, or version change was needed. |
+
+---
+
 ## 2026-09-22 — virtual calls discarded owned parameter modes
 
 | # | Defect | Rule | Status | Fixed in |

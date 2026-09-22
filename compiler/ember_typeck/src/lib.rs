@@ -9965,7 +9965,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // current index, as `[CTL-1]` requires for a borrowed place.
         self.scopes.push(HashMap::new());
         let item_ty = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
-        let item_local = self.declare(binding_name(pattern), item_ty, pattern.span);
+        // A name-only header retains the compact existing representation. A
+        // structured header first binds the borrowed element privately, then
+        // exposes borrowed references to its leaves.
+        let simple_binding = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+        let item_local = self.declare(
+            simple_binding.then(|| binding_name(pattern)).flatten(),
+            item_ty,
+            pattern.span,
+        );
         self.loop_labels.push(label.map(|l| l.name));
         let mut inner = vec![Stmt::Let {
             local: item_local,
@@ -9989,6 +9997,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             }),
         }];
+        if !simple_binding {
+            self.bind_borrowed_loop_pattern(pattern, item_local, item_ty, &mut inner);
+        }
         let checked = self.check_block(body);
         self.loop_labels.pop();
         self.scopes.pop();
@@ -10018,6 +10029,114 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ],
             span,
         }))
+    }
+
+    /// Bind a structured array-loop pattern through the reference that
+    /// `[CTL-1]` yields. Each component remains a borrowed view of the source
+    /// element; copying a class handle only occurs if a later expression asks
+    /// for the value, which keeps `[RC-2e]`'s retain-at-use rule intact.
+    fn bind_borrowed_loop_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        item_local: LocalId,
+        item_ty: Ty,
+        inner: &mut Vec<Stmt>,
+    ) {
+        self.bind_borrowed_loop_pattern_at(pattern, item_local, item_ty, &mut Vec::new(), inner);
+    }
+
+    fn bind_borrowed_loop_pattern_at(
+        &mut self,
+        pattern: &ast::Pattern,
+        item_local: LocalId,
+        item_ty: Ty,
+        projection: &mut Vec<usize>,
+        inner: &mut Vec<Stmt>,
+    ) {
+        match &pattern.kind {
+            ast::PatternKind::Wild => {}
+            ast::PatternKind::Bind { name, .. } => {
+                let Some(value) = self.borrowed_loop_pattern_source(item_local, item_ty, projection, pattern.span)
+                else {
+                    return;
+                };
+                let local = self.declare(Some(name.name), value.ty, pattern.span);
+                inner.push(Stmt::Let { local, init: Some(value) });
+            }
+            ast::PatternKind::Tuple(items) => {
+                let Some(value) = self.borrowed_loop_pattern_source(item_local, item_ty, projection, pattern.span)
+                else {
+                    return;
+                };
+                let TyKind::Ref { inner: tuple, .. } = *self.types.kind(value.ty) else {
+                    unreachable!("array-loop pattern source remains a reference")
+                };
+                let TyKind::Tuple(fields) = self.types.kind(tuple) else {
+                    let shown = self.types.display(tuple);
+                    self.error(
+                        codes::E2020,
+                        pattern.span,
+                        format!("a tuple loop pattern cannot match `{shown}`"),
+                    );
+                    return;
+                };
+                if fields.len() != items.len() {
+                    let shown = self.types.display(tuple);
+                    self.error(
+                        codes::E2020,
+                        pattern.span,
+                        format!(
+                            "`{shown}` has {} elements, but this loop pattern has {}",
+                            fields.len(),
+                            items.len()
+                        ),
+                    );
+                    return;
+                }
+                for (index, item) in items.iter().enumerate() {
+                    projection.push(index);
+                    self.bind_borrowed_loop_pattern_at(item, item_local, item_ty, projection, inner);
+                    projection.pop();
+                }
+            }
+            _ => self.error(
+                codes::E1010,
+                pattern.span,
+                "this loop pattern is not supported yet; use bindings, `_`, or a tuple of them",
+            ),
+        }
+    }
+
+    fn borrowed_loop_pattern_source(
+        &mut self,
+        item_local: LocalId,
+        item_ty: Ty,
+        projection: &[usize],
+        span: Span,
+    ) -> Option<Expr> {
+        let mut source = Expr { ty: item_ty, kind: ExprKind::Local(item_local), span };
+        for &index in projection {
+            let TyKind::Ref { mutable, inner } = *self.types.kind(source.ty) else {
+                unreachable!("array-loop pattern source remains a reference")
+            };
+            let field_ty = match self.types.kind(inner) {
+                TyKind::Tuple(fields) => fields.get(index).copied(),
+                _ => None,
+            }?;
+            let value = Expr { ty: inner, kind: ExprKind::Deref(Box::new(source)), span };
+            let field = Expr {
+                ty: field_ty,
+                kind: ExprKind::Field { base: Box::new(value), index },
+                span,
+            };
+            let field_ref = self.types.intern(TyKind::Ref { mutable, inner: field_ty });
+            source = Expr {
+                ty: field_ref,
+                kind: ExprKind::Ref { place: Box::new(field), mutable },
+                span,
+            };
+        }
+        Some(source)
     }
 
     /// `[CTL-1]` — `for x in it` over anything that provides `next()`:
@@ -10165,13 +10284,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let item_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
 
-        // `Some(x): <body>` — the loop variable is the payload.
+        // `Some(x): <body>` — a simple loop header names the payload
+        // directly. A tuple header retains that payload privately and binds
+        // its borrowed leaves before checking the user body.
         self.scopes.push(HashMap::new());
-        let bound = self.declare(binding_name(pattern), item_ty, pattern.span);
+        let simple_binding = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+        let bound = self.declare(
+            simple_binding.then(|| binding_name(pattern)).flatten(),
+            item_ty,
+            pattern.span,
+        );
+        let mut prologue = Vec::new();
+        if !simple_binding {
+            if matches!(self.types.kind(item_ty), TyKind::Ref { .. }) {
+                self.bind_borrowed_loop_pattern(pattern, bound, item_ty, &mut prologue);
+            } else {
+                self.error(
+                    codes::E1010,
+                    pattern.span,
+                    "this loop pattern needs an iterator that yields a borrowed tuple",
+                );
+            }
+        }
         self.loop_labels.push(label.map(|l| l.name));
-        let body = self.check_block(body);
+        let checked_body = self.check_block(body);
         self.loop_labels.pop();
         self.scopes.pop();
+        prologue.extend(checked_body.stmts);
+        let body = Block { stmts: prologue, span: checked_body.span };
 
         let some_arm = hir::MatchArm {
             pattern: hir::Pattern {
