@@ -9799,3 +9799,19 @@ concrete dynamic adapter slot and weak retain/release/upgrade operations while
 rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
 `[CLS-4]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
 `[TST-26]` coverage without an ODR or specification change.
+
+### 0.299 `[TYP-22]` mutable dynamic-interface returns of generic weak fields — 2026-09-22
+
+A `mut self` interface slot on a generic class may update its own state and
+return `Weak[Shared[Token]]` through `Box[dyn Revise]`. The dynamic write
+interval covers the mutation and closes at the call boundary; the returned weak
+observer is independently retained for the caller and upgrades only against the
+separate live `Shared` owner.
+
+`tests/conformance/TYP-22/accept_dyn_interface_box_generic_class_mut_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions pin the
+concrete mutable adapter slot, write-access operation, and weak
+retain/release/upgrade operations while rejecting `ember_box_new_copy`. This
+extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[EXC-1]`, `[DRP-6]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
+ODR or specification change.
