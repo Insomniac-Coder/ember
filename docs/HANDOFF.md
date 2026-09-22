@@ -9634,3 +9634,19 @@ write-access operation and exactly the class field's one weak retain/release,
 plus one weak upgrade. This covers existing `[TYP-16]`, `[TYP-22]`, `[CLS-4]`,
 `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and
 `[TST-26]` composition; no ODR or specification change is needed.
+
+### 0.289 `[TYP-22]` generic-base dynamic boxes with inherited weak fields — 2026-09-22
+
+Generic base substitution and dynamic-box erasure compose on one class object.
+`Pixel[bool]` initializes its inherited `Weak[Shared[Token]]` field through
+`super.init`, then a `Box[dyn Render]` adapter invokes the derived method to
+upgrade that base field and observe its payload through `.get()`. The base
+layout and inherited field-drop path retain ordinary weak ownership; erasure
+does not allocate a copied Box payload.
+
+`tests/conformance/TYP-22/accept_dyn_interface_box_generic_base_shared_weak_field.em`
+prints `7` in debug, release, and shipping. Its generated-C assertions require
+weak retain, release, and upgrade operations and reject `ember_box_new_copy`.
+This covers `[TYP-16]`, `[TYP-22]`, `[CLS-2]`, `[CLS-4]`, `[DRP-6]`,
+`[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` composition without
+an ODR or specification change.
