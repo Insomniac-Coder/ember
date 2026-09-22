@@ -10399,3 +10399,12 @@ payload, the owned form gets its independent observer cleanup, and expired
 observers return `None` without preventing the second interface call. This
 completes the defined multi-interface weak-argument matrix without a
 specification change or ODR.
+
+### 0.340 `[TYP-22]` composed borrowed dynamic-carrier weak arguments — 2026-09-22
+
+The composed carrier matrix now also covers generic classes borrowed as
+`ref dyn Observe + Bump` and mutably borrowed as `ref mut dyn Observe + Bump`.
+Live and expired `Weak[Shared[Token]]` arguments exercise the ordered
+multi-interface slots, the mutable write interval, owned observer cleanup, and
+the expected `Some`/`None` results. These four fixtures complete the defined
+multi-interface carrier argument modes without a specification change or ODR.
