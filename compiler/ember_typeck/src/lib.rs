@@ -10285,27 +10285,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let item_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
 
         // `Some(x): <body>` — a simple loop header names the payload
-        // directly. A tuple header retains that payload privately and binds
-        // its borrowed leaves before checking the user body.
+        // directly. A borrowed tuple header retains that payload privately and
+        // binds borrowed leaves; a value-yielding iterator uses the ordinary
+        // checked pattern, which transfers its payload fields into the arm.
         self.scopes.push(HashMap::new());
         let simple_binding = matches!(pattern.kind, ast::PatternKind::Bind { .. });
-        let bound = self.declare(
-            simple_binding.then(|| binding_name(pattern)).flatten(),
-            item_ty,
-            pattern.span,
-        );
         let mut prologue = Vec::new();
-        if !simple_binding {
-            if matches!(self.types.kind(item_ty), TyKind::Ref { .. }) {
-                self.bind_borrowed_loop_pattern(pattern, bound, item_ty, &mut prologue);
-            } else {
-                self.error(
-                    codes::E1010,
-                    pattern.span,
-                    "this loop pattern needs an iterator that yields a borrowed tuple",
-                );
+        let payload_pattern = if simple_binding {
+            let bound = self.declare(binding_name(pattern), item_ty, pattern.span);
+            hir::Pattern {
+                ty: item_ty,
+                kind: hir::PatternKind::Bind { local: bound, sub: None },
+                span: pattern.span,
             }
-        }
+        } else if matches!(self.types.kind(item_ty), TyKind::Ref { .. }) {
+            let bound = self.declare(None, item_ty, pattern.span);
+            {
+                self.bind_borrowed_loop_pattern(pattern, bound, item_ty, &mut prologue);
+            }
+            hir::Pattern {
+                ty: item_ty,
+                kind: hir::PatternKind::Bind { local: bound, sub: None },
+                span: pattern.span,
+            }
+        } else {
+            self.check_pattern(pattern, item_ty)
+        };
         self.loop_labels.push(label.map(|l| l.name));
         let checked_body = self.check_block(body);
         self.loop_labels.pop();
@@ -10319,11 +10324,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 kind: hir::PatternKind::Variant {
                     enum_id: option_id,
                     variant: 1,
-                    fields: vec![hir::Pattern {
-                        ty: item_ty,
-                        kind: hir::PatternKind::Bind { local: bound, sub: None },
-                        span: pattern.span,
-                    }],
+                    fields: vec![payload_pattern],
                 },
                 span: pattern.span,
             },

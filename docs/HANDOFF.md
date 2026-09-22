@@ -9014,6 +9014,11 @@ direct Array iteration, while
 `accept_iterator_destructured_class_handles_owned_parameters_retain.em` covers
 the `SpanIter` path. Both print `7`, `8` in debug, release, and shipping and
 require exactly six retains: two initial objects, two Array transfers, and two
-owned-call boundaries. The frozen `[CTL-1]`, `[CTL-2]`, `[RC-1]`, `[RC-2e]`,
-and `[TYP-14]` rules already define that behavior, so D-176 requires no ODR or
+owned-call boundaries. The companion
+`accept_value_iterator_destructured_class_handles_owned_parameters_transfer.em`
+uses a value-yielding `next()` implementation and proves the ordinary pattern
+matcher transfers the pair into the loop body; it prints the same output and
+pins its eight retains across tuple and `Option` construction, pattern binding,
+and the owned calls. The frozen `[CTL-1]`, `[CTL-2]`, `[RC-1]`, `[RC-2e]`, and
+`[TYP-14]` rules already define that behavior, so D-176 requires no ODR or
 specification change.
