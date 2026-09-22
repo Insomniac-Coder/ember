@@ -227,13 +227,18 @@ impl Verifier<'_> {
                     enqueue(*otherwise);
                 }
                 Terminator::Call { next, .. } | Terminator::Assert { next, .. } => enqueue(*next),
-                Terminator::Return | Terminator::Unreachable => {
+                Terminator::Return => {
                     if state.values().any(|(ordinary, _)| *ordinary != 0) {
                         self.fail(format!(
                             "bb{index} terminates with dynamic accesses still open: {state:?}"
                         ));
                     }
                 }
+                // `Unreachable` has no source-level exit or runtime path. It
+                // commonly represents the impossible default edge of an
+                // exhaustive match, so an access open only on that dead edge
+                // cannot reach a caller and requires no runtime cleanup.
+                Terminator::Unreachable => {}
             }
         }
     }
@@ -527,6 +532,25 @@ mod tests {
                 .iter()
                 .any(|violation| violation.message.contains("still open")),
             "missing unclosed-access violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_access_may_remain_open_on_an_unreachable_path() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let stmt = Stmt::new(
+            StmtKind::BeginAccess {
+                place: Place::local(LocalId(0)),
+                mutable: true,
+            },
+            span,
+        );
+        let mut body = body_with(vec![stmt], span);
+        body.blocks[0].terminator = Terminator::Unreachable;
+        let violations = verify(&body);
+        assert!(
+            violations.is_empty(),
+            "unreachable paths do not require cleanup: {violations:?}"
         );
     }
 

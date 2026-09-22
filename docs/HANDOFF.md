@@ -9666,3 +9666,26 @@ derived virtual-slot adapter and the base-typed `->slot0` call, plus the weak
 upgrade/release paths. This covers existing `[TYP-16]`, `[CLS-2]`, `[CLS-4]`,
 `[DSP-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]`
 composition; no ODR or specification change is needed.
+
+### 0.291 `[DSP-1]` mutable generic virtual dispatch with inherited weak fields — 2026-09-22
+
+A base-typed generic handle may dispatch a `mut self` virtual slot to a derived
+override that updates an inherited field and independently upgrades another
+inherited `Weak[Shared[Token]]` field. The ordinary method-duration write
+access remains live across that valid reborrow sequence; each real `return`
+closes it, while the compiler-created impossible fallback of the exhaustive
+`match` has no runtime exit to clean up.
+
+The probe exposed D-181: MIR verification incorrectly demanded a closed dynamic
+access at `Unreachable`, treating a dead fallback edge as a source-level return.
+The verifier now enforces closure at `Return` only, preserving the existing
+rejection of an open access on every real exit. This is an implementation defect,
+not an ODR: `[ENM-2]` makes the match exhaustive, and `[CLS-4]`, `[DSP-1]`, and
+`[EXC-1]` already permit the inheritance, virtual call, and mutating receiver.
+
+`tests/conformance/TYP-16/accept_generic_class_virtual_mut_weak_field_dispatch.em`
+prints `9` in debug, release, and shipping. Generated-C assertions require the
+derived virtual slot and base-typed `->slot0` dispatch, a write-access operation,
+and the weak upgrade. The focused MIR verifier tests prove that an open access
+at `Return` remains invalid while one confined to `Unreachable` is valid. No
+specification change, ADR, ODR, owner decision, or version change is needed.
