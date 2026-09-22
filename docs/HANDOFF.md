@@ -10389,3 +10389,13 @@ the adapter slot, mutable write-access boundary, weak retain/release/upgrade
 paths, owned cleanup, and the expected `Some`/`None` result. The complete
 conformance suite passes in all profiles; this closes the defined `[TYP-22]`
 argument-mode matrix without a specification change or ODR.
+
+### 0.339 `[TYP-22]` composed dynamic weak argument modes — 2026-09-22
+
+Composed `Box[dyn Observe + Bump]` carriers now exercise borrowed and `owned`
+`Weak[Shared[Token]]` arguments while the target is live and after it expires.
+The four fixtures verify both ordered interface slots share the generic class
+payload, the owned form gets its independent observer cleanup, and expired
+observers return `None` without preventing the second interface call. This
+completes the defined multi-interface weak-argument matrix without a
+specification change or ODR.
