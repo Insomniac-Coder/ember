@@ -9876,3 +9876,19 @@ concrete dynamic adapter and weak retain/release/upgrade operations. This
 extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-4]`, `[BRW-1]`,
 `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an
 ODR or specification change.
+
+### 0.304 `[TYP-22]` expired mutable borrowed dynamic returns of generic weak fields — 2026-09-22
+
+A `ref mut dyn Revise` call may update a generic class under the normal dynamic
+write interval and return its copied `Weak[Shared[Token]]` field. The mutation
+does not extend either the class or payload lifetime: after the helper tears
+down both objects, the returned weak observer still correctly upgrades to
+`None`.
+
+`tests/conformance/TYP-22/accept_expired_ref_mut_dyn_generic_class_weak_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+concrete mutable adapter, the write-access operation, and weak
+retain/release/upgrade operations. This extends `[TYP-16]`, `[TYP-22]`,
+`[IFC-1]`, `[CLS-4]`, `[BRW-1]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`,
+`[WK-11]`–`[WK-13]`, and `[TST-26]` coverage without an ODR or specification
+change.
