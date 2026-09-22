@@ -9228,3 +9228,16 @@ retain, from initial Array insertion. The normal closure and inherent method
 call add no retain. This covers the ordinary nominal-receiver form of the
 explicit `[TYP-14]`, `[RC-2e]`, `[CLO-1]`, and `[CLO-2]` rules; it is coverage,
 not an ODR or specification change.
+
+### 0.263 `[TYP-17]` bounded generic methods through `ref T` — 2026-09-22
+
+The central receiver path also applies before generic-bound lookup. A function
+whose parameter is `ref T` and whose `T: Scored` bound supplies `.score()` must
+read through the reference before selecting the bound method; otherwise the
+checker asks `ref T`, rather than `T`, for an unavailable inherent method.
+
+`tests/conformance/TYP-18/accept_generic_bounded_method_through_shared_ref.em`
+calls the bound method through `ref Good` and prints `47` in debug, release,
+and shipping. This gives `[TYP-14]`, `[TYP-17]`, and `[TYP-18]` direct
+conformance coverage for the generic receiver route and is neither a new
+defect nor an ODR.
