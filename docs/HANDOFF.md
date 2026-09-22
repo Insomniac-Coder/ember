@@ -9345,3 +9345,17 @@ release, and shipping. Its generated C contains the compiler-only casted Cell
 store and no `ember_cell` helper. This is coverage of D-179 under the existing
 `[CELL-1]`, `[CELL-2]`, and `[TYP-14]` contract; no ODR or specification change
 is involved.
+
+### 0.271 `[CELL-1]` shared `Cell.update` through `ref Cell[T]` — 2026-09-22
+
+`update` is the callback form of the same Cell boundary. It must first load the
+payload, call the supplied function, and store that result back through the
+shared Cell receiver; the callback is not a reason to require `ref mut Cell` or
+to add runtime borrowing machinery.
+
+`tests/conformance/CELL-1/accept_cell_update_through_shared_ref.em` updates
+`40` to `42` through `ref Cell[i32]` in debug, release, and shipping. Its
+generated-C assertion pins the direct casted store and rejects an `ember_cell`
+runtime helper. This completes the shared-reference coverage of Cell's three
+mutation operations for the existing `[CELL-1]`, `[CELL-2]`, and `[TYP-14]`
+rules; no ODR or specification change is involved.
