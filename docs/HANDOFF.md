@@ -10047,3 +10047,19 @@ rejecting `ember_box_new_copy`. This extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`,
 `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`, `[DRP-6]`, `[HEAP-3]`–`[HEAP-7]`,
 `[WK-11]`–`[WK-14]`, and `[TST-26]` coverage without an ODR or specification
 change.
+
+### 0.315 `[TYP-22]` expired mutable dynamic returns of inherited generic class-owned weak fields — 2026-09-22
+
+A mutable dynamic call may update one generic-base field while returning a
+copied inherited `Weak[Token]` field. When the helper drops the dynamic box and
+its final token owner, the write access is already closed and the returned weak
+observer remains only an expired control-block handle: `upgrade()` takes
+`None` without preserving or reconstructing the class owner.
+
+`tests/conformance/TYP-22/accept_expired_dyn_interface_box_generic_base_mut_weak_class_field_return.em`
+prints `7` in debug, release, and shipping. Generated-C assertions require the
+concrete mutable adapter, the write-access operation, and weak
+retain/release/upgrade operations while rejecting `ember_box_new_copy`. This
+extends `[TYP-16]`, `[TYP-22]`, `[IFC-1]`, `[CLS-2]`, `[CLS-4]`, `[OBJ-3]`,
+`[DRP-6]`, `[EXC-1]`, `[HEAP-3]`–`[HEAP-7]`, `[WK-11]`–`[WK-14]`, and
+`[TST-26]` coverage without an ODR or specification change.
