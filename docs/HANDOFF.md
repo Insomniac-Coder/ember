@@ -10462,3 +10462,15 @@ milestone passed; `the_conformance_suite_runs` passed across debug, release, and
 shipping; and `cargo test --workspace --locked` passed (35 milestone tests and
 the remaining workspace tests). Rule-index, error-page, branding, generated
 runtime, and diff checks passed as well.
+
+### 0.346 `[DIA-13]` destructor self-escape rendering — 2026-09-23
+
+The existing `[CLS-7a]` producer for `E3016` now has the missing O9 rendered
+UI triplet: a program that publishes `self` from `drop`, the exact diagnostic
+snapshot, and a compiling companion that moves its payload out with `mem.take`
+instead of publishing the dying handle. The payload has an explicit
+`Default` implementation, so the repair is executable rather than merely
+matching the help text. The focused
+`committed_borrow_snapshots_match_and_primary_fixes_compile` test passes. This
+closes a Phase 2 diagnostic-evidence gap without changing the diagnostic or
+language semantics, and without an ODR.

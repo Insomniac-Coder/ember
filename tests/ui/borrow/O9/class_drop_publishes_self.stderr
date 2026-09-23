@@ -1,0 +1,10 @@
+error[E3016]: `self` escapes its own drop
+  --> tests/ui/borrow/O9/class_drop_publishes_self.em:13:23
+   |
+13 |         retained.push(self)
+   |                       ^^^^ published here
+   |
+   = help: move the data out with `mem.take` instead
+   = note: a destructor may not publish a handle to the object being destroyed [CLS-7a]
+
+error: could not compile due to 1 error(s)
