@@ -293,17 +293,17 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Current frozen development target: **v0.9.8_Hardened_3**, authored from immutable immediate predecessor `_2`; `_1` and `_2` remain unchanged historical artifacts. No 0.9.x repository-normative adoption is implied |
-| Current implementation checkpoint | The current checkout includes canonical `dyn I` formation/calls and owned `Box[dyn I]` for direct structs, including instantiated source generic structs with explicit interface methods or non-generic interface default bodies. They support borrowed and box-carried dispatch, concrete drop glue, and checked layout/implementation metadata through HIR, MIR verification, and C emission. H3 remains a frozen development target, not the adopted repository-normative source |
-| Latest continuation checkpoint | `25411e5` materializes instantiated generic struct interface adapters; the next checkpoint completes their non-generic default bodies. Generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
+| Current implementation checkpoint | The checkout includes the existing canonical `dyn I`/owned `Box[dyn I]` slices and N1 local-binding, field, and visible module-item suggestions. ODR-019 now gives those N1 candidates deterministic same-file/cross-file tie ordering; type-position and qualified-name N1 entry points remain incomplete. 0.9.8_Hardened_3 remains frozen and not repository-normative |
+| Latest continuation checkpoint | `e553018` closes ODR-019 under option 1, implements canonical cross-file N1 ranking, and adds ordered unit, conformance, and UI coverage. The remote CI run passed all five jobs. Next N1 work is type-position and qualified-name entry points; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
-| Recent commits | `25411e5` generic struct interface adapters · `e511acc` mutable struct interface boxes · `cad78de` owned struct interface boxes · `080e30f` borrowed struct interface adapters · `b828882` lifetime coverage ledger correction · earlier history remains recorded below |
-| Working tree | `main` was clean at `25411e5` before the generic-default continuation below; always re-run `git status` and `git log -1` because this row is not live state |
-| `cargo build --workspace --locked` | **0 warnings** in debug (2026-09-20) |
-| `cargo test --workspace --locked` | **222 Rust tests, all passing**, 0 failures (2026-09-20). The test build retains one pre-existing non-snake-case test-name warning. Added conformance programs do not change this Rust count because one integration test walks the directory |
+| Recent commits | `e553018` deterministic N1 cross-file ranking · `c27bfda` ODR-019 intake (superseded/closed) · `d1296fa` N1 field suggestions · `e13979e` N1 local suggestions · `4600b22` O9 destructor diagnostic snapshot · earlier history remains recorded below |
+| Working tree | `e553018` is pushed to `origin/main`. One handoff-only follow-up commit is local and below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
+| `cargo build --workspace --locked` | passed on 2026-09-23 after the N1 changes |
+| `cargo test --workspace --locked` | passed on 2026-09-23: 35 milestone tests (including the full multi-profile conformance runner), 6 UI tests, 8 N1 ranking unit tests, and the remaining workspace/doc tests. One pre-existing non-snake-case test-name warning remains |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 136 top-level rule directories, 504 `.em` files including support modules; the complete directory runner is green in debug, release, and shipping (2026-09-19) |
-| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial. ODR-019 option 1 is recorded in `_3` and its owner ruling is archived under `as-received/`; the target remains unadopted. See the latest continuation entry for implementation and verification state |
-| Gates | **all green** (six, run individually below) |
+| Conformance | 158 top-level directories, 741 `.em` files including support modules; the complete directory runner passed in debug, release, and shipping via the workspace suite (2026-09-23) |
+| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial. ODR-019 option 1 is recorded in `_3` and archived under `as-received/`; the target remains unadopted |
+| Gates | Local build/test and repository documentation gates passed; remote CI run [#35811529830](https://github.com/Insomniac-Coder/ember/actions/runs/35811529830) passed all 5 jobs (2026-09-23) |
 
 **Current continuation supersession (2026-09-15).** The H3 callable-mode
 diagnostic slice described in §0.126 is now present in the worktree and has
@@ -10576,12 +10576,11 @@ calls unsupported by this current C lowering; it was simplified to a valid
 imported call, and the entire suite then passed. Only a pre-existing
 non-snake-case lexer test warning remains.
 
-The work was not yet committed when this entry was drafted. Stage only the
-ODR/N1 files and preserve the six unrelated `ember_analysis` edits already in
-the worktree. The branch was five commits ahead of `origin/main` at task
-pickup; after committing this batch, follow the owner's push rule (push only
-when at least five commits are unpushed), then check the new remote CI run. Do
-not claim remote CI green until that run completes.
+Commit `e553018` was pushed once the branch reached six unpushed commits. Its
+GitHub Actions run `35811529830` then passed the specification/registry job
+and all four platform/compiler jobs (Ubuntu clang/gcc, Windows clang-cl/MSVC).
+The six unrelated `ember_analysis` edits remain unstaged and untouched. No
+further push is due: the owner-set threshold is five unpushed commits.
 
 Next implementation work is the remaining N1 type-position and qualified-name
 entry points, followed by the outstanding N2–N12 catalogue shapes. N1 is not
