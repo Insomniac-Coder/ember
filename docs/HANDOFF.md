@@ -293,15 +293,15 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Current frozen development target: **v0.9.8_Hardened_3**, authored from immutable immediate predecessor `_2`; `_1` and `_2` remain unchanged historical artifacts. No 0.9.x repository-normative adoption is implied |
-| Current implementation checkpoint | The checkout includes the existing canonical `dyn I`/owned `Box[dyn I]` slices and N1 local-binding, field, and visible module-item suggestions. ODR-019 now gives those N1 candidates deterministic same-file/cross-file tie ordering; type-position and qualified-name N1 entry points remain incomplete. 0.9.8_Hardened_3 remains frozen and not repository-normative |
-| Latest continuation checkpoint | `e553018` closes ODR-019 under option 1, implements canonical cross-file N1 ranking, and adds ordered unit, conformance, and UI coverage. The remote CI run passed all five jobs. Next N1 work is type-position and qualified-name entry points; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
+| Current implementation checkpoint | The checkout includes N1 local-binding, field, visible module-item, and now bare/generic type-position suggestions. ODR-019 gives these candidates deterministic same-file/cross-file tie ordering; qualified-name N1 entry points remain incomplete. 0.9.8_Hardened_3 remains frozen and not repository-normative |
+| Latest continuation checkpoint | `2f02a40` adds N1 suggestions for unresolved plain and generic type names, including imported aliases, with a UI regression and DIA-12 reject/fixed conformance pair. Type-checker tests, all UI tests, and the complete all-profile conformance runner pass. Qualified-name N1 paths remain next; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
-| Recent commits | `e553018` deterministic N1 cross-file ranking · `c27bfda` ODR-019 intake (superseded/closed) · `d1296fa` N1 field suggestions · `e13979e` N1 local suggestions · `4600b22` O9 destructor diagnostic snapshot · earlier history remains recorded below |
-| Working tree | `e553018` is pushed to `origin/main`. One handoff-only follow-up commit is local and below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
+| Recent commits | `2f02a40` N1 type-position suggestions · `e553018` deterministic N1 cross-file ranking · `c27bfda` ODR-019 intake (superseded/closed) · `d1296fa` N1 field suggestions · `e13979e` N1 local suggestions · earlier history remains recorded below |
+| Working tree | `e553018` is pushed to `origin/main`. Three local commits after this checkpoint (`918bad0` handoff-only, `2f02a40` implementation, and this handoff refresh) remain below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
 | `cargo build --workspace --locked` | passed on 2026-09-23 after the N1 changes |
-| `cargo test --workspace --locked` | passed on 2026-09-23: 35 milestone tests (including the full multi-profile conformance runner), 6 UI tests, 8 N1 ranking unit tests, and the remaining workspace/doc tests. One pre-existing non-snake-case test-name warning remains |
-| `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources; not one of the six gates and not introduced by the H4 intake |
-| Conformance | 158 top-level directories, 741 `.em` files including support modules; the complete directory runner passed in debug, release, and shipping via the workspace suite (2026-09-23) |
+| `cargo test --workspace --locked` | the last full-workspace run passed after the N1 cross-file ranking slice; for the current type-position slice, `cargo test --locked -p ember_typeck` passed (8 tests), `cargo test --locked -p ember_driver --test ui` passed (7 tests), and the complete conformance directory runner passed all profiles (1 runner test, 421.35s). One pre-existing non-snake-case test-name warning remains |
+| `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources. The touched UI test is rustfmt-clean; `ember_typeck/src/lib.rs` has repository-wide pre-existing drift, and the changed hunk was checked against rustfmt output |
+| Conformance | 158 top-level directories, 744 `.em` files including support modules; the complete directory runner passed in debug, release, and shipping (2026-09-23) |
 | Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial. ODR-019 option 1 is recorded in `_3` and archived under `as-received/`; the target remains unadopted |
 | Gates | Local build/test and repository documentation gates passed; remote CI run [#35811529830](https://github.com/Insomniac-Coder/ember/actions/runs/35811529830) passed all 5 jobs (2026-09-23) |
 
@@ -10582,6 +10582,32 @@ and all four platform/compiler jobs (Ubuntu clang/gcc, Windows clang-cl/MSVC).
 The six unrelated `ember_analysis` edits remain unstaged and untouched. No
 further push is due: the owner-set threshold is five unpushed commits.
 
-Next implementation work is the remaining N1 type-position and qualified-name
-entry points, followed by the outstanding N2–N12 catalogue shapes. N1 is not
-declared globally complete by this ODR closure.
+At the time of this checkpoint, N1's type-position and qualified-name entry
+points remained. Section 0.352 closes the plain and generic type-position
+paths; qualified-name entry points and the outstanding N2–N12 catalogue
+shapes remain. N1 is not declared globally complete by this ODR closure.
+
+### 0.352 `[DIA-12]` N1 type-position suggestions — 2026-09-23
+
+Unresolved bare type names and unknown generic type applications now use the
+existing N1 candidate ranking helper. Suggestions replace only the identifier
+span, including when the primary diagnostic covers a full generic application.
+The UI regression exercises imported aliases in both positions and verifies the
+corrected program compiles; the DIA-12 reject/fixed fixtures cover the same
+cases. This extends the existing N1 algorithm without changing candidate
+discovery, ranking, accepted-program semantics, or the specification, so no
+ODR was needed.
+
+Verification: `cargo test --locked -p ember_typeck` passed (8 tests),
+`cargo test --locked -p ember_driver --test ui` passed (7 tests), and
+`the_conformance_suite_runs` passed the complete debug/release/shipping matrix
+(421.35s). The final pared-down conformance fixtures were then checked directly:
+the reject case emitted both exact type suggestions and the corrected run-pass
+case succeeded. `git diff --check` passed. The UI test is rustfmt-clean;
+workspace rustfmt remains non-green from broad pre-existing formatting drift.
+
+Commit `2f02a40` contains this implementation and its tests. It is local only;
+with this handoff refresh committed, the branch has three unpushed commits and
+remains below the owner-set five-commit push threshold. The six unrelated
+`ember_analysis` edits remain unstaged. N1's qualified-name entry points
+remain outstanding.
