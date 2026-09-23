@@ -1,0 +1,9 @@
+error[E1010]: cannot find `calculte` in this scope
+ --> tests/ui/basic/N1/module_item_typo.em:5:13
+  |
+5 |     println(calculte(2))
+  |             ^^^^^^^^
+  |
+  = help: did you mean `calculate`?
+
+error: could not compile due to 1 error(s)

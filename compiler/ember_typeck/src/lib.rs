@@ -624,6 +624,10 @@ struct Checker<'a> {
     /// Per module: the names it can write, mapped to the qualified name each
     /// one means. Its own items plus whatever it imported.
     visible: Vec<HashMap<Symbol, Symbol>>,
+    /// Declaration spans for module items, keyed by their canonical names.
+    /// N1 uses each span's file identity before considering its offset, so
+    /// imported aliases never compare unrelated source coordinates.
+    item_spans: HashMap<Symbol, Span>,
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
@@ -855,6 +859,7 @@ impl<'a> Checker<'a> {
             constants: HashMap::new(),
             prefixes: vec![String::new()],
             visible: vec![HashMap::new()],
+            item_spans: HashMap::new(),
             namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
@@ -1802,6 +1807,7 @@ impl<'a> Checker<'a> {
             let Some(name) = item_name(item) else { continue };
             let qualified = self.qualified(name);
             self.visible[index].insert(name, qualified);
+            self.item_spans.insert(qualified, item.span);
         }
     }
 
@@ -8798,12 +8804,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.scopes.iter().rev().find_map(|scope| scope.get(&name).copied())
     }
 
-    /// `[DIA-12]` N1 — offer nearby names from the currently visible local
-    /// bindings. De-duplicate shadowed names using the same inner-to-outer
-    /// order as `lookup`, then rank by spelling distance and source proximity.
-    fn local_name_suggestions(&self, written: Symbol, use_span: Span) -> Vec<String> {
+    /// `[DIA-12]` N1 — rank nearby lexical bindings and visible module items.
+    /// Shadowed bindings follow `lookup`'s inner-to-outer order; candidate
+    /// ranking handles same-file proximity and cross-file canonical identity.
+    fn name_suggestions(&self, written: Symbol, use_span: Span) -> Vec<String> {
         let mut seen = HashSet::new();
-        let candidates = self
+        let local_candidates = self
             .scopes
             .iter()
             .rev()
@@ -8813,10 +8819,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return None;
                 }
                 let declaration = self.locals.get(local.0 as usize)?;
-                let proximity = declaration.span.start.abs_diff(use_span.start) as usize;
-                Some((name.as_str().to_owned(), proximity))
+                Some(name_suggestions::Candidate {
+                    name: name.as_str().to_owned(),
+                    declaration: declaration.span,
+                    canonical_name: name.as_str().to_owned(),
+                })
             });
-        name_suggestions::rank(written.as_str(), candidates)
+        let item_candidates =
+            self.visible[self.current_module]
+                .iter()
+                .filter_map(|(name, qualified)| {
+                    let declaration = self.item_spans.get(qualified)?;
+                    Some(name_suggestions::Candidate {
+                        name: name.as_str().to_owned(),
+                        declaration: *declaration,
+                        canonical_name: qualified.as_str().to_owned(),
+                    })
+                });
+        name_suggestions::rank(
+            written.as_str(),
+            use_span,
+            local_candidates.chain(item_candidates),
+        )
     }
 
     /// `[DIA-12]` N1 — offer nearby fields visible on a struct or class,
@@ -8835,10 +8859,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 || definition.declaring_module == self.current_module
                         })
                         .map(|field| {
-                            (
-                                field.name.as_str().to_owned(),
-                                field.span.start.abs_diff(use_span.start) as usize,
-                            )
+                            let canonical_type = definition
+                                .origin
+                                .as_ref()
+                                .map_or(definition.name, |(origin, _)| *origin);
+                            name_suggestions::Candidate {
+                                name: field.name.as_str().to_owned(),
+                                declaration: field.span,
+                                canonical_name: format!("{canonical_type}::{}", field.name),
+                            }
                         }),
                 );
             }
@@ -8853,10 +8882,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 || definition.declaring_module == self.current_module
                         })
                         .map(|field| {
-                            (
-                                field.name.as_str().to_owned(),
-                                field.span.start.abs_diff(use_span.start) as usize,
-                            )
+                            let canonical_type = definition
+                                .origin
+                                .as_ref()
+                                .map_or(definition.name, |(origin, _)| *origin);
+                            name_suggestions::Candidate {
+                                name: field.name.as_str().to_owned(),
+                                declaration: field.span,
+                                canonical_name: format!("{canonical_type}::{}", field.name),
+                            }
                         }),
                 );
                 match definition.base {
@@ -8866,7 +8900,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             },
             _ => {}
         }
-        name_suggestions::rank(written.as_str(), candidates)
+        name_suggestions::rank(written.as_str(), use_span, candidates)
     }
 
     fn missing_field_diagnostic(&self, ty: Ty, name: Symbol, span: Span) -> Diagnostic {
@@ -11522,7 +11556,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     format!("cannot find `{name}` in this scope"),
                 );
-                for candidate in self.local_name_suggestions(name, segments[0].span) {
+                for candidate in self.name_suggestions(name, segments[0].span) {
                     diagnostic = diagnostic.suggest(
                         format!("did you mean `{candidate}`?"),
                         segments[0].span,
@@ -12666,7 +12700,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
-            self.error(codes::E1010, segments[0].span, format!("cannot find `{name}` in this scope"));
+            let name_span = segments[0].span;
+            let mut diagnostic = Diagnostic::error(
+                codes::E1010,
+                name_span,
+                format!("cannot find `{name}` in this scope"),
+            );
+            if segments.len() == 1 {
+                for candidate in self.name_suggestions(name, name_span) {
+                    diagnostic = diagnostic.suggest(
+                        format!("did you mean `{candidate}`?"),
+                        name_span,
+                        candidate,
+                    );
+                }
+            }
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 

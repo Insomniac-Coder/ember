@@ -38,7 +38,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-016 | **CLOSED** — diagnostic identity for existing multi-region and callable-mode rejections | Diagnostics / conformance | — | **No** — incorporated in 0.9.7_Hardened_3 |
 | ODR-017 | **CLOSED** — `Shared[T]` strong-owner and generalized `Weak[O]` surface | Standard-library API / ownership / borrowing | — | **No** — ruled 2026-09-20 |
 | ODR-018 | **CLOSED** — explicit shared cycle-analysis root | CLI / static diagnostics / package resolution | — | **No** — ruled 2026-09-20 |
-| ODR-019 | **OPEN** — N1 declaration proximity across source files | Diagnostics / name resolution | **P2** | **No** — diagnostic ordering only; owner policy required |
+| ODR-019 | **CLOSED** — option 1; N1 cross-file ties use canonical identity | Diagnostics / name resolution | — | **No** — diagnostic/tooling hardening only |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -46,10 +46,10 @@ work and needs no semantic decision. ODR-004 was discovered during the 0.9.5
 intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
-ODR-001, ODR-002, and ODR-004 through ODR-018 are closed; ODR-003 is deferred
-editorial work with no semantic impact. **ODR-019 is open** for the
-cross-file declaration-proximity tie-break in N1 suggestions. ODR-018 is closed
-by the explicit shared cycle-analysis-root ruling. H8 records the complete helper-mode and callable-abstraction
+ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 is deferred
+editorial work with no semantic impact. ODR-018 is closed by the explicit
+shared cycle-analysis-root ruling; ODR-019 is closed by the owner's option-1
+N1 ranking ruling, incorporated into 0.9.8_Hardened_3. H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -109,59 +109,67 @@ ownership, lifetime, ABI, runtime, or graph-semantics decision changed.
 
 ---
 
-## ODR-019 — N1 declaration proximity across source files — **OPEN**
+## ODR-019 — N1 declaration proximity across source files — **CLOSED**
 
     ID:        ODR-019
-    Status:    OPEN — cross-file candidate ranking is undefined
+    Status:    CLOSED — owner-selected option 1, canonical cross-file ordering
     Category:  DIAGNOSTICS / NAME RESOLUTION
-    Priority:  P2
-    Location:  Ember_v0.9.8_Hardened_1.md §XX.6.2 N1, `[DIA-12]`, `[DIA-15]`
+    Priority:  —
+    Location:  Ember_v0.9.8_Hardened_3.md §XX.6.2, N1 ranking algorithm
 
-    Question:  How is declaration proximity compared when a candidate's
-               declaration and the unresolved use are in different files?
+    Question:  How are N1 candidates ranked when declarations and the use
+               span multiple source files?
 
-    Blocks implementation:            YES — cross-file N1 candidate ranking
-    Blocks conformance:                YES — the cross-file ordering must be pinned
-    Blocks specification freeze:       YES — clarify diagnostic-ranking wording
-    Blocks normative specification adoption: YES — N1 ordering remains incomplete
+    Blocks implementation:            NO — implementation is authorized
+    Blocks conformance:                NO — deterministic ordering is specified
+    Blocks specification freeze:       NO — incorporated into 0.9.8_Hardened_3
+    Blocks normative specification adoption: implementation evidence still required
     Requires owner semantic decision:  NO — accepted/rejected programs do not change
 
-**Existing wording.** `[DIA-12]` requires N1 candidates to be ranked first by
-Damerau–Levenshtein distance, then by declaration proximity. `[DIA-15]` permits
-candidates from scope tables, `TypeInfo`, and a by-name index over module export
-hashes. Neither rule defines a proximity metric across source files.
+**Existing wording and gap.** `[DIA-12]` requires N1 candidates to be ranked
+first by Damerau–Levenshtein distance, then by declaration proximity. A span's
+byte offset is file-relative, so the text did not define a meaningful
+cross-file proximity comparison. This gap affects imported/aliased items,
+inherited members, and prelude candidates when they participate in N1; it does
+not affect source-language validity or the candidate set.
 
-**Implementation boundary.** `Span.start` is a byte offset within one source
-file. Taking `abs_diff` between offsets from unrelated files is deterministic
-but does not measure source proximity. This affects imported module items and
-fields inherited from types declared in another file. The same-file local
-binding, field, and function-call cases remain testable without this decision;
-the cross-file candidate ordering does not.
+**Owner ruling — option 1 adopted.** Rank by spelling distance first. Only
+when distances tie, rank same-file candidates before cross-file candidates.
+For same-file candidates, retain the existing declaration-proximity calculation
+unchanged and compare offsets only within the same source file. For cross-file
+candidates, do not compute proximity; order by the canonical qualified
+declaration identity using deterministic locale-independent lexicographic
+ordering. Preserve N1's existing top-three limit and apply it after the full
+ordering. Use visible spellings for display and only as a final fallback if
+all specified keys tie.
 
-**Possible interpretations.**
+Do not add a project-wide file/module distance model. Do not use source offsets
+from unrelated files, import/alias locations, filesystem traversal, import
+graph distance, hash iteration, file/source discovery order, operating-system
+directory order, or build/cache order as ranking keys. Do not create separate
+ranking mechanisms for imports, aliases, inherited members, or prelude
+candidates. Candidate discovery and visibility remain unchanged; no diagnostic
+code is added; no accepted program changes validity; no type, ownership,
+lifetime, runtime, ABI, overload, import, or module semantics change.
 
-1. Compare byte offsets only when both declarations share the use's file. Treat
-   cross-file candidates as an equal-proximity group and break ties by a
-   specified stable key (for example, the visible spelling and qualified
-   declaration name). The owner must also decide where that group sorts
-   relative to same-file candidates.
-2. For imported items, use the local import/alias binding span as the
-   declaration anchor; define a separate explicit anchor for fields whose
-   declaring type comes from another file and for implicit prelude items.
-3. Define a project-wide location/order model for declarations across modules
-   and files, with its normalization and tie-breaks stated explicitly.
+**Implementation checklist.**
 
-**Recommended resolution.** Prefer option 1: preserve true source proximity
-within a file and do not compare unrelated file-relative offsets. Specify the
-cross-file group's position and deterministic tie-break so results do not
-depend on hash-map iteration or module loading order.
+- [x] Keep the current candidate set, visibility, and discovery paths unchanged.
+- [x] Preserve Damerau–Levenshtein as the primary key and the existing distance threshold.
+- [x] Apply same-file-before-cross-file only after equal spelling distance.
+- [x] Preserve same-file declaration-proximity behavior; never compare unrelated offsets.
+- [x] Order cross-file ties by canonical qualified declaration identity, not alias/import position.
+- [x] Apply the existing three-suggestion cap after complete ranking; add no diagnostic code.
+- [x] Add ordered unit, conformance, and UI tests for local/cross-file ties, better cross-file spelling, import/alias, inherited/prelude candidates, top-three truncation, and reversed file/import discovery order.
+- [x] Run the full workspace and repository CI-equivalent checks; all passed on 2026-09-23.
 
-**Why owner input is required.** These alternatives produce different visible
-suggestion order and may change which three candidates a diagnostic shows.
-`[DIA-12]` does not choose how same-file and cross-file candidates compare, and
-an implementation must not silently invent that ranking contract. This is a
-diagnostic UX decision only; it does not alter language semantics, accepted
-programs, or generated code.
+The owner-provided ruling is preserved byte-for-byte at
+`docs/spec-source/as-received/ODR-019_N1_cross_file_suggestion_ranking.md`.
+The supplied request named `_2`; the owner subsequently clarified that the
+new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
+resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
+immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
+diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 

@@ -13,8 +13,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use ember_diag::shapes::{shape_for, Shape};
+use ember_diag::shapes::{Shape, shape_for};
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
@@ -228,9 +229,13 @@ fn committed_borrow_snapshots_match_and_primary_fixes_compile() {
 #[test]
 fn committed_basic_name_suggestion_matches_and_fixed_source_compiles() {
     let root = workspace_root();
-    let before = root.join("tests/ui/basic/N1/local_name_typo.em");
+    let before = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("local_name_typo"));
     let snapshot = before.with_extension("stderr");
-    let fixed = root.join("tests/ui/basic/N1/local_name_typo.fixed.em");
+    let fixed = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("local_name_typo.fixed"));
 
     let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
     let expected = normalize(&expected);
@@ -260,9 +265,13 @@ fn committed_basic_name_suggestion_matches_and_fixed_source_compiles() {
 #[test]
 fn committed_struct_field_name_suggestion_matches_and_fixed_source_compiles() {
     let root = workspace_root();
-    let before = root.join("tests/ui/basic/N1/struct_field_typo.em");
+    let before = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("struct_field_typo"));
     let snapshot = before.with_extension("stderr");
-    let fixed = root.join("tests/ui/basic/N1/struct_field_typo.fixed.em");
+    let fixed = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("struct_field_typo.fixed"));
 
     let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
     let expected = normalize(&expected);
@@ -292,9 +301,15 @@ fn committed_struct_field_name_suggestion_matches_and_fixed_source_compiles() {
 #[test]
 fn committed_inherited_class_field_name_suggestion_matches_and_fixed_source_compiles() {
     let root = workspace_root();
-    let before = root.join("tests/ui/basic/N1/inherited_class_field_typo.em");
+    let before = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("inherited_class_field_typo"));
     let snapshot = before.with_extension("stderr");
-    let fixed = root.join("tests/ui/basic/N1/inherited_class_field_typo.fixed.em");
+    let fixed = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file(
+            "inherited_class_field_typo.fixed",
+        ));
 
     let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
     let expected = normalize(&expected);
@@ -319,4 +334,117 @@ fn committed_inherited_class_field_name_suggestion_matches_and_fixed_source_comp
         "{} does not compile:\n{fixed_stderr}",
         fixed.display()
     );
+}
+
+#[test]
+fn committed_module_item_name_suggestion_matches_and_fixed_source_compiles() {
+    let root = workspace_root();
+    let before = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("module_item_typo"));
+    let snapshot = before.with_extension("stderr");
+    let fixed = root
+        .join("tests/ui/basic/N1")
+        .join(ember_branding::source_file("module_item_typo.fixed"));
+
+    let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
+    let expected = normalize(&expected);
+    let (before_exit, actual) = check(&before, &root);
+    assert_ne!(before_exit, 0, "{} unexpectedly compiled", before.display());
+    assert_eq!(actual, expected, "{} diagnostic changed", before.display());
+    assert_eq!(
+        error_codes(&actual),
+        ["E1010"],
+        "{} must isolate the unresolved module item",
+        before.display()
+    );
+    assert!(
+        actual.contains("did you mean `calculate`?"),
+        "N1 should suggest the visible module item with its exact spelling:\n{actual}"
+    );
+
+    let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+    assert_eq!(
+        fixed_exit,
+        0,
+        "{} does not compile:\n{fixed_stderr}",
+        fixed.display()
+    );
+}
+
+#[test]
+fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
+    let workspace = workspace_root();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_nanos();
+    let scratch = std::env::temp_dir().join(format!(
+        "ember-n1-cross-file-{}-{nonce}",
+        std::process::id()
+    ));
+    let cases = [
+        (
+            "io-first",
+            ["io", "text"],
+            "from text import print\nfrom io import print as prtin",
+        ),
+        (
+            "text-first",
+            ["text", "io"],
+            "from io import print as prtin\nfrom text import print",
+        ),
+    ];
+    let expected = vec![
+        "did you mean `prtin`?".to_owned(),
+        "did you mean `print`?".to_owned(),
+    ];
+
+    for (label, creation_order, imports) in cases {
+        let package = scratch.join(label);
+        std::fs::create_dir_all(&package).expect("temporary package directory is creatable");
+        for module in creation_order {
+            std::fs::write(
+                package.join(ember_branding::source_file(module)),
+                "pub fn print(value: i32) -> i32:\n    return value\n",
+            )
+            .expect("candidate module is writable");
+        }
+        let main = ember_branding::source_file("main");
+        std::fs::write(
+            package.join(&main),
+            format!("{imports}\n\nfn main():\n    pritn(1)\n"),
+        )
+        .expect("entry module is writable");
+
+        let mut previous = None;
+        for _ in 0..2 {
+            let output = Command::new(EMBER)
+                .args(["check", &main])
+                .current_dir(&package)
+                .env(ember_branding::std_path_var(), workspace.join("std"))
+                .output()
+                .expect("the Ember compiler runs");
+            assert!(
+                !output.status.success(),
+                "the misspelled call must be rejected"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
+            let helps: Vec<_> = stderr
+                .lines()
+                .filter_map(|line| line.trim_start().strip_prefix("= help: "))
+                .map(str::to_owned)
+                .collect();
+            assert_eq!(helps, expected, "{label}: unexpected N1 ordering\n{stderr}");
+            if let Some(previous) = &previous {
+                assert_eq!(
+                    &helps, previous,
+                    "{label}: repeated check changed N1 ordering"
+                );
+            }
+            previous = Some(helps);
+        }
+    }
+
+    std::fs::remove_dir_all(&scratch).expect("only the test's temporary packages are removed");
 }
