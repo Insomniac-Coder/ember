@@ -39,6 +39,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-017 | **CLOSED** — `Shared[T]` strong-owner and generalized `Weak[O]` surface | Standard-library API / ownership / borrowing | — | **No** — ruled 2026-09-20 |
 | ODR-018 | **CLOSED** — explicit shared cycle-analysis root | CLI / static diagnostics / package resolution | — | **No** — ruled 2026-09-20 |
 | ODR-019 | **CLOSED** — option 1; N1 cross-file ties use canonical identity | Diagnostics / name resolution | — | **No** — diagnostic/tooling hardening only |
+| ODR-020 | **OPEN** — N1 suggestions for namespace-qualified paths | Diagnostics / name resolution | **P2** | **No** — diagnostics only; owner policy needed |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -47,9 +48,11 @@ intake and closed when the owner supplied the missing definitions on 2026-09-12.
 ODR-005 was then closed by the owner's explicit all-mutable helper ruling.
 
 ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 is deferred
-editorial work with no semantic impact. ODR-018 is closed by the explicit
-shared cycle-analysis-root ruling; ODR-019 is closed by the owner's option-1
-N1 ranking ruling, incorporated into 0.9.8_Hardened_3. H8 records the complete helper-mode and callable-abstraction
+editorial work and ODR-020 is open, both with no semantic impact. ODR-018 is
+closed by the explicit shared cycle-analysis-root ruling; ODR-019 is closed
+by the owner's option-1 N1 ranking ruling, incorporated into
+0.9.8_Hardened_3. ODR-020 records the missing N1 policy for a recognized
+namespace with an unresolved member. H8 records the complete helper-mode and callable-abstraction
 ruling; H9 records the Arena-backed return-provenance ruling; H10 records the
 Arena allocation and initialization contract; 0.9.6_Hardened_1 records the
 abort-only `[ARN-10]` clarification and simplicity consolidation; H2 records the
@@ -170,6 +173,91 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-020 — N1 suggestions for namespace-qualified paths — **OPEN**
+
+    ID:        ODR-020
+    Status:    OPEN — qualified-segment and candidate policy required
+    Category:  DIAGNOSTICS / NAME RESOLUTION
+    Priority:  P2
+    Location:  Ember_v0.9.8_Hardened_3.md [MOD-2], [MOD-3], §III path grammar,
+               and §XX.6.2 [DIA-12] N1
+
+    Question:  For a qualified path whose namespace resolves but whose final
+               item does not, what is the N1 candidate set, visible spelling,
+               and edit span?
+
+    Blocks implementation:            YES — do not invent a path policy
+    Blocks conformance:                YES — the required output is undefined
+    Blocks specification freeze:       NO — keep frozen `_3` unchanged; use a
+                                         later target if the owner requires a norm
+    Requires owner semantic decision:  NO — accepted-program validity is unchanged
+
+**Existing wording and gap.** The grammar permits a qualified path of the form
+`identifier "::" identifier {"::" identifier}`. `[MOD-3]` says importing a
+module binds a namespace, while `[MOD-2]` defines which of its items are
+visible. `[DIA-12]` requires N1 to suggest an in-scope item within its distance
+threshold and applies the ranking algorithm to ordinary imports and aliases.
+It does not say whether `N1` compares only the unresolved terminal component
+or the whole path, which namespace items form the candidate set (including
+visibility/re-exports), whether a suggestion is displayed qualified or
+unqualified, or whether the fix replaces the terminal identifier or the full
+path. A misspelled namespace prefix and its relationship to N2 are also not
+covered by this entry and must not be silently folded into this policy.
+
+**Minimal reproducer and current behavior.** With `support.io` exporting
+`pub fn print(value: i32) -> i32`, compile:
+
+```ember
+import support.io as io
+
+fn main():
+    io::pritn(1)
+```
+
+The current compiler reports:
+
+```text
+error[E1010]: cannot find `support.io.pritn` in this scope
+```
+
+It underlines `io` and provides no N1 help. `resolve_qualified` has
+already resolved the namespace; the direct-call unknown-name path only adds
+suggestions for one-segment names, uses the first segment's span, and displays
+the canonical internal name. This was reproduced against the working tree on
+2026-09-23. It is a diagnostics implementation gap, not a language-semantic
+decision.
+
+**Possible interpretations.**
+
+1. Compare the unresolved terminal identifier against only items accessible
+   through the resolved namespace under `[MOD-2]`. Display the item spelling
+   (`print`) and replace only the final identifier; the already-written
+   namespace alias supplies context. Apply the existing N1 ordering to the
+   candidates using canonical declaration identity for cross-file ties.
+2. Use the same terminal-segment candidates, but display the visible qualified
+   path (for example, `io::print`) while still replacing only the terminal
+   identifier. This makes the namespace context explicit without rewriting an
+   alias.
+3. Rank and display whole qualified paths, replacing the entire path. This
+   would need a further rule for aliases versus canonical module paths and for
+   the edit range when only one segment is wrong.
+
+**Recommended owner action.** Select one display/edit policy and confirm that
+the candidate set is restricted to items actually accessible through the
+resolved namespace. Option 2 preserves the user's namespace alias and makes
+the result unambiguous; option 1 is the smallest fix. Keep unresolved-prefix
+handling separate from this decision, including its interaction with N2.
+
+**Why implementation is paused.** The choices change only diagnostics and
+machine-applicable edits, but the specification does not select among them or
+define the namespace-scoped candidate set. ODR-019's rule that candidate
+discovery and visibility remain unchanged prevents an agent from inventing a
+new set. Do not edit `_3` or implement qualified-path suggestions until the
+owner rules; after the ruling, write the normative detail into a new target
+without modifying `_3`.
 
 ---
 

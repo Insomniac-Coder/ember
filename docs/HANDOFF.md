@@ -293,16 +293,16 @@ work.
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
 | Specification | Adopted normative source: **v0.8.5_Hardened_1**. Current frozen development target: **v0.9.8_Hardened_3**, authored from immutable immediate predecessor `_2`; `_1` and `_2` remain unchanged historical artifacts. No 0.9.x repository-normative adoption is implied |
-| Current implementation checkpoint | The checkout includes N1 local-binding, field, visible module-item, and now bare/generic type-position suggestions. ODR-019 gives these candidates deterministic same-file/cross-file tie ordering; qualified-name N1 entry points remain incomplete. 0.9.8_Hardened_3 remains frozen and not repository-normative |
-| Latest continuation checkpoint | `2f02a40` adds N1 suggestions for unresolved plain and generic type names, including imported aliases, with a UI regression and DIA-12 reject/fixed conformance pair. Type-checker tests, all UI tests, and the complete all-profile conformance runner pass. Qualified-name N1 paths remain next; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
+| Current implementation checkpoint | The checkout includes N1 local-binding, field, visible module-item, and bare/generic type-position suggestions. ODR-019 gives these candidates deterministic same-file/cross-file tie ordering. Namespace-qualified N1 suggestions are paused under ODR-020; 0.9.8_Hardened_3 remains frozen and not repository-normative |
+| Latest continuation checkpoint | ODR-020 records the reproduced gap for a known namespace with an unresolved member: current diagnostics underline the namespace alias and show no N1 help, while the spec leaves candidate path/display/edit policy undefined. No qualified-name behavior was guessed. N1 type-position commit `2f02a40` remains tested; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
 | Recent commits | `2f02a40` N1 type-position suggestions · `e553018` deterministic N1 cross-file ranking · `c27bfda` ODR-019 intake (superseded/closed) · `d1296fa` N1 field suggestions · `e13979e` N1 local suggestions · earlier history remains recorded below |
-| Working tree | `e553018` is pushed to `origin/main`. Three local commits after this checkpoint (`918bad0` handoff-only, `2f02a40` implementation, and this handoff refresh) remain below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
+| Working tree | `e553018` is pushed to `origin/main`. Four local commits after this checkpoint (`918bad0`, `2f02a40`, `ee978f2`, and this ODR/handoff update) remain below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
 | `cargo build --workspace --locked` | passed on 2026-09-23 after the N1 changes |
 | `cargo test --workspace --locked` | the last full-workspace run passed after the N1 cross-file ranking slice; for the current type-position slice, `cargo test --locked -p ember_typeck` passed (8 tests), `cargo test --locked -p ember_driver --test ui` passed (7 tests), and the complete conformance directory runner passed all profiles (1 runner test, 421.35s). One pre-existing non-snake-case test-name warning remains |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources. The touched UI test is rustfmt-clean; `ember_typeck/src/lib.rs` has repository-wide pre-existing drift, and the changed hunk was checked against rustfmt output |
 | Conformance | 158 top-level directories, 744 `.em` files including support modules; the complete directory runner passed in debug, release, and shipping (2026-09-23) |
-| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial. ODR-019 option 1 is recorded in `_3` and archived under `as-received/`; the target remains unadopted |
+| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial; ODR-020 is open pending the owner’s N1 qualified-path policy. ODR-019 option 1 is recorded in `_3` and archived under `as-received/`; the target remains unadopted |
 | Gates | Local build/test and repository documentation gates passed; remote CI run [#35811529830](https://github.com/Insomniac-Coder/ember/actions/runs/35811529830) passed all 5 jobs (2026-09-23) |
 
 **Current continuation supersession (2026-09-15).** The H3 callable-mode
@@ -10611,3 +10611,21 @@ with this handoff refresh committed, the branch has three unpushed commits and
 remains below the owner-set five-commit push threshold. The six unrelated
 `ember_analysis` edits remain unstaged. N1's qualified-name entry points
 remain outstanding.
+
+### 0.353 ODR-020 — N1 namespace-qualified paths — 2026-09-23
+
+The probe `import support.io as io; io::pritn(1)` produced `E1010` for the
+canonical internal spelling `support.io.pritn`, underlined the namespace alias
+`io`, and provided no N1 help. The parser accepts qualified paths and
+`[MOD-3]` defines namespace imports, while `[DIA-12]` does not specify N1's
+candidate set, compared segment, display spelling, or edit range for this
+case. ODR-020 records the current output, the cited rules, and three policies;
+option 2 is recommended but not adopted. Unknown namespace prefixes and their
+interaction with N2 remain explicitly outside the question.
+
+No implementation or conformance test was added for the unresolved policy,
+and frozen `_3` was not edited. Pause qualified-name N1 work until the owner
+rules; the completed local/generic type-position N1 slice remains committed as
+`2f02a40`. This documentation checkpoint brings the branch to four unpushed
+commits, still below the five-commit push threshold. The six unrelated
+`ember_analysis` edits remain untouched and unstaged.
