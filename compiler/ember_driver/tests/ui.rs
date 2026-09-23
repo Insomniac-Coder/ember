@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ember_diag::shapes::{Shape, shape_for};
+use ember_diag::shapes::{shape_for, Shape};
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 
@@ -370,6 +370,169 @@ fn committed_module_item_name_suggestion_matches_and_fixed_source_compiles() {
         "{} does not compile:\n{fixed_stderr}",
         fixed.display()
     );
+}
+
+#[test]
+fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
+    let workspace = workspace_root();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_nanos();
+    let package = std::env::temp_dir().join(format!(
+        "ember-n1-qualified-name-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(package.join("support"))
+        .expect("support module directory is creatable");
+    std::fs::write(
+        package.join(ember_branding::source_file("support/io")),
+        "pub fn print(value: i32) -> i32:\n    return value\n",
+    )
+    .expect("namespace module is writable");
+    let main = ember_branding::source_file("main");
+    let main_path = package.join(&main);
+    let typo = "import support.io as io\n\nfn main():\n    io::pritn(1)\n";
+    std::fs::write(&main_path, typo).expect("misspelled source is writable");
+
+    let check = |json, std_root: &Path| {
+        let mut command = Command::new(EMBER);
+        command.args(["check", &main]);
+        if json {
+            command.arg("--json");
+        }
+        command
+            .current_dir(&package)
+            .env(ember_branding::std_path_var(), std_root)
+            .output()
+            .expect("the Ember compiler runs")
+    };
+    let before = check(false, &workspace.join("std"));
+    assert!(
+        !before.status.success(),
+        "the unresolved qualified name must remain rejected"
+    );
+    let stderr = normalize(&before.stderr);
+    assert_eq!(error_codes(&stderr), ["E1010"]);
+    assert!(
+        stderr.contains("did you mean `io::print`?"),
+        "N1 should render the source-qualified candidate while preserving its alias:\n{stderr}"
+    );
+    let lines = stderr.lines().collect::<Vec<_>>();
+    let source_line = lines
+        .iter()
+        .position(|line| line.contains("io::pritn(1)"))
+        .expect("the diagnostic includes the misspelled source line");
+    let marker = lines[source_line + 1..]
+        .iter()
+        .find(|line| line.contains('^'))
+        .expect("the diagnostic highlights the unresolved final segment");
+    assert_eq!(
+        marker.matches('^').count(),
+        "pritn".len(),
+        "the primary span must cover only the unresolved final identifier:\n{stderr}"
+    );
+    let json = check(true, &workspace.join("std"));
+    let json = String::from_utf8_lossy(&json.stdout);
+    let edit_start = typo.find("pritn").expect("the typo occurs in the source");
+    let edit_end = edit_start + "pritn".len();
+    assert!(
+        json.contains("\"replacement\":\"print\""),
+        "the edit should replace only the final token:\n{json}"
+    );
+    assert!(
+        json.contains(&format!("\"byte_start\":{edit_start}")),
+        "the edit should start at `pritn`:\n{json}"
+    );
+    assert!(
+        json.contains(&format!("\"byte_end\":{edit_end}")),
+        "the edit should end after `pritn`:\n{json}"
+    );
+
+    let fixed = typo.replace("io::pritn", "io::print");
+    std::fs::write(&main_path, fixed).expect("corrected source is writable");
+    let after = check(false, &workspace.join("std"));
+    assert!(
+        after.status.success(),
+        "the token-local correction must compile without rewriting the alias:\n{}",
+        normalize(&after.stderr)
+    );
+
+    let foreign_std = package.join("separate-std");
+    std::fs::create_dir_all(&foreign_std).expect("separate standard package is creatable");
+    std::fs::write(
+        foreign_std.join(ember_branding::source_file("hidden")),
+        "pub(package) fn print(value: i32) -> i32:\n    return value\n",
+    )
+    .expect("package-private declaration is writable");
+    std::fs::write(
+        &main_path,
+        "import std.hidden as foreign\n\nfn main():\n    foreign::pritn(1)\n",
+    )
+    .expect("foreign-package typo source is writable");
+    let foreign = check(false, &foreign_std);
+    assert!(
+        !foreign.status.success(),
+        "the unknown qualified item must remain rejected"
+    );
+    let foreign_stderr = normalize(&foreign.stderr);
+    assert_eq!(error_codes(&foreign_stderr), ["E1010"]);
+    assert!(
+        !foreign_stderr.contains("did you mean"),
+        "a `pub(package)` name from another package must not leak as a suggestion:\n{foreign_stderr}"
+    );
+    std::fs::remove_dir_all(&package).expect("only the test package is removed");
+}
+
+#[test]
+fn qualified_n1_ranking_is_stable_and_bad_prefixes_do_not_search_members() {
+    let root = workspace_root();
+    let candidates = root
+        .join("tests/conformance/DIA-12/reject_qualified_top_three_visible_candidates")
+        .with_extension(ember_branding::SOURCE_EXT);
+    let (exit, first) = check(&candidates, &root);
+    assert_ne!(exit, 0, "the misspelled qualified item must be rejected");
+    assert_eq!(error_codes(&first), ["E1010"]);
+    let ordered = [
+        "did you mean `picks::prin`?",
+        "did you mean `picks::print`?",
+        "did you mean `picks::prit`?",
+    ];
+    let positions = ordered.map(|suggestion| {
+        first
+            .find(suggestion)
+            .unwrap_or_else(|| panic!("missing N1 candidate {suggestion:?}:\n{first}"))
+    });
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    for _ in 0..3 {
+        let (repeat_exit, repeated) = check(&candidates, &root);
+        assert_eq!(repeat_exit, exit);
+        assert_eq!(
+            repeated, first,
+            "qualified N1 ordering must be deterministic"
+        );
+    }
+
+    let bad_prefix = root
+        .join("tests/conformance/DIA-12/reject_qualified_prefix_typo_is_not_searched")
+        .with_extension(ember_branding::SOURCE_EXT);
+    let (prefix_exit, prefix_stderr) = check(&bad_prefix, &root);
+    assert_ne!(prefix_exit, 0);
+    assert_eq!(error_codes(&prefix_stderr), ["E1010"]);
+    assert!(
+        !prefix_stderr.contains("did you mean"),
+        "a failed prefix must not search the final segment:\n{prefix_stderr}"
+    );
+    let lines = prefix_stderr.lines().collect::<Vec<_>>();
+    let source_line = lines
+        .iter()
+        .position(|line| line.contains("ioo::print(1)"))
+        .expect("the unresolved-prefix source line is rendered");
+    let marker = lines[source_line + 1..]
+        .iter()
+        .find(|line| line.contains('^'))
+        .expect("the unresolved prefix is highlighted");
+    assert_eq!(marker.matches('^').count(), "ioo".len());
 }
 
 #[test]

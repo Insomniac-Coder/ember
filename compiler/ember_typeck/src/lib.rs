@@ -628,6 +628,9 @@ struct Checker<'a> {
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
     item_spans: HashMap<Symbol, Span>,
+    /// The declaring module's visibility for each canonical item. This is the
+    /// resolver's visibility fact, reused when enumerating qualified N1 names.
+    item_visibility: HashMap<Symbol, ast::VisKind>,
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
@@ -860,6 +863,7 @@ impl<'a> Checker<'a> {
             prefixes: vec![String::new()],
             visible: vec![HashMap::new()],
             item_spans: HashMap::new(),
+            item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
@@ -1757,16 +1761,28 @@ impl<'a> Checker<'a> {
     /// `a.b` where `a` was bound by `import x.y.a` — the qualified name of
     /// `b` in that module.
     fn resolve_qualified(&self, segments: &[ast::Ident]) -> Option<Symbol> {
-        if segments.len() != 2 {
+        if segments.len() < 2 {
             return None;
         }
-        let module = *self.namespaces[self.current_module].get(&segments[0].name)?;
-        let prefix = &self.prefixes[module];
-        Some(if prefix.is_empty() {
-            segments[1].name
-        } else {
-            Symbol::intern(&format!("{prefix}.{}", segments[1].name))
-        })
+        let module = self.resolve_namespace_prefix(&segments[..segments.len() - 1]).ok()?;
+        Some(self.qualified_in_module(module, segments.last()?.name))
+    }
+
+    /// Resolve a namespace path through existing module aliases, returning the
+    /// first component that fails so diagnostics stay on the unresolved token.
+    fn resolve_namespace_prefix(&self, segments: &[ast::Ident]) -> Result<usize, usize> {
+        let Some(first) = segments.first() else { return Err(0) };
+        let Some(&first_module) = self.namespaces[self.current_module].get(&first.name) else {
+            return Err(0);
+        };
+        let mut module = first_module;
+        for (index, segment) in segments.iter().enumerate().skip(1) {
+            let Some(&next) = self.namespaces[module].get(&segment.name) else {
+                return Err(index);
+            };
+            module = next;
+        }
+        Ok(module)
     }
 
     /// Pass one: every item name in this module becomes visible to it, before
@@ -1808,6 +1824,7 @@ impl<'a> Checker<'a> {
             let qualified = self.qualified(name);
             self.visible[index].insert(name, qualified);
             self.item_spans.insert(qualified, item.span);
+            self.item_visibility.insert(qualified, item.vis.kind);
         }
     }
 
@@ -8855,6 +8872,65 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         )
     }
 
+    /// `[DIA-12]` N1 — use the names visible through an already-resolved
+    /// namespace, applying the same declaration visibility facts as imports.
+    fn qualified_name_suggestions(
+        &self,
+        namespace: usize,
+        written: Symbol,
+        use_span: Span,
+    ) -> Vec<String> {
+        let item_candidates = self.visible[namespace].iter().filter_map(|(name, qualified)| {
+            if self.qualified_in_module(namespace, *name) != *qualified {
+                return None;
+            }
+            let visibility = self.item_visibility.get(qualified)?;
+            let accessible = match visibility {
+                ast::VisKind::Private => namespace == self.current_module,
+                ast::VisKind::Package => self.same_package(namespace, self.current_module),
+                ast::VisKind::Public => true,
+            };
+            if !accessible {
+                return None;
+            }
+            let declaration = self.item_spans.get(qualified)?;
+            Some(name_suggestions::Candidate {
+                name: name.as_str().to_owned(),
+                declaration: *declaration,
+                canonical_name: qualified.as_str().to_owned(),
+            })
+        });
+        name_suggestions::rank(written.as_str(), use_span, item_candidates)
+    }
+
+    /// The current loader admits the root package and the separate `std`
+    /// package. Keep package visibility aligned with those existing roots.
+    fn same_package(&self, left: usize, right: usize) -> bool {
+        let is_std = |module: usize| {
+            let path = self.prefixes[module].as_str();
+            path == "std" || path.starts_with("std.")
+        };
+        is_std(left) == is_std(right)
+    }
+
+    fn add_qualified_name_suggestions(
+        &self,
+        mut diagnostic: Diagnostic,
+        namespace: usize,
+        written: Symbol,
+        source_prefix: &str,
+        use_span: Span,
+    ) -> Diagnostic {
+        for candidate in self.qualified_name_suggestions(namespace, written, use_span) {
+            diagnostic = diagnostic.suggest(
+                format!("did you mean `{source_prefix}::{candidate}`?"),
+                use_span,
+                candidate,
+            );
+        }
+        diagnostic
+    }
+
     fn add_name_suggestions(
         &self,
         mut diagnostic: Diagnostic,
@@ -12302,21 +12378,52 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         // `[MOD-3]` — `import a.b.c` binds `c` as a namespace, so `c.f(x)` is
         // a call into that module.
-        let name = match segments.len() {
-            1 => segments[0].name,
-            2 => match self.resolve_qualified(segments) {
-                Some(qualified) => qualified,
-                None => {
+        let namespace = if segments.len() > 1 {
+            match self.resolve_namespace_prefix(&segments[..segments.len() - 1]) {
+                Ok(namespace) => Some(namespace),
+                Err(index) => {
+                    let unresolved = &segments[index.min(segments.len() - 1)];
                     self.error(
                         codes::E1010,
-                        span,
-                        format!("`{}` is not a module in scope", segments[0].name),
+                        unresolved.span,
+                        format!("`{}` is not a module in scope", unresolved.name),
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-            },
+            }
+        } else {
+            None
+        };
+        let name = match segments.len() {
+            1 => segments[0].name,
+            2 => self.resolve_qualified(segments).expect("the namespace prefix resolved"),
             _ => {
-                self.error(codes::E1010, span, "a path this long is not supported yet");
+                let namespace = namespace.expect("a qualified call has a namespace prefix");
+                let name = self
+                    .resolve_qualified(segments)
+                    .expect("the namespace prefix resolved");
+                let final_segment = segments.last().expect("a path has a final segment");
+                if self.visible[namespace].get(&final_segment.name) != Some(&name) {
+                    let source_prefix = segments[..segments.len() - 1]
+                        .iter()
+                        .map(|segment| segment.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    let diagnostic = Diagnostic::error(
+                        codes::E1010,
+                        final_segment.span,
+                        format!("cannot find `{name}` in this scope"),
+                    );
+                    self.sink.emit(self.add_qualified_name_suggestions(
+                        diagnostic,
+                        namespace,
+                        final_segment.name,
+                        &source_prefix,
+                        final_segment.span,
+                    ));
+                } else {
+                    self.error(codes::E1010, span, "a path this long is not supported yet");
+                }
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
         };
@@ -12725,7 +12832,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
-            let name_span = segments[0].span;
+            let name_span = segments.last().expect("a path has a final segment").span;
             let mut diagnostic = Diagnostic::error(
                 codes::E1010,
                 name_span,
@@ -12739,6 +12846,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         candidate,
                     );
                 }
+            } else {
+                let namespace = namespace.expect("a qualified call has a namespace prefix");
+                let source_prefix = segments[..segments.len() - 1]
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                diagnostic = self.add_qualified_name_suggestions(
+                    diagnostic,
+                    namespace,
+                    segments.last().expect("a path has a final segment").name,
+                    &source_prefix,
+                    name_span,
+                );
             }
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };

@@ -292,18 +292,18 @@ work.
 |---|---|
 | Remote | `https://github.com/Insomniac-Coder/ember.git` |
 | Branch | `main` |
-| Specification | Adopted normative source: **v0.8.5_Hardened_1**. Current frozen development target: **v0.9.8_Hardened_3**, authored from immutable immediate predecessor `_2`; `_1` and `_2` remain unchanged historical artifacts. No 0.9.x repository-normative adoption is implied |
-| Current implementation checkpoint | The checkout includes N1 local-binding, field, visible module-item, and bare/generic type-position suggestions. ODR-019 gives these candidates deterministic same-file/cross-file tie ordering. Namespace-qualified N1 suggestions are paused under ODR-020; 0.9.8_Hardened_3 remains frozen and not repository-normative |
-| Latest continuation checkpoint | ODR-020 records the reproduced gap for a known namespace with an unresolved member: current diagnostics underline the namespace alias and show no N1 help, while the spec leaves candidate path/display/edit policy undefined. No qualified-name behavior was guessed. N1 type-position commit `2f02a40` remains tested; generic-class payloads, enums/scalars, multi-interface composition, and generic interface default members remain open |
+| Specification | Adopted normative source: **v0.8.5_Hardened_1**. The separate **v0.9.8_Hardened_3** development target remains frozen and untouched. ODR-020's owner ruling is incorporated in new **v0.9.7_Hardened_4**, copied from immutable **v0.9.7_Hardened_3**; H4 is not adopted as the repository-normative language source |
+| Current implementation checkpoint | N1 local-binding, field, visible module-item, bare/generic type-position, and namespace-qualified call suggestions are implemented. ODR-019's deterministic ranking is reused. Qualified suggestions preserve aliases/nested spelling, filter inaccessible members, rank only the unresolved final segment, and edit only that token. No accepted-program semantics changed |
+| Latest continuation checkpoint | ODR-020 is **closed**. H4 defines final-segment comparison, resolver-visible candidate scope under `[MOD-2]`, full source-qualified help, final-token edit, prefix-first failure, and reuse of the existing ranking/top-three policy. The original ruling is archived under `as-received/`; the implementation and DIA-12 regressions are in the worktree |
 | Latest architecture checkpoint | `30836ee` makes `check_escapes` honor the canonical `BorrowCapability` storage-survival constraint; `d35e94f` supplies the canonical Arena allocation owner while the source-type fallback remains for ordinary Arena place borrows |
 | Recent commits | `2f02a40` N1 type-position suggestions · `e553018` deterministic N1 cross-file ranking · `c27bfda` ODR-019 intake (superseded/closed) · `d1296fa` N1 field suggestions · `e13979e` N1 local suggestions · earlier history remains recorded below |
-| Working tree | `e553018` is pushed to `origin/main`. Four local commits after this checkpoint (`918bad0`, `2f02a40`, `ee978f2`, and this ODR/handoff update) remain below the five-commit push threshold. Six pre-existing `compiler/ember_analysis` edits remain unstaged and were preserved |
-| `cargo build --workspace --locked` | passed on 2026-09-23 after the N1 changes |
-| `cargo test --workspace --locked` | the last full-workspace run passed after the N1 cross-file ranking slice; for the current type-position slice, `cargo test --locked -p ember_typeck` passed (8 tests), `cargo test --locked -p ember_driver --test ui` passed (7 tests), and the complete conformance directory runner passed all profiles (1 runner test, 421.35s). One pre-existing non-snake-case test-name warning remains |
+| Working tree | Before the ODR-020 closeout commit, `origin/main` was at `e553018` and four commits were ahead (`918bad0`, `2f02a40`, `ee978f2`, `cff7fb9`). This task commit reaches the owner's five-unpushed-commit push threshold. Six pre-existing `compiler/ember_analysis` edits are unrelated, remain unstaged, and must be preserved |
+| `cargo build --workspace --locked` | Not rerun in this closeout; `cargo test --workspace --locked` compiled the workspace and passed |
+| `cargo test --workspace --locked` | passed on 2026-09-23: all workspace unit/integration/doc tests, 35 driver milestone tests including the full conformance runner, and all 9 driver UI tests; conformance completed in 417.86s. The ODR-020 alias, visibility, ranking, final-token edit, and bad-prefix regressions pass |
 | `cargo fmt --all -- --check` | **not clean**: broad pre-existing rustfmt drift in compiler sources. The touched UI test is rustfmt-clean; `ember_typeck/src/lib.rs` has repository-wide pre-existing drift, and the changed hunk was checked against rustfmt output |
-| Conformance | 158 top-level directories, 744 `.em` files including support modules; the complete directory runner passed in debug, release, and shipping (2026-09-23) |
-| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-019 are closed; ODR-003 remains deferred editorial; ODR-020 is open pending the owner’s N1 qualified-path policy. ODR-019 option 1 is recorded in `_3` and archived under `as-received/`; the target remains unadopted |
-| Gates | Local build/test and repository documentation gates passed; remote CI run [#35811529830](https://github.com/Insomniac-Coder/ember/actions/runs/35811529830) passed all 5 jobs (2026-09-23) |
+| Conformance | The full directory runner passed in debug, release, and shipping as part of the locked workspace test (2026-09-23) |
+| Ledgers | ODR-001, ODR-002, and ODR-004 through ODR-020 are closed; ODR-003 remains deferred editorial. ODR-019 option 1 remains in the separate 0.9.8 target; H4 does not redefine that policy. No 0.9.x target is repository-normative |
+| Gates | Local repository gates passed before closeout; the full workspace test is green. The five-commit push and its GitHub Actions result are the remaining closeout steps. Previous remote baseline run [#35811529830](https://github.com/Insomniac-Coder/ember/actions/runs/35811529830) passed all 5 jobs |
 
 **Current continuation supersession (2026-09-15).** The H3 callable-mode
 diagnostic slice described in §0.126 is now present in the worktree and has
@@ -10629,3 +10629,70 @@ rules; the completed local/generic type-position N1 slice remains committed as
 `2f02a40`. This documentation checkpoint brings the branch to four unpushed
 commits, still below the five-commit push threshold. The six unrelated
 `ember_analysis` edits remain untouched and unstaged.
+
+### 0.354 ODR-020 implementation and H4 closeout — 2026-09-23
+
+The owner supplied the ODR-020 policy in
+`docs/spec-source/as-received/ODR-020_qualified_path_N1.md` and directed that
+it be incorporated in a new `0.9.7_Hardened_4`, based on immutable
+`0.9.7_Hardened_3`. H4 preserves its immediate-predecessor lineage; neither
+H3 nor the separate `0.9.8_Hardened_3` development target was edited. ODR-020
+is closed in `docs/OWNER-QUEUE.md`. H4 is not adopted as the repository-normative
+language source.
+
+`ember_typeck` now resolves namespace prefixes component by component. A
+missing prefix is diagnosed at that prefix and does not trigger final-member
+search. For an existing namespace and missing final name, N1 compares only
+that final segment against accessible members from the resolved module, uses
+the existing ranking and top-three cap, displays the original namespace
+path/alias, and attaches the machine-applicable edit only to the final token.
+Private and cross-package `pub(package)` items are excluded. Direct `from`
+imports continue through ordinary unqualified N1. Existing `E1010` is
+retained; no diagnostic identity or accepted-program semantics were added.
+
+Regression coverage is in `compiler/ember_driver/tests/ui.rs` and
+`tests/conformance/DIA-12/`: alias and nested-path corrections, exact
+final-token span/edit, visibility filtering, same-package package visibility,
+deterministic top-three ranking, missing candidate, failed prefix, and
+corrected source compilation. The support fixture declares its required
+`[MOD-3]` / `parse-pass` metadata.
+
+Verification on this tree: `cargo test --workspace --locked` passed,
+including 35 driver milestone tests/full debug-release-shipping conformance,
+all 9 driver UI tests, and the remaining workspace unit/integration/doc tests
+(417.86s total). Earlier targeted `ember_typeck`/UI tests, all repository
+spec/registry/branding/error-page/split-spec gates, `rustfmt --check` for the
+touched UI test, and `git diff --check` passed. `cargo fmt --all -- --check`
+remains non-clean from unrelated pre-existing formatting drift; no broad
+reformat was applied. This ODR diagnostics slice is not a Phase 2/3 exit
+criterion and does not close or materially advance a formal phase gate.
+
+At this checkpoint the branch was `main`, with four commits ahead of
+`origin/main`; this task commit is the fifth, so the owner's push threshold is
+met. Push the task changes and verify the resulting GitHub Actions run before
+reporting completion. Preserve the six unrelated modified files under
+`compiler/ember_analysis/src/{access,borrows,definite_init,drops,regions,unused}.rs`;
+do not stage them. No PR is requested.
+
+**Phase status:** exactly **1 of 9 phases is formally complete**, with Phase 2
+active. Phase 0 is historical and excluded; the nine counted roadmap entries
+are Phases 1–7, 7a, and 8. Percentages below are rough worklist estimates, not
+accepted exit-gate results; later-phase estimates have low confidence because
+their full matrices were not re-audited in this task.
+
+| Roadmap phase (Part XXI) | Rough completion | Basis / gate status |
+|---|---:|---|
+| Phase 1 — Core language | 100% | The sole phase formally recorded complete |
+| Phase 2 — Ownership | 86% | Latest coverage ledger: OWN 8/8, BRW 9/9, LT 10/10, DRP 5/6, SPN 3/3, CELL 11/13, DIA ownership shapes 18/25; M2 exists and there are no unclassified borrow errors. Exit still fails on remaining DRP/CELL/DIA evidence |
+| Phase 3 — Objects | 70% | Class/object foundations and substantial targeted coverage exist; full OBJ/RC/EXC/DSP/WK matrix and static/runtime cycle-diagnostic exit remain open |
+| Phase 4 — Effects, comptime, derives | 15% | Some safety/effect-analysis foundations exist; full EFF/CT/RFL/DRV suites and safety-reason coverage remain open |
+| Phase 5 — C FFI | 10% | Existing C backend/build integration is only foundation; FFI conformance, Vulkan header import, and M5 remain open |
+| Phase 6 — Concurrency and DOD | 5% | Isolated type/analysis foundations only; thread/job/parallel/SOA/SIMD/ECS matrix and M6 remain open |
+| Phase 7 — C++ FFI and supported interpreter | 0% | Phase exit and implementation matrix remain outstanding |
+| Phase 7a — Iteration, determinism, instantiation cost | 5% | Existing generic/runtime foundations do not satisfy coroutine, determinism, hot-reload, or budget exits |
+| Phase 8 — Hardening and 1.0 | 10% | Repository quality gates and conformance infrastructure exist; full conformance, performance suite, and two external-package exit remain unmet |
+
+The percentages are intentionally separate from the formal count. This
+ODR-020 diagnostics change improves DIA-12 coverage, but DIA-12 is not one of
+Phase 2's `[DIA-7..10]` exit requirements; it therefore does not change the
+formal 1/9 count or Phase 2's estimate.
