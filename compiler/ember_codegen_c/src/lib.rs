@@ -3403,6 +3403,48 @@ impl Emitter<'_> {
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }
+                    // `[TYP-37]` — floats by totalOrder, everything else by `<`.
+                    Builtin::TotalLess => {
+                        let (a, b) = (&rendered[0], &rendered[1]);
+                        return match self.types.kind(*arg_ty) {
+                            TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64({a}, {b})"),
+                            TyKind::Float(_) => format!("{RT}total_lt_f32({a}, {b})"),
+                            _ => format!("(({a}) < ({b}))"),
+                        };
+                    }
+                    // `[STD-26]` — the count and the values are computed in
+                    // 64 bits, signed or unsigned as the type is; each value
+                    // lies between `start` and `stop`, so it converts back.
+                    Builtin::RangeCount | Builtin::RangeNth => {
+                        let unsigned = matches!(self.types.kind(*arg_ty), TyKind::Uint(_));
+                        let (wide, suffix) = if unsigned { ("uint64_t", "u64") } else { ("int64_t", "i64") };
+                        let widen = |v: &String| format!("({wide})({v})");
+                        if matches!(which, Builtin::RangeCount) {
+                            return format!(
+                                "{RT}range_count_{suffix}({}, {}, {})",
+                                widen(&rendered[0]),
+                                widen(&rendered[1]),
+                                widen(&rendered[2])
+                            );
+                        }
+                        let ty = self.c_type(*arg_ty);
+                        return format!(
+                            "(({ty}){RT}range_nth_{suffix}({}, {}, {}))",
+                            widen(&rendered[0]),
+                            widen(&rendered[1]),
+                            rendered[2]
+                        );
+                    }
+                    Builtin::StrCharCount => {
+                        return format!("{RT}str_char_count({})", rendered[0]);
+                    }
+                    Builtin::FloatAbs => {
+                        let function = match self.types.kind(*arg_ty) {
+                            TyKind::Float(FloatTy::F64) => "fabs",
+                            _ => "fabsf",
+                        };
+                        return format!("{function}({})", rendered[0]);
+                    }
                     // D-187 — the checker sent here only text (all six
                     // comparisons, by bytes) and `==`/`!=` on aggregates.
                     Builtin::ValueCompare { op } => {

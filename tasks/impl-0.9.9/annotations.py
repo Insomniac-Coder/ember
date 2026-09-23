@@ -15,10 +15,12 @@ EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.
 
 
 def expected_stdout(text):
+    """Every `#$ stdout:` line in order, each followed by its `#$` continuations."""
     lines = text.split('\n')
+    out = None
     for index, line in enumerate(lines):
         if line.startswith('#$ stdout:'):
-            out = [line[len('#$ stdout:'):].strip()]
+            out = (out or []) + [line[len('#$ stdout:'):].strip()]
             for more in lines[index + 1:]:
                 if more == '#$':
                     out.append('')
@@ -26,8 +28,7 @@ def expected_stdout(text):
                     out.append(more[3:])
                 else:
                     break
-            return out
-    return None
+    return out
 
 
 def run(args, path):

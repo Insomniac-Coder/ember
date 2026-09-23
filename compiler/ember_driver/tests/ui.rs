@@ -671,3 +671,16 @@ fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
 
     std::fs::remove_dir_all(&scratch).expect("only the test's temporary packages are removed");
 }
+
+#[test]
+fn a_returned_view_of_a_local_is_one_error() {
+    // D-190, `[DIA-14]` — the drop of `tmp` at the return is the escape
+    // `E3060` reports, not a second, `E3021` write while borrowed.
+    let root = workspace_root();
+    let path = root
+        .join("tests/conformance/LT-3/reject_a_returned_view_of_a_local")
+        .with_extension(ember_branding::SOURCE_EXT);
+    let (exit, stderr) = check(&path, &root);
+    assert_ne!(exit, 0, "the escaping view must be rejected");
+    assert_eq!(error_codes(&stderr), ["E3060"], "{stderr}");
+}

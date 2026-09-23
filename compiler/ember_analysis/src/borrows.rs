@@ -2006,9 +2006,24 @@ fn check_body(
                     // a second ordinary alias error. `check_escapes` reports
                     // the required A1/E3061 shape below. User-visible reset
                     // and every non-returning drop remain ordinary writes.
-                    if !(matches!(block.terminator, Terminator::Return)
-                        && is_arena_ty(types, place_ty(body, types, place)))
-                    {
+                    //
+                    // D-190 — the same holds for any storage a loan still
+                    // points into at the `return`: that loan escapes, and
+                    // `check_escapes` reports it (B7, `E3060`). Reporting the
+                    // drop as a write too (`E3021`) is two errors for one
+                    // mistake (`[DIA-14]`).
+                    let returning = matches!(block.terminator, Terminator::Return);
+                    let return_point = Point { block: block_index, index: block.stmts.len() };
+                    let escapes_at_return = returning
+                        && (is_arena_ty(types, place_ty(body, types, place))
+                            || in_scope(&loans, &regions, return_point).iter().any(|loan| {
+                                loan.capability.must_not_outlive_storage()
+                                    && loan
+                                        .capability
+                                        .source_place()
+                                        .is_some_and(|source| source.local == place.local)
+                            }));
+                    if !escapes_at_return {
                         accesses.push((place.clone(), Access::Write));
                     }
                 }

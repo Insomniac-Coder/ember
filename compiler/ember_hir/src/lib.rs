@@ -356,6 +356,11 @@ pub enum ExprKind {
     EraseRange(Box<Expr>),
     /// A call the compiler knows about directly, before `std` exists.
     Builtin { which: Builtin, args: Vec<Expr> },
+    /// A block used as an expression: its statements run, then `value` is
+    /// the result, and the block's locals end after it is read. The checker
+    /// builds these for calls that loop or bind (`sum`, `min`, `[STD-26]`),
+    /// so each argument is evaluated once.
+    Block { block: Block, value: Box<Expr> },
     /// `[CLS-1]` — allocate a class object and invoke its checked constructor.
     /// The arguments are stored in constructor-parameter order; when source
     /// named arguments were out of order, `arg_eval_order` tells MIR how to
@@ -440,6 +445,18 @@ pub enum Builtin {
     /// VI.6 — `assert(cond, msg)` and the assertions built on it: panics with
     /// `msg` when `cond` is false.
     Assert,
+    /// `[TYP-37]` — `a < b` in `Ord`'s order: IEEE totalOrder for floats, so
+    /// `-0.0 < +0.0` and NaN sits at an end; `<` for every other scalar. What
+    /// `min`, `max` and `clamp` compare with.
+    TotalLess,
+    /// `abs` of a float: clears the sign, so `abs(-0.0)` is `+0.0`.
+    FloatAbs,
+    /// `[STD-26]` — how many values `range(start, stop, step)` has, and the
+    /// `k`th of them; a zero step panics.
+    RangeCount,
+    RangeNth,
+    /// `[TXT-10]` — `s.char_count()`: the number of Unicode scalar values.
+    StrCharCount,
     /// `print(x)` — the same without the newline.
     Print,
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
@@ -743,6 +760,10 @@ impl Builtin {
             Builtin::EPrint => "eprint",
             Builtin::Panic => "panic",
             Builtin::Assert => "assert",
+            Builtin::TotalLess => "cmp",
+            Builtin::FloatAbs => "abs",
+            Builtin::RangeCount | Builtin::RangeNth => "range",
+            Builtin::StrCharCount => "char_count",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
             Builtin::ValueCompare { .. } => "compare",
@@ -1205,6 +1226,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::ClassNew { class_id, args, .. } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             format!("class#{}({})", class_id.0, inner.join(", "))
+        }
+        ExprKind::Block { block, value } => {
+            format!("{{ {} statements; {} }}", block.stmts.len(), dump_expr(value, function, types))
         }
         ExprKind::TupleLit(items) => {
             let inner: Vec<String> = items.iter().map(|e| dump_expr(e, function, types)).collect();

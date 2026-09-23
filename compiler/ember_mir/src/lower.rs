@@ -2494,6 +2494,21 @@ impl<'a> Builder<'a> {
 
                 self.current = join_bb;
             }
+            // The block's statements, then its value into `place`, and only
+            // then the block's defers and drops: the value may read a local
+            // the block declared.
+            hir::ExprKind::Block { block, value } => {
+                let mark = self.defers.len();
+                let owned_mark = self.owned.len();
+                for stmt in &block.stmts {
+                    self.lower_stmt(stmt);
+                }
+                self.lower_into(place, value);
+                self.emit_defers_from(mark);
+                self.defers.truncate(mark);
+                self.emit_drops_from(owned_mark);
+                self.owned.truncate(owned_mark);
+            }
             hir::ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(place, scrutinee, arms, expr.span);
             }

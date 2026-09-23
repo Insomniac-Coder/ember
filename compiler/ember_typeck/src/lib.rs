@@ -9969,6 +9969,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(size), to: int_ty }, span }
     }
 
+    /// `[TXT-10]` — `s.len()` (bytes), `s.char_count()` (characters, Python's
+    /// `len`), `s.is_empty()`.
+    fn synth_text_count(&mut self, receiver: Expr, name: &str, span: Span) -> Expr {
+        let str_ty = self.common.str_;
+        let usize_ty = self.common.usize;
+        let text = if receiver.ty == str_ty { receiver } else { self.coerce(receiver, str_ty) };
+        let which = if name == "char_count" { Builtin::StrCharCount } else { Builtin::SpanLen };
+        let count = Expr { ty: usize_ty, kind: ExprKind::Builtin { which, args: vec![text] }, span };
+        if name == "is_empty" {
+            return Expr {
+                ty: self.common.bool_,
+                kind: ExprKind::Binary {
+                    op: BinOp::Eq,
+                    lhs: Box::new(count),
+                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
+                },
+                span,
+            };
+        }
+        self.size_as_int(count)
+    }
+
     /// VI.6, `[PAN-1]` (0.9.9) — `panic(msg)`, `todo()` and `unreachable()`
     /// have type `Never`. `assert(cond)`, `assert(cond, msg)`, `assert_eq`
     /// and `assert_ne` are checked in every profile; `debug_assert` only in
@@ -10557,6 +10579,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        // `[STD-26]` (0.9.9) — `range`, `enumerate`, `zip` and `reversed` in a
+        // `for` header are counted loops (`[CTL-3b]`), with no iterator
+        // object. A function of the same name shadows them.
+        if let ast::ExprKind::Call { callee, args } = &iter.kind
+            && let ast::ExprKind::Path { segments } = &callee.kind
+            && segments.len() == 1
+            && matches!(segments[0].name.as_str(), "range" | "enumerate" | "zip" | "reversed")
+            && self.lookup(segments[0].name).is_none()
+            && !self.fn_ids.contains_key(&self.resolve_name(segments[0].name))
+        {
+            return self.check_for_builtin(
+                segments[0].name.as_str(),
+                args,
+                iter,
+                label,
+                pattern,
+                body,
+                else_block,
+                span,
+            );
+        }
         let incoming_class_init = self.class_init.clone();
         let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &iter.kind else {
             // `[CTL-1]` — anything else is driven through `next()`.
@@ -10649,6 +10692,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
         let (iterable, elem) = source;
+        let mut kept = Vec::new();
+        let iterable = self.keep_alive(iterable, &mut kept);
         let usize_ty = self.common.usize;
         let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
         let iterable_span = self.view_of(
@@ -10728,13 +10773,245 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         self.scopes.pop();
 
+        kept.push(Stmt::Let { local: xs_local, init: Some(iterable_span) });
+        kept.push(Stmt::ForRange {
+            local: index_local,
+            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            end: length,
+            inclusive: false,
+            body: Block { stmts: inner, span },
+            else_block,
+        });
+        Some(Stmt::Block(Block { stmts: kept, span }))
+    }
+
+    /// D-193 — a container a loop or `sum` views must outlive the view. A
+    /// place already does; a temporary (`for x in [1, 2]`) is bound to a
+    /// local of the enclosing block, so it is dropped after the loop rather
+    /// than at the end of the statement that made the view.
+    fn keep_alive(&mut self, value: Expr, stmts: &mut Vec<Stmt>) -> Expr {
+        if is_place(&value.kind) {
+            return value;
+        }
+        let (ty, span) = (value.ty, value.span);
+        let local = self.declare(None, ty, span);
+        stmts.push(Stmt::Let { local, init: Some(value) });
+        Expr { ty, kind: ExprKind::Local(local), span }
+    }
+
+    /// `[STD-26]` — a `for` over `range(…)`, `enumerate(…)`, `zip(…)` or
+    /// `reversed(…)`.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_builtin(
+        &mut self,
+        name: &str,
+        args: &[ast::Arg],
+        iter: &ast::Expr,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let positional: Vec<&ast::Expr> =
+            args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect();
+        let named = |key: &str| args.iter().find(|a| a.name.is_some_and(|n| n.name.is(key)));
+        let unknown = args.iter().find(|a| a.name.is_some_and(|n| !(name == "enumerate" && n.name.is("start"))));
+        let wrong = |this: &mut Self, wanted: &str| {
+            this.error(codes::E2020, iter.span, format!("`{name}` takes {wanted}"));
+            None
+        };
+        if let Some(arg) = unknown {
+            let key = arg.name.expect("named");
+            self.error(codes::E2020, key.span, format!("`{name}` has no parameter `{}`", key.name));
+            return None;
+        }
+        match name {
+            "range" => match positional.as_slice() {
+                // `range(n)` is `0..n`, and `range(a, b)` is `a..b`.
+                [stop] | [_, stop] => {
+                    let start = match positional.as_slice() {
+                        [start, _] => (*start).clone(),
+                        _ => ast::Expr {
+                            id: iter.id,
+                            kind: ast::ExprKind::Lit(ast::Literal::Int { value: 0, suffix: None }),
+                            span: iter.span,
+                        },
+                    };
+                    let as_range = ast::Expr {
+                        id: iter.id,
+                        kind: ast::ExprKind::Range {
+                            lo: Some(Box::new(start)),
+                            hi: Some(Box::new((*stop).clone())),
+                            inclusive: false,
+                        },
+                        span: iter.span,
+                    };
+                    self.check_for(label, pattern, &as_range, body, else_block, span)
+                }
+                [start, stop, step] => {
+                    self.check_for_stepped_range(label, pattern, (start, stop, step), body, else_block, span)
+                }
+                _ => wrong(self, "one to three arguments"),
+            },
+            "enumerate" | "reversed" | "zip" => {
+                let arity = if name == "zip" { 2 } else { 1 };
+                if positional.len() != arity {
+                    return wrong(self, if arity == 2 { "two iterables" } else { "one iterable" });
+                }
+                let mut sources = Vec::new();
+                for arg in &positional {
+                    let value = self.synth_committed(arg);
+                    if value.ty == self.common.error {
+                        return None;
+                    }
+                    match *self.types.kind(value.ty) {
+                        TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+                            sources.push((value, elem));
+                        }
+                        _ => {
+                            let shown = self.types.display(value.ty);
+                            self.error(
+                                codes::E0900,
+                                arg.span,
+                                format!("`{name}` over a `{shown}` is not implemented yet"),
+                            );
+                            return None;
+                        }
+                    }
+                }
+                // `for i, x in enumerate(xs)` and `for a, b in zip(xs, ys)`
+                // bind a pair.
+                let parts: Vec<&ast::Pattern> = match (&pattern.kind, name) {
+                    (_, "reversed") => vec![pattern],
+                    (ast::PatternKind::Tuple(items), _) if items.len() == 2 => items.iter().collect(),
+                    _ => {
+                        self.error(
+                            codes::E0900,
+                            pattern.span,
+                            format!("`{name}` needs two names here, as in `for a, b in {name}(…)`, for now"),
+                        );
+                        return None;
+                    }
+                };
+                match name {
+                    "enumerate" => {
+                        let int_ty = self.common.i64;
+                        let start = match named("start").map(|a| &a.value).or(positional.get(1).copied()) {
+                            Some(start) => self.check_expr(start, int_ty),
+                            None => Expr { ty: int_ty, kind: ExprKind::Int(0), span: iter.span },
+                        };
+                        self.check_for_indexed(
+                            label,
+                            sources,
+                            vec![parts[1]],
+                            Some((parts[0], start)),
+                            false,
+                            body,
+                            else_block,
+                            span,
+                        )
+                    }
+                    "zip" => self.check_for_indexed(label, sources, parts, None, false, body, else_block, span),
+                    _ => self.check_for_indexed(label, sources, parts, None, true, body, else_block, span),
+                }
+            }
+            _ => unreachable!("check_for_builtin is called for four names"),
+        }
+    }
+
+    /// `[STD-26]` — `range(start, stop, step)`, Python's: a negative step
+    /// counts down, and a zero step panics. It is a counted loop over the
+    /// number of values (`[CTL-3b]`), each computed from its index, so no
+    /// step past `stop` is ever taken and nothing overflows.
+    fn check_for_stepped_range(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        (start, stop, step): (&ast::Expr, &ast::Expr, &ast::Expr),
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let mut values = [self.synth(start), self.synth(stop), self.synth(step)];
+        let typed = values.iter().find(|v| !self.types.is_untyped_literal(v.ty)).map(|v| v.ty);
+        let ty = typed.unwrap_or(self.common.i64);
+        for value in &mut values {
+            let taken = std::mem::replace(value, Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            *value = self.coerce(taken, ty);
+        }
+        if !self.types.is_integral(ty) && ty != self.common.error {
+            let shown = self.types.display(ty);
+            self.error(codes::E2020, start.span, format!("cannot count over `{shown}`"));
+            return None;
+        }
+        let usize_ty = self.common.usize;
+        let [start, stop, step] = values;
+        self.scopes.push(HashMap::new());
+        let start_local = self.declare(None, ty, span);
+        let step_local = self.declare(None, ty, span);
+        let count_local = self.declare(None, usize_ty, span);
+        let index_local = self.declare(None, usize_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let count = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::RangeCount,
+                args: vec![local(start_local, ty), stop, local(step_local, ty)],
+            },
+            span,
+        };
+        self.scopes.push(HashMap::new());
+        let value_local = self.declare(binding_name(pattern), ty, pattern.span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        let mut inner = vec![Stmt::Let {
+            local: value_local,
+            init: Some(Expr {
+                ty,
+                kind: ExprKind::Builtin {
+                    which: Builtin::RangeNth,
+                    args: vec![local(start_local, ty), local(step_local, ty), local(index_local, usize_ty)],
+                },
+                span,
+            }),
+        }];
+        inner.extend(checked.stmts);
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+        // A zero step is the caller's bug (`[ERR-13]`): an assertion, so the
+        // panic names the line.
+        let bool_ty = self.common.bool_;
+        let nonzero = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Ne,
+                lhs: Box::new(local(step_local, ty)),
+                rhs: Box::new(Expr { ty, kind: ExprKind::Int(0), span }),
+            },
+            span,
+        };
+        let message = Expr {
+            ty: self.common.str_,
+            kind: ExprKind::Str("range() step must not be zero".to_string()),
+            span,
+        };
         Some(Stmt::Block(Block {
             stmts: vec![
-                Stmt::Let { local: xs_local, init: Some(iterable_span) },
+                Stmt::Let { local: start_local, init: Some(start) },
+                Stmt::Let { local: step_local, init: Some(step) },
+                Stmt::Expr(Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![nonzero, message] },
+                    span,
+                }),
+                Stmt::Let { local: count_local, init: Some(count) },
                 Stmt::ForRange {
                     local: index_local,
                     start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
-                    end: length,
+                    end: local(count_local, usize_ty),
                     inclusive: false,
                     body: Block { stmts: inner, span },
                     else_block,
@@ -10742,6 +11019,556 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ],
             span,
         }))
+    }
+
+    /// A counted loop over one or more views at once: `for x in view`,
+    /// `enumerate`, `zip` (the shorter length) and `reversed`. Each element
+    /// is borrowed, as `[CTL-1]` requires; `counter` is `enumerate`'s name and
+    /// start.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_indexed(
+        &mut self,
+        label: Option<ast::Ident>,
+        sources: Vec<(Expr, Ty)>,
+        patterns: Vec<&ast::Pattern>,
+        counter: Option<(&ast::Pattern, Expr)>,
+        reversed: bool,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
+        let usize_ty = self.common.usize;
+        let int_ty = self.common.i64;
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let mut outer = Vec::new();
+        self.scopes.push(HashMap::new());
+        let mut views = Vec::new();
+        for (value, elem) in sources {
+            let value = self.keep_alive(value, &mut outer);
+            let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+            let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+                self.view_of(value, span_ty, false, Builtin::SpanFrom { mutable: false })
+            } else {
+                self.coerce(value, span_ty)
+            };
+            let xs = self.declare(Some(Symbol::intern("__xs")), span_ty, span);
+            self.locals[xs.0 as usize].for_iterator = true;
+            outer.push(Stmt::Let { local: xs, init: Some(view) });
+            views.push((xs, span_ty, elem));
+        }
+        let lengths: Vec<Expr> = views
+            .iter()
+            .map(|&(xs, span_ty, _)| Expr {
+                ty: usize_ty,
+                kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] },
+                span,
+            })
+            .collect();
+        let length_local = self.declare(None, usize_ty, span);
+        let length = lengths
+            .into_iter()
+            .reduce(|shorter, next| self.pick_less(shorter, next, span))
+            .expect("at least one view");
+        outer.push(Stmt::Let { local: length_local, init: Some(length) });
+        let counter = counter.map(|(pattern, start)| {
+            let start_local = self.declare(None, int_ty, span);
+            outer.push(Stmt::Let { local: start_local, init: Some(start) });
+            (pattern, start_local)
+        });
+        let index_local = self.declare(None, usize_ty, span);
+
+        self.scopes.push(HashMap::new());
+        let mut inner = Vec::new();
+        // The element index: `length - 1 - i` when reversed.
+        let at_local = self.declare(None, usize_ty, span);
+        let at = if reversed {
+            let last = Expr {
+                ty: usize_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::Sub,
+                    lhs: Box::new(local(length_local, usize_ty)),
+                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(1), span }),
+                },
+                span,
+            };
+            Expr {
+                ty: usize_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::Sub,
+                    lhs: Box::new(last),
+                    rhs: Box::new(local(index_local, usize_ty)),
+                },
+                span,
+            }
+        } else {
+            local(index_local, usize_ty)
+        };
+        inner.push(Stmt::Let { local: at_local, init: Some(at) });
+        if let Some((pattern, start_local)) = &counter {
+            let counted = self.declare(binding_name(pattern), int_ty, pattern.span);
+            let index = Expr {
+                ty: int_ty,
+                kind: ExprKind::Cast { expr: Box::new(local(index_local, usize_ty)), to: int_ty },
+                span,
+            };
+            inner.push(Stmt::Let {
+                local: counted,
+                init: Some(Expr {
+                    ty: int_ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(local(*start_local, int_ty)),
+                        rhs: Box::new(index),
+                    },
+                    span,
+                }),
+            });
+        }
+        for (&(xs, span_ty, elem), pattern) in views.iter().zip(&patterns) {
+            let item_ty = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+            let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+            let item = self.declare(simple.then(|| binding_name(pattern)).flatten(), item_ty, pattern.span);
+            self.locals[item.0 as usize].loop_borrowed_handle = simple && self.is_counted_owner_handle(elem);
+            inner.push(Stmt::Let {
+                local: item,
+                init: Some(Expr {
+                    ty: item_ty,
+                    kind: ExprKind::Ref {
+                        place: Box::new(Expr {
+                            ty: elem,
+                            kind: ExprKind::Index {
+                                base: Box::new(local(xs, span_ty)),
+                                index: Box::new(local(at_local, usize_ty)),
+                            },
+                            span,
+                        }),
+                        mutable: false,
+                    },
+                    span,
+                }),
+            });
+            if !simple {
+                self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut inner);
+            }
+        }
+        self.loop_labels.push(label.map(|l| l.name));
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        inner.extend(checked.stmts);
+
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
+        }
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+        outer.push(Stmt::ForRange {
+            local: index_local,
+            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            end: local(length_local, usize_ty),
+            inclusive: false,
+            body: Block { stmts: inner, span },
+            else_block,
+        });
+        Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
+    /// once: the smaller, and `a` when they are equal. With `pick_greater`,
+    /// what `min`, `max`, `clamp` and `zip`'s length are built from.
+    fn pick_less(&mut self, a: Expr, b: Expr, span: Span) -> Expr {
+        self.pick(a, b, true, span)
+    }
+
+    fn pick_greater(&mut self, a: Expr, b: Expr, span: Span) -> Expr {
+        self.pick(a, b, false, span)
+    }
+
+    fn pick(&mut self, a: Expr, b: Expr, less: bool, span: Span) -> Expr {
+        let ty = a.ty;
+        let a_local = self.declare(None, ty, span);
+        let b_local = self.declare(None, ty, span);
+        let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
+        let (left, right) = if less { (local(b_local), local(a_local)) } else { (local(a_local), local(b_local)) };
+        let bool_ty = self.common.bool_;
+        let cond = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![left, right] },
+            span,
+        };
+        let value = self.if_value(cond, local(b_local), local(a_local), ty, span);
+        Expr {
+            ty,
+            kind: ExprKind::Block {
+                block: Block {
+                    stmts: vec![
+                        Stmt::Let { local: a_local, init: Some(a) },
+                        Stmt::Let { local: b_local, init: Some(b) },
+                    ],
+                    span,
+                },
+                value: Box::new(value),
+            },
+            span,
+        }
+    }
+
+    /// `then if cond else otherwise` as the two-arm `match` the ternary is.
+    fn if_value(&self, cond: Expr, then: Expr, otherwise: Expr, ty: Ty, span: Span) -> Expr {
+        let bool_ty = self.common.bool_;
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        Expr {
+            ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(cond),
+                arms: vec![arm(hir::PatternKind::Int(1), then), arm(hir::PatternKind::Wild, otherwise)],
+            },
+            span,
+        }
+    }
+
+    /// Two operands of one type, the way a binary operator's are: an
+    /// untyped literal takes the other's type. `None` after reporting.
+    fn unify_pair(&mut self, name: &str, a: Expr, b: Expr, span: Span) -> Option<(Expr, Expr)> {
+        let (a_lit, b_lit) = (self.types.is_untyped_literal(a.ty), self.types.is_untyped_literal(b.ty));
+        let (a, b) = match (a_lit, b_lit) {
+            (true, false) => {
+                let target = b.ty;
+                (self.coerce(a, target), b)
+            }
+            (false, true) => {
+                let target = a.ty;
+                (a, self.coerce(b, target))
+            }
+            (true, true) if self.types.is_float(a.ty) || self.types.is_float(b.ty) => {
+                let float = self.common.float_lit;
+                let a = self.adopt_literal(a, float);
+                let b = self.adopt_literal(b, float);
+                (self.commit(a), self.commit(b))
+            }
+            _ => (self.commit(a), self.commit(b)),
+        };
+        if a.ty == self.common.error || b.ty == self.common.error {
+            return None;
+        }
+        if a.ty != b.ty {
+            let (left, right) = (self.types.display(a.ty), self.types.display(b.ty));
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` compares two values of one type, found `{left}` and `{right}`"),
+            );
+            return None;
+        }
+        Some((a, b))
+    }
+
+    /// Whether `min`, `max` and `clamp` can order values of `ty` (`[TYP-37]`).
+    fn totally_ordered(&self, ty: Ty) -> bool {
+        matches!(
+            self.types.kind(ty),
+            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool
+        )
+    }
+
+    /// `[STD-26]`, `[MOD-5]` (0.9.9) — the prelude's `len`, `min`, `max`,
+    /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
+    /// other name.
+    fn synth_python_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all") {
+            return None;
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let positional: Vec<&ast::Expr> =
+            args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect();
+        let (fewest, most) = match name {
+            "len" | "abs" | "any" | "all" => (1, 1),
+            "min" | "max" => (2, 2),
+            "clamp" => (3, 3),
+            _ => (1, 2),
+        };
+        let named_ok = args.iter().all(|a| a.name.is_none_or(|n| name == "sum" && n.name.is("start")));
+        if !named_ok || positional.len() < fewest || positional.len() > most {
+            let wanted = if fewest == most { format!("{fewest}") } else { format!("{fewest} or {most}") };
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {wanted} argument(s), found {}", args.len()),
+            );
+            return Some(error);
+        }
+        let int_ty = self.common.i64;
+        let bool_ty = self.common.bool_;
+        Some(match name {
+            "len" => {
+                let value = self.synth_committed(positional[0]);
+                let value = self.read_through(value);
+                match *self.types.kind(value.ty) {
+                    _ if self.is_text(value.ty) => {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2073, positional[0].span, "`len` of a string")
+                                .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]")
+                                .help("`s.char_count()` for Python's count, or `s.len()` for the bytes"),
+                        );
+                        error
+                    }
+                    TyKind::Vec { .. } => {
+                        let length = Expr {
+                            ty: self.common.usize,
+                            kind: ExprKind::Builtin { which: Builtin::ArrayLen, args: vec![value] },
+                            span,
+                        };
+                        self.size_as_int(length)
+                    }
+                    TyKind::Span { .. } => {
+                        let length = Expr {
+                            ty: self.common.usize,
+                            kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![value] },
+                            span,
+                        };
+                        self.size_as_int(length)
+                    }
+                    TyKind::Array { len, .. } => Expr { ty: int_ty, kind: ExprKind::Int(u128::from(len)), span },
+                    _ if value.ty == self.common.error => error,
+                    _ => {
+                        let shown = self.types.display(value.ty);
+                        self.error(codes::E0900, positional[0].span, format!("`len` of a `{shown}` is not implemented yet"));
+                        error
+                    }
+                }
+            }
+            "min" | "max" => {
+                let a = self.synth(positional[0]);
+                let b = self.synth(positional[1]);
+                let Some((a, b)) = self.unify_pair(name, a, b, span) else { return Some(error) };
+                if !self.totally_ordered(a.ty) {
+                    let shown = self.types.display(a.ty);
+                    self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `{name}` needs"));
+                    return Some(error);
+                }
+                if name == "min" { self.pick_less(a, b, span) } else { self.pick_greater(a, b, span) }
+            }
+            "clamp" => {
+                let value = self.synth(positional[0]);
+                let lo = self.synth(positional[1]);
+                let hi = self.synth(positional[2]);
+                let Some((value, lo)) = self.unify_pair(name, value, lo, span) else { return Some(error) };
+                let Some((lo, hi)) = self.unify_pair(name, lo, hi, span) else { return Some(error) };
+                let ty = value.ty;
+                if lo.ty != ty || !self.totally_ordered(ty) {
+                    let shown = self.types.display(ty);
+                    self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `clamp` needs"));
+                    return Some(error);
+                }
+                // `[ERR-13]` — `lo > hi` is the caller's bug, and panics;
+                // otherwise `min(max(value, lo), hi)`.
+                let lo_local = self.declare(None, ty, span);
+                let hi_local = self.declare(None, ty, span);
+                let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
+                let inverted = Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(hi_local), local(lo_local)] },
+                    span,
+                };
+                let in_order = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(inverted) }, span };
+                let message = Expr {
+                    ty: self.common.str_,
+                    kind: ExprKind::Str("clamp: the lower bound is greater than the upper bound".to_string()),
+                    span,
+                };
+                let raised = self.pick_greater(value, local(lo_local), span);
+                let clamped = self.pick_less(raised, local(hi_local), span);
+                Expr {
+                    ty,
+                    kind: ExprKind::Block {
+                        block: Block {
+                            stmts: vec![
+                                Stmt::Let { local: lo_local, init: Some(lo) },
+                                Stmt::Let { local: hi_local, init: Some(hi) },
+                                Stmt::Expr(Expr {
+                                    ty: self.common.void,
+                                    kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![in_order, message] },
+                                    span,
+                                }),
+                            ],
+                            span,
+                        },
+                        value: Box::new(clamped),
+                    },
+                    span,
+                }
+            }
+            "abs" => {
+                let value = self.synth_committed(positional[0]);
+                let ty = value.ty;
+                match *self.types.kind(ty) {
+                    TyKind::Float(_) => Expr {
+                        ty,
+                        kind: ExprKind::Builtin { which: Builtin::FloatAbs, args: vec![value] },
+                        span,
+                    },
+                    TyKind::Uint(_) => value,
+                    TyKind::Int(_) => {
+                        // `0 - x` below zero: checked, so the minimum panics
+                        // (`[TYP-8]`).
+                        let x = self.declare(None, ty, span);
+                        let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
+                        let zero = || Expr { ty, kind: ExprKind::Int(0), span };
+                        let negative = Expr {
+                            ty: bool_ty,
+                            kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(x), zero()] },
+                            span,
+                        };
+                        let negated = Expr {
+                            ty,
+                            kind: ExprKind::Binary { op: BinOp::Sub, lhs: Box::new(zero()), rhs: Box::new(local(x)) },
+                            span,
+                        };
+                        let value_expr = self.if_value(negative, negated, local(x), ty, span);
+                        Expr {
+                            ty,
+                            kind: ExprKind::Block {
+                                block: Block { stmts: vec![Stmt::Let { local: x, init: Some(value) }], span },
+                                value: Box::new(value_expr),
+                            },
+                            span,
+                        }
+                    }
+                    _ if ty == self.common.error => error,
+                    _ => {
+                        let shown = self.types.display(ty);
+                        self.error(codes::E2020, positional[0].span, format!("`abs` needs a number, found `{shown}`"));
+                        error
+                    }
+                }
+            }
+            // `sum`, `any`, `all`: a loop over a view of the collection.
+            _ => {
+                let iterable = self.synth_committed(positional[0]);
+                if iterable.ty == self.common.error {
+                    return Some(error);
+                }
+                let elem = match *self.types.kind(iterable.ty) {
+                    TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+                    _ => {
+                        let shown = self.types.display(iterable.ty);
+                        self.error(
+                            codes::E0900,
+                            positional[0].span,
+                            format!("`{name}` over a `{shown}` is not implemented yet"),
+                        );
+                        return Some(error);
+                    }
+                };
+                let summing = name == "sum";
+                if summing && !self.types.is_numeric(elem) || !summing && elem != bool_ty {
+                    let shown = self.types.display(elem);
+                    let wanted = if summing { "numbers" } else { "`bool`s" };
+                    self.error(
+                        codes::E2020,
+                        positional[0].span,
+                        format!("`{name}` needs {wanted}, and these are `{shown}`"),
+                    );
+                    return Some(error);
+                }
+                let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+                let usize_ty = self.common.usize;
+                let mut kept = Vec::new();
+                let iterable = self.keep_alive(iterable, &mut kept);
+                let view = if matches!(self.types.kind(iterable.ty), TyKind::Vec { .. }) {
+                    self.view_of(iterable, span_ty, false, Builtin::SpanFrom { mutable: false })
+                } else {
+                    self.coerce(iterable, span_ty)
+                };
+                let xs = self.declare(None, span_ty, span);
+                let index = self.declare(None, usize_ty, span);
+                let acc_ty = if summing { elem } else { bool_ty };
+                let acc = self.declare(None, acc_ty, span);
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let start = if summing {
+                    match args.iter().find(|a| a.name.is_some()).map(|a| &a.value).or(positional.get(1).copied()) {
+                        Some(start) => self.check_expr(start, elem),
+                        None if self.types.is_float(elem) => Expr { ty: elem, kind: ExprKind::Float(0.0), span },
+                        None => Expr { ty: elem, kind: ExprKind::Int(0), span },
+                    }
+                } else {
+                    Expr { ty: bool_ty, kind: ExprKind::Bool(name == "all"), span }
+                };
+                let element = Expr {
+                    ty: elem,
+                    kind: ExprKind::Index { base: Box::new(local(xs, span_ty)), index: Box::new(local(index, usize_ty)) },
+                    span,
+                };
+                let step = if summing {
+                    Stmt::Assign {
+                        place: local(acc, acc_ty),
+                        value: Expr {
+                            ty: elem,
+                            kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(local(acc, acc_ty)), rhs: Box::new(element) },
+                            span,
+                        },
+                    }
+                } else {
+                    // `any` stops at the first true, `all` at the first false.
+                    let found = if name == "any" {
+                        element
+                    } else {
+                        Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(element) }, span }
+                    };
+                    Stmt::If {
+                        cond: found,
+                        then_block: Block {
+                            stmts: vec![
+                                Stmt::Assign {
+                                    place: local(acc, acc_ty),
+                                    value: Expr { ty: bool_ty, kind: ExprKind::Bool(name == "any"), span },
+                                },
+                                Stmt::Break { depth: 0 },
+                            ],
+                            span,
+                        },
+                        else_block: None,
+                    }
+                };
+                let length = Expr {
+                    ty: usize_ty,
+                    kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] },
+                    span,
+                };
+                Expr {
+                    ty: acc_ty,
+                    kind: ExprKind::Block {
+                        block: Block {
+                            stmts: kept
+                                .into_iter()
+                                .chain([
+                                Stmt::Let { local: xs, init: Some(view) },
+                                Stmt::Let { local: acc, init: Some(start) },
+                                Stmt::ForRange {
+                                    local: index,
+                                    start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+                                    end: length,
+                                    inclusive: false,
+                                    body: Block { stmts: vec![step], span },
+                                    else_block: None,
+                                },
+                                ])
+                                .collect(),
+                            span,
+                        },
+                        value: Box::new(local(acc, acc_ty)),
+                    },
+                    span,
+                }
+            }
+        })
     }
 
     fn is_counted_owner_handle(&self, ty: Ty) -> bool {
@@ -10904,6 +11731,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // counted loop over its indices, with no iterator object at all.
         if let TyKind::Vec { elem } = *self.types.kind(iterable.ty) {
             return self.check_for_array(label, pattern, (iterable, elem), body, else_block, span);
+        }
+        // `[CTL-1]` — a fixed array and a shared view are iterated the same
+        // way, through a view of their elements.
+        if let TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } =
+            *self.types.kind(iterable.ty)
+        {
+            return self.check_for_indexed(
+                label,
+                vec![(iterable, elem)],
+                vec![pattern],
+                None,
+                false,
+                body,
+                else_block,
+                span,
+            );
         }
 
         // The iterator itself is a local, because `next` mutates it.
@@ -12659,6 +13502,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     ast::UnOp::BitNot => (UnOp::BitNot, operand.ty),
                     ast::UnOp::Not => (UnOp::Not, self.common.bool_),
                 };
+                // D-192, `[TYP-8]` — negating a signed integer overflows at
+                // its minimum, which must panic like any overflow (and is
+                // undefined behaviour in C). `-x` is `0 - x`, whose checking
+                // follows the function's overflow policy. An untyped literal
+                // stays a constant (`[LEX-24]`).
+                if hir_op == UnOp::Neg && matches!(self.types.kind(ty), TyKind::Int(_)) {
+                    let zero = Expr { ty, kind: ExprKind::Int(0), span };
+                    return Expr {
+                        ty,
+                        kind: ExprKind::Binary { op: BinOp::Sub, lhs: Box::new(zero), rhs: Box::new(operand) },
+                        span,
+                    };
+                }
                 Expr {
                     ty,
                     kind: ExprKind::Unary { op: hir_op, operand: Box::new(operand) },
@@ -13454,6 +14310,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // function of the same name shadows them.
         if segments.len() == 1 && !self.fn_ids.contains_key(&self.resolve_name(name)) {
             if let Some(built) = self.synth_panic_or_assert(name.as_str(), args, span) {
+                return built;
+            }
+            if let Some(built) = self.synth_python_builtin(name.as_str(), args, span) {
                 return built;
             }
         }
@@ -16103,6 +16962,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.
+        // `[TXT-10]`, `[TXT-11]` (0.9.9) — `len()` counts bytes, `char_count()`
+        // characters, and `is_empty()`; a `String` has them through its `str`.
+        if self.is_text(receiver.ty)
+            && explicit.is_empty()
+            && args.is_empty()
+            && (matches!(name.name.as_str(), "char_count" | "is_empty")
+                || name.name.is("len") && receiver.ty == self.common.str_)
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_text_count(receiver, name.name.as_str(), span);
+        }
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
             if !explicit.is_empty() {
                 self.error(
@@ -17274,6 +18144,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.collect_mutated_capture_fields_expr(arg, environment, fields);
                 }
             }
+            ExprKind::Block { block, value } => {
+                for stmt in &block.stmts {
+                    self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
+                }
+                self.collect_mutated_capture_fields_expr(value, environment, fields);
+            }
             ExprKind::CallIndirect { callee, args, .. } => {
                 self.collect_mutated_capture_fields_expr(callee, environment, fields);
                 for arg in args {
@@ -17483,6 +18359,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     Self::builtin_consumes_argument(*which, index),
                 )
             }),
+            ExprKind::Block { block, value } => {
+                block.stmts.iter().any(|stmt| self.closure_stmt_moves_capture(stmt, environment))
+                    || self.closure_expr_moves_capture(value, environment, consuming)
+            }
             ExprKind::ClassNew { init, args, .. } => {
                 let Some(signature) = self.signatures.get(init.0 as usize) else {
                     return args
@@ -21170,6 +22050,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         hir::MatchArmBody::Expr(expr) => self.expr_diverges(expr),
                     })
             }
+            ExprKind::Block { block, value } => self.block_diverges(block) || self.expr_diverges(value),
             _ => false,
         }
     }

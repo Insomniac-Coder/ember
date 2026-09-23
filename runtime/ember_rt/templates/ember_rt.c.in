@@ -1211,6 +1211,65 @@ ember_str ember_vec_as_str(const ember_vec* v) {
     return s;
 }
 
+/* A float's bits as a signed integer, flipped below zero so that integer order
+ * is totalOrder. */
+static int64_t total_key_f64(double v) {
+    int64_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    return bits ^ (int64_t)((uint64_t)(bits >> 63) >> 1);
+}
+
+static int32_t total_key_f32(float v) {
+    int32_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    return bits ^ (int32_t)((uint32_t)(bits >> 31) >> 1);
+}
+
+bool ember_total_lt_f64(double a, double b) { return total_key_f64(a) < total_key_f64(b); }
+bool ember_total_lt_f32(float a, float b) { return total_key_f32(a) < total_key_f32(b); }
+
+size_t ember_range_count_i64(int64_t start, int64_t stop, int64_t step) {
+    /* The distance, exact in 64 unsigned bits: `stop - start` or its negation. */
+    if (step > 0) {
+        if (start >= stop) {
+            return 0;
+        }
+        uint64_t distance = (uint64_t)stop - (uint64_t)start;
+        return (size_t)((distance - 1) / (uint64_t)step + 1);
+    }
+    if (start <= stop) {
+        return 0;
+    }
+    uint64_t distance = (uint64_t)start - (uint64_t)stop;
+    uint64_t magnitude = (uint64_t)(-(step + 1)) + 1;
+    return (size_t)((distance - 1) / magnitude + 1);
+}
+
+size_t ember_range_count_u64(uint64_t start, uint64_t stop, uint64_t step) {
+    if (start >= stop) {
+        return 0;
+    }
+    return (size_t)((stop - start - 1) / step + 1);
+}
+
+/* Wrapping 64-bit arithmetic: the true value lies between `start` and `stop`,
+ * so the wrapped result is exact. */
+int64_t ember_range_nth_i64(int64_t start, int64_t step, size_t k) {
+    return (int64_t)((uint64_t)start + (uint64_t)k * (uint64_t)step);
+}
+
+uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k) {
+    return start + (uint64_t)k * step;
+}
+
+size_t ember_str_char_count(ember_str s) {
+    size_t count = 0;
+    for (size_t i = 0; i < s.len; ++i) {
+        count += (s.ptr[i] & 0xC0) != 0x80;
+    }
+    return count;
+}
+
 int ember_str_cmp(ember_str a, ember_str b) {
     size_t n = a.len < b.len ? a.len : b.len;
     int order = n == 0 ? 0 : memcmp(a.ptr, b.ptr, n);

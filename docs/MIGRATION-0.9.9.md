@@ -90,9 +90,9 @@ and gates green.
 6. ~~Prelude: `mem`, `panic`, `todo`, `unreachable`; `Option.unwrap`/`unwrap_or`~~ (done, with the
    assertions and `eprint`).
 
-**Next batch:** `[STD-26]`'s `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`,
-`all`, and `min`, `max`, `abs`, `clamp`, `input`; the rest of `[ERR-4]`; f-string specs (`[LEX-19]`)
-and float `Display` (`[STD-20]`); `Map`/`Set`; D-190.
+**Next batch:** f-string specs (`[LEX-19]`) and float `Display` (`[STD-20]`); the rest of `[ERR-4]`
+(`is_some`, `map`, …, `Result`'s methods); `sorted` and `Array.sort`; ranges and generator
+expressions (`[GRM-38]`) as values; `input`; `Map`/`Set`.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
 (`[EXC-19]`), `@sync`, `Weak` upgrade, callable fields.
@@ -223,3 +223,20 @@ The next number is ODR-024.
   pair of value and argument, so the argument is evaluated first, as any argument is. Found and
   fixed: D-191 (`println` of one `String` emitted invalid C). `annotations.py` now also checks
   `stdout` and `panics` for run tests, so a directory's runtime behaviour is checked in seconds.
+* **2026-09-24 — `[STD-26]`, block expressions, D-190, D-192, D-193.** HIR gained
+  `ExprKind::Block { block, value }` (its statements, then its value, then its drops), which the
+  checker uses to evaluate each argument once and to put a loop inside an expression. `len` is
+  `x.len()` for a collection or view, and `E2073` for a string. `min`, `max`, `clamp` compare with
+  a `TotalLess` builtin (IEEE totalOrder for floats, `[TYP-37]`; Python's rule that the first of
+  two equal arguments wins); `clamp` panics when `lo > hi` (`[ERR-13]`); `abs` is `0 - x` below
+  zero for integers (so the minimum panics) and `fabs` for floats. `sum`, `any`, `all` are a
+  counted loop over a view of the collection. In a `for` header, `range(n)` and `range(a, b)` are
+  `a..b`, `range(a, b, step)` is a counted loop over the number of values (runtime
+  `ember_range_count_*`, each value computed from its index so nothing overflows; a zero step is
+  an assertion); `enumerate`, `zip` and `reversed` are one counted loop over views. A shared
+  `Span` and a fixed array now iterate. Defects: D-190 (a returned view of a local reported
+  `E3021` beside the right `E3060`; the drop at a `return` is left to the escape check), D-192
+  (`-i64.MIN` did not panic), D-193 (`for x in [1, 2]` was rejected). The conformance harness does
+  not fail on unexpected diagnostics (`[TST-1]` says it must); recorded in the audit, with a UI test
+  pinning D-190's exact code list meanwhile.  `[TXT-10]`: `str` had no methods; `len()` (bytes), `char_count()` (characters) and `is_empty()`
+  are built for `str`, and for `String` through its `str` (`E2073`'s page needed them).
