@@ -18,6 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>  /* [STD-15]: the generated Array helpers move bytes */
 
 #ifdef __cplusplus
 extern "C" {
@@ -524,6 +525,12 @@ void ember_vec_push(ember_vec* v, size_t elem_size, const void* value);
  * them out of their fixed array, so they now belong to the result. */
 ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count);
 void ember_vec_free(ember_vec* v, size_t elem_size);
+/* `[STD-15]`: a stable merge sort by `less`; reversing in place; and inserting
+ * a copy of `*value` at `index` (the caller has checked `index <= len` and
+ * moved the value out, so it now belongs to the array). */
+void ember_vec_sort(ember_vec* v, size_t elem_size, bool (*less)(const void*, const void*));
+void ember_vec_reverse(ember_vec* v, size_t elem_size);
+void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value);
 /* Append `count` bytes. Used for `String`, whose element size is one. */
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);
 
@@ -561,6 +568,12 @@ void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec);
 /* `[TXT-10]`: the characters in valid UTF-8, counted as the bytes that do not
  * continue a character. */
 size_t ember_str_char_count(ember_str s);
+
+/* `[STD-8b]`: whether `needle` occurs in `text`. UTF-8 matches only at
+ * character boundaries, so a character never matches inside another's
+ * encoding. */
+bool ember_str_contains(ember_str text, ember_str needle);
+bool ember_str_contains_char(ember_str text, uint32_t needle);
 
 /* `[TYP-37]`: `a < b` by IEEE totalOrder, the order `min`, `max` and `clamp`
  * use for floats: -NaN < -inf < ... < -0.0 < +0.0 < ... < +inf < +NaN. */

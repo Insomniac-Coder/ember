@@ -136,6 +136,7 @@ pub fn emit(
             .collect(),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
+        array_helpers: std::cell::RefCell::new(Vec::new()),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -257,6 +258,10 @@ struct Emitter<'a> {
     /// field-wise equality function each, requested and emitted like
     /// `drop_glue`.
     eq_fns: std::cell::RefCell<Vec<Ty>>,
+    /// `[STD-15]` — the per-type helpers the Array methods call (a sort's
+    /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
+    /// like `eq_fns`.
+    array_helpers: std::cell::RefCell<Vec<(ArrayHelper, Ty)>>,
 }
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
@@ -264,6 +269,20 @@ const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
 const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
+
+/// And by the `[STD-15]` Array helpers' prototypes.
+const ARRAY_HELPER_PROTOTYPES: &str = "/* @@array-helper-prototypes@@ */";
+
+/// One per-type helper an Array method calls. `Pop` is keyed by the
+/// `Option[T]` it returns, the rest by the element type.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ArrayHelper {
+    Less,
+    Pop,
+    Remove,
+    Clear,
+    Sorted,
+}
 
 #[derive(Clone)]
 struct VirtualMethod {
@@ -362,6 +381,7 @@ impl Emitter<'_> {
         self.emit_prototypes(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
         self.line(EQ_FN_PROTOTYPES);
+        self.line(ARRAY_HELPER_PROTOTYPES);
         self.emit_interface_adapters();
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
@@ -384,8 +404,129 @@ impl Emitter<'_> {
         if has_main {
             self.emit_entry_point(leak_check);
         }
+        // The Array helpers first: `clear` drops through glue it may request.
+        self.emit_array_helpers();
         self.emit_drop_glue();
         self.emit_eq_fns();
+    }
+
+    /// The symbol of a `[STD-15]` Array helper, requesting it.
+    fn array_helper(&self, helper: ArrayHelper, ty: Ty) -> String {
+        let mut helpers = self.array_helpers.borrow_mut();
+        let index = helpers.iter().position(|&known| known == (helper, ty)).unwrap_or_else(|| {
+            helpers.push((helper, ty));
+            helpers.len() - 1
+        });
+        ember_branding::mangled(&format!("array_helper_{index}"))
+    }
+
+    /// `a < b` for two elements behind `const void*`, in `Ord`'s order:
+    /// totalOrder for floats (`[TYP-37]`), bytes for text.
+    fn less_behind_pointers(&self, ty: Ty) -> String {
+        match self.types.kind(ty) {
+            TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64(*(const double*)a, *(const double*)b)"),
+            TyKind::Float(_) => format!("{RT}total_lt_f32(*(const float*)a, *(const float*)b)"),
+            TyKind::Str => format!("{RT}str_cmp(*(const {RT}str*)a, *(const {RT}str*)b) < 0"),
+            TyKind::Vec { .. } => format!(
+                "{RT}str_cmp({RT}vec_as_str((const {RT}vec*)a), {RT}vec_as_str((const {RT}vec*)b)) < 0"
+            ),
+            _ => {
+                let c = self.c_type(ty);
+                format!("*(const {c}*)a < *(const {c}*)b")
+            }
+        }
+    }
+
+    /// Define every requested Array helper, to a fixpoint (`sorted` asks for
+    /// a comparison), and put their prototypes where the marker stands.
+    fn emit_array_helpers(&mut self) {
+        let mut emitted = 0;
+        let mut prototypes = Vec::new();
+        loop {
+            let pending: Vec<(ArrayHelper, Ty)> = self.array_helpers.borrow()[emitted..].to_vec();
+            if pending.is_empty() {
+                break;
+            }
+            for (helper, ty) in pending {
+                let symbol = ember_branding::mangled(&format!("array_helper_{emitted}"));
+                let (signature, body) = match helper {
+                    ArrayHelper::Less => (
+                        format!("static bool {symbol}(const void* a, const void* b)"),
+                        vec![format!("return {};", self.less_behind_pointers(ty))],
+                    ),
+                    ArrayHelper::Pop => {
+                        let TyKind::Enum(id) = *self.types.kind(ty) else {
+                            unreachable!("`pop` returns an Option")
+                        };
+                        let def = self.types.enum_def(id).clone();
+                        let (none, some) = (&def.variants[0], &def.variants[1]);
+                        let elem = some.fields[0].ty;
+                        let (option, elem_c) = (self.c_type(ty), self.c_type(elem));
+                        (
+                            format!("static {option} {symbol}({RT}vec* v)"),
+                            vec![
+                                format!("{option} r;"),
+                                "memset(&r, 0, sizeof r);".to_string(),
+                                format!("if (v->len == 0) {{ r.tag = {}; return r; }}", none.discriminant),
+                                "v->len -= 1;".to_string(),
+                                format!(
+                                    "memcpy(&r.payload.{}.{}, (unsigned char*)v->ptr + v->len * sizeof({elem_c}), sizeof({elem_c}));",
+                                    some.name, some.fields[0].name
+                                ),
+                                format!("r.tag = {};", some.discriminant),
+                                "return r;".to_string(),
+                            ],
+                        )
+                    }
+                    ArrayHelper::Remove => {
+                        let c = self.c_type(ty);
+                        (
+                            format!("static {c} {symbol}({RT}vec* v, size_t i)"),
+                            vec![
+                                format!("{c} r;"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + i * sizeof({c});"),
+                                format!("memcpy(&r, at, sizeof({c}));"),
+                                format!("memmove(at, at + sizeof({c}), (v->len - i - 1) * sizeof({c}));"),
+                                "v->len -= 1;".to_string(),
+                                "return r;".to_string(),
+                            ],
+                        )
+                    }
+                    ArrayHelper::Clear => {
+                        let c = self.c_type(ty);
+                        let mut drops = Vec::new();
+                        self.drop_lines(&format!("(({c}*)v->ptr)[_ci]"), ty, &mut drops);
+                        let mut body = Vec::new();
+                        if !drops.is_empty() {
+                            body.push(format!("for (size_t _ci = 0; _ci < v->len; ++_ci) {{ {} }}", drops.join(" ")));
+                        }
+                        body.push("v->len = 0;".to_string());
+                        (format!("static void {symbol}({RT}vec* v)"), body)
+                    }
+                    ArrayHelper::Sorted => {
+                        let c = self.c_type(ty);
+                        let less = self.array_helper(ArrayHelper::Less, ty);
+                        (
+                            format!("static {RT}vec {symbol}(const void* elems, size_t count)"),
+                            vec![
+                                format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), elems, count);"),
+                                format!("{RT}vec_sort(&r, sizeof({c}), {less});"),
+                                "return r;".to_string(),
+                            ],
+                        )
+                    }
+                };
+                prototypes.push(format!("{signature};"));
+                self.line(&format!("{signature} {{"));
+                for line in body {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        self.out = self.out.replacen(ARRAY_HELPER_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
     /// D-187 — a C expression, true when `a` and `b` (values of `ty`) are
@@ -3437,6 +3578,52 @@ impl Emitter<'_> {
                     }
                     Builtin::StrCharCount => {
                         return format!("{RT}str_char_count({})", rendered[0]);
+                    }
+                    Builtin::StrContains => {
+                        return format!("{RT}str_contains({}, {})", rendered[0], rendered[1]);
+                    }
+                    // `[STD-15]` — the receiver arrives as a pointer to the
+                    // array, as `push`'s does.
+                    Builtin::ArraySort => {
+                        let elem = self.element_of(*arg_ty);
+                        let less = self.array_helper(ArrayHelper::Less, elem);
+                        return format!("{RT}vec_sort({}, sizeof({}), {less})", rendered[0], self.c_type(elem));
+                    }
+                    Builtin::ArrayReverse => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!("{RT}vec_reverse({}, sizeof({}))", rendered[0], self.c_type(elem));
+                    }
+                    Builtin::ArrayClear => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!("{}({})", self.array_helper(ArrayHelper::Clear, elem), rendered[0]);
+                    }
+                    Builtin::ArrayPop { option } => {
+                        return format!("{}({})", self.array_helper(ArrayHelper::Pop, *option), rendered[0]);
+                    }
+                    Builtin::ArrayRemove => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!("{}({}, {})", self.array_helper(ArrayHelper::Remove, elem), rendered[0], rendered[1]);
+                    }
+                    Builtin::ArrayInsert => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!(
+                            "{RT}vec_insert({}, sizeof({}), {}, &{})",
+                            rendered[0],
+                            self.c_type(elem),
+                            rendered[2],
+                            rendered[1]
+                        );
+                    }
+                    Builtin::ArraySorted { elem } => {
+                        return format!(
+                            "{}(({}).ptr, ({}).len)",
+                            self.array_helper(ArrayHelper::Sorted, *elem),
+                            rendered[0],
+                            rendered[0]
+                        );
+                    }
+                    Builtin::StrContainsChar => {
+                        return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);
                     }
                     Builtin::FloatAbs => {
                         let function = match self.types.kind(*arg_ty) {

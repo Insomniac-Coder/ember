@@ -91,7 +91,7 @@ and gates green.
    assertions and `eprint`).
 
 **Next batch:** ~~f-string specs (`[LEX-19]`)~~ (done); ~~float `Display` (`[STD-20]`)~~ (done); the rest of `[ERR-4]`
-(`is_some`, `map`, …, `Result`'s methods); `sorted` and `Array.sort`; ranges and generator
+(`is_some`, `map`, …, `Result`'s methods); ~~`sorted` and `Array.sort`~~ (done); ranges and generator
 expressions (`[GRM-38]`) as values (comprehensions themselves are done); `input`; `Map`/`Set`.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
@@ -276,3 +276,16 @@ The next number is ODR-024.
   innermost level. Not yet: a generator stored or passed elsewhere, a stepped `range` in a
   clause, `{…}` comprehensions (they need `Map`/`Set`). `tests/milestones` had one more
   integral float (`5` is now `5.0`).
+* **2026-09-24 — `Array` methods (`[STD-15]`), membership (`[STD-8]`), D-195.** Reading methods are
+  checker desugars: `is_empty`, `contains`/`index_of` (a linear scan through the same equality
+  `==` uses), and `get`/`first`/`last` through `Span.get`, so an empty array's `last()` is `None`.
+  Methods that move elements call per-element-type helpers the C backend generates and emits
+  like the equality functions (`ArrayHelper`: a sort's comparison, `pop`, `remove`, `clear` with
+  each element's drop, `sorted`), and the runtime gained a stable bottom-up merge sort, `reverse`
+  and `insert`. `sort` orders scalars (floats by totalOrder) and text; `sorted` copies, so it
+  needs `Copy` elements until `Clone` is built. `remove`/`insert` bind their arguments before the
+  mutable borrow (`xs.insert(len(xs), v)`) and assert the index (`[ERR-13]`). `x in c` and
+  `x not in c` scan collections, test text for a `str` or `char` needle (`[STD-8b]`), and compare
+  twice for a range written in place; anything else is `E2226`. `sorted(xs)` from `[STD-26]`.
+  D-195: `String +=` emitted invalid C, and `String + str` was rejected. The runtime header now
+  includes `<string.h>` for the generated helpers.

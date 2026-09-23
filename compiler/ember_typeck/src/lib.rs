@@ -9523,6 +9523,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     );
                     return;
                 }
+                // D-195, `[TXT-11]` — `s += t` on a `String` appends, as
+                // `push_str`; no other non-numeric `op=` exists yet.
+                if let Some(bin) = op
+                    && !self.types.is_numeric(place_ty)
+                    && place_ty != self.common.error
+                {
+                    let is_string = matches!(*self.types.kind(place_ty), TyKind::Vec { elem } if elem == self.common.u8);
+                    if is_string && *bin == ast::BinOp::Add {
+                        let str_ty = self.common.str_;
+                        let text = self.synth_committed(value);
+                        let text = self.read_through(text);
+                        if !self.is_text(text.ty) {
+                            if text.ty != self.common.error {
+                                let shown = self.types.display(text.ty);
+                                self.error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
+                            }
+                            return;
+                        }
+                        let text = self.coerce(text, str_ty);
+                        let receiver = self.pass_receiver(place, Mode::Mut, stmt.span);
+                        out.push(Stmt::Expr(Expr {
+                            ty: self.common.void,
+                            kind: ExprKind::Builtin { which: Builtin::StringPush, args: vec![receiver, text] },
+                            span: stmt.span,
+                        }));
+                        return;
+                    }
+                    let shown = self.types.display(place_ty);
+                    self.error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                    return;
+                }
                 let value = match op {
                     // `a op= b` is `a = a op b` when no `AddAssign` exists
                     // (`[TYP-21]`); Phase 0 has scalars only, so it always is.
@@ -11569,6 +11600,438 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some(Some((start, end, inclusive)))
     }
 
+    /// `a == b` for two values of one type, as the operator writes it: a
+    /// scalar compared in C, text and `[STR-5]` aggregates through
+    /// `ValueCompare`. `None` when the type has no `Eq`.
+    fn equality(&self, a: Expr, b: Expr, span: Span) -> Option<Expr> {
+        let ty = a.ty;
+        let scalar = match self.types.kind(ty) {
+            TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. } => false,
+            TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
+            _ => true,
+        };
+        let kind = if scalar {
+            ExprKind::Binary { op: BinOp::Eq, lhs: Box::new(a), rhs: Box::new(b) }
+        } else if self.is_text(ty) || self.has_implicit_eq(ty) {
+            ExprKind::Builtin { which: Builtin::ValueCompare { op: BinOp::Eq }, args: vec![a, b] }
+        } else {
+            return None;
+        };
+        Some(Expr { ty: self.common.bool_, kind, span })
+    }
+
+    /// `[STD-8]` — `x in c`: a linear scan of an `Array`, a view or a fixed
+    /// array; a substring or character test on text (`[STD-8b]`); two
+    /// comparisons on a range written in place (`x in a..b`). Each operand is
+    /// evaluated once; `x not in c` is its negation. Anything else is `E2226`.
+    fn synth_membership(&mut self, needle: &ast::Expr, container: &ast::Expr, negate: bool, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let bool_ty = self.common.bool_;
+        let negated = |found: Expr| {
+            if negate {
+                Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(found) }, span }
+            } else {
+                found
+            }
+        };
+        // `x in a..b` and `x in a..=b`.
+        if let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &container.kind {
+            let value = self.synth(needle);
+            let lo = self.synth(lo);
+            let hi = self.synth(hi);
+            let Some((value, lo)) = self.unify_pair("in", value, lo, span) else { return error };
+            let Some((value, hi)) = self.unify_pair("in", value, hi, span) else { return error };
+            let ty = value.ty;
+            if !self.totally_ordered(ty) {
+                let shown = self.types.display(ty);
+                self.error(codes::E2226, span, format!("a range of `{shown}` does not implement `Contains`"));
+                return error;
+            }
+            let x = self.declare(None, ty, span);
+            let local = || Expr { ty, kind: ExprKind::Local(x), span };
+            let above = Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(lo), rhs: Box::new(local()) },
+                span,
+            };
+            let below = Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary {
+                    op: if *inclusive { BinOp::Le } else { BinOp::Lt },
+                    lhs: Box::new(local()),
+                    rhs: Box::new(hi),
+                },
+                span,
+            };
+            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(above), rhs: Box::new(below) }, span };
+            return negated(Expr {
+                ty: bool_ty,
+                kind: ExprKind::Block {
+                    block: Block { stmts: vec![Stmt::Let { local: x, init: Some(value) }], span },
+                    value: Box::new(both),
+                },
+                span,
+            });
+        }
+        let haystack = self.synth_committed(container);
+        let haystack = self.read_through(haystack);
+        if haystack.ty == self.common.error {
+            return error;
+        }
+        // Text: a `str` or a `char` needle.
+        if self.is_text(haystack.ty) {
+            let str_ty = self.common.str_;
+            let text = self.coerce(haystack, str_ty);
+            let value = self.synth_committed(needle);
+            let value = self.read_through(value);
+            let (which, value) = if value.ty == self.common.char_ {
+                (Builtin::StrContainsChar, value)
+            } else if self.is_text(value.ty) {
+                (Builtin::StrContains, self.coerce(value, str_ty))
+            } else {
+                if value.ty != self.common.error {
+                    let shown = self.types.display(value.ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2226, span, format!("`str` does not implement `Contains[{shown}]`"))
+                            .note("a string contains `str` and `char` needles; for bytes, search `s.as_bytes()` [STD-8b]"),
+                    );
+                }
+                return error;
+            };
+            return negated(Expr { ty: bool_ty, kind: ExprKind::Builtin { which, args: vec![text, value] }, span });
+        }
+        let elem = match *self.types.kind(haystack.ty) {
+            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            _ => {
+                let shown = self.types.display(haystack.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2226, span, format!("`{shown}` does not implement `Contains`"))
+                        .help("`c.iter().any(fn(e) => e == x)` [STD-8]"),
+                );
+                return error;
+            }
+        };
+        let value = self.check_expr(needle, elem);
+        match self.scan(haystack, elem, value, true, span) {
+            Some(found) => negated(found),
+            None => error,
+        }
+    }
+
+    /// A linear scan of a collection for `value`: whether it is there, or
+    /// (with `found_flag` false) `Option[int]`, the index of the first match.
+    fn scan(&mut self, haystack: Expr, elem: Ty, value: Expr, found_flag: bool, span: Span) -> Option<Expr> {
+        let bool_ty = self.common.bool_;
+        let usize_ty = self.common.usize;
+        let int_ty = self.common.i64;
+        let mut stmts = Vec::new();
+        let haystack = self.keep_alive(haystack, &mut stmts);
+        let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+        let view = if matches!(self.types.kind(haystack.ty), TyKind::Vec { .. }) {
+            self.view_of(haystack, span_ty, false, Builtin::SpanFrom { mutable: false })
+        } else {
+            self.coerce(haystack, span_ty)
+        };
+        let xs = self.declare(None, span_ty, span);
+        let needle = self.declare(None, elem, span);
+        let at = self.declare(None, usize_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let element = Expr {
+            ty: elem,
+            kind: ExprKind::Index { base: Box::new(local(xs, span_ty)), index: Box::new(local(at, usize_ty)) },
+            span,
+        };
+        let Some(matches) = self.equality(element, local(needle, elem), span) else {
+            let shown = self.types.display(elem);
+            self.sink.emit(
+                Diagnostic::error(codes::E2226, span, format!("`{shown}` has no `Eq`, so a scan cannot match it"))
+                    .help("`c.iter().any(fn(e) => …)` with a comparison of your own [STD-8]"),
+            );
+            return None;
+        };
+        let (acc_ty, init, hit) = if found_flag {
+            (bool_ty, Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }, Expr { ty: bool_ty, kind: ExprKind::Bool(true), span })
+        } else {
+            let option = self.option_of(int_ty);
+            let TyKind::Enum(option_id) = *self.types.kind(option) else { unreachable!("Option is an enum") };
+            let index = Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(local(at, usize_ty)), to: int_ty }, span };
+            (
+                option,
+                Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: Vec::new() }, span },
+                Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![index] }, span },
+            )
+        };
+        let acc = self.declare(None, acc_ty, span);
+        stmts.push(Stmt::Let { local: xs, init: Some(view) });
+        stmts.push(Stmt::Let { local: needle, init: Some(value) });
+        stmts.push(Stmt::Let { local: acc, init: Some(init) });
+        let length = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] }, span };
+        stmts.push(Stmt::ForRange {
+            local: at,
+            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            end: length,
+            inclusive: false,
+            body: Block {
+                stmts: vec![Stmt::If {
+                    cond: matches,
+                    then_block: Block {
+                        stmts: vec![Stmt::Assign { place: local(acc, acc_ty), value: hit }, Stmt::Break { depth: 0 }],
+                        span,
+                    },
+                    else_block: None,
+                }],
+                span,
+            },
+            else_block: None,
+        });
+        Some(Expr {
+            ty: acc_ty,
+            kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(local(acc, acc_ty)) },
+            span,
+        })
+    }
+
+    /// `[STD-15]` — the Array methods that only read: `is_empty()`,
+    /// `contains(x)`, `index_of(x) -> Option[int]`, and `get(i)`, `first()`,
+    /// `last()`, each an `Option[ref T]` into the array.
+    fn synth_array_query(&mut self, receiver: Expr, elem: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let usize_ty = self.common.usize;
+        let int_ty = self.common.i64;
+        let wanted = usize::from(matches!(name.name.as_str(), "contains" | "index_of" | "get"));
+        if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{}` takes {wanted} argument(s), found {}", name.name, args.len()));
+            return error;
+        }
+        match name.name.as_str() {
+            "is_empty" => {
+                let length = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::ArrayLen, args: vec![receiver] }, span };
+                Expr {
+                    ty: self.common.bool_,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Eq,
+                        lhs: Box::new(length),
+                        rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
+                    },
+                    span,
+                }
+            }
+            "contains" | "index_of" => {
+                let value = self.check_expr(&args[0].value, elem);
+                self.scan(receiver, elem, value, name.name.is("contains"), span).unwrap_or(error)
+            }
+            _ => {
+                // A reference into the array, so the array must be a place.
+                if !is_place(&receiver.kind) {
+                    self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
+                    return error;
+                }
+                let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+                let view = self.view_of(receiver, span_ty, false, Builtin::SpanFrom { mutable: false });
+                let index = match name.name.as_str() {
+                    "get" => {
+                        let Some(index) = self.check_index(&args[0].value, None, span) else { return error };
+                        index
+                    }
+                    "first" => Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+                    // `len - 1` as a wrapped `int`: an empty array asks for an
+                    // index no length reaches, and `get` answers `None`.
+                    _ => {
+                        let xs = self.declare(None, span_ty, span);
+                        let length = Expr {
+                            ty: usize_ty,
+                            kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![Expr { ty: span_ty, kind: ExprKind::Local(xs), span }] },
+                            span,
+                        };
+                        let last = Expr {
+                            ty: int_ty,
+                            kind: ExprKind::Binary {
+                                op: BinOp::Sub,
+                                lhs: Box::new(self.size_as_int(length)),
+                                rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Int(1), span }),
+                            },
+                            span,
+                        };
+                        let item = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+                        let option = self.option_of(item);
+                        let wrapped = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(last), to: usize_ty }, span };
+                        return Expr {
+                            ty: option,
+                            kind: ExprKind::Block {
+                                block: Block { stmts: vec![Stmt::Let { local: xs, init: Some(view) }], span },
+                                value: Box::new(Expr {
+                                    ty: option,
+                                    kind: ExprKind::Builtin {
+                                        which: Builtin::SpanGet,
+                                        args: vec![Expr { ty: span_ty, kind: ExprKind::Local(xs), span }, wrapped],
+                                    },
+                                    span,
+                                }),
+                            },
+                            span,
+                        };
+                    }
+                };
+                let item = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+                let option = self.option_of(item);
+                Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::SpanGet, args: vec![view, index] }, span }
+            }
+        }
+    }
+
+    /// `[STD-15]` — the Array methods that reorder or move elements. The
+    /// array is borrowed mutably, as `push` borrows it; `remove` and
+    /// `insert` check their index first (`[ERR-13]`: the caller's bug
+    /// panics); `sorted` copies, so it needs `Copy` elements for now.
+    fn synth_array_change(&mut self, receiver: Expr, elem: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let void = self.common.void;
+        let usize_ty = self.common.usize;
+        let bool_ty = self.common.bool_;
+        let method = name.name.as_str();
+        let wanted = match method {
+            "remove" => 1,
+            "insert" => 2,
+            _ => 0,
+        };
+        if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {wanted} argument(s), found {}", args.len()));
+            return error;
+        }
+        if matches!(method, "sort" | "sorted") && !self.sortable(elem) {
+            let shown = self.types.display(elem);
+            self.error(
+                codes::E2040,
+                span,
+                format!("`{shown}` does not implement `Ord`, which `{method}` needs"),
+            );
+            return error;
+        }
+        if method == "sorted" {
+            if !self.types.is_copy(elem) {
+                let shown = self.types.display(elem);
+                self.error(codes::E0900, span, format!("`sorted` of `{shown}` values is not implemented yet: it needs `Clone`"));
+                return error;
+            }
+            let ty = receiver.ty;
+            return Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArraySorted { elem }, args: vec![receiver] }, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{method}` changes the array, so it needs an Array variable"));
+            return error;
+        }
+        let array_ty = receiver.ty;
+        let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+        let call = |which, args, ty| Expr { ty, kind: ExprKind::Builtin { which, args }, span };
+        match method {
+            "sort" => call(Builtin::ArraySort, vec![receiver], void),
+            "reverse" => call(Builtin::ArrayReverse, vec![receiver], void),
+            "clear" => call(Builtin::ArrayClear, vec![receiver], void),
+            "pop" => {
+                let option = self.option_of(elem);
+                call(Builtin::ArrayPop { option }, vec![receiver], option)
+            }
+            _ => {
+                // `remove(i)` needs `i < len`, and `insert(i, v)` `i <= len`.
+                // The borrow is bound once, read through for the length,
+                // then handed to the operation.
+                let Some(index) = self.check_index(&args[0].value, None, span) else { return error };
+                let value = (method == "insert").then(|| self.check_expr(&args[1].value, elem));
+                let borrow_ty = receiver.ty;
+                let borrow = self.declare(None, borrow_ty, span);
+                let at = self.declare(None, usize_ty, span);
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let through = Expr { ty: array_ty, kind: ExprKind::Deref(Box::new(local(borrow, borrow_ty))), span };
+                let length = call(Builtin::ArrayLen, vec![through], usize_ty);
+                let (op, message) = if method == "insert" {
+                    (BinOp::Le, "insert index out of range; the index may be at most the length")
+                } else {
+                    (BinOp::Lt, "remove index out of range")
+                };
+                let in_range = Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Binary { op, lhs: Box::new(local(at, usize_ty)), rhs: Box::new(length) },
+                    span,
+                };
+                let message = Expr { ty: self.common.str_, kind: ExprKind::Str(message.to_string()), span };
+                let check = Stmt::Expr(call(Builtin::Assert, vec![in_range, message], void));
+                // The arguments first, which may read the array, then the
+                // borrow: `xs.insert(len(xs), v)`.
+                let mut stmts = vec![Stmt::Let { local: at, init: Some(index) }];
+                let value = value.map(|value| {
+                    let kept = self.declare(None, elem, span);
+                    stmts.push(Stmt::Let { local: kept, init: Some(value) });
+                    local(kept, elem)
+                });
+                stmts.push(Stmt::Let { local: borrow, init: Some(receiver) });
+                stmts.push(check);
+                let action = match value {
+                    Some(value) => call(Builtin::ArrayInsert, vec![local(borrow, borrow_ty), value, local(at, usize_ty)], void),
+                    None => call(Builtin::ArrayRemove, vec![local(borrow, borrow_ty), local(at, usize_ty)], elem),
+                };
+                let ty = action.ty;
+                Expr {
+                    ty,
+                    kind: ExprKind::Block {
+                        block: Block { stmts, span },
+                        value: Box::new(action),
+                    },
+                    span,
+                }
+            }
+        }
+    }
+
+    /// `[STD-26]` — `sorted(xs) -> Array[T]`: a new, stably sorted array of a
+    /// collection's elements. `key=` and `reverse=` are not built yet.
+    fn synth_sorted(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if let Some(named) = args.iter().find_map(|a| a.name) {
+            self.error(codes::E0900, named.span, format!("`sorted`'s `{}` is not implemented yet", named.name));
+            return error;
+        }
+        if args.len() != 1 {
+            self.error(codes::E2020, span, format!("`sorted` takes one iterable, found {} arguments", args.len()));
+            return error;
+        }
+        let value = self.synth_committed(&args[0].value);
+        let value = self.read_through(value);
+        let elem = match *self.types.kind(value.ty) {
+            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            _ if value.ty == self.common.error => return error,
+            _ => {
+                let shown = self.types.display(value.ty);
+                self.error(codes::E0900, args[0].value.span, format!("`sorted` of a `{shown}` is not implemented yet"));
+                return error;
+            }
+        };
+        if !self.sortable(elem) {
+            let shown = self.types.display(elem);
+            self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `sorted` needs"));
+            return error;
+        }
+        if !self.types.is_copy(elem) {
+            let shown = self.types.display(elem);
+            self.error(codes::E0900, span, format!("`sorted` of `{shown}` values is not implemented yet: it needs `Clone`"));
+            return error;
+        }
+        // A fixed array is read through a view; an `Array` and a view have
+        // the pointer and length the copy starts from.
+        let value = if matches!(self.types.kind(value.ty), TyKind::Array { .. }) {
+            let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+            self.coerce(value, span_ty)
+        } else {
+            value
+        };
+        let ty = self.types.intern(TyKind::Vec { elem });
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArraySorted { elem }, args: vec![value] }, span }
+    }
+
+    /// Whether `sort` can order values of `ty` (`[TYP-37]`): scalars and text.
+    fn sortable(&self, ty: Ty) -> bool {
+        self.totally_ordered(ty) || self.is_text(ty)
+    }
+
     /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
     /// once: the smaller, and `a` when they are equal. With `pick_greater`,
     /// what `min`, `max`, `clamp` and `zip`'s length are built from.
@@ -11676,8 +12139,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
     /// other name.
     fn synth_python_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
-        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all") {
+        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted") {
             return None;
+        }
+        if name == "sorted" {
+            return Some(self.synth_sorted(args, span));
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let positional: Vec<&ast::Expr> =
@@ -17405,6 +17871,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.synth_text_count(receiver, name.name.as_str(), span);
         }
+        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
+            && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
+            && matches!(name.name.as_str(), "is_empty" | "contains" | "index_of" | "get" | "first" | "last")
+            && explicit.is_empty()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_array_query(receiver, elem, name, args, span);
+        }
+        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
+            && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
+            && matches!(name.name.as_str(), "sort" | "reverse" | "clear" | "pop" | "remove" | "insert" | "sorted")
+            && explicit.is_empty()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_array_change(receiver, elem, name, args, span);
+        }
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
             if !explicit.is_empty() {
                 self.error(
@@ -22610,6 +23092,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         rhs: &ast::Expr,
         span: Span,
     ) -> Expr {
+        if matches!(op, ast::BinOp::In | ast::BinOp::NotIn) {
+            return self.synth_membership(lhs, rhs, op == ast::BinOp::NotIn, span);
+        }
         let Some(hir_op) = convert_binop(op) else {
             self.error(codes::E1010, span, "this operator is not supported yet in this phase");
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -22618,6 +23103,43 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let (lhs_ast, rhs_ast) = (lhs, rhs);
         let mut lhs = self.synth(lhs);
         let mut rhs = self.synth(rhs);
+        // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
+        // returns it extended; `str + str` is `E2040`, whose help is an
+        // f-string.
+        if op == ast::BinOp::Add && self.is_text(lhs.ty) && self.is_text(rhs.ty) {
+            let str_ty = self.common.str_;
+            if lhs.ty == str_ty {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2040, span, "`str` does not implement `Add`")
+                        .help("build the text with an f-string: `f\"{a}{b}\"`")
+                        .note("`a + b` extends a `String` on the left, consuming it [TXT-11]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let string_ty = lhs.ty;
+            let text = self.coerce(rhs, str_ty);
+            let joined = self.declare(None, string_ty, span);
+            let local = || Expr { ty: string_ty, kind: ExprKind::Local(joined), span };
+            let receiver = self.pass_receiver(local(), Mode::Mut, span);
+            return Expr {
+                ty: string_ty,
+                kind: ExprKind::Block {
+                    block: Block {
+                        stmts: vec![
+                            Stmt::Let { local: joined, init: Some(lhs) },
+                            Stmt::Expr(Expr {
+                                ty: self.common.void,
+                                kind: ExprKind::Builtin { which: Builtin::StringPush, args: vec![receiver, text] },
+                                span,
+                            }),
+                        ],
+                        span,
+                    },
+                    value: Box::new(local()),
+                },
+                span,
+            };
+        }
         // `[TYP-14]` — an operand wants a value. This is before the operator
         // method lookup on purpose: `ref Vec3 + Vec3` should find `Vec3`'s
         // `add`, not fail to find one on a reference.

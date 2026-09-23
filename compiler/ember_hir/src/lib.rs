@@ -557,6 +557,21 @@ pub enum Builtin {
     StrCharCount,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
+    /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
+    StrContains,
+    StrContainsChar,
+    /// `[STD-15]` — `xs.sort()` (stable, in `Ord`'s order), `xs.reverse()`,
+    /// `xs.clear()` (dropping each element), `xs.pop() -> Option[T]`,
+    /// `xs.remove(i) -> T`, `xs.insert(i, v)` (its arguments are the array,
+    /// the value, then the index), and `sorted(xs) -> Array[T]` over an
+    /// `Array` or a view.
+    ArraySort,
+    ArrayReverse,
+    ArrayClear,
+    ArrayPop { option: Ty },
+    ArrayRemove,
+    ArrayInsert,
+    ArraySorted { elem: Ty },
     /// `print(x)` — the same without the newline.
     Print,
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
@@ -865,6 +880,14 @@ impl Builtin {
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
             Builtin::FormatWith(_) => "format",
+            Builtin::StrContains | Builtin::StrContainsChar => "contains",
+            Builtin::ArraySort => "sort",
+            Builtin::ArrayReverse => "reverse",
+            Builtin::ArrayClear => "clear",
+            Builtin::ArrayPop { .. } => "pop",
+            Builtin::ArrayRemove => "remove",
+            Builtin::ArrayInsert => "insert",
+            Builtin::ArraySorted { .. } => "sorted",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
             Builtin::ValueCompare { .. } => "compare",

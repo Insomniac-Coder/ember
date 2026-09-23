@@ -2423,6 +2423,7 @@ impl<'a> Builder<'a> {
                 let spill_second = matches!(
                     which,
                     hir::Builtin::ArrayPush
+                        | hir::Builtin::ArrayInsert
                         | hir::Builtin::ArenaAlloc { .. }
                         | hir::Builtin::FixedArenaAlloc { .. }
                         | hir::Builtin::ScopedArenaAlloc { .. }

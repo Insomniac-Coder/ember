@@ -1169,6 +1169,63 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
     v->cap = cap;
 }
 
+void ember_vec_sort(ember_vec* v, size_t elem_size, bool (*less)(const void*, const void*)) {
+    size_t n = v->len;
+    if (n < 2) {
+        return;
+    }
+    unsigned char* a = (unsigned char*)v->ptr;
+    unsigned char* tmp = (unsigned char*)ember_alloc(n * elem_size, EMBER_VEC_ALIGN);
+    /* Bottom-up merges of runs of `width`; taking from the left run unless the
+     * right element is strictly less keeps equal elements in order. */
+    for (size_t width = 1; width < n; width *= 2) {
+        for (size_t lo = 0; lo < n; lo += 2 * width) {
+            size_t mid = lo + width < n ? lo + width : n;
+            size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+            size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) {
+                if (less(a + j * elem_size, a + i * elem_size)) {
+                    memcpy(tmp + k * elem_size, a + j * elem_size, elem_size);
+                    ++j;
+                } else {
+                    memcpy(tmp + k * elem_size, a + i * elem_size, elem_size);
+                    ++i;
+                }
+                ++k;
+            }
+            memcpy(tmp + k * elem_size, a + i * elem_size, (mid - i) * elem_size);
+            k += mid - i;
+            memcpy(tmp + k * elem_size, a + j * elem_size, (hi - j) * elem_size);
+        }
+        memcpy(a, tmp, n * elem_size);
+    }
+    ember_free(tmp, n * elem_size, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_reverse(ember_vec* v, size_t elem_size) {
+    if (v->len < 2) {
+        return;
+    }
+    unsigned char* a = (unsigned char*)v->ptr;
+    for (size_t i = 0, j = v->len - 1; i < j; ++i, --j) {
+        unsigned char* x = a + i * elem_size;
+        unsigned char* y = a + j * elem_size;
+        for (size_t b = 0; b < elem_size; ++b) {
+            unsigned char t = x[b];
+            x[b] = y[b];
+            y[b] = t;
+        }
+    }
+}
+
+void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value) {
+    ember_vec_reserve(v, elem_size, v->len + 1);
+    unsigned char* a = (unsigned char*)v->ptr;
+    memmove(a + (index + 1) * elem_size, a + index * elem_size, (v->len - index) * elem_size);
+    memcpy(a + index * elem_size, value, elem_size);
+    v->len += 1;
+}
+
 ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count) {
     ember_vec v = ember_vec_empty();
     if (count == 0) {
@@ -1268,6 +1325,28 @@ size_t ember_str_char_count(ember_str s) {
         count += (s.ptr[i] & 0xC0) != 0x80;
     }
     return count;
+}
+
+bool ember_str_contains(ember_str text, ember_str needle) {
+    if (needle.len == 0) {
+        return true;
+    }
+    for (size_t at = 0; at + needle.len <= text.len; ++at) {
+        if (memcmp(text.ptr + at, needle.ptr, needle.len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t encode_utf8(uint32_t c, unsigned char* out);
+
+bool ember_str_contains_char(ember_str text, uint32_t needle) {
+    unsigned char encoded[4];
+    ember_str piece;
+    piece.ptr = encoded;
+    piece.len = encode_utf8(needle, encoded);
+    return ember_str_contains(text, piece);
 }
 
 int ember_str_cmp(ember_str a, ember_str b) {
