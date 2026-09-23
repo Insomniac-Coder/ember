@@ -224,3 +224,35 @@ fn committed_borrow_snapshots_match_and_primary_fixes_compile() {
         );
     }
 }
+
+#[test]
+fn committed_basic_name_suggestion_matches_and_fixed_source_compiles() {
+    let root = workspace_root();
+    let before = root.join("tests/ui/basic/N1/local_name_typo.em");
+    let snapshot = before.with_extension("stderr");
+    let fixed = root.join("tests/ui/basic/N1/local_name_typo.fixed.em");
+
+    let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
+    let expected = normalize(&expected);
+    let (before_exit, actual) = check(&before, &root);
+    assert_ne!(before_exit, 0, "{} unexpectedly compiled", before.display());
+    assert_eq!(actual, expected, "{} diagnostic changed", before.display());
+    assert_eq!(
+        error_codes(&actual),
+        ["E1010"],
+        "{} must isolate the unknown-name diagnostic",
+        before.display()
+    );
+    assert!(
+        actual.contains("did you mean `count`?"),
+        "N1 should suggest the visible binding with its exact spelling:\n{actual}"
+    );
+
+    let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+    assert_eq!(
+        fixed_exit,
+        0,
+        "{} does not compile:\n{fixed_stderr}",
+        fixed.display()
+    );
+}

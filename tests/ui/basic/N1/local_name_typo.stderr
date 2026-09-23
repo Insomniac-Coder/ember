@@ -1,0 +1,9 @@
+error[E1010]: cannot find `coutn` in this scope
+ --> tests/ui/basic/N1/local_name_typo.em:3:13
+  |
+3 |     println(coutn)
+  |             ^^^^^
+  |
+  = help: did you mean `count`?
+
+error: could not compile due to 1 error(s)

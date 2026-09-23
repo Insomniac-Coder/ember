@@ -10474,3 +10474,21 @@ matching the help text. The focused
 `committed_borrow_snapshots_match_and_primary_fixes_compile` test passes. This
 closes a Phase 2 diagnostic-evidence gap without changing the diagnostic or
 language semantics, and without an ODR.
+
+### 0.347 `[DIA-12]` N1 local-binding name suggestions — 2026-09-23
+
+Unknown single-segment names now receive up to three suggestions drawn from
+the currently visible local bindings. Candidates use unrestricted
+Damerau–Levenshtein distance, the specified distance threshold, declaration
+proximity, and a deterministic lexical tie-break; shadowed bindings are
+deduplicated in lookup order. The UI fixture pins the exact replacement and
+includes a compiling corrected program. This is the local-binding slice of
+N1 only: field, method, and item candidates remain outstanding, so N1 is not
+closed. The defined binding behavior required no specification change or ODR.
+
+Verification: `cargo test -p ember_typeck` passed (3 tests),
+`cargo test -p ember_driver --test ui` passed (2 tests), and the new helper
+passes its focused rustfmt check. Package-wide `cargo fmt --check` remains
+non-green due to extensive pre-existing formatting drift in these packages;
+the new helper and touched UI-test hunk are formatted, and no broad reformat was
+applied.

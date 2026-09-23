@@ -13,6 +13,7 @@
 //! later phases add the obligation solver around it.
 
 mod usefulness;
+mod name_suggestions;
 
 use std::collections::{HashMap, HashSet};
 
@@ -8797,6 +8798,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.scopes.iter().rev().find_map(|scope| scope.get(&name).copied())
     }
 
+    /// `[DIA-12]` N1 — offer nearby names from the currently visible local
+    /// bindings. De-duplicate shadowed names using the same inner-to-outer
+    /// order as `lookup`, then rank by spelling distance and source proximity.
+    fn local_name_suggestions(&self, written: Symbol, use_span: Span) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let candidates = self
+            .scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter())
+            .filter_map(|(name, local)| {
+                if !seen.insert(*name) {
+                    return None;
+                }
+                let declaration = self.locals.get(local.0 as usize)?;
+                let proximity = declaration.span.start.abs_diff(use_span.start) as usize;
+                Some((name.as_str().to_owned(), proximity))
+            });
+        name_suggestions::rank(written.as_str(), candidates)
+    }
+
     /// `[CLO-2]` — whether a name a closure body could not find is one the
     /// enclosing function declares, in which case it is a **capture** and not
     /// a typo.
@@ -11431,7 +11453,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if let Some(captured) = self.resolve_capture(name, span) {
                     return captured;
                 }
-                self.error(codes::E1010, span, format!("cannot find `{name}` in this scope"));
+                let mut diagnostic = Diagnostic::error(
+                    codes::E1010,
+                    span,
+                    format!("cannot find `{name}` in this scope"),
+                );
+                for candidate in self.local_name_suggestions(name, segments[0].span) {
+                    diagnostic = diagnostic.suggest(
+                        format!("did you mean `{candidate}`?"),
+                        segments[0].span,
+                        candidate,
+                    );
+                }
+                self.sink.emit(diagnostic);
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
 
