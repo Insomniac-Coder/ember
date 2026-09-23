@@ -574,14 +574,21 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
     )
     .primary_label("this strong field closes the shortest statically visible cycle")
     .note("every edge in this statically visible cycle is strong; the cycle may leak at run time");
-    if let Some(replacement) = &first.weak_replacement {
-        let owner = class_name(types, ClassId(first.field_owner as u32));
+    if let Some(edge) = cycle
+        .iter()
+        .find(|edge| edge.weak_replacement.is_some())
+    {
+        let replacement = edge
+            .weak_replacement
+            .as_ref()
+            .expect("selected weak replacement edge must have a replacement");
+        let owner = class_name(types, ClassId(edge.field_owner as u32));
         diagnostic = diagnostic.suggest(
             format!(
                 "replace `{owner}.{}` with `{replacement}` if this is a back-reference",
-                first.field
+                edge.field
             ),
-            first.type_span,
+            edge.type_span,
             replacement.clone(),
         );
     }

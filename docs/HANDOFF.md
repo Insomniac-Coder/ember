@@ -10445,3 +10445,20 @@ The four fixtures verify mutable access intervals, inherited counter updates,
 weak upgrade `Some`/`None`, and the absence of an owned observer copy. This is
 coverage of the existing `[FN-1]`/`[TYP-22]` rules, without a specification
 change or ODR.
+
+### 0.345 `[WK-10]` mixed-owner cycle suggestion — 2026-09-23
+
+`L3001` continues to point at the field that closes the shortest visible cycle,
+but its machine-applicable `Weak[T]` suggestion now scans that cycle for the
+first safely weakenable direct class edge. A leading `Shared[...]` edge no
+longer suppresses a valid suggestion on a later class-handle back-reference.
+The all-`Shared` cycle still receives no rewrite. Focused milestone coverage
+asserts both behaviors, and `warning_mixed_cycle_suggests_first_weakable_edge`
+pins the `[WK-10]` source case. This is a repair to the existing `[WK-6]` /
+`[WK-10]` contract, not a specification gap or ODR.
+
+Verification: the focused `cycle_lint_offers_only_safe_weak_suggestions`
+milestone passed; `the_conformance_suite_runs` passed across debug, release, and
+shipping; and `cargo test --workspace --locked` passed (35 milestone tests and
+the remaining workspace tests). Rule-index, error-page, branding, generated
+runtime, and diff checks passed as well.

@@ -1157,6 +1157,33 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
         "a Shared ownership contract must not receive an automatic Weak rewrite:\n{}",
         shared.stdout
     );
+
+    let mixed = ember(
+        &[
+            "check",
+            "--json",
+            &format!(
+                "tests/conformance/WK-5/warning_mixed_cycle_suggests_first_weakable_edge.{SOURCE_EXT}"
+            ),
+        ],
+        &root,
+    );
+    assert_eq!(mixed.exit, 0, "mixed-cycle check failed:\n{}", mixed.stderr);
+    assert!(
+        mixed.stdout.contains("\"replacement\":\"Weak[Owner]\""),
+        "a later direct class edge in the cycle should receive the safe Weak replacement:\n{}",
+        mixed.stdout
+    );
+    assert!(
+        mixed.stdout.contains("replace `Child.parent` with `Weak[Owner]`"),
+        "the suggestion should name the first safely weakenable edge:\n{}",
+        mixed.stdout
+    );
+    assert!(
+        !mixed.stdout.contains("replace `Owner.child`"),
+        "a Shared ownership contract must not receive an automatic Weak rewrite:\n{}",
+        mixed.stdout
+    );
 }
 
 #[test]
