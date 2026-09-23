@@ -47,6 +47,9 @@ impl CodeKind {
 pub enum Subsystem {
     Lex,
     Parse,
+    /// 0.9.9 `[CLI-19]`, `[PHIL-12]` — a construct this compiler does not
+    /// implement (`E0900`) or the specification leaves unspecified (`E0901`).
+    Support,
     Resolve,
     Types,
     Ownership,
@@ -64,6 +67,7 @@ impl Subsystem {
         match self {
             Subsystem::Lex => (0, 99),
             Subsystem::Parse => (100, 499),
+            Subsystem::Support => (900, 999),
             Subsystem::Resolve => (1000, 1499),
             Subsystem::Types => (2000, 2499),
             Subsystem::Ownership => (3000, 3499),
@@ -148,6 +152,9 @@ codes! {
     E0107 = (Error, 107, Parse, "[GRM-16]", "a jump expression may not be an operand");
     E0108 = (Error, 108, Parse, "[ATT-3]", "attribute is not permitted on this statement");
     E0109 = (Error, 109, Parse, "[GRM-15]", "`owned` is not permitted in expression position");
+    // 0.9.9 `[CLI-19]`: a construct the specification defines and this
+    // compiler does not implement yet is rejected by name, never silently.
+    E0900 = (Error, 900, Support, "[CLI-19]", "construct not implemented by this compiler");
 
     // --- name resolution, modules, visibility -------------------------------
     E1010 = (Error, 1010, Resolve, "[MOD-3]", "cannot find name in this scope");
@@ -173,7 +180,7 @@ codes! {
     E2061 = (Error, 2061, Types, "[TYP-23]", "lambda parameter types cannot be inferred here");
     E2062 = (Error, 2062, Types, "[TYP-23]", "ambiguous type");
     E2070 = (Error, 2070, Types, "[TYP-24]", "ambiguous interface method");
-    E2228 = (Error, 2228, Types, "[FN-6a], [LT-11a]", "callable parameter mode mismatch");
+    E2228 = (Error, 2228, Types, "[CLO-3]", "callable parameter mode mismatch");
     E2080 = (Error, 2080, Types, "[STR-3]", "`@derive(Copy)` on a type with a field that is not Copy");
     E2090 = (Error, 2090, Types, "[ENM-2]", "non-exhaustive match");
     E2100 = (Error, 2100, Types, "[CLS-2]", "field read before it is initialised");
@@ -190,7 +197,13 @@ codes! {
     E2160 = (Error, 2160, Types, "[CTL-7]", "control flow cannot leave a `defer` block");
     E2170 = (Error, 2170, Types, "[IX.5]", "cannot take a reference to a field of a packed struct");
     E2180 = (Error, 2180, Types, "[ERR-2]", "`?` outside a function returning `Option` or `Result`");
+    // 0.9.9 `[FN-10]`, ODR-023: only `void` and `Result[void, E]` have an
+    // implicit value at the end of a body.
+    E2182 = (Error, 2182, Types, "[FN-10]", "a function that returns a value can reach the end of its body");
     E2200 = (Error, 2200, Types, "[XVIII.4.4]", "type has infinite size");
+    // 0.9.9 `[TYP-28]`: `/` is true division; two integer operands are
+    // rejected with the `//` and float fix-its.
+    E2240 = (Error, 2240, Types, "[TYP-28]", "`/` on two integers");
 
     // --- range and domain types (`[RNG-*]`, 0.6) ------------------------------
     E2210 = (Error, 2210, Types, "[RNG-2]", "a value of one range type where another was expected");
@@ -241,7 +254,7 @@ codes! {
     E3042 = (Error, 3042, Ownership, "[EXP-6]", "partial move then use of the whole value");
     E3063 = (Error, 3063, Ownership, "[TYP-15]", "stored view may not outlive its source");
     E3064 = (Error, 3064, Ownership, "[LT-2]", "two independent regions in one view struct");
-    E3065 = (Error, 3065, Ownership, "[LT-22], [LT-35], [LT-36], [LT-37], [LT-38], [LT-39], [LT-40], [VERIFY-3]", "multi-region result provenance");
+    E3065 = (Error, 3065, Ownership, "[LT-35]", "multi-region result provenance");
     E3095 = (Error, 3095, Ownership, "[DSJ-4]", "disjointness is not establishable for these operands");
     E3096 = (Error, 3096, Ownership, "[ARN-6]", "arena is scoped here");
     E3050 = (Error, 3050, Ownership, "[BRW-7]", "use of an uninitialised or moved place");

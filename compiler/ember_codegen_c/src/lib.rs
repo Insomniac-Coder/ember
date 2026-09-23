@@ -134,6 +134,7 @@ pub fn emit(
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
             .collect(),
+        drop_glue: std::cell::RefCell::new(Vec::new()),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -245,7 +246,16 @@ struct Emitter<'a> {
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
     direct_param_modes: BTreeMap<String, Vec<ParameterMode>>,
+    /// D-182 — aggregate types whose drop is emitted as an out-of-line
+    /// `static` function, in first-request order. An `Array` element or a
+    /// `Box` payload drops through one, so a type that owns itself through
+    /// an indirection (`struct Tree: kids: Array[Tree]`) is a runtime
+    /// recursion instead of an infinite inline expansion.
+    drop_glue: std::cell::RefCell<Vec<Ty>>,
 }
+
+/// Replaced, once every body has been emitted, by the drop-glue prototypes.
+const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
 
 #[derive(Clone)]
 struct VirtualMethod {
@@ -342,6 +352,7 @@ impl Emitter<'_> {
         self.collect_interface_adapters(bodies);
         self.emit_interface_vtable_types();
         self.emit_prototypes(bodies);
+        self.line(DROP_GLUE_PROTOTYPES);
         self.emit_interface_adapters();
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
@@ -364,6 +375,94 @@ impl Emitter<'_> {
         if has_main {
             self.emit_entry_point(leak_check);
         }
+        self.emit_drop_glue();
+    }
+
+    /// The name of `ty`'s out-of-line drop glue, requesting it. Only
+    /// aggregates are worth a function; everything else drops in one line.
+    fn drop_glue_call(&self, access: &str, ty: Ty) -> Option<String> {
+        if !matches!(
+            self.types.kind(ty),
+            TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Tuple(_) | TyKind::Array { .. }
+        ) || !self.owns_itself(ty)
+        {
+            return None;
+        }
+        let mut glue = self.drop_glue.borrow_mut();
+        let index = match glue.iter().position(|&known| known == ty) {
+            Some(index) => index,
+            None => {
+                glue.push(ty);
+                glue.len() - 1
+            }
+        };
+        Some(format!("{}(&{access});", drop_glue_symbol(index)))
+    }
+
+    /// Whether dropping `ty` can reach another `ty` it owns — through an
+    /// `Array` element or a `Box` payload, the only owning indirections whose
+    /// drop the backend expands inline. Only such a type needs out-of-line
+    /// glue; every other drop stays inline, as it always was.
+    fn owns_itself(&self, ty: Ty) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut pending = self.owned_parts(ty);
+        while let Some(part) = pending.pop() {
+            if part == ty {
+                return true;
+            }
+            if seen.insert(part) {
+                pending.extend(self.owned_parts(part));
+            }
+        }
+        false
+    }
+
+    /// The values a value of `ty` owns and drops inline.
+    fn owned_parts(&self, ty: Ty) -> Vec<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Vec { elem } | TyKind::Array { elem, .. } => vec![*elem],
+            TyKind::Tuple(items) => items.clone(),
+            TyKind::Struct(id) => match self.box_inner_id(*id) {
+                Some(payload) => vec![payload],
+                None => self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
+            },
+            TyKind::Enum(id) => self
+                .types
+                .enum_def(*id)
+                .variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Define every requested glue function, to a fixpoint (a glue body can
+    /// request more), and put their prototypes where the marker stands.
+    fn emit_drop_glue(&mut self) {
+        let mut emitted = 0;
+        let mut prototypes = Vec::new();
+        loop {
+            let pending: Vec<Ty> = self.drop_glue.borrow()[emitted..].to_vec();
+            if pending.is_empty() {
+                break;
+            }
+            for ty in pending {
+                let symbol = drop_glue_symbol(emitted);
+                let c_ty = self.c_type(ty);
+                let mut lines = Vec::new();
+                self.drop_lines("(*value)", ty, &mut lines);
+                prototypes.push(format!("static void {symbol}({c_ty}* value);"));
+                self.line(&format!("static void {symbol}({c_ty}* value) {{"));
+                for line in lines {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        self.out = self.out.replacen(DROP_GLUE_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
     /// `ember_types.h`'s content, inlined into the single translation unit
@@ -1812,7 +1911,10 @@ impl Emitter<'_> {
                 if self.types.needs_drop(*elem) {
                     let mut inner = Vec::new();
                     let element = format!("(({}*){access}.ptr)[_di]", self.c_type(*elem));
-                    self.drop_lines(&element, *elem, &mut inner);
+                    match self.drop_glue_call(&element, *elem) {
+                        Some(call) => inner.push(call),
+                        None => self.drop_lines(&element, *elem, &mut inner),
+                    }
                     if !inner.is_empty() {
                         out.push(format!(
                             "for (size_t _di = 0; _di < {access}.len; ++_di) {{ {} }}",
@@ -1866,7 +1968,11 @@ impl Emitter<'_> {
                 if compiler_box && def.fields.len() == 1 {
                     if let TyKind::Ptr { inner, .. } = self.types.kind(def.fields[0].ty) {
                         if self.types.needs_drop(*inner) {
-                            self.drop_lines(&format!("(*{access})"), *inner, out);
+                            let payload = format!("(*{access})");
+                            match self.drop_glue_call(&payload, *inner) {
+                                Some(call) => out.push(call),
+                                None => self.drop_lines(&payload, *inner, out),
+                            }
                         }
                         let inner_c = self.c_type(*inner);
                         out.push(format!(
@@ -2591,7 +2697,7 @@ impl Emitter<'_> {
                 let location = self.location(*span);
                 let call = match msg {
                     AssertKind::Overflow(op) => {
-                        format!("{RT}panic_overflow(\"{}\", {location})", op.c_operator())
+                        format!("{RT}panic_overflow(\"{}\", {location})", op.spelling())
                     }
                     AssertKind::SignedDivisionOverflow => {
                         format!("{RT}panic_overflow(\"/\", {location})")
@@ -2781,6 +2887,15 @@ impl Emitter<'_> {
 
     /// The `ember_ck_*` suffix for a type: the helpers are per width and
     /// signedness.
+    /// The type of an operand, where the backend can name it.
+    fn operand_type(&self, operand: &Operand, body: &Body) -> Option<Ty> {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => Some(self.place_ty(place, body)),
+            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
+            Operand::Const(_) => None,
+        }
+    }
+
     fn checked_suffix(&self, ty: ember_types::Ty) -> String {
         match self.types.kind(ty) {
             TyKind::Int(i) => match i {
@@ -3160,6 +3275,20 @@ impl Emitter<'_> {
                     }
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
+                    }
+                    // `[TYP-38]` — one allocation of exactly the literal's
+                    // elements, moved (bitwise) out of the fixed array; MIR
+                    // has marked the fixed array as moved, so it is not
+                    // dropped a second time.
+                    Builtin::ArrayFromLiteral => {
+                        let TyKind::Array { elem, len } = *self.types.kind(*arg_ty) else {
+                            unreachable!("[TYP-38] an Array literal is built from a fixed array")
+                        };
+                        let elem_c = self.c_type(elem);
+                        return format!(
+                            "{RT}vec_from_elems(sizeof({elem_c}), ({})._0, {len})",
+                            rendered[0]
+                        );
                     }
                     Builtin::BoxNew { elem, boxed } => {
                         let elem_c = self.c_type(*elem);
@@ -3691,6 +3820,27 @@ impl Emitter<'_> {
     fn rvalue(&self, rvalue: &Rvalue, body: &Body, target: Ty) -> String {
         match rvalue {
             Rvalue::Use(o) => self.operand(o, body),
+            // `[TYP-29]`, ODR-021 — float floor division and modulo are the
+            // runtime's Python-exact helpers; C has no operator for either.
+            Rvalue::BinaryOp {
+                op: op @ (ember_mir::BinOp::FloorDiv | ember_mir::BinOp::FloorRem),
+                lhs,
+                rhs,
+            }
+                if self.types.is_float(target) =>
+            {
+                let stem =
+                    if *op == ember_mir::BinOp::FloorDiv { "floordiv" } else { "floorrem" };
+                let suffix = match self.types.kind(target) {
+                    TyKind::Float(FloatTy::F32) => "f32",
+                    _ => "f64",
+                };
+                format!(
+                    "{RT}{stem}_{suffix}({}, {})",
+                    self.operand(lhs, body),
+                    self.operand(rhs, body)
+                )
+            }
             Rvalue::BinaryOp { op, lhs, rhs } => {
                 format!(
                     "({} {} {})",
@@ -3722,6 +3872,17 @@ impl Emitter<'_> {
                         format!("({ty}){{ .data = (void*)({data}), .vtable = &{table} }}")
                     }
                     CastKind::ClassInterfaceUpcast { .. } => format!("(({ty}){value})"),
+                    // `[TYP-6]` (0.9.9) — float to integer saturates and maps
+                    // NaN to 0; C's own conversion is undefined outside the
+                    // target's range.
+                    CastKind::Numeric
+                        if self.types.is_integral(*to)
+                            && self.operand_type(operand, body).is_some_and(|from| {
+                                matches!(self.types.kind(from), TyKind::Float(_))
+                            }) =>
+                    {
+                        format!("{RT}ftoi_{}({value})", self.checked_suffix(*to))
+                    }
                     // A widening is lossless by construction (`[TYP-5]`), so
                     // the C cast is exact.
                     CastKind::Widen
@@ -4090,6 +4251,15 @@ impl Planner<'_> {
             TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Fn { .. } => {
                 self.visit(TypeNode::Structural(ty))
             }
+            // A function-pointer type is a `typedef`, which C cannot declare
+            // ahead the way it forward-declares a struct, so a pointer to one
+            // still needs it first: a closure capturing a callable local by
+            // shared borrow holds `ref fn(A) -> R` (D-185).
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }
+                if matches!(self.types.kind(*inner), TyKind::Fn { .. }) =>
+            {
+                self.visit(TypeNode::Structural(*inner))
+            }
             _ => {}
         }
     }
@@ -4358,6 +4528,11 @@ fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
     referenced
 }
 
+/// D-182 — the `index`th out-of-line drop-glue function.
+fn drop_glue_symbol(index: usize) -> String {
+    ember_branding::mangled(&format!("drop_glue_{index}"))
+}
+
 /// The `ember_ck_*` stem for an operator.
 fn checked_name(op: ember_mir::BinOp) -> &'static str {
     use ember_mir::BinOp;
@@ -4367,6 +4542,8 @@ fn checked_name(op: ember_mir::BinOp) -> &'static str {
         BinOp::Mul => "mul",
         BinOp::Div => "div",
         BinOp::Rem => "rem",
+        BinOp::FloorDiv => "floordiv",
+        BinOp::FloorRem => "floorrem",
         // Nothing else is lowered through `CheckedBinaryOp`.
         _ => "add",
     }

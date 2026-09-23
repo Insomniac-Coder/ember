@@ -12,6 +12,6 @@ fn replace(cell: ref Cell[i32]) -> i32:
     return cell.replace(42)
 
 fn main():
-    cell = Cell(7)
+    cell: Cell[i32] = Cell(7)
     println(replace(ref cell))
     println(cell.get())

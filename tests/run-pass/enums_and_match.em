@@ -74,7 +74,7 @@ fn bucket(n: i32) -> i32:
 
 # `[GRM-10]` — `=>` arms make the `match` an expression with a value.
 fn degrees(d: Dir) -> i32:
-    turned = match d:
+    turned: i32 = match d:
         Dir.North => 0
         Dir.South => 180
         Dir.East => 90

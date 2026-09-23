@@ -14,6 +14,6 @@ fn update(cell: ref Cell[i32]):
     cell.update(add_two)
 
 fn main():
-    cell = Cell(40)
+    cell: Cell[i32] = Cell(40)
     update(ref cell)
     println(cell.get())

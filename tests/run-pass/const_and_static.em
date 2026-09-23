@@ -13,7 +13,7 @@ fn main():
     # A `const` may be an array length, which a literal was until now.
     xs: [i32; SIZE] = [7; SIZE]
     println(xs[3])
-    total = 0
+    total: i32 = 0
     for i in 0..SIZE:
         total = total + xs[i]
     println(total)

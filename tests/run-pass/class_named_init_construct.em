@@ -19,6 +19,6 @@ fn bump(mut value: i32) -> i32:
 fn main():
     point = Point(y=23, x=19)
     println(point.x + point.y)
-    state = 1
+    state: i32 = 1
     point = Point(y=bump(state), x=bump(state))
     println(point.x * 10 + point.y)

@@ -33,7 +33,22 @@ pub struct Module {
     pub directive: Option<Directive>,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
+    /// `[GRM-2]`, `[FN-8]` (0.9.9) — statements written at file scope. The
+    /// parser gathers them, in order, into a synthesised `fn main()` in
+    /// `items`; only the entry file may have them.
+    pub script: Option<Script>,
     pub span: Span,
+}
+
+/// Where a script's statements came from, so a tool can put them back.
+#[derive(Debug)]
+pub struct Script {
+    /// The index in `Module::items` of the synthesised `fn main()`.
+    pub main: usize,
+    /// For each statement of that body, how many source items precede it.
+    pub placement: Vec<usize>,
+    /// The first statement, where a module that may not have them is told.
+    pub first: Span,
 }
 
 #[derive(Debug)]
@@ -560,6 +575,10 @@ pub enum ExprKind {
     MethodCall { recv: Box<Expr>, name: Ident, generic_args: Vec<GenericArg>, args: Vec<Arg> },
     Unary { op: UnOp, operand: Box<Expr> },
     Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
+    /// `[GRM-25]` (0.9.9) — `a < b <= c`: a chain of two or more of `==`,
+    /// `!=`, `<`, `>`, `<=`, `>=`, meaning `a < b and b <= c` with each operand
+    /// evaluated at most once, left to right.
+    CompareChain { first: Box<Expr>, rest: Vec<(BinOp, Expr)> },
     /// `and` / `or`, kept apart from `Binary` because they short-circuit
     /// (`[EXP-3]`).
     Logical { op: LogicalOp, lhs: Box<Expr>, rhs: Box<Expr> },
@@ -709,6 +728,8 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// `//` — floor division (`[TYP-28]`, `[TYP-29]`, 0.9.9).
+    FloorDiv,
     Rem,
     Pow,
     BitAnd,
@@ -737,6 +758,7 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::FloorDiv => "//",
             BinOp::Rem => "%",
             BinOp::Pow => "**",
             BinOp::BitAnd => "&",

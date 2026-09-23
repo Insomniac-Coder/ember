@@ -8,7 +8,7 @@ struct Point:
     y: f32
 
 fn sum(xs: [i32; 4]) -> i32:
-    total = 0
+    total: i32 = 0
     i: usize = 0
     while i < 4:
         total = total + xs[i]
@@ -20,18 +20,18 @@ fn swap(p: (i32, f32)) -> (f32, i32):
 
 fn main():
     # A tuple is a value: it is passed, returned and copied whole.
-    t = (3, 4.5)
+    t: (i32, f32) = (3, 4.5)
     s = swap(t)
     println(s.0)
     println(s.1)
 
     # An array literal, indexed and summed through a function.
-    xs = [10, 20, 30, 40]
+    xs: [i32; 4] = [10, 20, 30, 40]
     println(sum(xs))
     println(xs[2])
 
     # `[value; count]`, and writing through an index.
-    ys = [7; 4]
+    ys: [i32; 4] = [7; 4]
     ys[1] = 100
     println(sum(ys))
 

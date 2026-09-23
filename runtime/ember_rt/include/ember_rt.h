@@ -264,6 +264,91 @@ EMBER_CHECKED_DIV(i32, int32_t, INT32_MIN)
 EMBER_CHECKED_DIV(i64, int64_t, INT64_MIN)
 EMBER_CHECKED_DIV(isize, ptrdiff_t, INT64_MIN)
 
+/* [TYP-28] (0.9.9): `//` rounds the quotient toward negative infinity and `%`
+ * takes the sign of the divisor, as in Python. The zero divisor has already
+ * been checked. T.MIN // -1 overflows; T.MIN % -1 is 0 and does not.
+ * Unsigned operands use C's operators, which agree with floor there. */
+#define EMBER_CHECKED_FLOOR(SUFFIX, TYPE, MINVAL)                                 \
+    static inline bool ember_ck_floordiv_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        TYPE q;                                                                   \
+        if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = a; return true; }      \
+        q = (TYPE)(a / b);                                                        \
+        if ((TYPE)(a % b) != 0 && ((a < 0) != (b < 0))) { q = (TYPE)(q - 1); }    \
+        *out = q;                                                                 \
+        return false;                                                             \
+    }                                                                             \
+    static inline bool ember_ck_floorrem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        TYPE r;                                                                   \
+        if (b == (TYPE)-1) { *out = 0; return false; }                            \
+        r = (TYPE)(a % b);                                                        \
+        if (r != 0 && ((r < 0) != (b < 0))) { r = (TYPE)(r + b); }                \
+        *out = r;                                                                 \
+        return false;                                                             \
+    }
+
+EMBER_CHECKED_FLOOR(i8, int8_t, INT8_MIN)
+EMBER_CHECKED_FLOOR(i16, int16_t, INT16_MIN)
+EMBER_CHECKED_FLOOR(i32, int32_t, INT32_MIN)
+EMBER_CHECKED_FLOOR(i64, int64_t, INT64_MIN)
+EMBER_CHECKED_FLOOR(isize, ptrdiff_t, INT64_MIN)
+
+/* [TYP-29] as ruled by ODR-021 (0.9.9_Hardened_3): float `//` and `%` are
+ * Python's. The remainder is the exact floor modulo rounded once (fmod is
+ * exact), and the quotient is consistent with it, so `1 // 0.1 == 9.0` and
+ * `1 % 0.1 == 0.09999999999999995`. Zero divisors, infinities and NaN follow
+ * IEEE through fmod and the division. */
+#define EMBER_FLOAT_FLOOR(SUFFIX, TYPE, FMOD, FLOOR, COPYSIGN)                    \
+    static inline TYPE ember_floorrem_##SUFFIX(TYPE a, TYPE b) {                 \
+        TYPE mod = FMOD(a, b);                                                    \
+        if (mod != 0) {                                                           \
+            if ((b < 0) != (mod < 0)) { mod += b; }                               \
+        } else {                                                                  \
+            mod = COPYSIGN((TYPE)0, b);                                           \
+        }                                                                         \
+        return mod;                                                               \
+    }                                                                             \
+    static inline TYPE ember_floordiv_##SUFFIX(TYPE a, TYPE b) {                 \
+        TYPE mod = FMOD(a, b);                                                    \
+        TYPE div = (a - mod) / b;                                                 \
+        TYPE floordiv;                                                            \
+        if (mod != 0 && ((b < 0) != (mod < 0))) { div -= (TYPE)1; }               \
+        if (div != 0) {                                                           \
+            floordiv = FLOOR(div);                                                \
+            if (div - floordiv > (TYPE)0.5) { floordiv += (TYPE)1; }              \
+        } else {                                                                  \
+            floordiv = COPYSIGN((TYPE)0, a / b);                                  \
+        }                                                                         \
+        return floordiv;                                                          \
+    }
+
+EMBER_FLOAT_FLOOR(f32, float, fmodf, floorf, copysignf)
+EMBER_FLOAT_FLOOR(f64, double, fmod, floor, copysign)
+
+/* [TYP-6] (0.9.9): `x as T` from a float to an integer rounds toward zero and
+ * saturates at T's bounds; NaN becomes 0. C's conversion is undefined outside
+ * T's range, so the bounds are tested first. Every integer bound below is
+ * exactly representable as a double or rounds to the next power of two, and
+ * the comparisons are ordered so the in-range conversion is always defined.
+ * An `f32` operand converts to `double` exactly. */
+#define EMBER_FLOAT_TO_INT(SUFFIX, TYPE, MINV, MAXV)                              \
+    static inline TYPE ember_ftoi_##SUFFIX(double v) {                            \
+        if (v != v) { return 0; }                                                 \
+        if (v <= (double)(MINV)) { return (TYPE)(MINV); }                         \
+        if (v >= (double)(MAXV)) { return (TYPE)(MAXV); }                         \
+        return (TYPE)v;                                                           \
+    }
+
+EMBER_FLOAT_TO_INT(i8, int8_t, INT8_MIN, INT8_MAX)
+EMBER_FLOAT_TO_INT(i16, int16_t, INT16_MIN, INT16_MAX)
+EMBER_FLOAT_TO_INT(i32, int32_t, INT32_MIN, INT32_MAX)
+EMBER_FLOAT_TO_INT(i64, int64_t, INT64_MIN, INT64_MAX)
+EMBER_FLOAT_TO_INT(isize, ptrdiff_t, PTRDIFF_MIN, PTRDIFF_MAX)
+EMBER_FLOAT_TO_INT(u8, uint8_t, 0, UINT8_MAX)
+EMBER_FLOAT_TO_INT(u16, uint16_t, 0, UINT16_MAX)
+EMBER_FLOAT_TO_INT(u32, uint32_t, 0, UINT32_MAX)
+EMBER_FLOAT_TO_INT(u64, uint64_t, 0, UINT64_MAX)
+EMBER_FLOAT_TO_INT(usize, size_t, 0, SIZE_MAX)
+
 /* -- memory ---------------------------------------------------------------- */
 
 /* [HEAP-1] Every heap type allocates through these. ember_alloc never returns
@@ -434,6 +519,10 @@ typedef struct ember_vec {
 void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
 /* Append one element, copied from `value`. */
 void ember_vec_push(ember_vec* v, size_t elem_size, const void* value);
+/* [TYP-38] (0.9.9): an Array built from a list literal. One allocation holding
+ * exactly `count` elements, copied bitwise from `elems`; the caller has moved
+ * them out of their fixed array, so they now belong to the result. */
+ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count);
 void ember_vec_free(ember_vec* v, size_t elem_size);
 /* Append `count` bytes. Used for `String`, whose element size is one. */
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);

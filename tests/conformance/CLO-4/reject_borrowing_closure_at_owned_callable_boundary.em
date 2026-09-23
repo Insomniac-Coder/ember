@@ -8,6 +8,6 @@ fn invoke(owned f: fn() -> i32) -> i32:
     return f()
 
 fn main():
-    value = 7
+    value: i32 = 7
     closure = fn() => value
     println(invoke(closure)) #$ error[E3063]: captures by reference cannot be passed to an `owned` callable parameter

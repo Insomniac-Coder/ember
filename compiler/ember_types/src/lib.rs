@@ -7,7 +7,7 @@
 //! `[TYP-11]` — the default struct layout is C-compatible, deliberately, so
 //! that every plain struct can cross an FFI boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use ember_span::{Span, Symbol};
@@ -559,25 +559,42 @@ impl TypeTable {
     /// Whether a type mentions any generic parameter, and so still has to be
     /// substituted before it means anything at run time.
     pub fn is_generic(&self, ty: Ty) -> bool {
+        self.is_generic_in(ty, &mut HashSet::new())
+    }
+
+    /// `seen` holds the nominal types already being examined. A type may
+    /// reach itself through an owning indirection (`struct Tree: kids:
+    /// Array[Tree]`); meeting it again adds nothing, and without the set the
+    /// walk never ends (D-182).
+    fn is_generic_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.kind(ty) {
             TyKind::Param { .. } => true,
-            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.is_generic(*inner),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic(*elem),
-            TyKind::Span { elem, .. } => self.is_generic(*elem),
-            TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic(t)),
-            TyKind::Fn { params, ret, .. } => {
-                params.iter().any(|param| self.is_generic(param.ty)) || self.is_generic(*ret)
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
+                self.is_generic_in(*inner, seen)
             }
-            TyKind::Struct(id) => self
-                .struct_def(*id)
-                .fields
-                .iter()
-                .any(|field| self.is_generic(field.ty)),
-            TyKind::Class(id) => self
-                .class_def(*id)
-                .fields
-                .iter()
-                .any(|field| self.is_generic(field.ty)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic_in(*elem, seen),
+            TyKind::Span { elem, .. } => self.is_generic_in(*elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic_in(t, seen)),
+            TyKind::Fn { params, ret, .. } => {
+                params.iter().any(|param| self.is_generic_in(param.ty, seen))
+                    || self.is_generic_in(*ret, seen)
+            }
+            TyKind::Struct(id) => {
+                seen.insert(ty)
+                    && self
+                        .struct_def(*id)
+                        .fields
+                        .iter()
+                        .any(|field| self.is_generic_in(field.ty, seen))
+            }
+            TyKind::Class(id) => {
+                seen.insert(ty)
+                    && self
+                        .class_def(*id)
+                        .fields
+                        .iter()
+                        .any(|field| self.is_generic_in(field.ty, seen))
+            }
             _ => false,
         }
     }
@@ -588,33 +605,50 @@ impl TypeTable {
     /// sized compiler-known struct and therefore do not recurse through that
     /// wrapper here.
     pub fn has_unsized_by_value(&self, ty: Ty) -> bool {
+        self.has_unsized_by_value_in(ty, &mut HashSet::new())
+    }
+
+    /// `seen` breaks cycles through owning indirections, as in
+    /// `is_generic_in` (D-182).
+    fn has_unsized_by_value_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.kind(ty) {
             TyKind::Dyn { .. } => true,
             TyKind::Ref { .. } | TyKind::Ptr { .. } => false,
             TyKind::Array { elem, .. }
             | TyKind::Vec { elem }
-            | TyKind::Span { elem, .. } => self.has_unsized_by_value(*elem),
-            TyKind::Tuple(items) => items.iter().any(|&item| self.has_unsized_by_value(item)),
-            TyKind::Fn { params, ret, .. } => {
-                params.iter().any(|param| self.has_unsized_by_value(param.ty))
-                    || self.has_unsized_by_value(*ret)
+            | TyKind::Span { elem, .. } => self.has_unsized_by_value_in(*elem, seen),
+            TyKind::Tuple(items) => {
+                items.iter().any(|&item| self.has_unsized_by_value_in(item, seen))
             }
-            TyKind::Struct(id) => self
-                .struct_def(*id)
-                .fields
-                .iter()
-                .any(|field| self.has_unsized_by_value(field.ty)),
-            TyKind::Class(id) => self
-                .class_def(*id)
-                .fields
-                .iter()
-                .any(|field| self.has_unsized_by_value(field.ty)),
-            TyKind::Enum(id) => self
-                .enum_def(*id)
-                .variants
-                .iter()
-                .flat_map(|variant| variant.fields.iter())
-                .any(|field| self.has_unsized_by_value(field.ty)),
+            TyKind::Fn { params, ret, .. } => {
+                params.iter().any(|param| self.has_unsized_by_value_in(param.ty, seen))
+                    || self.has_unsized_by_value_in(*ret, seen)
+            }
+            TyKind::Struct(id) => {
+                seen.insert(ty)
+                    && self
+                        .struct_def(*id)
+                        .fields
+                        .iter()
+                        .any(|field| self.has_unsized_by_value_in(field.ty, seen))
+            }
+            TyKind::Class(id) => {
+                seen.insert(ty)
+                    && self
+                        .class_def(*id)
+                        .fields
+                        .iter()
+                        .any(|field| self.has_unsized_by_value_in(field.ty, seen))
+            }
+            TyKind::Enum(id) => {
+                seen.insert(ty)
+                    && self
+                        .enum_def(*id)
+                        .variants
+                        .iter()
+                        .flat_map(|variant| variant.fields.iter())
+                        .any(|field| self.has_unsized_by_value_in(field.ty, seen))
+            }
             _ => false,
         }
     }

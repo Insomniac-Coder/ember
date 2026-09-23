@@ -9,5 +9,5 @@ fn read_cell(cell: ref Cell[i32]) -> i32:
     return cell.get()
 
 fn main():
-    cell = Cell(7)
+    cell: Cell[i32] = Cell(7)
     println(read_cell(ref cell))

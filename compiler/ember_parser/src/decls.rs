@@ -191,6 +191,40 @@ impl Parser<'_> {
 
     // -- items ----------------------------------------------------------------
 
+    /// `[GRM-2]` (0.9.9) — whether the next tokens begin an item, exactly as
+    /// `parse_item_kind` dispatches. Anything else at file scope is a script
+    /// statement. `unsafe:` is a statement; `unsafe fn` and `unsafe extern`
+    /// are items.
+    pub(crate) fn at_item_start(&self) -> bool {
+        match self.peek() {
+            TokenKind::DocComment(_) | TokenKind::Reserved(_) => true,
+            TokenKind::Punct(Punct::At) => true,
+            TokenKind::Keyword(
+                Kw::Pub
+                | Kw::Extern
+                | Kw::Fn
+                | Kw::Virtual
+                | Kw::Override
+                | Kw::Struct
+                | Kw::Class
+                | Kw::Open
+                | Kw::Enum
+                | Kw::Interface
+                | Kw::Extend
+                | Kw::Const
+                | Kw::Static
+                | Kw::Comptime
+                | Kw::Type,
+            ) => true,
+            TokenKind::Keyword(Kw::Unsafe) => {
+                self.at_kw_at(1, Kw::Fn) || self.at_kw_at(1, Kw::Extern)
+            }
+            TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
+            TokenKind::Ident(_) => self.at_gen_fn(),
+            _ => false,
+        }
+    }
+
     pub(crate) fn parse_item(&mut self) -> Option<Item> {
         let doc_span = self.span();
         let doc = self.take_doc();

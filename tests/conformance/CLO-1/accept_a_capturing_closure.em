@@ -13,9 +13,9 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32:
     return f(v)
 
 fn main():
-    scale = 3
+    scale: i32 = 3
     println(apply(fn(x) => x * scale, 2))
-    offset = 10
+    offset: i32 = 10
     println(apply(fn(x) => x + offset, 5))
 #$ stdout: 6
 #$ 15

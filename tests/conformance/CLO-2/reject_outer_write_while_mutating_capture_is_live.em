@@ -5,7 +5,7 @@
 # outer place cannot be written in the intervening region.
 
 fn main():
-    counter = 0
+    counter: i32 = 0
     increment = fn() -> i32:
         counter = counter + 1
         return counter

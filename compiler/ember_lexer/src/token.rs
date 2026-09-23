@@ -302,12 +302,14 @@ macro_rules! puncts {
 puncts! {
     // three characters
     StarStarEq => "**=", ShlEq => "<<=", ShrEq => ">>=", DotDotEq => "..=",
+    // `[LEX-21]` (0.9.9) — `//=` before `//` before `/`.
+    SlashSlashEq => "//=",
     // two characters
     StarStar => "**", EqEq => "==", NotEq => "!=", LtEq => "<=", GtEq => ">=",
     Shl => "<<", Shr => ">>", PlusEq => "+=", MinusEq => "-=", StarEq => "*=",
     SlashEq => "/=", PercentEq => "%=", AmpEq => "&=", PipeEq => "|=",
     CaretEq => "^=", DotDot => "..", Arrow => "->", FatArrow => "=>",
-    QuestionDot => "?.", ColonColon => "::",
+    QuestionDot => "?.", ColonColon => "::", SlashSlash => "//",
     // one character
     Plus => "+", Minus => "-", Star => "*", Slash => "/", Percent => "%",
     // `;` is absent from Part II §6's operator table but required by

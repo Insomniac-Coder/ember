@@ -4,4 +4,4 @@
 fn main():
     n: i32 = 10
     d: i32 = 0
-    println(n / d)
+    println(n // d)

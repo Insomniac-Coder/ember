@@ -84,6 +84,14 @@ struct Expectations {
     warnings: Vec<(String, String)>,
 }
 
+/// The text after `error[` or `warning[`: `E3062]: message`, or `E3062]`
+/// alone, which requires the code and no particular message (D-184).
+fn code_and_message(value: &str) -> Option<(String, String)> {
+    let (code, rest) = value.split_once(']')?;
+    let message = rest.strip_prefix(':').unwrap_or(rest);
+    Some((code.trim().to_string(), message.trim().to_string()))
+}
+
 fn parse_expectations(source: &str) -> Expectations {
     let mut expectations = Expectations::default();
     let mut collecting_stdout = false;
@@ -178,17 +186,15 @@ fn parse_expectations(source: &str) -> Expectations {
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("error[") {
-            if let Some((code, message)) = value.split_once("]:") {
-                expectations
-                    .errors
-                    .push((code.trim().to_string(), message.trim().to_string()));
+            // D-184 — `#$ error[E3062]` with no `:` names a code and no message.
+            // It used to be dropped, so eight cases passed on any rejection.
+            if let Some((code, message)) = code_and_message(value) {
+                expectations.errors.push((code, message));
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("warning[") {
-            if let Some((code, message)) = value.split_once("]:") {
-                expectations
-                    .warnings
-                    .push((code.trim().to_string(), message.trim().to_string()));
+            if let Some((code, message)) = code_and_message(value) {
+                expectations.warnings.push((code, message));
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("help:") {
@@ -1601,11 +1607,36 @@ fn check_directory(name: &str) -> usize {
         })
         .collect();
     entries.sort();
+    let mut failures = Vec::new();
     for path in entries {
-        check_file(&path, &root);
+        check_file_collecting(&path, &root, &mut failures);
         count += 1;
     }
+    report_failures(name, &failures);
     count
+}
+
+/// Run one case, recording its failure instead of stopping the directory, so
+/// one run reports every failing case rather than the first.
+fn check_file_collecting(path: &Path, root: &Path, failures: &mut Vec<String>) {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_file(path, root)));
+    if let Err(payload) = outcome {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_else(|| "a case panicked with a non-text payload".to_string());
+        failures.push(message);
+    }
+}
+
+fn report_failures(what: &str, failures: &[String]) {
+    assert!(
+        failures.is_empty(),
+        "{} failing case(s) in {what}:\n\n{}",
+        failures.len(),
+        failures.join("\n\n----------\n\n")
+    );
 }
 
 #[test]
@@ -1980,7 +2011,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     .expect("write initial callable-mode helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import apply\n\nfn increment(mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value = 4\n    println(apply(increment, value))\n",
+        "from helper import apply\n\nfn increment(mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(increment, value))\n",
     )
     .expect("write callable-mode importer");
 
@@ -2017,7 +2048,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     .expect("change callable-mode helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import apply\n\nfn identity(value: i32) -> i32:\n    return value\n\nfn main():\n    value = 4\n    println(apply(identity, value))\n",
+        "from helper import apply\n\nfn identity(value: i32) -> i32:\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(identity, value))\n",
     )
     .expect("adapt importer to the changed callable contract");
     check("after callable mode change");
@@ -2323,6 +2354,13 @@ struct S:
     assert_eq!(parsed.assert_c_count, vec![(arena_alloc, 1)]);
     assert_eq!(parsed.helps, ["keep one owner"]);
     assert_eq!(parsed.forbidden_helps, ["RefCell"]);
+
+    // D-184 — the bare form names a code and requires it.
+    let bare = parse_expectations("#$ test: compile-fail\n#$ error[E3062]\n#$ error[E2020]: expected\n");
+    assert_eq!(
+        bare.errors,
+        [("E3062".to_string(), String::new()), ("E2020".to_string(), "expected".to_string())]
+    );
 }
 
 /// `[TST-4]`/`[TST-4a]` — every rule directory under `tests/conformance/` is
@@ -2346,6 +2384,7 @@ fn the_conformance_suite_runs() {
         "tests/conformance holds no rule directories"
     );
 
+    let mut failures = Vec::new();
     for rule_dir in rules {
         let rule = rule_dir.file_name().unwrap().to_string_lossy().into_owned();
         let mut files: Vec<PathBuf> = std::fs::read_dir(&rule_dir)
@@ -2383,7 +2422,8 @@ fn the_conformance_suite_runs() {
                 "{}: no `#$ rules:` annotation",
                 path.display()
             );
-            check_file(path, &root);
+            check_file_collecting(path, &root, &mut failures);
         }
     }
+    report_failures("tests/conformance", &failures);
 }

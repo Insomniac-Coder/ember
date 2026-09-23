@@ -5,7 +5,7 @@
 //! than three for the same region, so a single typo cannot bury the real
 //! error under a cascade.
 
-use ember_ast::{Ident, Module, NodeId, NodeIds};
+use ember_ast::{Block, Dispatch, FnDecl, Ident, Item, ItemKind, Module, NodeId, NodeIds, Script, Stmt, Visibility};
 use ember_diag::{Code, Diagnostic, Sink, codes};
 use ember_lexer::{Kw, Punct, Token, TokenKind};
 use ember_span::{FileId, Span, Symbol};
@@ -400,6 +400,10 @@ impl<'a> Parser<'a> {
 
         let mut imports = Vec::new();
         let mut items = Vec::new();
+        // `[GRM-2]` (0.9.9) — statements at file scope, and how many items
+        // preceded each, for the implicit `main` of a script.
+        let mut script = Vec::new();
+        let mut placement = Vec::new();
 
         loop {
             self.eat_newlines();
@@ -425,6 +429,22 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            if !self.at_item_start() {
+                let before = self.pos;
+                match self.parse_statement() {
+                    Some(stmt) => {
+                        placement.push(items.len());
+                        script.push(stmt);
+                    }
+                    None => {
+                        if self.pos == before {
+                            self.bump();
+                        }
+                        self.recover_to_item();
+                    }
+                }
+                continue;
+            }
             let before = self.pos;
             match self.parse_item() {
                 Some(item) => items.push(item),
@@ -437,7 +457,40 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Module { directive, imports, items, span: start.to(self.prev_span()) }
+        // `[FN-8]` (0.9.9) — a script's statements form, in source order, the
+        // body of an implicit `fn main()`. The parser builds it here, where
+        // node ids are allocated; the driver rejects it outside the entry
+        // file, and a declared `main` beside it is two items of one name.
+        let script = (!script.is_empty()).then(|| {
+            let first: Span = script.first().map(|s: &Stmt| s.span).expect("non-empty");
+            let last: Span = script.last().map(|s: &Stmt| s.span).expect("non-empty");
+            let span = first.to(last);
+            let name = Ident { name: Symbol::intern("main"), span: first };
+            let body = Block { id: self.next_id(), stmts: script, span };
+            let decl = FnDecl {
+                name,
+                is_unsafe: false,
+                abi: None,
+                is_gen: false,
+                dispatch: Dispatch::Static,
+                generics: Vec::new(),
+                params: Vec::new(),
+                ret: None,
+                where_clause: Vec::new(),
+                body: Some(body),
+            };
+            items.push(Item {
+                id: self.next_id(),
+                attrs: Vec::new(),
+                vis: Visibility::private(),
+                doc: None,
+                kind: ItemKind::Fn(decl),
+                span,
+            });
+            Script { main: items.len() - 1, placement, first }
+        });
+
+        Module { directive, imports, items, script, span: start.to(self.prev_span()) }
     }
 
     fn parse_directive(&mut self) -> Option<ember_ast::Directive> {

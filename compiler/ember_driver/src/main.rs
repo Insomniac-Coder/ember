@@ -1203,6 +1203,24 @@ fn load_modules(
             wanted.push((names, import.span));
         }
 
+        // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
+        // path) may hold statements at file scope; elsewhere they are
+        // `E0100`, and the implicit `main` built from them is dropped.
+        let mut module = module;
+        if !path.is_empty() {
+            if let Some(script) = module.script.take() {
+                sink.emit(
+                    ember_diag::Diagnostic::error(
+                        ember_diag::codes::E0100,
+                        script.first,
+                        "a statement at file scope outside the entry file",
+                    )
+                    .help("move it into a function")
+                    .note("only the file given to `ember run`/`ember build` is a script [GRM-2]"),
+                );
+                module.items.remove(script.main);
+            }
+        }
         loaded.push(ember_typeck::LoadedModule {
             path: path.clone(),
             module,
@@ -2229,13 +2247,13 @@ fn runtime_dir() -> Result<PathBuf, String> {
     ))
 }
 
-/// `[TYP-8]`, and Part XIX §2's profile table: `debug` panics on overflow,
-/// `release` and `shipping` wrap. `[PRF-1]` allows exactly this one difference
-/// in semantics between profiles.
+/// `[TYP-8]` (0.9.9) — "Integer overflow panics in every profile", and
+/// `[PRF-1]`: a profile never changes what a program means. 0.8's `release`
+/// and `shipping` wrapped; wrapping is now only what `@overflow(wrap)` or the
+/// `wrapping_*` methods ask for.
 fn overflow_policy(profile: Profile) -> ember_types::OverflowPolicy {
     match profile {
-        Profile::Debug => ember_types::OverflowPolicy::Panic,
-        Profile::Release | Profile::Shipping => ember_types::OverflowPolicy::Wrap,
+        Profile::Debug | Profile::Release | Profile::Shipping => ember_types::OverflowPolicy::Panic,
     }
 }
 

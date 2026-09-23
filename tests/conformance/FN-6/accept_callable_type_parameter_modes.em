@@ -14,7 +14,7 @@ fn apply(f: fn(mut i32) -> i32, mut value: i32) -> i32:
     return f(value)
 
 fn main():
-    value = 4
+    value: i32 = 4
     operation: fn(mut i32) -> i32 = increment
     println(operation(value))
     println(apply(increment, value))

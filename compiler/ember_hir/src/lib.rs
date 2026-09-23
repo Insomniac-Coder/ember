@@ -436,6 +436,10 @@ pub enum Builtin {
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
     /// compiler-known type until Phase 2's generics.
     ArrayNew,
+    /// `[TYP-38]` (0.9.9) — `[a, b, c]` where an `Array[T]` is expected, or
+    /// with no context: one allocation holding exactly the elements, moved
+    /// out of the fixed array that is the only argument.
+    ArrayFromLiteral,
     /// `[CLS-1]` — allocate a class object, optionally followed by its
     /// compiler-known `init` method. The nominal class identity travels with
     /// the builtin so the backend can select the matching `TypeInfo` record;
@@ -720,6 +724,7 @@ impl Builtin {
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
+            Builtin::ArrayFromLiteral => "Array",
             Builtin::ClassNew { .. } => "class",
             Builtin::ClassDowncast { forced: true, .. } => "as!",
             Builtin::ClassDowncast { forced: false, .. } => "as?",
@@ -825,8 +830,17 @@ pub enum BinOp {
     Add,
     Sub,
     Mul,
+    /// True division on floats; C's truncating division on integers, which
+    /// only compiler-lowered forms (`div_trunc`) produce (`[TYP-28]`).
     Div,
+    /// C's truncating remainder (`rem_trunc`).
     Rem,
+    /// `//` — floor division: the quotient rounded toward negative infinity
+    /// (`[TYP-28]`), `floor(a / b)` on floats (`[TYP-29]`).
+    FloorDiv,
+    /// `%` — floor modulo, with the sign of the divisor (`[TYP-28]`,
+    /// `[TYP-29]`).
+    FloorRem,
     BitAnd,
     BitOr,
     BitXor,
@@ -865,6 +879,15 @@ impl BinOp {
         matches!(self, BinOp::And | BinOp::Or)
     }
 
+    /// The Ember spelling, which a panic message names (`[TYP-8]`: "naming
+    /// the operator actually written").
+    pub fn spelling(self) -> &'static str {
+        match self {
+            BinOp::FloorDiv => "//",
+            other => other.c_operator(),
+        }
+    }
+
     /// The C spelling. Ember's semantics match C's for every operator here
     /// except division and remainder by zero, which panic (`[TYP-8]`).
     pub fn c_operator(self) -> &'static str {
@@ -874,6 +897,11 @@ impl BinOp {
             BinOp::Mul => "*",
             BinOp::Div => "/",
             BinOp::Rem => "%",
+            // Only unsigned operands reach C through this spelling: floor and
+            // truncation agree there. Signed operands use the checked runtime
+            // helpers and floats the `floor` helpers.
+            BinOp::FloorDiv => "/",
+            BinOp::FloorRem => "%",
             BinOp::BitAnd => "&",
             BinOp::BitOr => "|",
             BinOp::BitXor => "^",

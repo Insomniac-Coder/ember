@@ -10696,3 +10696,21 @@ The percentages are intentionally separate from the formal count. This
 ODR-020 diagnostics change improves DIA-12 coverage, but DIA-12 is not one of
 Phase 2's `[DIA-7..10]` exit requirements; it therefore does not change the
 formal 1/9 count or Phase 2's estimate.
+
+### 0.355 0.9.9 implementation begins on `phase-0.9.9` — 2026-09-23
+
+The owner directed the compiler be moved to the 0.9.9 language written in
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_3.md`, with implementation
+ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
+agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
+branch `phase-0.9.9` (worktree `Code/ember-099`), because the main checkout
+holds uncommitted `ember_analysis` work that must not be clobbered.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_3`.
+
+**Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
+ODR list and the progress log. The spec's sources, passes and tools are in
+`tasks/spec-0.9.9/` (canonical on this branch). Landed so far: `int`/`float`
+and `i64`/`f64` literal defaults, floor `//`/`%` and `E2240`, Python-exact
+float floor operations, `[TXT-9]` string literals, unparenthesised tuples,
+comparison chains; D-182–D-185; ODR-021 and ODR-022. The directory tests now
+report every failing case in one run (`check_file_collecting`).

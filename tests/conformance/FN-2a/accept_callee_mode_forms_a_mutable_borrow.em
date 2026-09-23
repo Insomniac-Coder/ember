@@ -7,7 +7,7 @@ fn double(mut n: i32):
     n = n + n
 
 fn main():
-    value = 2
+    value: i32 = 2
     double(value)
     println(value)
 #$ stdout: 4

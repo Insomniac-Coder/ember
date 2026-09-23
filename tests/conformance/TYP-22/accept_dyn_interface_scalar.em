@@ -24,5 +24,5 @@ fn main():
     println(inspect_ref(ref value))
     boxed: Box[dyn Inspect] = Box(value)
     println(boxed.inspect())
-    boxed_literal: Box[dyn Inspect] = Box(42)
+    boxed_literal: Box[dyn Inspect] = Box(42i32)
     println(boxed_literal.inspect())

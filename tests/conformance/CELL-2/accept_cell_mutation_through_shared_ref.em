@@ -12,6 +12,6 @@ fn bump(cell: ref Cell[i32]):
     cell.set(cell.get() + 1)
 
 fn main():
-    cell = Cell(41)
+    cell: Cell[i32] = Cell(41)
     bump(ref cell)
     println(cell.get())

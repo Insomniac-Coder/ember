@@ -58,7 +58,7 @@ fn main():
     println(total_area(Circle(1.0), Circle(2.0)))
 
     # `[CTL-1]` — `for` over anything that provides `next()`.
-    total = 0
+    total: i32 = 0
     for x in Counting(0, 5):
         total = total + x
     println(total)
@@ -75,7 +75,7 @@ fn main():
         println(-1)
 
     # And over a collection, which is a counted loop over its indices.
-    xs: Array[i32] = Array()
+    xs: Array[int] = Array()
     for i in 0..5:
         xs.push(i * i)
     sum = 0

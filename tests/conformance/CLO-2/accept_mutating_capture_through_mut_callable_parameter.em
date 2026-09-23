@@ -10,7 +10,7 @@ fn invoke(mut f: fn() -> i32) -> i32:
     return f()
 
 fn main():
-    counter = 0
+    counter: i32 = 0
     increment = fn() -> i32:
         counter = counter + 1
         return counter

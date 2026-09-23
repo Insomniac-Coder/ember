@@ -12,7 +12,7 @@ type WideRatio = f32 in -100.0 ..= 100.0
 type NarrowRatio = f32 in -10.0 ..= 10.0
 
 fn quotient(value: Wide) -> Narrow:
-    return value / 10
+    return value // 10
 
 fn quotient_ratio(value: WideRatio) -> NarrowRatio:
     return value / 10.0

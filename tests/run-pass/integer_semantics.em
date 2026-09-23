@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: TYP-8, TYP-10
+#$ rules: TYP-8, TYP-10, TYP-28
 
 @overflow(wrap)
 fn wrapped(a: i32, b: i32) -> i32:
@@ -12,11 +12,13 @@ fn shifted(a: u32, n: u32) -> u32:
 fn main():
     println(wrapped(2147483647, 1))
     println(shifted(1, 33))
-    println(7 / 2)
+    println(7 // 2)
     println(7 % 2)
-    println(-7 / 2)
+    println(-7 // 2)
+    println(-7 % 2)
 #$ stdout: -2147483648
 #$ 2
 #$ 3
 #$ 1
-#$ -3
+#$ -4
+#$ 1

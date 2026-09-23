@@ -2342,6 +2342,24 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
+            // `[STD-9]` (0.9.9) — `println(a, b, sep=…, end=…)` arrives as one
+            // `print` whose arguments are the pieces in order. Every argument
+            // is evaluated first, as in Python, and then each piece is printed
+            // through the printer for its own type.
+            hir::ExprKind::Builtin { which: hir::Builtin::Print, args } if args.len() > 1 => {
+                let pieces: Vec<(Operand, Ty)> =
+                    args.iter().map(|a| (self.lower_operand_borrowed(a), a.ty)).collect();
+                for (operand, arg_ty) in pieces {
+                    let next = self.new_block();
+                    self.terminate(Terminator::Call {
+                        func: FuncRef::Builtin { which: hir::Builtin::Print, arg_ty },
+                        args: vec![operand],
+                        dest: place.clone(),
+                        next,
+                    });
+                    self.current = next;
+                }
+            }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.
                 // For most builtins that is the first argument; `alloc` takes
@@ -2376,7 +2394,9 @@ impl<'a> Builder<'a> {
                 );
                 let spill_first = matches!(
                     which,
-                    hir::Builtin::BoxNew { .. } | hir::Builtin::SharedNew { .. }
+                    hir::Builtin::BoxNew { .. }
+                        | hir::Builtin::SharedNew { .. }
+                        | hir::Builtin::ArrayFromLiteral
                 );
                 let args: Vec<Operand> = args
                     .iter()
@@ -2871,7 +2891,7 @@ impl<'a> Builder<'a> {
             return false;
         }
         match op {
-            BinOp::Div | BinOp::Rem => true,
+            BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem => true,
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Shl | BinOp::Shr => {
                 self.overflow == OverflowPolicy::Panic
             }
@@ -4550,7 +4570,7 @@ impl<'a> Builder<'a> {
         let rhs_op = self.lower_operand(rhs);
 
         match op {
-            BinOp::Div | BinOp::Rem => {
+            BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem => {
                 // The divisor is zero-checked whatever the policy says.
                 let is_zero = self.temp(self.bool_ty, span);
                 self.push(StmtKind::Assign {
@@ -4586,7 +4606,13 @@ impl<'a> Builder<'a> {
                     self.terminate(Terminator::Assert {
                         cond: Operand::Copy(Place::local(overflow)),
                         expected: false,
-                        msg: AssertKind::SignedDivisionOverflow,
+                        // `[TYP-8]` names the operator written: `MIN // -1`
+                        // says `//`. `%` never overflows (`MIN % -1 == 0`).
+                        msg: if op == BinOp::FloorDiv {
+                            AssertKind::Overflow(op)
+                        } else {
+                            AssertKind::SignedDivisionOverflow
+                        },
                         next: after,
                         span,
                     });

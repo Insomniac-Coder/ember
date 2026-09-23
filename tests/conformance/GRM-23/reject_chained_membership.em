@@ -1,14 +1,10 @@
 #$ test: parse-fail
-#$ rules: GRM-23
-# "non-associative: `a in b in c` is `E0104`". Ember has no chained
-# comparison, and the Python reading would surprise a C++ programmer.
-#
-# Note the code: Part III §5's table gives `E0102` for a chained *comparison*,
-# and `[GRM-23]` names `E0104` for this. The document is explicit, so the
-# membership operators report `E0104` (errata ERR-026).
+#$ rules: GRM-23, GRM-25
+# "Membership does not chain: `a in b in c` is `E0102`" ([GRM-23], 0.9.9).
+# Comparisons chain as in Python ([GRM-25]); `is` and `in` do not.
 
 fn main():
     xs: Array[i32] = Array[i32]()
     ys: Array[i32] = Array[i32]()
-    b = 1 in xs in ys           #$ error[E0104]: chained membership
+    b = 1 in xs in ys           #$ error[E0102]: `is` and `in` may not appear in a comparison chain
     println(1)

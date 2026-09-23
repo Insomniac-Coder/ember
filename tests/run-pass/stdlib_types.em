@@ -5,7 +5,7 @@
 # compiler until Phase 2's generics let the standard library write them.
 fn halve(n: i32) -> Option[i32]:
     if n % 2 == 0:
-        return Some(n / 2)
+        return Some(n // 2)
     return None
 
 # `[ERR-2]` — `?` yields the payload or returns the failure.
@@ -45,7 +45,7 @@ fn main():
     println(showr(twice(-3)))
 
     # `Array[T]` — a growable sequence, bounds-checked like a fixed array.
-    xs: Array[i32] = Array()
+    xs: Array[int] = Array()
     for i in 0..5:
         xs.push(i * i)
     println(xs.len())

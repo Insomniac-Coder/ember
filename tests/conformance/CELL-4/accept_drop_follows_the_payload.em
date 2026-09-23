@@ -15,7 +15,7 @@ struct Bag:
 
 fn make(n: i32) -> Bag:
     xs: Array[i32] = Array[i32]()
-    i = 0
+    i: i32 = 0
     while i < n:
         xs.push(i)
         i = i + 1

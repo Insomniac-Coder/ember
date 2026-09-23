@@ -1,0 +1,214 @@
+F-001	TOOLING	S3	12 errors
+F-002	DEFECT	S2	`()` is not accepted as a value of type `void`.
+F-003	DEFECT	S2	`import a.b.c` does not bind `c`.
+F-004	DEFECT	S2	importing a module that does not exist is silently accepted.
+F-005	DEFECT	S3	every E2020 type mismatch carries a note about numeric conversion.
+F-006	DEFECT	S4	N1 suggestion quality
+F-007	ERRATUM	S3	the showcase program passes a `str` literal where a `String` is required.
+F-008	DEFECT	S3	one bad character reports once per byte.
+F-009	DEFECT	S3	"not implemented in this phase" reuses `E1010`
+F-010	DEFECT	S3	cascades after a failed import.
+F-011	DEFECT	S3	cascade after a private constructor.
+F-012	DEFECT	S1	`println` of any `String`, including every f-string, emits C that does not compile.
+F-013	TOOLING	S2	"accepted by Ember, rejected by the C compiler" is a whole defect class with no gate.
+F-014	DESIGN	S2	a name assigned in every branch of an `if`/`else` is not visible after it.
+F-015	DEFECT	S3	`if x = 5:` (a `==` typo) gets a misleading fix.
+F-016	ERRATUM	S4	the 0.8.2c change log says there is no if-let; the grammar has one.
+F-017	ERRATUM	S3	the EBNF still contains what `[GRM-16]` and `[GRM-11]` delete.
+F-018	DESIGN	S3	two path separators, `.` and `::`.
+F-019	DESIGN	S3	`as` binds tighter than unary minus.
+F-020	ERRATUM	S4	`@deprecated` has two signatures
+F-021	ERRATUM	S3	`@nopanic` is listed as v2 in the attribute table, while the 0.8.4_Hardened_1 change log calls `@nopanic(explicit)` one of Ember's current c
+F-022	ERRATUM	S4	a pasted editorial instruction inside `[BLD-11]`
+F-023	DEFECT	S3	`E1020` means two things in the compiler.
+F-024	DESIGN	S3	`[GRM-14]` adds a third kind of generic parameter (`access P`) for one library type, `std.ecs.Query`.
+F-025	DESIGN	S3	`[LEX-22]` reserves `'a` for "v2 named lifetimes".
+F-026	TOOLING	S4	`[LEX-2]`: the formatter writes the platform's line ending by default.
+F-027	ERRATUM	S4	`[LEX-15]` still says "The reserved set therefore has 48 entries"
+F-028	ERRATUM	S4	the Part I.4 table still promises "~2 ns per access pair"
+F-029	DEFECT	S2	`xs = Array[i32]()` is rejected: the explicit type argument is ignored.
+F-030	ERRATUM	S3	`min`, `max` and `clamp` are used as free functions and declared nowhere.
+F-031	DESIGN	S2	strings are the biggest Python-ergonomics gap.
+F-032	ERRATUM	S3	`[TYP-15]` and `[TYP-15a]` disagree about containers of static views.
+F-033	ERRATUM	S3	`<<` overflow is undefined by the text.
+F-034	ERRATUM	S4	`[TYP-13]` guarantees a niche for `*fn`
+F-035	ERRATUM	S3	`as?` / `as!` are used in IV.6 and absent from the grammar.
+F-036	DESIGN	S3	`@view` is required on a struct the compiler already knows is a view
+F-037	DESIGN	S3	the default integer is `i32`.
+F-038	DESIGN	S3	floats have no `Ord`, so sorting a list of floats needs ceremony.
+F-039	DOCS	S4	`[RNG-10]` carries `[RNG-10a]`, `[RNG-10b]` and `[RNG-10c]` inline in one bullet
+F-040	DEFECT	S3	the orphan rule `[TYP-20]` is not enforced, and as written it is stricter than Rust's.
+F-041	DEFECT	S4	"interface methods need the interface imported" (`[TYP-24]` step 2) is not enforced.
+F-042	GAP	S3	no table says which standard interfaces the built-in types implement.
+F-043	ERRATUM	S3	which interface `<` uses is unclear, and `Ord` excludes floats.
+F-044	GAP	S4	`Formatter`, `FmtError`, `Ordering` and `Into` are used by the interface sketch and declared nowhere
+F-045	DESIGN	S4	three iteration interfaces
+F-046	DESIGN	S2	eight selectable language versions before 1.0.
+F-047	ERRATUM	S3	the `[MOD-5]` prelude list is incomplete against the rest of the document.
+F-048	DESIGN	S2	`Map` and `Set` are not in the prelude.
+F-049	DESIGN	S3	Python chained comparison is rejected.
+F-050	ERRATUM	S3	`[GRM-23]` gives `a in b in c` code `E0104`
+F-051	ERRATUM	S3	`extend[T: Display] Array[T] implements Display` (V.6) is not in the grammar
+F-052	ERRATUM	S3	impl granularity is inconsistent.
+F-053	ERRATUM	S4	three rules stated twice, verbatim, inside themselves
+F-054	DESIGN	S3	every struct needs `@derive(...)` boilerplate.
+F-055	DESIGN	S2	no runtime-initialised globals in v1.
+F-056	GAP	S4	`fn main(args: Span[str])`
+F-057	ERRATUM	S4	undeclared names in normative examples
+F-058	DEFECT	S2	a closure cannot be returned or boxed; the spec's own form is rejected.
+F-059	GAP	S2	what a `fn(A) -> R` type means outside a parameter is unspecified.
+F-060	DESIGN	S3	calling a callable field needs a temporary.
+F-061	DESIGN	S3	a boxed once-callable is not callable (`[CLO-6a]`).
+F-062	ERRATUM	S2	a class `gen fn` with `mut self` contradicts `[CORO-6]` or `[CLS-7]`, and the text does not say which.
+F-063	ERRATUM	S3	`Coroutine[R]` names one type parameter; a coroutine has two
+F-064	DESIGN	S3	temporaries in an `if`-condition live through the `else`
+F-065	DESIGN	S4	`%` follows C (sign of the dividend) while the syntax follows Python.
+F-066	GAP	S3	integer `
+F-067	DESIGN	S2	a method call borrows all of `self`, so the classic Rust partial-borrow error is back.
+F-068	DESIGN	S3	the Python swap `a[i], a[j] = a[j], a[i]` is a parse error
+F-069	WITHDRAWN	-	premise disproved by probe; see F-168.
+F-070	DESIGN	S3	`@borrows(arena)` is mandatory on every Arena wrapper, at every nesting level
+F-071	ERRATUM	S4	the `@borrows` example contradicts the rule and its own semantics.
+F-072	ERRATUM	S4	`[DRP-4]` is unenforceable as written
+F-073	DEFECT	S2	writing a class field through a handle from outside a method fails.
+F-074	GAP	S3	no way to return an iterator without naming its concrete type.
+F-075	ERRATUM	S4	`split_at_mut` is named by `[BRW-5]` and `[TST-25]` (item 8); the API is `split_at`
+F-076	ERRATUM	S4	VII.7's example has statements at file scope
+F-077	DEFECT	S3	spec examples call APIs that do not exist:
+F-078	ERRATUM	S1	the text contradicts itself on whether a `Sync` class has dynamic exclusivity at all, which decides whether Safe Ember has a data race.
+F-079	GAP	S1	assigning a non-`Copy` field through a handle is neither an "instantaneous" nor a "long-term" access.
+F-080	DEFECT	S2	`String(literal)` does not exist.
+F-081	DEFECT	S2	(update to F-073)
+F-082	DESIGN	S3	reference cycles leak silently in release, and Python users build cycles
+F-083	DESIGN	S3	objects may die before their last syntactic use
+F-084	ERRATUM	S4	the VIII.7 idiom uses three things the compiler lacks or rejects
+F-085	TOOLING	S2	the development target's examples are not checked by any gate, and half of them do not parse.
+F-086	ERRATUM	S3	`[ARN-4]` makes `@noalloc`-cleanliness a property of a value, which the effect system cannot see.
+F-087	DESIGN	S3	`Shared[T]` overlaps `class` almost completely.
+F-088	GAP	S2	almost none of the Part IX.1 heap library exists.
+F-089	ERRATUM	S3	`[UNS-8]` and `[LEX-11]` contradict each other about whether a comment can produce a warning.
+F-090	ERRATUM	S3	the `assert_disjoint` example uses `dst` after moving it.
+F-091	ERRATUM	S4	`[ALC-3]` declares `static ALLOC: dyn Allocator`
+F-092	GAP	S4	phantom type parameters.
+F-093	DESIGN	S2	`Map`/`Set` iterate in unspecified order; Python's `dict` iterates in insertion order.
+F-094	GAP	S3	is `DefaultHasher` seeded per process?
+F-095	DESIGN	S3	`[EFF-2]`: a `fn(A) -> R` parameter "is assumed to carry all effects unless written `@noalloc fn(A) -> R`"
+F-096	ERRATUM	S4	`RuntimeCheck` has four kinds; `[EFF-17]` says `@no_runtime_checks` "excludes all five kinds"
+F-097	ERRATUM	S4	`[EFF-16]`'s last two sentences have no clear antecedent
+F-098	DESIGN	S4	`@realtime`'s default set includes `@nopanic(explicit)`, and `[EFF-16]` makes every division by a non-constant, every shift by a variable, a
+F-099	ERRATUM	S3	(refines F-021)
+F-100	GAP	S2	the first-hour path does not exist.
+F-101	ERRATUM	S3	is the stale-handle check removed in `shipping`?
+F-102	PERF	S2	"release wraps and emits nothing" is only true if the C is written so that wrapping is defined.
+F-103	DOCS	S4	`[TOOL-1]`–`[TOOL-4]` sit inside X.3 "Inspection"
+F-104	ERRATUM	S1	`[THR-1]` admits a `Sync` class with a plain mutable scalar field, and scalar field writes through a handle are unchecked.
+F-105	ERRATUM	S3	the job-system example breaks two rules.
+F-106	GAP	S3	what `return`, `break`, `continue` and `?` mean inside `with scope = thread.scope():`.
+F-107	DESIGN	S4	async is v2.
+F-108	ERRATUM	S3	`[CT-1]` excludes allocation from comptime and then supports allocating types.
+F-109	GAP	S2	what happens when comptime-materialised heap data is mutated at run time.
+F-110	ERRATUM	S3	`comptime` is used as an expression with a block value, which the grammar does not have.
+F-111	ERRATUM	S4	more syntax in examples that the grammar lacks:
+F-112	ERRATUM	S3	`@derive(SoA)` generates a different `SoA[T]` per `T`, which is specialisation
+F-113	DESIGN	S3	a default error type would shorten most signatures.
+F-114	GAP	S3	`[DRV-1]`: every derive is specified as a hand-written `extend` in `std/derive/*.em`, and the generator "MUST produce the same MIR".
+F-115	DESIGN	S1	the build order is inverted against the goal.
+F-116	ERRATUM	S3	`min`/`max`/`clamp`/`abs`/`sqrt`/`sin` are declared in `std.math`, but the spec's examples call them unimported
+F-117	ERRATUM	S4	`[STD-8]`'s mandated help text is Rust syntax
+F-118	ERRATUM	S4	`[TXT-2]` still names `CppString.as_str()`
+F-119	GAP	S3	`print`/`println` have no signature.
+F-120	ERRATUM	S3	`unsafe(reason = "…")` (`[UNS-9]`) is not in the grammar
+F-121	DOCS	S4	sections filed under the wrong Part
+F-122	ERRATUM	S4	the `[MOD-5]` prelude list omits names Part XV puts in the prelude
+F-123	DEFECT	S2	Ember cannot call C at all today, and the C-import directive is silently ignored.
+F-124	ERRATUM	S3	two more unapplied editorial instructions inside normative rules
+F-125	ERRATUM	S4	`std::string` → `CppString` "with `.as_str()`"
+F-126	GAP	S3	the overlay language has no grammar.
+F-127	DESIGN	S3	scope: the C++ importer is a project the size of the rest of the compiler.
+F-128	GAP	S3	the "five count contracts" are never listed.
+F-129	ERRATUM	S4	the `[FFI-39]` example uses constructor syntax the grammar does not have
+F-130	ERRATUM	S2	two package settings turn memory-safety checks off for Safe code, and `[PHIL-10]` lists no such exception.
+F-131	ERRATUM	S4	XVII.5 writes `mut` at a call site
+F-132	ERRATUM	S4	the mandated refusal report suggests a signature the rules reject
+F-133	DESIGN	S3	`migrate_from` may not contain a single integer `+`
+F-134	GAP	S3	is a base class's `init` inherited?
+F-135	ERRATUM	S4	wrong or loose citations
+F-136	DEFECT	S2	the mangling scheme is not injective, and a collision is an internal compiler error.
+F-137	DEFECT	S2	`for x in span:` is rejected.
+F-138	DEFECT	S3	`[CTL-3b]`'s guaranteed lowering is not implemented.
+F-139	DEFECT	S2	float contraction is never disabled.
+F-140	PERF	S1	there is no performance suite; "fast like C" is unmeasured.
+F-141	DEFECT	S3	several promised backend/runtime pieces do not exist
+F-142	TOOLING	S3	`compiler/ember_typeck/src/lib.rs` is 20,935 lines in one file
+F-143	ERRATUM	S3	XIX says effect analysis both runs after monomorphisation (XIX.1: *"Effect analysis runs 
+F-144	TOOLING	S1	the instrument that measures the goal does not exist.
+F-145	ERRATUM	S3	`E9010` has two meanings.
+F-146	GAP	S3	most of the CLI in XX.1 is missing
+F-147	DESIGN	S3	the example manifest makes shipping builds UB on an exclusivity violation by default
+F-148	DEFECT	S2	`xs[-1]` compiles and panics at run time with index 18446744073709551615.
+F-149	DEFECT	S3	`x is None` gives two wrong errors instead of the fix.
+F-150	DEFECT	S3	`let x = 5` gives a raw parse error
+F-151	DEFECT	S4	`a < b < c` fix-it is incomplete
+F-152	ERRATUM	S4	`[DIA-7a]`'s table is flattened into one line
+F-153	ERRATUM	S4	(the rule behind F-006)
+F-154	ERRATUM	S4	stale conditional and dead codes in the diagnostics part
+F-155	DESIGN	S2	integer `/` is the silent Python trap.
+F-156	GAP	S2	no user guide and no "coming from Python" chapter.
+F-157	ERRATUM	S3	C++ exception policy: "no default" vs a default.
+F-158	ERRATUM	S4	more amendment text appended instead of applied
+F-159	PROCESS	S2	Phase 1 is recorded as complete, but its exit criterion ("conformance for Parts II–VI except closures/generics") is not met.
+F-160	DEFECT	S2	indexing does not produce a place that can be returned by reference, so milestone M2 cannot be written as specified.
+F-161	DEFECT	S1	every contract attribute is accepted and ignored, and so is any made-up attribute.
+F-162	DEFECT	S3	milestone M3 fails: `mem` is not in the prelude.
+F-163	ERRATUM	S4	XXI.5 lists `book/` as "(user guide, v1.1)"
+F-164	ERRATUM	S3	the Stage 0 example uses syntax and semantics the rest of the document rejects
+F-165	ERRATUM	S4	stale lists in XXIII
+F-166	PROCESS	S3	three owner decisions bear directly on the goal and should be re-put with the evidence from this pass
+F-167	ERRATUM	S3	the quick reference does not type-check, and one of its errors is in the reference itself.
+F-168	DESIGN	S1	`with_views*` and `@latebound`: a chain of features whose net effect is to reject safe programs.
+F-169	DEFECT	S3	diagnostics that originate in a callee's contract are reported at the callee, not the caller.
+F-170	ERRATUM	S3	the headline multi-region example does not compile under the document's own rules.
+F-171	GAP	S2	the machine-readable implementation matrix the spec requires does not exist.
+F-172	ERRATUM	S3	Part XXIV's normative rules have no category.
+F-173	DOCS	S2	one 870 KB file is three documents.
+F-174	ERRATUM	S3	`[GEN-COH-1]` makes impl ownership a *package* matter
+F-175	GAP	S3	what happens when a `Pool` runs out of generations.
+F-176	ERRATUM	S4	`[HR-IMPL-2]` describes reclaiming an old image
+F-177	ERRATUM	S3	Appendix B is a "mandatory CI" checklist that fails against the file it is in.
+F-178	DOCS	S4	Appendix H is 730 lines of audit records that "bind nobody"
+F-179	PROCESS	S3	1.0 is tied to a full RageV production migration.
+F-180	DEFECT	S2	the conditional expression `a if c else b` is not implemented
+F-181	DEFECT	S2	built-in scalars do not implement `Ord`, so no generic comparison can be written.
+F-182	DEFECT	S2	`Option`/`Array`/`str` basics are missing:
+F-183	DEFECT	S3	a single-statement block lambda inside brackets is rejected.
+F-184	DEFECT	S1	range types reach the C compiler broken
+F-185	DEFECT	S1	a parent/child class pair with a constructor overflows the compiler's stack.
+F-186	DEFECT	S3	the runtime exclusivity panic names a C symbol, not the Ember object.
+F-187	DEFECT	S3	`L3011` fires on calls that cannot re-enter the cell.
+F-188	DEFECT	S3	a view escaping its source gets two errors, the first wrong.
+F-189	DEFECT	S3	`Array.iter()` does not exist
+F-190	DEFECT	S2	growable-buffer arithmetic is unchecked.
+F-191	DEFECT	S2	`Array[T]` storage is aligned to 16 bytes whatever `T` needs.
+F-192	DEFECT	S2	`@align(N)` is silently ignored.
+F-193	PERF	S2	every reference-count operation is an out-of-line call, and a `Sync` retain is a CAS loop.
+F-194	PERF	S3	every allocation goes through `_aligned_malloc` (MSVC) / `aligned_alloc`, and `ember_realloc` always allocates-copies-frees.
+F-195	DEFECT	S4	reference-count overflow reports the wrong reason.
+F-196	DEFECT	S3	redeclaring a name in the same block is accepted.
+F-197	GAP	S3	raw strings, byte strings and f-string format specs are not implemented
+F-198	DESIGN	S2	the ten most common Python habits get no help at all.
+F-199	PROCESS	S2	the ledgers say "none open" while ~80 defects reproduce.
+F-200	PROCESS	S2	specification churn far outpaces the compiler.
+F-201	DOCS	S3	`docs/HANDOFF.md` is 10,698 lines.
+F-202	DOCS	S4	`examples/` has only `hello.em`
+F-203	DEFECT	S2	a generic struct's methods cannot name their own type.
+F-204	DEFECT	S2	the textbook recursive enum cannot be traversed.
+F-205	DEFECT	S3	calling a parameter whose type is a generic bounded by `Callable` fails
+F-206	GAP	S2	32 error pages for 210 registered codes.
+F-207	TOOLING	S2	the six "green" gates are green because their baselines absorb almost everything.
+F-208	DEFECT	S2	range slicing `xs[a..b]` is not implemented
+F-209	DESIGN	S3	comprehensions.
+F-210	DESIGN	S4	interfaces are nominal only.
+F-211	DEFECT	S3	`enumerate` over an `Array` cannot be written
+F-212	DOCS	S4	two errata are marked open that the grammar already fixed.
+F-213	GAP	S4	`i32.MIN % -1`.
+F-214	TOOLING	S3	the test suite is green (263 tests) but has a flaky UI pair, and `cargo test` hides everything after the first failure

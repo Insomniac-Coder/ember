@@ -8,7 +8,7 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32:
     return f(v)
 
 fn main():
-    a = 2
-    b = 100
+    a: i32 = 2
+    b: i32 = 100
     println(apply(fn(x) => x * a + b, 4))
 #$ stdout: 108

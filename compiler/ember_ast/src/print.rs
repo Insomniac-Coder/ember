@@ -389,6 +389,15 @@ impl Printer {
                     p.expr(rhs);
                 })
             }
+            ExprKind::CompareChain { first, rest } => {
+                let ops = rest.iter().map(|(op, _)| op.as_str()).collect::<Vec<_>>().join(" ");
+                self.nest(&format!("CompareChain {ops}"), |p| {
+                    p.expr(first);
+                    for (_, operand) in rest {
+                        p.expr(operand);
+                    }
+                })
+            }
             ExprKind::Logical { op, lhs, rhs } => self.nest(&format!("Logical {op:?}"), |p| {
                 p.expr(lhs);
                 p.expr(rhs);

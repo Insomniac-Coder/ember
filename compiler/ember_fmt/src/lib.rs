@@ -135,8 +135,26 @@ impl Printer<'_> {
         }
         self.imports(&module.imports);
 
+        // `[GRM-2]` (0.9.9) — a script's statements are printed where they
+        // were written, among the items, never as the `fn main()` the parser
+        // built from them.
+        let script_main = module.script.as_ref().map(|script| script.main);
+        let placement = module.script.as_ref().map(|s| s.placement.as_slice()).unwrap_or(&[]);
+        let statements: &[ast::Stmt] = script_main
+            .and_then(|index| match &module.items[index].kind {
+                ast::ItemKind::Fn(decl) => decl.body.as_ref().map(|body| body.stmts.as_slice()),
+                _ => None,
+            })
+            .unwrap_or(&[]);
+        let mut next_statement = 0;
+        let mut printed_any = !module.imports.is_empty();
+        let mut source_items = 0;
         for (index, item) in module.items.iter().enumerate() {
-            if index > 0 || !module.imports.is_empty() {
+            if Some(index) == script_main {
+                continue;
+            }
+            self.script_run(statements, placement, &mut next_statement, source_items, &mut printed_any);
+            if printed_any {
                 // `[FMT-1]` — two blank lines between items. The separation
                 // comes first, so a comment written above an item stays
                 // attached to it rather than floating above the gap.
@@ -145,6 +163,32 @@ impl Printer<'_> {
             }
             self.comments_before(item.span);
             self.item(item);
+            printed_any = true;
+            source_items += 1;
+        }
+        self.script_run(statements, placement, &mut next_statement, usize::MAX, &mut printed_any);
+    }
+
+    /// The script statements that stood before the `before`th item, one per
+    /// line, separated from the items around them like an item.
+    fn script_run(
+        &mut self,
+        statements: &[ast::Stmt],
+        placement: &[usize],
+        next: &mut usize,
+        before: usize,
+        printed_any: &mut bool,
+    ) {
+        let start = *next;
+        while *next < statements.len() && placement[*next] <= before {
+            if *next == start && *printed_any {
+                self.blank();
+                self.blank();
+            }
+            self.comments_before(statements[*next].span);
+            self.stmt(&statements[*next]);
+            *next += 1;
+            *printed_any = true;
         }
     }
 
@@ -798,6 +842,13 @@ impl Printer<'_> {
                 } else {
                     format!("{left} {} {right}", op.as_str())
                 }
+            }
+            ast::ExprKind::CompareChain { first, rest } => {
+                let mut text = self.expr_pure(first);
+                for (op, operand) in rest {
+                    text.push_str(&format!(" {} {}", op.as_str(), self.expr_pure(operand)));
+                }
+                text
             }
             ast::ExprKind::Logical { op, lhs, rhs } => {
                 let op = match op {

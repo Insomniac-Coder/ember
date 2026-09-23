@@ -40,6 +40,9 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-018 | **CLOSED** — explicit shared cycle-analysis root | CLI / static diagnostics / package resolution | — | **No** — ruled 2026-09-20 |
 | ODR-019 | **CLOSED** — option 1; N1 cross-file ties use canonical identity | Diagnostics / name resolution | — | **No** — diagnostic/tooling hardening only |
 | ODR-020 | **CLOSED** — resolved prefix, visible final-segment N1; qualified help, token-local edit | Diagnostics / name resolution | — | **No** — incorporated in 0.9.7_Hardened_4 |
+| ODR-021 | **CLOSED** — float `//`/`%` are Python's (exact floor modulo, rounded once) | Language / floating point | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_3 |
+| ODR-022 | **CLOSED** — `x = 0` is `int` at the declaration; later uses never change it | Language / type inference | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_3 |
+| ODR-023 | **CLOSED** — a value function reaching its end is `E2182` | Diagnostics / functions | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_4 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -176,6 +179,130 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-023 — which diagnostic reports a function that can reach its end without a value? — **CLOSED**
+
+    ID:        ODR-023
+    Status:    CLOSED — ruled 2026-09-23 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_4
+    Category:  DIAGNOSTICS / FUNCTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_3.md [FN-10], §XVII.9 registry
+
+    Question:  `[FN-10]` gives `void` and `Result[void, E]` functions an implicit
+               value at the end of the body and says "No other return type has
+               an implicit value". A body that can reach its end therefore has
+               no meaning, but no rule names the diagnostic, and the registry
+               has no code for it.
+
+    Blocks implementation:            YES — the compiler must reject with some code
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Reproducer.** `fn sign(x: int) -> int: if x > 0: return 1` — the compiler
+accepted it and returned an uninitialised value (D-186).
+
+**Options.** (1) Report it under an existing code, such as `E2020` (a type
+mismatch between `void` and `int`). (2) A dedicated code.
+
+**Ruling: option 2, `E2182`** — "a function that returns a value can reach the
+end of its body", citing `[FN-10]`, shown at the function's name, with the help
+to return on every path or end with `panic(…)`. It is not a type mismatch the
+programmer wrote, and a dedicated code gets its own explanation and error page.
+Hardened_4 adds the sentence to `[FN-10]` and the row to §XVII.9.
+
+## ODR-022 — does a later use change the type of `x = 0`? — **CLOSED**
+
+    ID:        ODR-022
+    Status:    CLOSED — ruled 2026-09-23 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_3
+    Category:  LANGUAGE / TYPE INFERENCE
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_2.md [LEX-16], [LEX-17], [TYP-23]
+
+    Question:  An unannotated local initialised by an untyped literal
+               (`total = 0`) — is its type fixed at the declaration (`int`), or
+               left open and fixed by later uses (`return total` in an `i32`
+               function)?
+
+    Blocks implementation:            YES until ruled — every literal-initialised local
+    Blocks conformance:                YES — decides which corpus programs are valid
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**The two halves.** `[LEX-16]`: an untyped integer literal "takes the type its
+context expects …, and with no context it is `int` (`i64`)". `[TYP-23]`: "A
+local declared by `x = e` takes `e`'s type; a type left open by `e` (`[]`,
+`Map()`, `None`) is fixed by later uses in the same function … Untyped literals
+are resolved last." Read together, `x = 0` either has no context (so `int`), or
+has an untyped type left open (so later uses decide). Both readings are
+plausible; the listed examples of "left open" do not include a literal, and
+"resolved last" does not say what a literal's context is.
+
+**Reproducer.**
+
+```ember
+fn sum_to(n: i32) -> i32:
+    total = 0
+    i = 1
+    while i <= n:
+        total += i
+        i += 1
+    return total
+```
+
+Option 1 accepts only if later uses decide; option 2 rejects `i <= n` and
+`return total` with `E2020`.
+
+**Options.** (1) Later uses decide, with `int` only when nothing constrains the
+local (Rust's rule). (2) The declaration decides: a literal's context is the
+expected type at the literal itself, an unannotated declaration supplies none,
+so `total` is `int`.
+
+**Ruling: option 2.** Option 1 is action at a distance: a use far down a
+function would change an earlier variable's width, and with it where its
+arithmetic overflows (`[TYP-8]`) and whether a large literal at the declaration
+fits at all. A Python programmer reads `total = 0` as an `int`; option 2 makes
+that true everywhere and makes a declaration say its type without reading the
+rest of the function. `[]`, `Map()` and `None` stay open because they have no
+default. The cost is an annotation (`total: i32 = 0`) in code that works in a
+narrower type, and the `E2020` at the later use carries a help naming the
+declaration and that annotation. Hardened_3 states the rule in `[TYP-23]`.
+
+## ODR-021 — float `//` and `%`: the formula in IEEE arithmetic, or Python's result? — **CLOSED**
+
+    ID:        ODR-021
+    Status:    CLOSED — ruled 2026-09-23 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_3
+    Category:  LANGUAGE / FLOATING-POINT SEMANTICS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_2.md [TYP-29], [PHIL-14], [TYP-9]
+
+    Question:  `[TYP-29]` defines float `a // b` as `floor(a / b)` and `a % b` as
+               `a - b * floor(a / b)` "(the sign of `b`, Python)". Evaluated in
+               IEEE arithmetic, the formula and Python disagree. Which governs?
+
+    Blocks implementation:            YES until ruled — the runtime needs one algorithm
+    Blocks conformance:                YES — the printed results differ
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**The two halves.** The formula, evaluated with IEEE rounding, gives
+`1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 1.0 - 0.1 * 10.0`, about `-5.55e-17`
+(the sign of neither operand). Python gives `9.0` and `0.09999999999999995`,
+because `0.1` is slightly more than a tenth, so ten of them exceed `1.0`.
+`[PHIL-14]` (a Python spelling has Python's meaning) and the parenthesis name
+Python; the formula names a computation.
+
+**Options.** (1) The formula as written, in IEEE arithmetic. (2) The exact
+floor modulo rounded once — computed exactly with `fmod`, then moved into the
+divisor's sign — and the floor quotient consistent with it, which is what
+Python computes.
+
+**Ruling: option 2.** Option 1 breaks the sign promise the same sentence makes
+and loses `a == (a // b) * b + a % b` far beyond rounding. Option 2 is
+Python's, keeps the identity to within one rounding, and costs a few operations
+more than a bare `floor`. Zero divisors, infinities and NaN follow IEEE through
+`fmod` and the division, as `[TYP-29]` already says. Hardened_3 rewrites
+`[TYP-29]` to state the exact definition. Implemented in the runtime as
+`ember_floordiv_f32/f64` and `ember_floorrem_f32/f64`.
 
 ## ODR-020 — N1 suggestions for namespace-qualified paths — **CLOSED**
 

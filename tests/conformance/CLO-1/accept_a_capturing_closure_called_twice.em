@@ -8,6 +8,6 @@ fn twice(f: fn(i32) -> i32, v: i32) -> i32:
     return f(f(v))
 
 fn main():
-    k = 5
+    k: i32 = 5
     println(twice(fn(x) => x + k, 1))
 #$ stdout: 11

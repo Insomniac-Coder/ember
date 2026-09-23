@@ -14,7 +14,7 @@ extend Pixel implements Default:
         println("before default panic")
         numerator: i32 = 1
         denominator: i32 = 0
-        value = numerator / denominator
+        value = numerator // denominator
         println("continuation after default panic")
         return Pixel(value)
 

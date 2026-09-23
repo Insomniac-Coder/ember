@@ -4,20 +4,20 @@
 
 # `[CTL-3]` — a range loop is a counted loop, with no iterator object.
 fn sum(n: i32) -> i32:
-    total = 0
+    total: i32 = 0
     for i in 0..n:
         total = total + i
     return total
 
 fn inclusive(n: i32) -> i32:
-    total = 0
+    total: i32 = 0
     for i in 1..=n:
         total = total + i
     return total
 
 # `continue` has to run the increment, or the loop never advances.
 fn skipping() -> i32:
-    seen = 0
+    seen: i32 = 0
     for i in 0..10:
         if i == 3:
             continue
@@ -42,7 +42,7 @@ fn broken() -> i32:
 
 # A label names which loop to leave.
 fn labelled() -> i32:
-    hits = 0
+    hits: i32 = 0
     outer: for i in 0..3:
         for j in 0..3:
             if j == 1:
@@ -74,7 +74,7 @@ fn deferred_in_loop():
         println(100)
 
 # `[CTL-6]` — `with` binds for the block.
-fn scoped() -> i32:
+fn scoped() -> int:
     with x = 41, y = 1:
         return x + y
     return 0

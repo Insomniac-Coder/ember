@@ -83,7 +83,7 @@ impl Parser<'_> {
 
     // -- statements -----------------------------------------------------------
 
-    fn parse_statement(&mut self) -> Option<Stmt> {
+    pub(crate) fn parse_statement(&mut self) -> Option<Stmt> {
         // A doc comment where a statement was expected documents nothing; it
         // is discarded in silence (ERR-007). Parsing then continues with the
         // statement that follows — returning `None` here made the caller treat
@@ -259,7 +259,7 @@ impl Parser<'_> {
             self.bump();
             let pattern = self.expr_to_pattern(first);
             let ty = Some(self.parse_type());
-            let init = self.eat_punct(Punct::Eq).then(|| self.parse_expr());
+            let init = self.eat_punct(Punct::Eq).then(|| self.parse_expr_list(true));
             return Some(StmtKind::Decl { pattern, ty, init });
         }
 
@@ -276,7 +276,7 @@ impl Parser<'_> {
             return Some(StmtKind::Assign { targets, op: Some(op), value });
         }
         if self.eat_punct(Punct::Eq) {
-            let value = self.parse_expr();
+            let value = self.parse_expr_list(true);
             return Some(StmtKind::Assign { targets, op: None, value });
         }
 
@@ -294,6 +294,7 @@ impl Parser<'_> {
             Punct::MinusEq => BinOp::Sub,
             Punct::StarEq => BinOp::Mul,
             Punct::SlashEq => BinOp::Div,
+            Punct::SlashSlashEq => BinOp::FloorDiv,
             Punct::PercentEq => BinOp::Rem,
             Punct::StarStarEq => BinOp::Pow,
             Punct::AmpEq => BinOp::BitAnd,
@@ -581,14 +582,43 @@ impl Parser<'_> {
         Expr { id, kind: ExprKind::Yield(value), span: start.to(self.prev_span()) }
     }
 
+    /// `[GRM-29]` (0.9.9) — `expr_list := expression {"," expression} [","]`.
+    /// Two or more expressions, or one followed by a comma, are a tuple:
+    /// `return x, y`, `a, b = b, a`, `pair: (int, int) = 1, 2`. One
+    /// expression without a comma is itself.
+    fn parse_expr_list(&mut self, allow_block_lambda: bool) -> Expr {
+        let start = self.span();
+        let first = self.parse_expr_bp(0, allow_block_lambda);
+        if !self.at_punct(Punct::Comma) {
+            return first;
+        }
+        let id = self.next_id();
+        let mut items = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            if self.at_expr_end() {
+                break;
+            }
+            items.push(self.parse_expr_bp(0, allow_block_lambda));
+        }
+        Expr { id, kind: ExprKind::Tuple(items), span: start.to(self.prev_span()) }
+    }
+
     fn parse_jump(&mut self, allow_block_lambda: bool) -> Expr {
         let start = self.span();
         let id = self.next_id();
         let jump = match self.peek() {
             TokenKind::Keyword(Kw::Return) => {
                 self.bump();
-                let value = (!self.at_expr_end())
-                    .then(|| Box::new(self.parse_expr_bp(0, allow_block_lambda)));
+                // Inside brackets (`allow_block_lambda` is false there) a `,`
+                // ends a colon-bodied lambda (`[LEX-6a]`), so `return a, b`
+                // makes a tuple only outside them.
+                let value = (!self.at_expr_end()).then(|| {
+                    Box::new(if allow_block_lambda {
+                        self.parse_expr_list(true)
+                    } else {
+                        self.parse_expr_bp(0, false)
+                    })
+                });
                 Jump::Return(value)
             }
             TokenKind::Keyword(Kw::Break) => {
@@ -668,33 +698,61 @@ impl Parser<'_> {
             let rhs = self.parse_expr_bp(rbp, allow_block_lambda);
 
             if non_assoc && matches!(op, InfixOp::Bin(b) if b.is_comparison()) {
+                // `[GRM-25]` (0.9.9) — `==`, `!=`, `<`, `>`, `<=`, `>=` chain
+                // as in Python; `is` and `in` may not appear in a chain
+                // (`E0102`, and `[GRM-23]`'s `a in b in c` is the same code).
+                let identity_or_membership = |o: &InfixOp| {
+                    matches!(
+                        o,
+                        InfixOp::Bin(BinOp::In | BinOp::NotIn | BinOp::Is | BinOp::IsNot)
+                    )
+                };
+                let chains = |o: &InfixOp| {
+                    matches!(o, InfixOp::Bin(b) if b.is_comparison())
+                };
                 if let Some((next, _, _, _)) = self.infix_op() {
-                    if matches!(next, InfixOp::Bin(b) if b.is_comparison()) {
-                        let span = self.span();
-                        // Two rules govern this position and they name
-                        // different codes. Part III §5's precedence table
-                        // gives `E0102` for a chained comparison; `[GRM-23]`
-                        // gives **`E0104`** for `a in b in c` specifically.
-                        // The membership operators answer to `[GRM-23]`, so
-                        // they report its code — the document is explicit and
-                        // the compiler follows it rather than unifying the two
-                        // on the tidier code (errata ERR-026).
-                        let membership = |o: &InfixOp| {
-                            matches!(o, InfixOp::Bin(BinOp::In | BinOp::NotIn))
-                        };
-                        let (code, what) = if membership(&op) || membership(&next) {
-                            (codes::E0104, "chained membership")
+                    if chains(&next) {
+                        if identity_or_membership(&op) || identity_or_membership(&next) {
+                            let span = self.span();
+                            self.report(
+                                Diagnostic::error(
+                                    codes::E0102,
+                                    span,
+                                    "`is` and `in` may not appear in a comparison chain",
+                                )
+                                .help("write the tests separately, joined by `and`")
+                                .note("only `==`, `!=`, `<`, `>`, `<=` and `>=` chain [GRM-25]"),
+                            );
                         } else {
-                            (codes::E0102, "chained comparison")
-                        };
-                        self.report(
-                            Diagnostic::error(code, span, what)
-                                .help("write `a < b and b < c`")
-                                .note(concat!(
-                                    "comparison and membership are non-associative: ",
-                                    "Ember has no chained comparison [GRM-23]"
-                                )),
-                        );
+                            let InfixOp::Bin(first_op) = op else { unreachable!("a comparison") };
+                            let mut rest = vec![(first_op, rhs)];
+                            while let Some((next, _, next_rbp, _)) = self.infix_op() {
+                                if !chains(&next) {
+                                    break;
+                                }
+                                if identity_or_membership(&next) {
+                                    let span = self.span();
+                                    self.report(Diagnostic::error(
+                                        codes::E0102,
+                                        span,
+                                        "`is` and `in` may not appear in a comparison chain",
+                                    ));
+                                    break;
+                                }
+                                self.bump_infix(next);
+                                let operand = self.parse_expr_bp(next_rbp, allow_block_lambda);
+                                let InfixOp::Bin(bin) = next else { unreachable!("a comparison") };
+                                rest.push((bin, operand));
+                            }
+                            let id = self.next_id();
+                            let span = start.to(self.prev_span());
+                            lhs = Expr {
+                                id,
+                                kind: ExprKind::CompareChain { first: Box::new(lhs), rest },
+                                span,
+                            };
+                            continue;
+                        }
                     }
                 }
             }
@@ -789,6 +847,7 @@ impl Parser<'_> {
                     Punct::Minus => left(InfixOp::Bin(BinOp::Sub), BP_ADD),
                     Punct::Star => left(InfixOp::Bin(BinOp::Mul), BP_MUL),
                     Punct::Slash => left(InfixOp::Bin(BinOp::Div), BP_MUL),
+                    Punct::SlashSlash => left(InfixOp::Bin(BinOp::FloorDiv), BP_MUL),
                     Punct::Percent => left(InfixOp::Bin(BinOp::Rem), BP_MUL),
                     // `**` is right-associative, so the right binding power
                     // equals the left one.

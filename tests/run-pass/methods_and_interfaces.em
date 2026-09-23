@@ -79,7 +79,7 @@ fn main():
     k.advance(5)
     println(k.get())
 
-    n = 21
+    n: i32 = 21
     double(n)
     println(n)
 #$ stdout: 9

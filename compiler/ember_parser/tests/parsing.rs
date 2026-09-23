@@ -290,10 +290,13 @@ fn not_binds_looser_than_a_comparison() {
 }
 
 #[test]
-fn a_chained_comparison_is_e0010() {
-    // [III.5] — no Python chaining.
-    let out = run("fn f():\n    x = a < b < c\n");
-    assert!(out.codes.contains(&"E0102".to_string()), "{}", out.messages);
+fn a_chained_comparison_parses_and_membership_does_not_chain() {
+    // `[GRM-25]` (0.9.9) — comparisons chain as in Python; `[GRM-23]` —
+    // `is` and `in` may not appear in a chain (`E0102`).
+    let chained = dump("fn f():\n    x = a < b <= c\n");
+    assert!(chained.contains("CompareChain < <="), "{chained}");
+    let membership = run("fn f():\n    x = a in b in c\n");
+    assert!(membership.codes.contains(&"E0102".to_string()), "{}", membership.messages);
 }
 
 #[test]

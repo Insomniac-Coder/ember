@@ -1169,6 +1169,17 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
     v->cap = cap;
 }
 
+ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count) {
+    ember_vec v = ember_vec_empty();
+    if (count == 0) {
+        return v;
+    }
+    ember_vec_reserve(&v, elem_size, count);
+    memcpy(v.ptr, elems, elem_size * count);
+    v.len = count;
+    return v;
+}
+
 void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
     ember_vec_reserve(v, elem_size, v->len + 1);
     memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);

@@ -5,7 +5,7 @@ from std.mem import UnsafeCell
 
 fn main():
     cell = UnsafeCell(1)
-    value = 2
+    value: i32 = 2
     unsafe:
         _pointer = cell.get()
         first: ref mut i32 = ref mut value

@@ -654,6 +654,16 @@ struct Checker<'a> {
     /// conservative, and the conservative direction is a check that gets
     /// emitted rather than one that does not.
     local_ranges: HashMap<LocalId, (Bound, Bound)>,
+    /// `[TYP-23]`, ODR-022 — locals declared from an untyped literal
+    /// (`total = 0`), with the declaration's span. A later use that needs
+    /// another type names the declaration in its help. The span is checked on
+    /// use because local ids restart in every function.
+    literal_locals: HashMap<LocalId, Span>,
+    /// `[TYP-23]` — the type expected of the method call being synthesised,
+    /// handed from `synth_with_expectation` to `synth_method_call` for one
+    /// hop and taken there before anything else is synthesised, so a nested
+    /// call never sees it.
+    method_expectation: Option<Ty>,
     /// `[CLO-1]` — the function that runs each capturing closure, keyed by the
     /// anonymous struct that is its environment. A value of that struct type is
     /// callable, and this is what it calls.
@@ -869,6 +879,8 @@ impl<'a> Checker<'a> {
             type_params: HashMap::new(),
             current_generics: Vec::new(),
             local_ranges: HashMap::new(),
+            literal_locals: HashMap::new(),
+            method_expectation: None,
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             derived_clone_methods: Vec::new(),
@@ -5524,6 +5536,58 @@ impl<'a> Checker<'a> {
         GenericParam { name: param.name, bounds: param.bounds.clone(), callable }
     }
 
+    /// `[TYP-18]`, `[TYP-23]` — solve a generic constructor's parameters in
+    /// the order `synth_generic_call` uses: typed values first, then the
+    /// expected instance of the same generic (a hint that never overrides
+    /// them), then untyped literals, which default only if still open. So
+    /// `holder: Holder[i32] = Holder(42)` is a `Holder[i32]`.
+    fn infer_constructor_arguments(
+        &mut self,
+        name: Symbol,
+        args: &[ast::Arg],
+        fields: &[Ty],
+        expected: Option<Ty>,
+        solved: &mut Vec<Option<Ty>>,
+        fixed: usize,
+    ) {
+        let mut literals = Vec::new();
+        for (arg, &field) in args.iter().zip(fields.iter()) {
+            let value = self.synth(&arg.value);
+            if self.types.is_untyped_literal(value.ty) {
+                literals.push((field, value));
+                continue;
+            }
+            let value = self.commit(value);
+            self.types.unify_with_fixed(field, value.ty, solved, fixed);
+        }
+        let origin = expected.and_then(|ty| match self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(*id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(*id).origin.clone(),
+            _ => None,
+        });
+        if let Some((origin, hinted)) = origin
+            && origin == name
+            && hinted.len() == solved.len()
+        {
+            for (slot, hint) in solved.iter_mut().zip(hinted) {
+                if slot.is_none() {
+                    *slot = Some(hint);
+                }
+            }
+        }
+        for (field, value) in literals {
+            let value = self.commit(value);
+            let mut trial = solved.clone();
+            if self.types.unify_with_fixed(field, value.ty, &mut trial, fixed) {
+                for (slot, found) in solved.iter_mut().zip(trial) {
+                    if slot.is_none() {
+                        *slot = found;
+                    }
+                }
+            }
+        }
+    }
+
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
     /// struct. The type arguments come from the values, unless they were
     /// written out.
@@ -5533,6 +5597,7 @@ impl<'a> Checker<'a> {
         decl: &GenericStruct,
         args: &[ast::Arg],
         explicit: &[Ty],
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         if explicit.len() > decl.params.len() {
@@ -5554,10 +5619,8 @@ impl<'a> Checker<'a> {
             }
         }
         // Unify each declared field type with the value given for it.
-        for (arg, field) in args.iter().zip(decl.fields.iter()) {
-            let value = self.synth_committed(&arg.value);
-            self.types.unify_with_fixed(field.ty, value.ty, &mut solved, explicit.len());
-        }
+        let fields: Vec<Ty> = decl.fields.iter().map(|field| field.ty).collect();
+        self.infer_constructor_arguments(name, args, &fields, expected, &mut solved, explicit.len());
 
         let mut substitution = Vec::new();
         for (index, param) in decl.params.iter().enumerate() {
@@ -5587,6 +5650,7 @@ impl<'a> Checker<'a> {
         decl: &GenericClass,
         args: &[ast::Arg],
         explicit: &[Ty],
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         if explicit.len() > decl.params.len() {
@@ -5605,10 +5669,8 @@ impl<'a> Checker<'a> {
         for (slot, ty) in explicit.iter().enumerate() {
             solved[slot] = Some(*ty);
         }
-        for (arg, field) in args.iter().zip(decl.fields.iter()) {
-            let value = self.synth_committed(&arg.value);
-            self.types.unify_with_fixed(field.ty, value.ty, &mut solved, explicit.len());
-        }
+        let fields: Vec<Ty> = decl.fields.iter().map(|field| field.ty).collect();
+        self.infer_constructor_arguments(name, args, &fields, expected, &mut solved, explicit.len());
         let mut substitution = Vec::with_capacity(decl.params.len());
         for (index, param) in decl.params.iter().enumerate() {
             let Some(ty) = solved[index] else {
@@ -7140,6 +7202,9 @@ impl<'a> Checker<'a> {
             "i16" => c.i16,
             "i32" => c.i32,
             "i64" => c.i64,
+            // `[TYP-1]` table (0.9.9) -- `int` is a prelude alias of `i64`,
+            // the default integer and the size and index type.
+            "int" => c.i64,
             "i128" => c.i128,
             "isize" => c.isize,
             "u8" => c.u8,
@@ -7151,6 +7216,8 @@ impl<'a> Checker<'a> {
             "f16" => c.f16,
             "f32" => c.f32,
             "f64" => c.f64,
+            // `[TYP-1]` table (0.9.9) -- `float` is a prelude alias of `f64`.
+            "float" => c.f64,
             "str" => c.str_,
             "void" => c.void,
             _ => return None,
@@ -7280,7 +7347,10 @@ impl<'a> Checker<'a> {
             }
 
             let body = match &decl.body {
-                Some(block) => self.check_block(block),
+                Some(block) => {
+                    let body = self.check_block(block);
+                    self.complete_function_end(body, decl.name.span)
+                }
                 None => Block { stmts: Vec::new(), span: item.span },
             };
             self.in_static_safe = outer_static_safe;
@@ -7735,6 +7805,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.reject_unsafe_cell_in_static_safe(span);
         }
         let body = self.check_block(block);
+        let body = self.complete_function_end(body, decl.name.span);
         let overflow = self.overflow_policy(attrs, span);
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
@@ -8247,6 +8318,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .unwrap_or_default();
         let body = self.check_block(block);
+        let body = self.complete_function_end(body, decl.name.span);
         if self.class_init.is_some() {
             self.report_missing_class_init_fields(span);
         }
@@ -8387,6 +8459,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::ExprKind::Binary { lhs, rhs, .. }
             | ast::ExprKind::Logical { lhs, rhs, .. } => {
                 Self::class_init_uses_whole_self(lhs) || Self::class_init_uses_whole_self(rhs)
+            }
+            ast::ExprKind::CompareChain { first, rest } => {
+                Self::class_init_uses_whole_self(first)
+                    || rest.iter().any(|(_, operand)| Self::class_init_uses_whole_self(operand))
             }
             ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
                 Self::class_init_uses_whole_self(then_expr)
@@ -9166,8 +9242,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             );
                             return;
                         }
-                        let init = self.synth_committed(value);
+                        let synthesized = self.synth(value);
+                        let from_literal = self.types.is_untyped_literal(synthesized.ty);
+                        let init = self.commit(synthesized);
+                        self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
+                        if from_literal {
+                            self.literal_locals.insert(local, stmt.span);
+                        }
                         if let Some(range) = self.range_of(&init) {
                             self.local_ranges.insert(local, range);
                         }
@@ -9240,6 +9322,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         let rhs = self.check_expr(value, place_ty);
                         let lhs = self.synth(target);
                         let op = convert_binop(*bin);
+                        if op.is_some_and(|op| {
+                            self.reject_integer_true_division(op, place_ty, stmt.span)
+                        }) {
+                            return;
+                        }
                         match op {
                             Some(op) => Expr {
                                 ty: place_ty,
@@ -10940,7 +11027,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     // -- expressions ---------------------------------------------------------
 
     /// Synthesis mode, then default any untyped literal that survived
-    /// (`[LEX-16]`, `[LEX-17]`): `i32` for integers, `f32` for floats.
+    /// (`[LEX-16]`, `[LEX-17]`, 0.9.9): `int` (`i64`) for integers, `float`
+    /// (`f64`) for floats.
     fn synth_committed(&mut self, ast_expr: &ast::Expr) -> Expr {
         let expr = self.synth(ast_expr);
         let committed = self.commit(expr);
@@ -10948,32 +11036,39 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         committed
     }
 
-    /// `[LEX-17a]` — an unsuffixed float literal that takes `f32` from the
-    /// *default* rather than from context, and that was written with more
-    /// precision than `f32` holds, is `W2015`. A literal that receives `f32`
-    /// from context is not diagnosed: the programmer chose the type.
+    /// `[LEX-17a]` (0.9.9) — an unsuffixed float literal that receives `f32`
+    /// or `f16`, from context or otherwise, and has more significant digits
+    /// than the type keeps (nine for `f32`, five for `f16`) is `W2015`. `0.1`
+    /// at `f32` is not warned: the program chose the type, and every decimal
+    /// literal is rounded to it.
     fn warn_if_literal_loses_precision(&mut self, expr: &ast::Expr, ty: Ty) {
-        if ty != self.common.f32 {
+        let (kept, shown) = if ty == self.common.f32 {
+            (9, "f32")
+        } else if ty == self.common.f16 {
+            (5, "f16")
+        } else {
             return;
-        }
+        };
         let ast::ExprKind::Lit(ast::Literal::Float { value, suffix: None, digits }) = &expr.kind
         else {
             return;
         };
-        // Nine is the most a decimal string can carry into `f32` without a
-        // round trip changing it.
-        if *digits <= 9 {
+        if *digits <= kept {
             return;
         }
-        let as_f32 = *value as f32;
+        let rounded = if ty == self.common.f32 {
+            format!("{}", *value as f32)
+        } else {
+            format!("{} digits", kept)
+        };
         self.sink.emit(
             Diagnostic::warning(
                 codes::W2015,
                 expr.span,
-                "float literal loses precision at `f32`",
+                format!("float literal loses precision at `{shown}`"),
             )
-            .primary_label(format!("`{value}` becomes `{as_f32}`"))
-            .help(format!("write `{value}f64` to keep it, or annotate the binding `: f32` to accept it")),
+            .primary_label(format!("`{value}` becomes `{rounded}`"))
+            .help(format!("write `{value}f64` to keep it, or fewer digits to accept `{shown}`")),
         );
     }
 
@@ -10981,14 +11076,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if !self.types.is_untyped_literal(expr.ty) {
             return expr;
         }
-        let default = if self.types.is_float(expr.ty) { self.common.f32 } else { self.common.i32 };
-        Expr { ty: default, ..expr }
+        let default = if self.types.is_float(expr.ty) { self.common.f64 } else { self.common.i64 };
+        self.adopt_literal(expr, default)
+    }
+
+    /// `[TYP-28]` (0.9.9) — `/` is true division and applies to floats; two
+    /// integer operands are `E2240`, whose fix-its are floor division and a
+    /// conversion to `float`. Returns whether it reported.
+    fn reject_integer_true_division(&mut self, op: BinOp, operand: Ty, span: Span) -> bool {
+        if op != BinOp::Div || !self.types.is_integral(operand) {
+            return false;
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E2240, span, "`/` on two integers")
+                .note("`/` is true division in Ember, as in Python 3 [TYP-28]")
+                .help("write `a // b` for floor division")
+                .help("or convert both operands, `a as float / b as float`, for a float result"),
+        );
+        true
     }
 
     /// Checking mode: an expected type flows downward (`[TYP-23]` rule 3).
     fn check_expr(&mut self, expr: &ast::Expr, expected: Ty) -> Expr {
         let found = self.synth_with_expectation(expr, Some(expected));
-        self.coerce(found, expected)
+        let coerced = self.coerce(found, expected);
+        self.warn_if_literal_loses_precision(expr, coerced.ty);
+        coerced
     }
 
     /// `[TYP-5]` — coercion sites allow lossless widening; a literal adopts
@@ -11180,6 +11293,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.view_of(expr, expected, false, Builtin::StringAsStr);
         }
+        // `[TXT-9]` (0.9.9) — "a string literal initialises a `String`":
+        // wherever a `String` is expected, the literal produces a new `String`
+        // holding its text, allocating at the literal. It is exactly a
+        // one-part f-string, so it reuses that lowering and its `Alloc`.
+        if let ExprKind::Str(text) = &expr.kind
+            && matches!(*self.types.kind(expected), TyKind::Vec { elem } if elem == self.common.u8)
+        {
+            let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: expected });
+            return Expr {
+                ty: expected,
+                kind: ExprKind::FString {
+                    parts: vec![hir::FStringPart::Text(text.clone())],
+                    buffer_ref,
+                },
+                span: expr.span,
+            };
+        }
         // `[RNG-3]` — construction. A constant the compiler can place in range
         // needs no check; one it can place outside is `E2211`; anything else
         // is outside `[RNG-10]`'s closed set and is `E2215`.
@@ -11201,12 +11331,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
         let span = expr.span;
-        self.sink.emit(
+        let diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
                 .primary_label(format!("this is `{found}`"))
-                .note("Ember does not convert between numeric types implicitly [TYP-4]"),
-        );
+                .note("Ember does not convert between numeric types implicitly [TYP-4]");
+        let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        self.sink.emit(diagnostic);
         Expr { ty: expected, kind: ExprKind::Error, span }
+    }
+
+    /// `[TYP-23]`, ODR-022 — when `expr` reads a local declared from an
+    /// untyped literal, the help names the declaration and the annotation
+    /// that gives it the wanted type.
+    fn literal_local_help(
+        &self,
+        diagnostic: Diagnostic,
+        expr: &Expr,
+        wanted: Ty,
+    ) -> Diagnostic {
+        let ExprKind::Local(id) = expr.kind else { return diagnostic };
+        let Some(&declared_at) = self.literal_locals.get(&id) else { return diagnostic };
+        let Some(local) = self.locals.get(id.0 as usize) else { return diagnostic };
+        let Some(name) = local.name else { return diagnostic };
+        if local.span != declared_at || !self.types.is_numeric(wanted) {
+            return diagnostic;
+        }
+        let declared = self.types.display(local.ty);
+        let wanted = self.types.display(wanted);
+        diagnostic
+            .secondary(declared_at, format!("declared from a literal, so `{declared}` [TYP-23]"))
+            .help(format!("declare it as `{name}: {wanted} = ...` to make it `{wanted}`"))
     }
 
     /// `[FN-6a]`/`[LT-11a]` — callable parameter modes are part of the
@@ -11567,6 +11721,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
             ExprKind::Float(value) => Expr { ty: expected, kind: ExprKind::Float(value), span },
+            // D-183 — an operator tree of untyped literals (`-7.5`, `1 + 2`)
+            // takes the type as a whole: every node still untyped adopts it,
+            // or the operands keep a type the backend cannot lower.
+            ExprKind::Unary { op, operand } if self.types.is_untyped_literal(operand.ty) => {
+                let operand = Box::new(self.adopt_literal(*operand, expected));
+                Expr { ty: expected, kind: ExprKind::Unary { op, operand }, span }
+            }
+            ExprKind::Binary { op, lhs, rhs }
+                if !op.is_comparison()
+                    && self.types.is_untyped_literal(lhs.ty)
+                    && self.types.is_untyped_literal(rhs.ty) =>
+            {
+                let lhs = Box::new(self.adopt_literal(*lhs, expected));
+                let rhs = Box::new(self.adopt_literal(*rhs, expected));
+                Expr { ty: expected, kind: ExprKind::Binary { op, lhs, rhs }, span }
+            }
             other => Expr { ty: expected, kind: other, span },
         }
     }
@@ -11776,8 +11946,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // error on the element that disagrees rather than on the whole
             // literal.
             ast::ExprKind::ArrayLit(items) => {
+                // `[TYP-38]` (0.9.9) — a list literal has the type its context
+                // expects: `[T; N]` or `Span[T]` (a fixed array, and a view of
+                // one), or `Array[T]`, which is also what it is with no
+                // context. Only the `Array` form allocates.
+                let vec_elem = expected.and_then(|want| match self.types.kind(want) {
+                    TyKind::Vec { elem } => Some(*elem),
+                    _ => None,
+                });
+                let span_elem = expected.and_then(|want| match self.types.kind(want) {
+                    TyKind::Span { elem, .. } => Some(*elem),
+                    _ => None,
+                });
+                let fixed_context = self.expected_elem(expected).is_some() || span_elem.is_some();
                 let mut elems: Vec<Expr> = Vec::with_capacity(items.len());
-                let elem_ty = match self.expected_elem(expected) {
+                let elem_ty = match self.expected_elem(expected).or(vec_elem).or(span_elem) {
                     Some(ty) => ty,
                     None => {
                         let Some(first) = items.first() else {
@@ -11800,7 +11983,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 let len = elems.len() as u64;
                 let ty = self.types.intern(TyKind::Array { elem: elem_ty, len });
-                Expr { ty, kind: ExprKind::ArrayLit(elems), span }
+                let fixed = Expr { ty, kind: ExprKind::ArrayLit(elems), span };
+                if fixed_context {
+                    return fixed;
+                }
+                let array = self.types.intern(TyKind::Vec { elem: elem_ty });
+                if len == 0 {
+                    return Expr {
+                        ty: array,
+                        kind: ExprKind::Builtin { which: Builtin::ArrayNew, args: Vec::new() },
+                        span,
+                    };
+                }
+                Expr {
+                    ty: array,
+                    kind: ExprKind::Builtin { which: Builtin::ArrayFromLiteral, args: vec![fixed] },
+                    span,
+                }
             }
 
             // `[value; count]`.
@@ -12023,12 +12222,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         span,
                     );
                 }
+                self.method_expectation = expected;
                 self.synth_method_call(recv, *name, generic_args, args, span)
             }
 
             ast::ExprKind::Call { callee, args } => self.synth_call(callee, args, expected, span),
 
             ast::ExprKind::Binary { op, lhs, rhs } => self.synth_binary(*op, lhs, rhs, span),
+
+            ast::ExprKind::CompareChain { first, rest } => self.synth_compare_chain(first, rest, span),
 
             ast::ExprKind::Logical { op, lhs, rhs } => {
                 let bool_ty = self.common.bool_;
@@ -12369,6 +12571,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             return self.synth_closure_call(value, id, args, span, latebound);
                         }
                     }
+                } else if self.is_capture_candidate(segments[0].name) {
+                    // D-185 — inside a closure, a callable local of the
+                    // enclosing function is a capture (`[CLO-2]`), and calling
+                    // it is a call through the captured value (`[CLO-3]`). The
+                    // call path used to consult only the closure's own scope
+                    // and reported `E1010`.
+                    if let Some(value) = self.resolve_capture(segments[0].name, callee.span) {
+                        if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                            return self.synth_indirect_call(value, args, span, false, false);
+                        }
+                        if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
+                            let callee = Expr { ty: fn_ty, ..value };
+                            return self.synth_indirect_call(callee, args, span, consumes_callee, false);
+                        }
+                        if let TyKind::Struct(id) = *self.types.kind(value.ty) {
+                            if self.closure_calls.contains_key(&id) {
+                                return self.synth_closure_call(value, id, args, span, false);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -12675,10 +12897,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // arguments inferred from the values, or written as `Pair[i32, f32]`.
         let resolved_name = self.resolve_name(name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
-            return self.synth_generic_struct_literal(resolved_name, &decl, args, &explicit, span);
+            return self.synth_generic_struct_literal(
+                resolved_name,
+                &decl,
+                args,
+                &explicit,
+                expected,
+                span,
+            );
         }
         if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
-            return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, span);
+            return self.synth_generic_class_constructor(
+                resolved_name,
+                &decl,
+                args,
+                &explicit,
+                expected,
+                span,
+            );
         }
 
         // `[UNS-5]`, `std.mem` — the raw memory primitives.
@@ -12810,6 +13046,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         if let Some(builtin) = Builtin::from_name(name.as_str()) {
+            // `[STD-9]` (0.9.9) — several arguments, `sep=` and `end=`.
+            let positional = args.iter().filter(|a| a.name.is_none()).count();
+            if positional != 1 || args.iter().any(|a| a.name.is_some()) {
+                return self.synth_print_pieces(builtin, args, span);
+            }
             let args: Vec<Expr> = args
                 .iter()
                 .map(|a| {
@@ -12869,7 +13110,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // arguments say what its parameters are, and the instance gets its own
         // symbol.
         if !self.signatures[def.0 as usize].generics.is_empty() {
-            return self.synth_generic_call(def, name, args, explicit, span);
+            return self.synth_generic_call(def, name, args, explicit, expected, span);
         }
 
         let signature: Vec<(Ty, Mode)> =
@@ -13079,6 +13320,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name: Symbol,
         args: &[ast::Arg],
         explicit: Vec<Ty>,
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         let generics = self.signatures[def.0 as usize].generics.clone();
@@ -13125,13 +13367,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // so this does not change source order; it lets a later ordinary
         // argument determine `T` before an earlier `fn(T) -> T` lambda needs
         // its parameter expectation.
+        //
+        // `[TYP-23]` (0.9.9) — an untyped literal argument waits until the
+        // typed arguments and the expected result have had their say: in
+        // `f(x_i32, 0)` it adopts `i32` rather than fixing `T` as `int`, and
+        // in `first: ref mut i32 = arena.alloc(10)` the expectation decides.
+        // It defaults only when nothing else fixes its parameter.
+        let mut deferred_literals = Vec::new();
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(index) = slots[arg_index] else { continue };
             let param_ty = declared[index].1;
             if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
-            let value = self.synth_committed(&arg.value);
+            let value = self.synth(&arg.value);
+            if self.types.is_untyped_literal(value.ty) {
+                deferred_literals.push((index, param_ty, value));
+                continue;
+            }
+            let value = self.commit(value);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -13153,6 +13407,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     );
                 }
             }
+            checked_args[index] = Some(value);
+        }
+        // The expected result is a hint for what the arguments left open. It
+        // never overrides them: `x: i64 = id(y_i32)` keeps `T = i32` and
+        // widens the result at the coercion site.
+        if let Some(expected) = expected {
+            let mut hinted = solved.clone();
+            if self.unify_generic_argument(ret, expected, &generics, &mut hinted, explicit.len()) {
+                for (slot, hint) in solved.iter_mut().zip(hinted) {
+                    if slot.is_none() {
+                        *slot = hint;
+                    }
+                }
+            }
+        }
+        for (index, param_ty, value) in deferred_literals {
+            let value = self.commit(value);
+            let mut trial = solved.clone();
+            if self.unify_generic_argument(param_ty, value.ty, &generics, &mut trial, explicit.len()) {
+                for (slot, fixed) in solved.iter_mut().zip(trial) {
+                    if slot.is_none() {
+                        *slot = fixed;
+                    }
+                }
+            }
+            // A mismatch is left to the re-check against the substituted
+            // parameter type below, where the literal adopts or is reported.
             checked_args[index] = Some(value);
         }
         for (arg_index, arg) in args.iter().enumerate() {
@@ -13976,7 +14257,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         if !self.signatures[def.0 as usize].generics.is_empty() {
-            return self.synth_generic_call(def, qualified, args, explicit, span);
+            return self.synth_generic_call(def, qualified, args, explicit, None, span);
         }
         if !explicit.is_empty() {
             self.error(
@@ -15033,6 +15314,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        let expected = self.method_expectation.take();
         let receiver = self.synth_committed(recv);
         if receiver.ty == self.common.error {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -15286,13 +15568,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_unsafe_cell_method(receiver, inner, name, args, span);
         }
         if self.is_arena(receiver.ty) {
-            return self.synth_arena_method(receiver, name, args, &explicit, span);
+            return self.synth_arena_method(receiver, name, args, &explicit, expected, span);
         }
         if self.is_fixed_arena(receiver.ty) {
-            return self.synth_fixed_arena_method(receiver, name, args, &explicit, span);
+            return self.synth_fixed_arena_method(receiver, name, args, &explicit, expected, span);
         }
         if self.is_scoped_arena(receiver.ty) {
-            return self.synth_scoped_arena_method(receiver, name, args, &explicit, span);
+            return self.synth_scoped_arena_method(receiver, name, args, &explicit, expected, span);
         }
         if let Some(elem) = self.arena_array_element(receiver.ty) {
             if !explicit.is_empty() {
@@ -16154,6 +16436,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             ast::LambdaBody::Block(block) => {
                 let checked = self.check_block(block);
+                // `[FN-10]` applies to a block-bodied lambda as to a function.
+                let checked = self.complete_function_end(checked, block.span);
                 (checked, self.ret_ty)
             }
         };
@@ -18377,6 +18661,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name: ast::Ident,
         args: &[ast::Arg],
         explicit: &[Ty],
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
@@ -18587,7 +18872,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let value = {
-            let value = match explicit.first().copied() {
+            // `[TYP-23]` — `first: ref mut i32 = arena.alloc(10)`: the
+            // expected view says what the payload is.
+            let payload = explicit.first().copied().or_else(|| match expected
+                .map(|ty| self.types.kind(ty).clone())
+            {
+                Some(TyKind::Ref { mutable: true, inner }) => Some(inner),
+                _ => None,
+            });
+            let value = match payload {
                 Some(ty) => self.check_expr(&args[0].value, ty),
                 None => self.synth_committed(&args[0].value),
             };
@@ -18637,6 +18930,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name: ast::Ident,
         args: &[ast::Arg],
         explicit: &[Ty],
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
@@ -18691,7 +18985,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let value = {
-            let value = match explicit.first().copied() {
+            // `[TYP-23]` — `first: ref mut i32 = arena.alloc(10)`: the
+            // expected view says what the payload is.
+            let payload = explicit.first().copied().or_else(|| match expected
+                .map(|ty| self.types.kind(ty).clone())
+            {
+                Some(TyKind::Ref { mutable: true, inner }) => Some(inner),
+                _ => None,
+            });
+            let value = match payload {
                 Some(ty) => self.check_expr(&args[0].value, ty),
                 None => self.synth_committed(&args[0].value),
             };
@@ -18771,6 +19073,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name: ast::Ident,
         args: &[ast::Arg],
         explicit: &[Ty],
+        expected: Option<Ty>,
         span: Span,
     ) -> Expr {
         let method = name.name.as_str();
@@ -18810,7 +19113,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let value = {
-            let value = match explicit.first().copied() {
+            // `[TYP-23]` — `first: ref mut i32 = arena.alloc(10)`: the
+            // expected view says what the payload is.
+            let payload = explicit.first().copied().or_else(|| match expected
+                .map(|ty| self.types.kind(ty).clone())
+            {
+                Some(TyKind::Ref { mutable: true, inner }) => Some(inner),
+                _ => None,
+            });
+            let value = match payload {
                 Some(ty) => self.check_expr(&args[0].value, ty),
                 None => self.synth_committed(&args[0].value),
             };
@@ -20088,6 +20399,253 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         expr
     }
 
+    /// `[GRM-25]` (0.9.9) — `a < b <= c` is `a < b and b <= c`, each operand
+    /// evaluated at most once, left to right, stopping at the first false
+    /// comparison. A middle operand is shared by two comparisons; it is
+    /// written into both when reading it twice cannot be observed (a name, a
+    /// literal, a field or an index of those). Any other middle operand is
+    /// `E0900` for now, with the help to bind it to a local.
+    fn synth_compare_chain(
+        &mut self,
+        first: &ast::Expr,
+        rest: &[(ast::BinOp, ast::Expr)],
+        span: Span,
+    ) -> Expr {
+        for (_, operand) in &rest[..rest.len() - 1] {
+            if !Self::rereadable(operand) {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E0900,
+                        operand.span,
+                        "a computed operand in the middle of a comparison chain is not implemented yet",
+                    )
+                    .help("bind it to a local first, then compare the local")
+                    .note("the operand must be evaluated once and compared twice [GRM-25]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+        }
+        let mut left = first;
+        let mut links = Vec::new();
+        for (op, right) in rest {
+            links.push(self.synth_binary(*op, left, right, left.span.to(right.span)));
+            left = right;
+        }
+        let bool_ty = self.common.bool_;
+        let mut chain = links.pop().expect("a chain has two comparisons");
+        while let Some(link) = links.pop() {
+            chain = Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(link), rhs: Box::new(chain) },
+                span,
+            };
+        }
+        chain
+    }
+
+    /// `[FN-10]` (0.9.9) — what happens when control reaches the end of a
+    /// function body. A `void` function returns. A `Result[void, E]`
+    /// function returns `Ok(())`, which is appended here. Any other return
+    /// type has no implicit value, so a body that can reach its end is
+    /// `E2182` (ODR-023). Before this check the backend returned the
+    /// uninitialised return slot (D-186).
+    fn complete_function_end(&mut self, mut body: Block, name: Span) -> Block {
+        let ret = self.ret_ty;
+        if ret == self.common.void
+            || ret == self.common.error
+            || matches!(self.types.kind(ret), TyKind::Never)
+            || self.block_diverges(&body)
+        {
+            return body;
+        }
+        let void_ok = match self.types.kind(ret) {
+            TyKind::Enum(id) if self.is_result(ret) => {
+                let def = self.types.enum_def(*id);
+                def.variants[0].fields.first().is_some_and(|field| field.ty == self.common.void)
+                    .then_some(*id)
+            }
+            _ => None,
+        };
+        let end = body.span.shrink_to_end();
+        match void_ok {
+            Some(enum_id) => {
+                let unit = Expr { ty: self.common.void, kind: ExprKind::Error, span: end };
+                body.stmts.push(Stmt::Return(Some(Expr {
+                    ty: ret,
+                    kind: ExprKind::EnumLit { enum_id, variant: 0, fields: vec![unit] },
+                    span: end,
+                })));
+            }
+            None => {
+                let shown = self.types.display(ret);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2182,
+                        name,
+                        format!("this function returns `{shown}` but can reach the end of its body"),
+                    )
+                    .primary_label("a path through the body ends without a `return`")
+                    .help("add a `return` on every path, or end with `panic(…)` where no value exists")
+                    .note("only `void` and `Result[void, E]` functions have an implicit value [FN-10]"),
+                );
+            }
+        }
+        body
+    }
+
+    /// Whether control cannot reach the end of `block`: some statement in it
+    /// always returns, panics or loops forever. Conservative: `false` means
+    /// "may reach the end".
+    fn block_diverges(&self, block: &Block) -> bool {
+        block.stmts.iter().any(|stmt| self.stmt_diverges(stmt))
+    }
+
+    fn stmt_diverges(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Return(_) => true,
+            Stmt::Expr(expr) => self.expr_diverges(expr),
+            Stmt::Let { init: Some(value), .. } | Stmt::Assign { value, .. } => {
+                self.expr_diverges(value)
+            }
+            Stmt::If { then_block, else_block: Some(else_block), .. } => {
+                self.block_diverges(then_block) && self.block_diverges(else_block)
+            }
+            Stmt::Block(block) => self.block_diverges(block),
+            // `while true:` with no `break` of its own never finishes.
+            Stmt::While { cond, body, .. } => {
+                matches!(cond.kind, ExprKind::Bool(true)) && !Self::breaks_out(body, 0)
+            }
+            _ => false,
+        }
+    }
+
+    fn expr_diverges(&self, expr: &Expr) -> bool {
+        // `[TYP-2]` table — `Never` is the type of an expression that does not
+        // complete: `panic(…)`, `unreachable()`, a call returning `Never`.
+        if matches!(self.types.kind(expr.ty), TyKind::Never) {
+            return true;
+        }
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => {
+                !arms.is_empty()
+                    && arms.iter().all(|arm| match &arm.body {
+                        hir::MatchArmBody::Block(block) => self.block_diverges(block),
+                        hir::MatchArmBody::Expr(expr) => self.expr_diverges(expr),
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `block` contains a `break` that leaves the loop `depth` levels
+    /// out from it.
+    fn breaks_out(block: &Block, depth: usize) -> bool {
+        block.stmts.iter().any(|stmt| match stmt {
+            Stmt::Break { depth: target } => *target == depth,
+            Stmt::If { then_block, else_block, .. } => {
+                Self::breaks_out(then_block, depth)
+                    || else_block.as_ref().is_some_and(|b| Self::breaks_out(b, depth))
+            }
+            Stmt::Block(inner) | Stmt::Defer(inner) => Self::breaks_out(inner, depth),
+            Stmt::While { body, else_block, .. } | Stmt::ForRange { body, else_block, .. } => {
+                Self::breaks_out(body, depth + 1)
+                    || else_block.as_ref().is_some_and(|b| Self::breaks_out(b, depth))
+            }
+            Stmt::Expr(expr) => match &expr.kind {
+                ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+                    hir::MatchArmBody::Block(block) => Self::breaks_out(block, depth),
+                    hir::MatchArmBody::Expr(_) => false,
+                }),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+
+    /// `[STD-9]` (0.9.9) — `print(a, b, …, sep=" ", end="")` and `println(…,
+    /// end="\n")`: the arguments' text separated by `sep`, then `end`. The
+    /// call becomes one `print` builtin whose arguments are the pieces in
+    /// order; MIR evaluates every argument first and then prints each piece.
+    fn synth_print_pieces(&mut self, builtin: Builtin, args: &[ast::Arg], span: Span) -> Expr {
+        let str_ty = self.common.str_;
+        let text = |text: &str| Expr { ty: str_ty, kind: ExprKind::Str(text.to_string()), span };
+        let mut sep = text(" ");
+        let mut end = text(if builtin == Builtin::Println { "\n" } else { "" });
+        let mut values = Vec::new();
+        for arg in args {
+            match arg.name {
+                Some(name) if name.name.is("sep") => {
+                    sep = self.check_expr(&arg.value, str_ty);
+                    if !matches!(sep.kind, ExprKind::Str(_) | ExprKind::Error) {
+                        self.error(
+                            codes::E0900,
+                            arg.value.span,
+                            "a `sep` that is not a string literal is not implemented yet",
+                        );
+                    }
+                }
+                Some(name) if name.name.is("end") => end = self.check_expr(&arg.value, str_ty),
+                Some(name) => {
+                    self.error(
+                        codes::E2020,
+                        name.span,
+                        format!("`{}` has no parameter `{}`", builtin.name(), name.name),
+                    );
+                }
+                None => {
+                    let value = self.synth_committed(&arg.value);
+                    let value = self.read_through(value);
+                    let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8)
+                    {
+                        self.coerce(value, str_ty)
+                    } else {
+                        value
+                    };
+                    if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                        let shown = self.types.display(value.ty);
+                        self.error(
+                            codes::E0900,
+                            arg.value.span,
+                            format!("printing a `{shown}` is not implemented yet"),
+                        );
+                    }
+                    values.push(value);
+                }
+            }
+        }
+        let mut pieces = Vec::new();
+        for (index, value) in values.into_iter().enumerate() {
+            if index > 0 {
+                let kind = match &sep.kind {
+                    ExprKind::Str(text) => ExprKind::Str(text.clone()),
+                    _ => ExprKind::Error,
+                };
+                pieces.push(Expr { ty: sep.ty, kind, span: sep.span });
+            }
+            pieces.push(value);
+        }
+        pieces.push(end);
+        Expr {
+            ty: self.common.void,
+            kind: ExprKind::Builtin { which: Builtin::Print, args: pieces },
+            span,
+        }
+    }
+
+    /// Whether evaluating `expr` twice is indistinguishable from evaluating
+    /// it once: it reads, and nothing it reads can change in between.
+    fn rereadable(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Path { .. } | ast::ExprKind::Lit(_) => true,
+            ast::ExprKind::Paren(inner) => Self::rereadable(inner),
+            ast::ExprKind::Unary { operand, .. } => Self::rereadable(operand),
+            ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => {
+                Self::rereadable(base)
+            }
+            _ => false,
+        }
+    }
+
     fn synth_binary(
         &mut self,
         op: ast::BinOp,
@@ -20100,6 +20658,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
+        let (lhs_ast, rhs_ast) = (lhs, rhs);
         let mut lhs = self.synth(lhs);
         let mut rhs = self.synth(rhs);
         // `[TYP-14]` — an operand wants a value. This is before the operator
@@ -20211,23 +20770,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             (false, false) => {}
         }
+        // `[LEX-17a]` — a literal operand takes `f32`/`f16` from the other
+        // side here rather than at a coercion site.
+        self.warn_if_literal_loses_precision(lhs_ast, lhs.ty);
+        self.warn_if_literal_loses_precision(rhs_ast, rhs.ty);
 
         if lhs.ty != rhs.ty && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2020,
-                    span,
-                    format!("`{}` cannot be applied to `{left}` and `{right}`", op.as_str()),
-                )
-                .note("Ember does not convert between numeric types implicitly [TYP-4]")
-                .help(format!("cast one side, for example `x as {right}`")),
-            );
+            let diagnostic = Diagnostic::error(
+                codes::E2020,
+                span,
+                format!("`{}` cannot be applied to `{left}` and `{right}`", op.as_str()),
+            )
+            .note("Ember does not convert between numeric types implicitly [TYP-4]")
+            .help(format!("cast one side, for example `x as {right}`"));
+            // ODR-022 — a side declared from a literal is the likelier fix.
+            let diagnostic = self.literal_local_help(diagnostic, &lhs, rhs.ty);
+            let diagnostic = self.literal_local_help(diagnostic, &rhs, lhs.ty);
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
         let operand_ty = lhs.ty;
+        if self.reject_integer_true_division(hir_op, operand_ty, span) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         if !hir_op.is_comparison() && !self.types.is_numeric(operand_ty) && operand_ty != self.common.error {
             let shown = self.types.display(operand_ty);
             self.error(
@@ -20237,6 +20805,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
         }
 
+        // D-187 — C compares only scalars, pointers and unit-only enums. A
+        // comparison of any other type used to reach the C compiler and fail
+        // there; until `[STR-5]`'s field-wise `Eq` is built it is `E0900`.
+        if hir_op.is_comparison() && !matches!(hir_op, BinOp::Is | BinOp::IsNot) {
+            let c_comparable = match self.types.kind(operand_ty) {
+                TyKind::Struct(_)
+                | TyKind::Tuple(_)
+                | TyKind::Array { .. }
+                | TyKind::Str
+                | TyKind::Vec { .. }
+                | TyKind::Span { .. } => false,
+                TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
+                _ => true,
+            };
+            if !c_comparable {
+                let shown = self.types.display(operand_ty);
+                self.error(
+                    codes::E0900,
+                    span,
+                    format!("comparing `{shown}` values with `{}` is not implemented yet", op.as_str()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+        }
         let ty = if hir_op.is_comparison() { self.common.bool_ } else { operand_ty };
         Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
     }
@@ -20249,6 +20841,7 @@ fn operator_method(op: ast::BinOp) -> Option<&'static str> {
         ast::BinOp::Sub => "sub",
         ast::BinOp::Mul => "mul",
         ast::BinOp::Div => "div",
+        ast::BinOp::FloorDiv => "floordiv",
         ast::BinOp::Rem => "rem",
         ast::BinOp::BitAnd => "bitand",
         ast::BinOp::BitOr => "bitor",
@@ -20274,7 +20867,9 @@ fn convert_binop(op: ast::BinOp) -> Option<BinOp> {
         ast::BinOp::Sub => BinOp::Sub,
         ast::BinOp::Mul => BinOp::Mul,
         ast::BinOp::Div => BinOp::Div,
-        ast::BinOp::Rem => BinOp::Rem,
+        // `[TYP-28]`/`[TYP-29]` (0.9.9) — `//` and `%` are floor operations.
+        ast::BinOp::FloorDiv => BinOp::FloorDiv,
+        ast::BinOp::Rem => BinOp::FloorRem,
         ast::BinOp::BitAnd => BinOp::BitAnd,
         ast::BinOp::BitOr => BinOp::BitOr,
         ast::BinOp::BitXor => BinOp::BitXor,
@@ -20617,6 +21212,8 @@ fn interval(op: BinOp, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, B
         BinOp::Mul => corners(|x, y| x * y, |x, y| x.checked_mul(y)),
         BinOp::Div => division_interval(a, b),
         BinOp::Rem => remainder_interval(a, b),
+        BinOp::FloorDiv => floor_division_interval(a, b),
+        BinOp::FloorRem => floor_remainder_interval(a, b),
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => bitwise_interval(op, a, b),
         _ => None,
     }
@@ -20690,6 +21287,38 @@ fn bitwise_interval(
         return Some((Bound::Int(0), Bound::Int(mask)));
     }
     None
+}
+
+/// `[TYP-28]` — floor division is monotone in the dividend for a divisor of
+/// one sign, and monotone in the divisor for a dividend of one sign, so when
+/// the divisor range excludes zero the extremes lie at the four corners. A
+/// divisor range that may be zero leaves the fact unknown.
+fn floor_division_interval(a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    let (Bound::Int(a0), Bound::Int(a1)) = a else { return None };
+    let (Bound::Int(b0), Bound::Int(b1)) = b else { return None };
+    if b0 <= 0 && b1 >= 0 {
+        return None;
+    }
+    let floor_div = |x: i128, y: i128| -> Option<i128> {
+        let q = x.checked_div(y)?;
+        Some(if x % y != 0 && ((x < 0) != (y < 0)) { q - 1 } else { q })
+    };
+    let corners = [floor_div(a0, b0)?, floor_div(a0, b1)?, floor_div(a1, b0)?, floor_div(a1, b1)?];
+    Some((Bound::Int(*corners.iter().min()?), Bound::Int(*corners.iter().max()?)))
+}
+
+/// `[TYP-28]` — a floor modulo has the sign of its divisor: `0 <= a % b < b`
+/// for a positive divisor and `b < a % b <= 0` for a negative one.
+fn floor_remainder_interval(_a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    match b {
+        (Bound::Int(b0), Bound::Int(b1)) if b0 > 0 => {
+            Some((Bound::Int(0), Bound::Int(b1 - 1)))
+        }
+        (Bound::Int(b0), Bound::Int(b1)) if b1 < 0 => {
+            Some((Bound::Int(b0 + 1), Bound::Int(0)))
+        }
+        _ => None,
+    }
 }
 
 fn nonnegative_bit_mask(upper: i128) -> Option<i128> {

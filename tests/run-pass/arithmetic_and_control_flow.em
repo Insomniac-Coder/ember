@@ -7,8 +7,8 @@ fn max(a: i32, b: i32) -> i32:
     return b
 
 fn sum_to(n: i32) -> i32:
-    total = 0
-    i = 1
+    total: i32 = 0
+    i: i32 = 1
     while i <= n:
         total += i
         i += 1
