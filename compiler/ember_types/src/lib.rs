@@ -1411,7 +1411,27 @@ impl TypeTable {
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
             TyKind::Class(id) => self.class_def(*id).name.to_string(),
             TyKind::ClassInterface(interface) => interface.to_string(),
-            TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
+            TyKind::Enum(id) => {
+                // The prelude's `Option` and `Result` are built once per
+                // payload type; they print as they are written.
+                let def = self.enum_def(*id);
+                let name = def.name.as_str();
+                let payload = |index: usize| {
+                    def.variants.get(index).and_then(|v| v.fields.first()).map(|f| self.display(f.ty))
+                };
+                let named = |a: &str, b: &str| {
+                    def.variants.len() == 2 && def.variants[0].name.is(a) && def.variants[1].name.is(b)
+                };
+                match (payload(0), payload(1)) {
+                    (None, Some(inner)) if name.starts_with("Option_") && named("None", "Some") => {
+                        format!("Option[{inner}]")
+                    }
+                    (Some(ok), Some(err)) if name.starts_with("Result_") && named("Ok", "Err") => {
+                        format!("Result[{ok}, {err}]")
+                    }
+                    _ => name.to_string(),
+                }
+            }
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             TyKind::Param { name, .. } => name.to_string(),
             TyKind::Assoc { name } => format!("Self.{name}"),

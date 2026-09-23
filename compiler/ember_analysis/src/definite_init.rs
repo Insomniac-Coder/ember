@@ -271,10 +271,11 @@ fn transfer(
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
                 state[local.0 as usize] = State::Uninit;
             }
-            // A drop reads the place it is dropping.
-            StmtKind::Drop { place, .. } => {
-                read_place(place, &state, stmt.span, &mut reporter);
-            }
+            // A drop is not a read (Part XVIII §4.6): an empty place is not
+            // dropped, and a `Maybe` one gets a drop flag. Drop elaboration
+            // settles both, so a temporary made in one arm of a `match` and
+            // dropped at the end of the statement is no error (D-196).
+            StmtKind::Drop { .. } => {}
             StmtKind::BeginAccess { .. }
             | StmtKind::BeginAccessTransfer { .. }
             | StmtKind::EndAccess { .. }

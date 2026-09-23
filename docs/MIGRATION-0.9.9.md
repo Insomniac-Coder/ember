@@ -91,7 +91,7 @@ and gates green.
    assertions and `eprint`).
 
 **Next batch:** ~~f-string specs (`[LEX-19]`)~~ (done); ~~float `Display` (`[STD-20]`)~~ (done); the rest of `[ERR-4]`
-(`is_some`, `map`, …, `Result`'s methods); ~~`sorted` and `Array.sort`~~ (done); ranges and generator
+(~~`is_some`, `Result`'s methods~~ (done); the ones taking a function: `map`, `and_then`, …); ~~`sorted` and `Array.sort`~~ (done); ranges and generator
 expressions (`[GRM-38]`) as values (comprehensions themselves are done); `input`; `Map`/`Set`.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
@@ -289,3 +289,26 @@ The next number is ODR-024.
   twice for a range written in place; anything else is `E2226`. `sorted(xs)` from `[STD-26]`.
   D-195: `String +=` emitted invalid C, and `String + str` was rejected. The runtime header now
   includes `<string.h>` for the generated helpers.
+* **2026-09-24 — `Option`/`Result` methods (`[ERR-4]`), D-196.** `is_some`/`is_none`,
+  `is_ok`/`is_err`, `unwrap`, `expect`, `unwrap_or`, `unwrap_or_default`, `ok()`, `err()` and
+  `ok_or(e)` are checker desugars into a `match` on the value, so they need no library code. A
+  failed `unwrap` or `expect` panics with the error's `Display` text, after `expect`'s own message
+  (`reading the answer: `x` is not a number`); an error type with no text gives a fixed message.
+  `unwrap_or` and `ok_or` evaluate their argument before the match (a tuple scrutinee), as a call
+  would. The methods that take a function wait for closures to be callable from a desugar.
+  D-196: a temporary made in one arm of a `match` or conditional (the `str` view of an f-string,
+  say) was reported as `E3050` at its end-of-statement drop; a drop is no longer a read.
+* **2026-09-24 — `T` to `Option[T]` (`[TYP-5]` rule 11), defaults (`[FN-5]`), open `None`/`[]`
+  (`[TYP-23]`), D-197.** Rule 11 is the last step of `coerce`: after the type itself, a literal
+  that fits, widening, range erasure and the text rules, a non-`Option` value becomes
+  `Some(value)`; an `Option` is never wrapped again. Parameter defaults were parsed and silently
+  dropped; now each is checked once where it is declared, with no locals in scope, and a direct
+  call that leaves a parameter out checks the default again at the call, silently (a `Sink`
+  mark and rollback), and evaluates it after the written arguments. A default that reads an
+  earlier parameter, and one on a generic function, are `E0900`. `x = None` and `xs = []`
+  declare an open local; the first assignment, `push`/`insert`, or coercion site expecting a
+  type fixes it, and the body is checked again with the type written in (the first pass's
+  diagnostics and per-body state are undone). Passes repeat while each fixes another local; one
+  still open is `E2060` at its first use. D-197: `println` of one value skipped the printer check
+  and sent an `Array` to C as a string. Messages now show `Option[i64]` and `Result[i64, str]`
+  rather than the per-payload names the compiler builds.

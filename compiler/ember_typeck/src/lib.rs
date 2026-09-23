@@ -581,6 +581,44 @@ struct InterfaceDefault {
     source: (usize, usize, usize),
 }
 
+/// `[TYP-23]` — a local declared from `None` or `[]`, waiting for a later
+/// use to say its type.
+struct OpenLocal {
+    /// The declaration; the next pass looks the type up by it.
+    declared: Span,
+    name: Symbol,
+    /// Declared from `[]` rather than `None`.
+    array: bool,
+    first_use: Option<Span>,
+    fixed: Option<Ty>,
+}
+
+/// `[TYP-23]` — the open locals of the body being checked, and the types
+/// earlier passes over it found.
+#[derive(Default)]
+struct OpenState {
+    allowed: bool,
+    locals: HashMap<LocalId, OpenLocal>,
+    resolved: HashMap<Span, Ty>,
+}
+
+/// What a body check changes, so that a pass can be undone.
+struct BodySnapshot {
+    locals: usize,
+    scopes: Vec<HashMap<Symbol, LocalId>>,
+    local_ranges: HashMap<LocalId, (Bound, Bound)>,
+    literal_locals: HashMap<LocalId, Span>,
+    borrowed_params: HashSet<LocalId>,
+    callable_once_locals: HashSet<LocalId>,
+    callable_parameter_locals: HashSet<LocalId>,
+    latebound_callable_parameter_locals: HashSet<LocalId>,
+    callable_value_bindings: HashMap<LocalId, DefId>,
+    class_init: Option<ClassInitState>,
+    lambdas: usize,
+    reported_stmt_attrs: HashSet<Span>,
+    reported_defaults: HashSet<Span>,
+}
+
 struct Checker<'a> {
     types: &'a mut TypeTable,
     common: &'a CommonTypes,
@@ -859,6 +897,11 @@ struct Checker<'a> {
     reported_stmt_attrs: HashSet<Span>,
     /// `[PRF-3]` — whether `debug_assert` is checked (the `debug` profile).
     debug_assertions: bool,
+    /// `[FN-5]` — each function's parameter defaults by parameter name, with
+    /// the module they are resolved in.
+    param_defaults: HashMap<DefId, (usize, Vec<(Symbol, ast::Expr)>)>,
+    reported_defaults: HashSet<Span>,
+    open: OpenState,
 }
 
 impl<'a> Checker<'a> {
@@ -951,6 +994,9 @@ impl<'a> Checker<'a> {
             lint_return_intersection: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
+            param_defaults: HashMap::new(),
+            reported_defaults: HashSet::new(),
+            open: OpenState::default(),
         }
     }
 
@@ -3077,6 +3123,7 @@ impl<'a> Checker<'a> {
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
                     self.signatures.push(Signature { params, ret, generics, borrows });
+                    self.record_defaults(def, decl);
                 }
                 _ => {}
             }
@@ -4328,6 +4375,7 @@ impl<'a> Checker<'a> {
                 )
             };
             if let Some(def) = registered {
+                self.record_defaults(def, decl);
                 if is_abstract_class_method {
                     self.abstract_methods.insert(def);
                     self.pending_abstract_methods.push(PendingAbstractMethod {
@@ -5037,6 +5085,23 @@ impl<'a> Checker<'a> {
             }
             _ => Err("only numbers, text, `bool` and `char` take a format spec so far".to_string()),
         }
+    }
+
+    /// `[TYP-36]` — a class handle has `Debug` (its class and address) but
+    /// no `Display`, so printing one as it stands is `E2040`. Returns whether
+    /// it reported.
+    fn no_display(&mut self, ty: Ty, span: Span) -> bool {
+        if !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            return false;
+        }
+        let shown = self.types.display(ty);
+        self.sink.emit(
+            Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Display`"))
+                .primary_label("a class handle")
+                .note("a class handle has `Debug` (its class and address) but no `Display` [TYP-36]")
+                .help("print one of its fields"),
+        );
+        true
     }
 
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
@@ -7486,7 +7551,8 @@ impl<'a> Checker<'a> {
                     {
                         self.reject_unsafe_cell_in_static_safe(item.span);
                     }
-                    self.check_block(block);
+                    self.check_declared_defaults(def, decl, &signature_params);
+                    self.check_body(block);
                 }
                 self.in_static_safe = outer_static_safe;
                 self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
@@ -7535,9 +7601,10 @@ impl<'a> Checker<'a> {
                 self.reject_unsafe_cell_in_static_safe(item.span);
             }
 
+            self.check_declared_defaults(def, decl, &signature_params);
             let body = match &decl.body {
                 Some(block) => {
-                    let body = self.check_block(block);
+                    let body = self.check_body(block);
                     self.complete_function_end(body, decl.name.span)
                 }
                 None => Block { stmts: Vec::new(), span: item.span },
@@ -7993,7 +8060,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             self.reject_unsafe_cell_in_static_safe(span);
         }
-        let body = self.check_block(block);
+        let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
         let overflow = self.overflow_policy(attrs, span);
         self.in_static_safe = outer_static_safe;
@@ -8506,7 +8573,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let body = self.check_block(block);
+        let signature_params = self.signatures[def.0 as usize].params.clone();
+        self.check_declared_defaults(def, decl, &signature_params);
+        let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
         if self.class_init.is_some() {
             self.report_missing_class_init_fields(span);
@@ -9037,6 +9106,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
         expected: Option<Ty>,
     ) -> Expr {
+        if let Some(open) = self.open.locals.get_mut(&local)
+            && open.first_use.is_none()
+        {
+            open.first_use = Some(span);
+        }
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
         // `[CELL-7]` — a guard local reads through like a reference, unless
@@ -9450,6 +9524,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             );
                             return;
                         }
+                        if self.declare_open(segments[0].name, value, stmt.span, out) {
+                            return;
+                        }
                         let synthesized = self.synth(value);
                         let from_literal = self.types.is_untyped_literal(synthesized.ty);
                         let init = self.commit(synthesized);
@@ -9588,6 +9665,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     None => self.check_expr(value, place_ty),
                 };
+                if place_ty == self.common.error
+                    && let ExprKind::Local(local) = place.kind
+                {
+                    self.fix_open_local(local, value.ty, true);
+                }
                 if op.is_none() {
                     self.mark_class_init_field(&place);
                 }
@@ -10218,6 +10300,177 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// a `match`: `Some(x)` is `x`, and `None` panics or is the default. An
     /// argument is evaluated before the value is looked at, as any argument
     /// is, by matching on the pair of the two.
+    /// `[ERR-4]` — `is_some`/`is_none` and `is_ok`/`is_err`, which look
+    /// without consuming; `Result`'s `unwrap`, `expect` (a failure panics
+    /// with the error's text) and `unwrap_or`; `ok()`/`err()`, which keep one
+    /// side as an `Option`; `Option`'s `unwrap_or_default` and `ok_or(e)`.
+    /// Each is a `match` on the value.
+    fn synth_wrapper_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let wanted = usize::from(matches!(method, "expect" | "unwrap_or" | "ok_or"));
+        if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {wanted} argument(s), found {}", args.len()));
+            return error;
+        }
+        let ty = receiver.ty;
+        let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("Option and Result are enums") };
+        let def = self.types.enum_def(id).clone();
+        let bool_ty = self.common.bool_;
+        let str_ty = self.common.str_;
+        let arm = |pattern, body: Expr| hir::MatchArm { pattern, guard: None, body: hir::MatchArmBody::Expr(body), span };
+        let variant = |index: usize, fields| hir::Pattern {
+            ty,
+            kind: hir::PatternKind::Variant { enum_id: id, variant: index, fields },
+            span,
+        };
+        let wild = |ty| hir::Pattern { ty, kind: hir::PatternKind::Wild, span };
+        let flag = |value: bool| Expr { ty: bool_ty, kind: ExprKind::Bool(value), span };
+        let matching = |scrutinee: Expr, arms, result| Expr {
+            ty: result,
+            kind: ExprKind::Match { scrutinee: Box::new(scrutinee), arms },
+            span,
+        };
+        // `Option` is `None` then `Some(T)`; `Result` is `Ok(T)` then `Err(E)`.
+        let payload = |index: usize| def.variants[index].fields.first().map(|f| f.ty);
+        match method {
+            "is_some" | "is_none" | "is_ok" | "is_err" => {
+                let (index, fields) = match method {
+                    "is_some" => (1, vec![wild(payload(1).expect("Some"))]),
+                    "is_none" => (0, Vec::new()),
+                    "is_ok" => (0, vec![wild(payload(0).expect("Ok"))]),
+                    _ => (1, vec![wild(payload(1).expect("Err"))]),
+                };
+                matching(receiver, vec![arm(variant(index, fields), flag(true)), arm(wild(ty), flag(false))], bool_ty)
+            }
+            "unwrap_or_default" => {
+                let inner = payload(1).expect("Some");
+                let default = match self.types.kind(inner) {
+                    TyKind::Int(_) | TyKind::Uint(_) => Expr { ty: inner, kind: ExprKind::Int(0), span },
+                    TyKind::Float(_) => Expr { ty: inner, kind: ExprKind::Float(0.0), span },
+                    TyKind::Bool => flag(false),
+                    TyKind::Str => Expr { ty: inner, kind: ExprKind::Str(String::new()), span },
+                    TyKind::Vec { .. } => Expr { ty: inner, kind: ExprKind::Builtin { which: Builtin::ArrayNew, args: Vec::new() }, span },
+                    _ => {
+                        let shown = self.types.display(inner);
+                        self.error(codes::E0900, span, format!("`unwrap_or_default` of `{shown}` is not implemented yet"));
+                        return error;
+                    }
+                };
+                let bound = self.declare(None, inner, span);
+                let value = Expr { ty: inner, kind: ExprKind::Local(bound), span };
+                let bind = hir::Pattern { ty: inner, kind: hir::PatternKind::Bind { local: bound, sub: None }, span };
+                matching(receiver, vec![arm(variant(1, vec![bind]), value), arm(wild(ty), default)], inner)
+            }
+            "ok_or" => {
+                let inner = payload(1).expect("Some");
+                let failure = self.synth_committed(&args[0].value);
+                if failure.ty == self.common.error {
+                    return error;
+                }
+                let result = self.result_of(inner, failure.ty);
+                let TyKind::Enum(result_id) = *self.types.kind(result) else { unreachable!("Result is an enum") };
+                let bound = self.declare(None, inner, span);
+                let kept = self.declare(None, failure.ty, span);
+                let pair_ty = self.types.intern(TyKind::Tuple(vec![ty, failure.ty]));
+                let pair = Expr { ty: pair_ty, kind: ExprKind::TupleLit(vec![receiver, failure]), span };
+                let fields = |items| hir::Pattern { ty: pair_ty, kind: hir::PatternKind::Fields(items), span };
+                let bind = |local, ty| hir::Pattern { ty, kind: hir::PatternKind::Bind { local, sub: None }, span };
+                let ok = Expr {
+                    ty: result,
+                    kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![Expr { ty: inner, kind: ExprKind::Local(bound), span }] },
+                    span,
+                };
+                let err_ty = self.types.enum_def(result_id).variants[1].fields[0].ty;
+                let err = Expr {
+                    ty: result,
+                    kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![Expr { ty: err_ty, kind: ExprKind::Local(kept), span }] },
+                    span,
+                };
+                matching(
+                    pair,
+                    vec![
+                        arm(fields(vec![variant(1, vec![bind(bound, inner)]), wild(err_ty)]), ok),
+                        arm(fields(vec![wild(ty), bind(kept, err_ty)]), err),
+                    ],
+                    result,
+                )
+            }
+            "ok" | "err" => {
+                let index = usize::from(method == "err");
+                let inner = payload(index).expect("Ok and Err carry a value");
+                let option = self.option_of(inner);
+                let TyKind::Enum(option_id) = *self.types.kind(option) else { unreachable!("Option is an enum") };
+                let bound = self.declare(None, inner, span);
+                let bind = hir::Pattern { ty: inner, kind: hir::PatternKind::Bind { local: bound, sub: None }, span };
+                let some = Expr {
+                    ty: option,
+                    kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![Expr { ty: inner, kind: ExprKind::Local(bound), span }] },
+                    span,
+                };
+                let none = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: Vec::new() }, span };
+                matching(receiver, vec![arm(variant(index, vec![bind]), some), arm(wild(ty), none)], option)
+            }
+            // `Result`'s `unwrap`, `expect` and `unwrap_or`.
+            _ => {
+                let value_ty = payload(0).expect("Ok");
+                let error_ty = payload(1).expect("Err");
+                let bound = self.declare(None, value_ty, span);
+                let bind = |local, ty| hir::Pattern { ty, kind: hir::PatternKind::Bind { local, sub: None }, span };
+                let value = Expr { ty: value_ty, kind: ExprKind::Local(bound), span };
+                if method == "unwrap_or" {
+                    let fallback = self.check_expr(&args[0].value, value_ty);
+                    let kept = self.declare(None, value_ty, span);
+                    let pair_ty = self.types.intern(TyKind::Tuple(vec![ty, value_ty]));
+                    let pair = Expr { ty: pair_ty, kind: ExprKind::TupleLit(vec![receiver, fallback]), span };
+                    let fields = |items| hir::Pattern { ty: pair_ty, kind: hir::PatternKind::Fields(items), span };
+                    return matching(
+                        pair,
+                        vec![
+                            arm(fields(vec![variant(0, vec![bind(bound, value_ty)]), wild(value_ty)]), value),
+                            arm(fields(vec![wild(ty), bind(kept, value_ty)]), Expr { ty: value_ty, kind: ExprKind::Local(kept), span }),
+                        ],
+                        value_ty,
+                    );
+                }
+                // A failure panics with the error's text, after `expect`'s
+                // message when there is one.
+                let failed = self.declare(None, error_ty, span);
+                let failed_value = Expr { ty: error_ty, kind: ExprKind::Local(failed), span };
+                let mut parts = Vec::new();
+                if method == "expect" {
+                    let message = self.check_expr(&args[0].value, str_ty);
+                    parts.push(hir::FStringPart::Value(message, None));
+                    parts.push(hir::FStringPart::Text(": ".to_string()));
+                }
+                if self.is_formattable(error_ty) {
+                    let shown = if matches!(*self.types.kind(error_ty), TyKind::Vec { elem } if elem == self.common.u8) {
+                        self.coerce(failed_value, str_ty)
+                    } else {
+                        failed_value
+                    };
+                    parts.push(hir::FStringPart::Value(shown, None));
+                } else {
+                    parts.push(hir::FStringPart::Text("called `unwrap` on an `Err` value".to_string()));
+                }
+                let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+                let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+                let text = Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
+                let text = self.coerce(text, str_ty);
+                let panic = Expr {
+                    ty: self.common.never,
+                    kind: ExprKind::Builtin { which: Builtin::Panic, args: vec![text] },
+                    span,
+                };
+                matching(
+                    receiver,
+                    vec![arm(variant(0, vec![bind(bound, value_ty)]), value), arm(variant(1, vec![bind(failed, error_ty)]), panic)],
+                    value_ty,
+                )
+            }
+        }
+    }
+
     fn synth_option_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
         let option_ty = receiver.ty;
         let TyKind::Enum(option_id) = *self.types.kind(option_ty) else {
@@ -10933,6 +11186,141 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// place already does; a temporary (`for x in [1, 2]`) is bound to a
     /// local of the enclosing block, so it is dropped after the loop rather
     /// than at the end of the statement that made the view.
+    /// `[TYP-23]` — check a function body. A local declared from `None` or
+    /// `[]` is left open, and the first use that says its type fixes it; the
+    /// body is then checked again with those types written in, and the first
+    /// pass's diagnostics are dropped. Passes repeat while they fix another
+    /// local; one still open at the end is `E2060` at its first use.
+    fn check_body(&mut self, block: &ast::Block) -> Block {
+        let outer = std::mem::replace(&mut self.open, OpenState { allowed: true, ..OpenState::default() });
+        let mark = self.sink.mark();
+        let snapshot = BodySnapshot {
+            locals: self.locals.len(),
+            scopes: self.scopes.clone(),
+            local_ranges: self.local_ranges.clone(),
+            literal_locals: self.literal_locals.clone(),
+            borrowed_params: self.borrowed_params.clone(),
+            callable_once_locals: self.callable_once_locals.clone(),
+            callable_parameter_locals: self.callable_parameter_locals.clone(),
+            latebound_callable_parameter_locals: self.latebound_callable_parameter_locals.clone(),
+            callable_value_bindings: self.callable_value_bindings.clone(),
+            class_init: self.class_init.clone(),
+            lambdas: self.lambdas.len(),
+            reported_stmt_attrs: self.reported_stmt_attrs.clone(),
+            reported_defaults: self.reported_defaults.clone(),
+        };
+        let body = loop {
+            let body = self.check_block(block);
+            let mut fixed_one = false;
+            let mut still_open: Vec<OpenLocal> = Vec::new();
+            for (_, open) in std::mem::take(&mut self.open.locals) {
+                match open.fixed {
+                    Some(ty) => fixed_one |= self.open.resolved.insert(open.declared, ty).is_none(),
+                    None => still_open.push(open),
+                }
+            }
+            if !fixed_one {
+                still_open.sort_by_key(|open| (open.declared.start, open.declared.end));
+                for open in still_open {
+                    self.report_open_local(&open);
+                }
+                break body;
+            }
+            self.sink.rollback(mark);
+            self.locals.truncate(snapshot.locals);
+            self.scopes = snapshot.scopes.clone();
+            self.local_ranges = snapshot.local_ranges.clone();
+            self.literal_locals = snapshot.literal_locals.clone();
+            self.borrowed_params = snapshot.borrowed_params.clone();
+            self.callable_once_locals = snapshot.callable_once_locals.clone();
+            self.callable_parameter_locals = snapshot.callable_parameter_locals.clone();
+            self.latebound_callable_parameter_locals = snapshot.latebound_callable_parameter_locals.clone();
+            self.callable_value_bindings = snapshot.callable_value_bindings.clone();
+            self.class_init = snapshot.class_init.clone();
+            self.lambdas.truncate(snapshot.lambdas);
+            self.reported_stmt_attrs = snapshot.reported_stmt_attrs.clone();
+            self.reported_defaults = snapshot.reported_defaults.clone();
+        };
+        self.open = outer;
+        body
+    }
+
+    /// `[TYP-23]` — declare `name` from `None` or `[]`: with the type an
+    /// earlier pass found, or open. Returns whether it declared.
+    fn declare_open(&mut self, name: Symbol, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) -> bool {
+        let array = match &value.kind {
+            ast::ExprKind::ArrayLit(items) if items.is_empty() => true,
+            ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None") => false,
+            _ => return false,
+        };
+        if let Some(&ty) = self.open.resolved.get(&span) {
+            let init = self.check_expr(value, ty);
+            let local = self.declare(Some(name), ty, span);
+            out.push(Stmt::Let { local, init: Some(init) });
+            return true;
+        }
+        if !self.open.allowed {
+            return false;
+        }
+        let local = self.declare(Some(name), self.common.error, span);
+        self.open.locals.insert(local, OpenLocal { declared: span, name, array, first_use: None, fixed: None });
+        out.push(Stmt::Let { local, init: None });
+        true
+    }
+
+    /// `[TYP-23]` — a use of an open local that says its type: a value
+    /// assigned to it or added to it (`assigned`), or a coercion site that
+    /// expects one. `x = v` with `v: T` makes `x` an `Option[T]` (`[TYP-5]`
+    /// rule 11); a site expecting a view makes `[]` an `Array`.
+    fn fix_open_local(&mut self, local: LocalId, ty: Ty, assigned: bool) {
+        let Some(open) = self.open.locals.get(&local) else { return };
+        if open.fixed.is_some() || ty == self.common.error {
+            return;
+        }
+        let ty = if self.types.is_untyped_literal(ty) {
+            if self.types.is_float(ty) { self.common.f64 } else { self.common.i64 }
+        } else {
+            ty
+        };
+        let fixed = if open.array {
+            match *self.types.kind(ty) {
+                TyKind::Vec { .. } => ty,
+                TyKind::Span { elem, .. } | TyKind::Array { elem, .. } if !assigned => {
+                    self.types.intern(TyKind::Vec { elem })
+                }
+                _ => return,
+            }
+        } else if self.is_option(ty) {
+            ty
+        } else if assigned {
+            self.option_of(ty)
+        } else {
+            return;
+        };
+        if let Some(open) = self.open.locals.get_mut(&local) {
+            open.fixed = Some(fixed);
+        }
+    }
+
+    /// `[TYP-23]` — "one still open at the end is `E2060`, highlighting the
+    /// first use".
+    fn report_open_local(&mut self, open: &OpenLocal) {
+        let name = open.name;
+        let (message, annotated) = if open.array {
+            (format!("cannot infer the element type of `{name}`"), format!("{name}: Array[int] = []"))
+        } else {
+            (format!("cannot tell which `Option` `{name}` is"), format!("{name}: Option[int] = None"))
+        };
+        let diagnostic = match open.first_use {
+            Some(first) => Diagnostic::error(codes::E2060, first, message)
+                .primary_label("first used here, and no use in the function says what it holds")
+                .secondary(open.declared, "declared here"),
+            None => Diagnostic::error(codes::E2060, open.declared, message)
+                .primary_label("nothing in the function says what it holds"),
+        };
+        self.sink.emit(diagnostic.help(format!("annotate the declaration: `{annotated}`")));
+    }
+
     fn keep_alive(&mut self, value: Expr, stmts: &mut Vec<Stmt>) -> Expr {
         if is_place(&value.kind) {
             return value;
@@ -13197,6 +13585,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[TYP-5]` — coercion sites allow lossless widening; a literal adopts
     /// the expected type; everything else is `E2020`.
     fn coerce(&mut self, expr: Expr, expected: Ty) -> Expr {
+        if expr.ty == self.common.error
+            && expected != self.common.error
+            && let ExprKind::Local(local) = expr.kind
+        {
+            self.fix_open_local(local, expected, false);
+        }
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
@@ -13417,6 +13811,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 kind: ExprKind::Widen { expr: Box::new(expr), to: expected },
                 span,
             };
+        }
+        // `[TYP-5]` rule 11 — a `T` becomes `Option[T]` as `Some(value)`,
+        // after rules 1–4 and one level only: an `Option` is never wrapped.
+        if self.is_option(expected)
+            && !self.is_option(expr.ty)
+            && let TyKind::Enum(id) = *self.types.kind(expected)
+        {
+            let inner = self.types.enum_def(id).variants[1].fields[0].ty;
+            if self.coerces_before_option(&expr, inner) {
+                let value = self.coerce(expr, inner);
+                let span = value.span;
+                return Expr {
+                    ty: expected,
+                    kind: ExprKind::EnumLit { enum_id: id, variant: 1, fields: vec![value] },
+                    span,
+                };
+            }
         }
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
@@ -13779,6 +14190,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Widen { expr, .. } => self.constant_bound_of(expr),
             _ => None,
         }
+    }
+
+    /// `[TYP-5]` — whether `expr` reaches `wanted` by the rules rule 11
+    /// composes with: the type itself, a literal that fits, widening (1–2),
+    /// range erasure (3), and the two text rules (4).
+    fn coerces_before_option(&self, expr: &Expr, wanted: Ty) -> bool {
+        let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { elem } if elem == self.common.u8);
+        expr.ty == wanted
+            || self.types.is_untyped_literal(expr.ty) && self.literal_fits(expr, wanted)
+            || self.types.widens_to(expr.ty, wanted)
+            || matches!(*self.types.kind(expr.ty), TyKind::Range(id)
+                if { let repr = self.types.range_def(id).repr; repr == wanted || self.types.widens_to(repr, wanted) })
+            || matches!(expr.kind, ExprKind::Str(_)) && string(wanted)
+            || wanted == self.common.str_ && string(expr.ty)
     }
 
     fn literal_fits(&self, expr: &Expr, expected: Ty) -> bool {
@@ -14222,7 +14647,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             } else {
                                 value
                             };
-                            if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                            if self.no_display(value.ty, expr.span) {
+                            } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
                                 let shown = self.types.display(value.ty);
                                 self.error(
                                     codes::E1010,
@@ -15216,38 +15642,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         if let Some(builtin) = Builtin::from_name(name.as_str()) {
-            // `[STD-9]` (0.9.9) — several arguments, `sep=` and `end=`.
-            let positional = args.iter().filter(|a| a.name.is_none()).count();
-            if positional != 1 || args.iter().any(|a| a.name.is_some()) {
-                return self.synth_print_pieces(builtin, args, span);
-            }
-            // D-191 — a `String` prints as the `str` it borrows, as it does
-            // among several arguments; the runtime prints `str`.
-            let str_ty = self.common.str_;
-            let args: Vec<Expr> = args
-                .iter()
-                .map(|a| {
-                    let arg = self.synth_committed(&a.value);
-                    let arg = self.read_through(arg);
-                    if matches!(*self.types.kind(arg.ty), TyKind::Vec { elem } if elem == self.common.u8) {
-                        self.coerce(arg, str_ty)
-                    } else {
-                        arg
-                    }
-                })
-                .collect();
-            if args.len() != 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{}` takes one argument, found {}", builtin.name(), args.len()),
-                );
-            }
-            return Expr {
-                ty: self.common.void,
-                kind: ExprKind::Builtin { which: builtin, args },
-                span,
-            };
+            // `[STD-9]` (0.9.9) — any number of arguments, `sep=` and `end=`.
+            // One path for every count, so each value is checked for a
+            // printer the same way (D-197).
+            return self.synth_print_pieces(builtin, args, span);
         }
 
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
@@ -15294,7 +15692,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
-        if args.len() != signature.len() {
+        if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -15303,7 +15701,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(name, args, &params);
-        let checked = self.check_bound_call_arguments(args, &params, &slots);
+        let (checked, slots) = self.check_call_with_defaults(def, name, args, &params, &slots, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -16624,7 +17022,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
-        if args.len() != signature.len() {
+        if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -16633,7 +17031,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(qualified, args, &params);
-        let checked = self.check_bound_call_arguments(args, &params, &slots);
+        let (checked, slots) = self.check_call_with_defaults(def, qualified, args, &params, &slots, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -16816,7 +17214,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(_, ty, mode, _)| (*ty, *mode))
             .collect::<Vec<_>>();
         let ret = self.signatures[def.0 as usize].ret;
-        if args.len() != signature.len() {
+        if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -16837,7 +17235,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
-        let checked = self.check_bound_call_arguments(args, &params, &slots);
+        let (checked, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -16938,7 +17336,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(_, ty, mode, _)| (self.types.substitute_self(*ty, owner), *mode))
             .collect::<Vec<_>>();
         let ret = self.types.substitute_self(self.signatures[def.0 as usize].ret, owner);
-        if args.len() != signature.len() {
+        if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -16953,7 +17351,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
-        let checked = self.check_bound_call_arguments(args, &params, &slots);
+        let (checked, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -17680,6 +18078,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let expected = self.method_expectation.take();
         let receiver = self.synth_committed(recv);
         if receiver.ty == self.common.error {
+            // `[TYP-23]` — `xs.push(v)` says what an open `xs = []` holds.
+            if let ExprKind::Local(local) = receiver.kind
+                && self.open.locals.get(&local).is_some_and(|open| open.array)
+                && let ("push" | "append", [item]) | ("insert", [_, item]) = (name.name.as_str(), args)
+            {
+                let item = self.synth_committed(&item.value);
+                let array = self.types.intern(TyKind::Vec { elem: item.ty });
+                self.fix_open_local(local, array, true);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[CELL-7]` — a guard reads through to its contents, so a method on
@@ -17908,6 +18315,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_span_method(receiver, elem, mutable, name, args, span);
+        }
+        if (self.is_option(receiver.ty) && matches!(name.name.as_str(), "is_some" | "is_none" | "unwrap_or_default" | "ok_or")
+            || self.is_result(receiver.ty)
+                && matches!(name.name.as_str(), "is_ok" | "is_err" | "unwrap" | "expect" | "unwrap_or" | "ok" | "err"))
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_wrapper_method(receiver, name, args, span);
         }
         if self.is_option(receiver.ty)
             && matches!(name.name.as_str(), "unwrap" | "unwrap_or" | "expect")
@@ -18165,7 +18587,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // The receiver is the first parameter; the written arguments are the
         // rest.
         let expected = signature.len().saturating_sub(1);
-        if args.len() != expected {
+        if !self.arity_fits(def, args.len(), expected) {
             self.error(
                 codes::E2020,
                 span,
@@ -18208,7 +18630,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut checked = vec![checked_receiver];
         let params = self.signatures[def.0 as usize].params[1..].to_vec();
         let slots = self.call_argument_slots(name.name, args, &params);
-        checked.extend(self.check_bound_call_arguments(args, &params, &slots));
+        let (values, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
+        checked.extend(values);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -18785,6 +19208,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         env: Option<(Symbol, Ty, Mode, Span)>,
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
+        let outer_open = std::mem::take(&mut self.open);
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
         let outer_callable_once_locals = std::mem::take(&mut self.callable_once_locals);
@@ -18847,6 +19271,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
 
         let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.open = outer_open;
         self.scopes = outer_scopes;
         self.borrowed_params = outer_borrowed_params;
         self.callable_once_locals = outer_callable_once_locals;
@@ -22243,6 +22668,124 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         slots
     }
 
+    /// `[FN-5]` — remember a declaration's parameter defaults.
+    fn record_defaults(&mut self, def: DefId, decl: &ast::FnDecl) {
+        let defaults: Vec<(Symbol, ast::Expr)> = decl
+            .params
+            .iter()
+            .filter_map(|p| match (&p.kind, &p.default) {
+                (ast::ParamKind::Named { name, .. }, Some(default)) => Some((name.name, default.clone())),
+                _ => None,
+            })
+            .collect();
+        if !defaults.is_empty() && self.signatures[def.0 as usize].generics.is_empty() {
+            self.param_defaults.insert(def, (self.current_module, defaults));
+        }
+    }
+
+    /// `[FN-5]` — whether `given` arguments can call `def`: no more than it
+    /// has parameters, and enough that the defaults cover the rest.
+    fn arity_fits(&self, def: DefId, given: usize, declared: usize) -> bool {
+        let defaults = self.param_defaults.get(&def).map_or(0, |(_, d)| d.len());
+        given <= declared && given + defaults >= declared
+    }
+
+    /// `[FN-5]` — check each default once, where it is declared, as an
+    /// expression of its parameter's type. The names it may use are the
+    /// module's, not the body's; one that reads an earlier parameter is not
+    /// built yet.
+    fn check_declared_defaults(&mut self, def: DefId, decl: &ast::FnDecl, params: &[(Symbol, Ty, Mode, Span)]) {
+        let recorded = self.param_defaults.contains_key(&def);
+        let mut earlier = vec![Symbol::intern("self")];
+        for param in &decl.params {
+            let ast::ParamKind::Named { name, .. } = &param.kind else { continue };
+            if let Some(default) = &param.default
+                && let Some(&(_, ty, _, _)) = params.iter().find(|(n, ..)| *n == name.name)
+                // A generic body is checked once per instance; report once.
+                && self.reported_defaults.insert(default.span)
+            {
+                if !recorded {
+                    self.error(
+                        codes::E0900,
+                        default.span,
+                        "a default on a generic function's parameter is not implemented yet",
+                    );
+                } else if may_name(default, &earlier) {
+                    self.error(
+                        codes::E0900,
+                        default.span,
+                        format!("a default that reads an earlier parameter is not implemented yet (`{}`)", name.name),
+                    );
+                } else {
+                    let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                    let locals = self.locals.len();
+                    self.check_expr(default, ty);
+                    self.locals.truncate(locals);
+                    self.scopes = scopes;
+                }
+            }
+            earlier.push(name.name);
+        }
+    }
+
+    /// `[FN-5]` — check a direct call's arguments and give each parameter the
+    /// call leaves out its default, evaluated at the call after the written
+    /// arguments. The default was reported where it is declared, so its
+    /// check here is silent. Returns the arguments in parameter order and
+    /// every parameter's slot in evaluation order.
+    fn check_call_with_defaults(
+        &mut self,
+        def: DefId,
+        callee: Symbol,
+        args: &[ast::Arg],
+        params: &[(Symbol, Ty, Mode, Span)],
+        slots: &[Option<usize>],
+        span: Span,
+    ) -> (Vec<Expr>, Vec<Option<usize>>) {
+        let written = self.check_bound_call_arguments(args, params, slots);
+        let mut given = vec![false; params.len()];
+        for slot in slots.iter().flatten() {
+            given[*slot] = true;
+        }
+        if given.iter().all(|g| *g) || args.len() > params.len() {
+            return (written, slots.to_vec());
+        }
+        let mut written = written.into_iter();
+        let mut checked = Vec::with_capacity(params.len());
+        let mut order = slots.to_vec();
+        let defaults = self.param_defaults.get(&def).cloned();
+        for (index, &(name, ty, _, _)) in params.iter().enumerate() {
+            if given[index] {
+                checked.push(written.next().expect("one checked argument per given parameter"));
+                continue;
+            }
+            let default = defaults.as_ref().and_then(|(module, list)| {
+                list.iter().find(|(n, _)| *n == name).map(|(_, expr)| (*module, expr.clone()))
+            });
+            let Some((module, default)) = default else {
+                self.error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                checked.push(Expr { ty, kind: ExprKind::Error, span });
+                continue;
+            };
+            let earlier: Vec<Symbol> =
+                std::iter::once(Symbol::intern("self")).chain(params[..index].iter().map(|p| p.0)).collect();
+            let value = if may_name(&default, &earlier) {
+                Expr { ty, kind: ExprKind::Error, span }
+            } else {
+                let mark = self.sink.mark();
+                let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                let caller_module = std::mem::replace(&mut self.current_module, module);
+                let value = self.check_expr(&default, ty);
+                self.current_module = caller_module;
+                self.scopes = scopes;
+                if self.sink.rollback(mark) { Expr { ty, kind: ExprKind::Error, span } } else { value }
+            };
+            checked.push(value);
+            order.push(Some(index));
+        }
+        (checked, order)
+    }
+
     /// Return the parameter slots in source evaluation order. Positional
     /// calls need no metadata; keeping the common case as `None` avoids
     /// changing their HIR shape and lowering path.
@@ -23033,7 +23576,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     } else {
                         value
                     };
-                    if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                    if self.no_display(value.ty, arg.value.span) {
+                    } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
                         let shown = self.types.display(value.ty);
                         self.error(
                             codes::E0900,
@@ -24129,3 +24673,28 @@ struct CaptureWatch {
     /// discovery and the final body use the same representation.
     captures_by_move: bool,
 }
+
+/// `[FN-5]` — whether `expr` may name one of `names`. Anything this does not
+/// look inside counts as naming one, so the answer errs towards yes.
+fn may_name(expr: &ast::Expr, names: &[Symbol]) -> bool {
+    match &expr.kind {
+        ast::ExprKind::Lit(_) => false,
+        ast::ExprKind::Path { segments } => names.contains(&segments[0].name),
+        ast::ExprKind::SelfExpr => true,
+        ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => may_name(inner, names),
+        ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => may_name(base, names),
+        ast::ExprKind::Cast { expr, .. } => may_name(expr, names),
+        ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
+            may_name(lhs, names) || may_name(rhs, names)
+        }
+        ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => items.iter().any(|e| may_name(e, names)),
+        ast::ExprKind::Call { callee, args } => {
+            may_name(callee, names) || args.iter().any(|a| may_name(&a.value, names))
+        }
+        ast::ExprKind::MethodCall { recv, args, .. } => {
+            may_name(recv, names) || args.iter().any(|a| may_name(&a.value, names))
+        }
+        _ => true,
+    }
+}
+

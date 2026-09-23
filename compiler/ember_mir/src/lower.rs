@@ -2350,9 +2350,11 @@ impl<'a> Builder<'a> {
                 if args.len() > 1 =>
             {
                 let which = *which;
-                let pieces: Vec<(Operand, Ty)> =
-                    args.iter().map(|a| (self.lower_operand_borrowed(a), a.ty)).collect();
-                for (operand, arg_ty) in pieces {
+                let pieces: Vec<(Operand, Ty, ember_span::Span)> =
+                    args.iter().map(|a| (self.lower_operand_borrowed(a), a.ty, a.span)).collect();
+                for (operand, arg_ty, span) in pieces {
+                    // Each piece is used where it is written.
+                    self.at(span);
                     let next = self.new_block();
                     self.terminate(Terminator::Call {
                         func: FuncRef::Builtin { which, arg_ty },

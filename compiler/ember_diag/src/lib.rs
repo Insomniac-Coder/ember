@@ -180,6 +180,28 @@ impl Sink {
         self.error_count
     }
 
+    /// A point to `rollback` to.
+    pub fn mark(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    /// Forget what was emitted after `mark`, for a check whose diagnostics are
+    /// reported elsewhere. Returns whether an error was among them.
+    pub fn rollback(&mut self, mark: usize) -> bool {
+        let mut errors = false;
+        for d in self.diagnostics.drain(mark..) {
+            match d.severity {
+                Severity::Error => {
+                    self.error_count -= 1;
+                    errors = true;
+                }
+                Severity::Warning | Severity::Lint => self.warning_count -= 1,
+                _ => {}
+            }
+        }
+        errors
+    }
+
     /// `[DIA-7]` — emit an ownership or borrow diagnostic, which MUST carry
     /// one of §XIX.6.1's shapes. A code the classifier cannot place is
     /// recorded rather than silently emitted, because "an unexplained

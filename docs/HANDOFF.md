@@ -10719,13 +10719,18 @@ text comparison, the ternary, `[TYP-31]` (`int` sizes, any integer index,
 `E2011`), the removed constructs (`::`, `#! language`, `@latebound`,
 `std.borrow`, `@thread_local`), `.` paths through modules, the `[ATT-1]`/
 `[ATT-6]` attribute check, and the prelude's panics, assertions, `eprint`,
-`mem` and `Option.unwrap`/`unwrap_or`/`expect`; D-182–D-191 (D-190 is open);
+`mem`; Python's built-ins (`len`, `min`, `max`, `sum`, `sorted`, …), block
+expressions, float text, f-string specs, comprehensions, `Array` methods and
+`in`, `String` concatenation; `[ERR-4]`'s `Option`/`Result` methods (not the
+ones taking a function); `[TYP-5]` rule 11 (`T` to `Option[T]`); parameter
+defaults (`[FN-5]`, not those reading an earlier parameter); open `x = None`
+and `xs = []` fixed by a later use (`[TYP-23]`); D-182–D-197, all fixed;
 ODR-021, ODR-022 and ODR-023. The next ODR is ODR-024. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.
 
-**Phase estimates against 0.9.9 (2026-09-23).** 0.9.9 dropped Part XXI (F-159:
+**Phase estimates against 0.9.9 (updated 2026-09-24).** 0.9.9 dropped Part XXI (F-159:
 phase status is project tracking), so the phases are the ones 0.9.8 defined, by
 rule family. 0.9.9 marks 302 of its 899 rules new or changed. Method: the last
 recorded percentage, scaled by the share of the phase's rules that 0.9.9 left
@@ -10736,8 +10741,8 @@ Parts II–VI) no longer holds.
 
 | Phase | 0.9.8 record | 0.9.9 estimate | Rules touched by 0.9.9 |
 |---|---:|---:|---|
-| 1 Core language (Parts II–VI) | 100% | ~60% | 109 of 233; ~20 re-done (M1 is about half done) |
-| 2 Ownership | 86% | ~73% | 12 of 72 |
+| 1 Core language (Parts II–VI) | 100% | ~71% | 109 of 233; ~50 re-done (M1 is about three quarters done) |
+| 2 Ownership | 86% | ~75% | 12 of 72; D-190, D-196 |
 | 3 Objects | 70% | ~45% | 24 of 68 (CLS/EXC changes; M2) |
 | 4 Effects, comptime, derives | 15% | ~9% | 13 of 35 |
 | 5 C FFI | 10% | ~8% | 15 of 86 |
