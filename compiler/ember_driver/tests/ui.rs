@@ -373,6 +373,66 @@ fn committed_module_item_name_suggestion_matches_and_fixed_source_compiles() {
 }
 
 #[test]
+fn unknown_type_suggests_visible_import_alias_and_corrected_type_compiles() {
+    let workspace = workspace_root();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_nanos();
+    let package = std::env::temp_dir().join(format!(
+        "ember-n1-type-position-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&package).expect("temporary package directory is creatable");
+    let model = ember_branding::source_file("model");
+    std::fs::write(
+        package.join(model),
+        "pub struct Point:\n    x: i32\n\npub struct Vector[T]:\n    value: T\n",
+    )
+    .expect("candidate module is writable");
+    let main = ember_branding::source_file("main");
+    let main_path = package.join(&main);
+    std::fs::write(
+        &main_path,
+        "from model import Point as Dot, Vector as Vect\n\nfn takes(value: Dto):\n    pass\n\nfn takes_vector(value: Vetc[i32]):\n    pass\n\nfn main():\n    pass\n",
+    )
+    .expect("misspelled type source is writable");
+
+    let check = || {
+        Command::new(EMBER)
+            .args(["check", &main])
+            .current_dir(&package)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs")
+    };
+    let before = check();
+    assert!(
+        !before.status.success(),
+        "the misspelled type must be rejected"
+    );
+    let stderr = normalize(&before.stderr);
+    assert_eq!(error_codes(&stderr), ["E1010", "E1010"]);
+    assert!(
+        stderr.contains("did you mean `Dot`?") && stderr.contains("did you mean `Vect`?"),
+        "N1 should suggest visible aliases in plain and generic type positions:\n{stderr}"
+    );
+
+    std::fs::write(
+        &main_path,
+        "from model import Point as Dot, Vector as Vect\n\nfn takes(value: Dot):\n    pass\n\nfn takes_vector(value: Vect[i32]):\n    pass\n\nfn main():\n    pass\n",
+    )
+    .expect("corrected type source is writable");
+    let fixed = check();
+    assert!(
+        fixed.status.success(),
+        "the corrected type does not compile:\n{}",
+        normalize(&fixed.stderr)
+    );
+    std::fs::remove_dir_all(&package).expect("only the test package is removed");
+}
+
+#[test]
 fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
     let workspace = workspace_root();
     let nonce = SystemTime::now()

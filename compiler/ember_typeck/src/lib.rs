@@ -4637,7 +4637,7 @@ impl<'a> Checker<'a> {
                     };
                     return self.class_interface_type(interface, ty.span);
                 }
-                self.resolve_type_application(name, &resolved, ty.span)
+                self.resolve_type_application(name, &resolved, ty.span, segments[0].span)
             }
 
             ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 => {
@@ -4675,11 +4675,13 @@ impl<'a> Checker<'a> {
                 if let Some(&ty) = self.named_types.get(&resolved) {
                     return ty;
                 }
-                self.error(
+                let diagnostic = Diagnostic::error(
                     codes::E1010,
                     segments[0].span,
                     format!("cannot find type `{name}` in this scope"),
                 );
+                self.sink
+                    .emit(self.add_name_suggestions(diagnostic, name, segments[0].span));
                 self.common.error
             }
             _ => {
@@ -4698,7 +4700,13 @@ impl<'a> Checker<'a> {
     /// Resolve a named type application after bracket ambiguity has been
     /// settled. Both written type syntax (`Array[Cell[i32]]`) and the
     /// expression-shaped syntax preserved by `[GRM-8]` use this single path.
-    fn resolve_type_application(&mut self, name: Symbol, args: &[(Ty, Span)], span: Span) -> Ty {
+    fn resolve_type_application(
+        &mut self,
+        name: Symbol,
+        args: &[(Ty, Span)],
+        span: Span,
+        name_span: Span,
+    ) -> Ty {
         let require = |this: &mut Self, expected: usize| {
             if args.len() == expected {
                 true
@@ -4801,16 +4809,20 @@ impl<'a> Checker<'a> {
         } else if name.is("Result") {
             2
         } else {
+            let is_known_type = self.named_types.contains_key(&resolved_name)
+                || self.interfaces.contains_key(&resolved_name);
             let message = if self.named_types.contains_key(&resolved_name) {
                 format!("`{name}` does not take type arguments in this phase")
             } else {
                 format!("cannot find type `{name}` in this scope")
             };
-            self.error(
-                codes::E1010,
-                span,
-                message,
-            );
+            let diagnostic = Diagnostic::error(codes::E1010, span, message);
+            let diagnostic = if is_known_type {
+                diagnostic
+            } else {
+                self.add_name_suggestions(diagnostic, name, name_span)
+            };
+            self.sink.emit(diagnostic);
             return self.common.error;
         };
         if !require(self, arity) {
@@ -8843,6 +8855,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         )
     }
 
+    fn add_name_suggestions(
+        &self,
+        mut diagnostic: Diagnostic,
+        written: Symbol,
+        use_span: Span,
+    ) -> Diagnostic {
+        for candidate in self.name_suggestions(written, use_span) {
+            diagnostic =
+                diagnostic.suggest(format!("did you mean `{candidate}`?"), use_span, candidate);
+        }
+        diagnostic
+    }
+
     /// `[DIA-12]` N1 — offer nearby fields visible on a struct or class,
     /// including inherited class fields.
     fn field_name_suggestions(&self, ty: Ty, written: Symbol, use_span: Span) -> Vec<String> {
@@ -12794,7 +12819,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     };
                     resolved.push((ty, arg.span()));
                 }
-                self.resolve_type_application(segments[0].name, &resolved, expr.span)
+                self.resolve_type_application(
+                    segments[0].name,
+                    &resolved,
+                    expr.span,
+                    segments[0].span,
+                )
             }
             _ => {
                 self.error(codes::E1010, expr.span, "expected a type argument");
