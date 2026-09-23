@@ -359,6 +359,7 @@ fn terminator_mentions_local(terminator: &Terminator, local: LocalId) -> bool {
                     | ember_mir::AssertKind::SignedDivisionOverflow
                     | ember_mir::AssertKind::ShiftTooLarge
                     | ember_mir::AssertKind::Downcast => false,
+                    ember_mir::AssertKind::Panic { message } => operand_mentions_local(message, local),
                 }
         }
     }

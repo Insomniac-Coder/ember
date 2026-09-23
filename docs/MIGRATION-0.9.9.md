@@ -86,9 +86,13 @@ and gates green.
 2. ~~`==`/`!=` field-wise, text by bytes (D-187)~~ (done; ordering on tuples, arrays and `Option` is not).
 3. ~~The ternary `x if c else y`~~ (done).
 4. ~~`[TYP-31]`: `len()` is `int`, any integer index, `E2011` for a negative literal index~~ (done).
-5. Removed constructs: `::` is `E0100` with `use '.' for paths`; `#! language` other than the
-   current version is `E0006`; `@latebound` and `@thread_local` rejected, with the corpus migrated.
-6. Prelude: `mem`, `panic`, `todo`, `unreachable`; `Option.unwrap`/`unwrap_or`.
+5. ~~Removed constructs: `::`, `#! language`, `@latebound`, `std.borrow`, `@thread_local`~~ (done).
+6. ~~Prelude: `mem`, `panic`, `todo`, `unreachable`; `Option.unwrap`/`unwrap_or`~~ (done, with the
+   assertions and `eprint`).
+
+**Next batch:** `[STD-26]`'s `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`,
+`all`, and `min`, `max`, `abs`, `clamp`, `input`; the rest of `[ERR-4]`; f-string specs (`[LEX-19]`)
+and float `Display` (`[STD-20]`); `Map`/`Set`; D-190.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
 (`[EXC-19]`), `@sync`, `Weak` upgrade, callable fields.
@@ -171,3 +175,51 @@ The next number is ODR-024.
   compilations raced on the `[LT-40]` interface cache; records are now written aside and renamed
   into place. `tasks/impl-0.9.9/survey.py` now prints the exit status and output of a rejection
   that reported no `error[...]`, which is how D-189 was found.
+* **2026-09-23 — removed constructs.** `[LEX-21]`/`[GRM-24]`: a `::` is `E0100 `::` is not a path
+  separator` with the help `use '.' for paths` (the parser still reads it as a path, so the rest
+  resolves); `.` now reaches a module through another's namespace (`support.io.print`), a type
+  and a variant through a module (`inner.Shape.Square(2)`, in patterns too), and a misspelt item
+  after a `.` path gets the same N1 suggestions the `::` form had, printed with `.`. Name
+  suggestions sort by `.`-qualified name (`[DIA-24]`). The cycle tool's target is
+  `<Class[.field]>` with `.` only, resolved left to right; a `::` target is refused. `[VER-8]`:
+  the only accepted directive is `#! language "0.9.9"`; any other is `E0006` whose help is to
+  delete the line; the std modules' directives are deleted. `@latebound` is `E0104`: probing
+  showed an ordinary callable type already behaves as `[LT-7]` says, so the modifier had nothing
+  left to do. `std.borrow` (`with_views*`) is removed. Corpus: `DIA-12` and two UI tests move to
+  `.` paths (`ioo.print(1)` now reads as an unknown name `ioo`, so its message is `cannot find
+  `ioo``); `FN-6b` and `LT-10`'s `@latebound` tests are re-homed where they still mean something
+  (`LT-7/accept_a_callable_type_needs_no_modifier`, `ATT-1/reject_the_removed_latebound_modifier`,
+  `TYP-15/reject_a_callback_view_result_stored_in_a_box`, and `LT-10`'s nested escape, which
+  0.9.9 accepts, as `LT-7/accept_a_callback_result_borrows_the_callers_view`); the 18 tests of
+  `with_views*` itself are retired with it (their generic-inference case is covered by three
+  `TYP-18` tests), as is `LT-10/reject_latebound_owned_capture_publication` (the question it now
+  raises is in the audit). New: `LEX-21`, `GRM-24`, `VER-8` and two `LT-7` cases (its example,
+  and a callee's local escaping through a callback). Found: D-190 (open).
+  `tasks/impl-0.9.9/annotations.py` checks a directory's `help`/`error` annotations in seconds.
+* **2026-09-23 — attributes (`[ATT-1]`, `[ATT-6]`).** No pass had checked attribute names: an
+  unknown one (`@thread_local`, `@frobnicate`) was accepted silently, and `@export("symbol")` in
+  `[FFI-26]`'s own test was accepted and ignored (the symbol stayed `on_update`). Now every
+  attribute on an item, member or variant is checked against the Part V table: an unknown or
+  removed one is `E0104`, a reserved one is `E0104 reserved for a later version`, one on a
+  declaration it does not apply to is `E0104` naming where it does, and one whose effect is not
+  built is `E0900`. Built: `@derive(Copy, Clone)` (and `Eq`, which is implicit), `@repr` on
+  enums, `@layout(c)` (the C layout the backend always emits, `[LAY-2]`), `@view`
+  (documentation), `@static_safe`, `@overflow`, `@borrows`. Statement attributes keep the parser's
+  name and place checks (`[ATT-2]`, `[ATT-3]`); the checker rejects all four with `E0900`, since
+  none is built, so `--syntax-only` still passes valid syntax. `FFI-26`'s test drops the ignored
+  `@export`. `spec_check`'s baseline (it checks the adopted 0.8.5 document's examples): Appendix
+  A's block is newly failing by design (`#! language "0.5"` is `E0006` under `[VER-8]`), and five
+  blocks that failed now parse.
+* **2026-09-23 — the prelude's panics and assertions (`[MOD-5]`, VI.6).** `panic(msg)`, `todo()`,
+  `unreachable()` have type `Never` and lower to a MIR assertion that cannot hold
+  (`AssertKind::Panic`, whose message is an operand every analysis visits beside the
+  `RefCellBorrow` operands), then a block nothing reaches, as after a `return`. `assert(cond)`,
+  `assert(cond, msg)`, `assert_eq`, `assert_ne` are the same assertion on a condition, in every
+  profile; `debug_assert` is checked in `debug` only (`[PRF-3]`), and elsewhere its arguments are
+  type-checked and not evaluated (`W2016`, which needs effects, is not built). A function of the
+  same name shadows each (`[MOD-5]`). `eprint`/`eprintln` share `print`'s pieces; the runtime has
+  one printer per type taking its stream. `mem` is a prelude namespace (`std.mem` is always
+  loaded). `Option.unwrap`, `unwrap_or`, `expect` (`[ERR-4]`) are a `match` on the value, or on the
+  pair of value and argument, so the argument is evaluated first, as any argument is. Found and
+  fixed: D-191 (`println` of one `String` emitted invalid C). `annotations.py` now also checks
+  `stdout` and `panics` for run tests, so a directory's runtime behaviour is checked in seconds.

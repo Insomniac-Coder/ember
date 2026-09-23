@@ -1140,6 +1140,9 @@ pub enum AssertKind {
     /// `[DSP-4]` — `as!` failed its runtime class-chain check. The v1 panic
     /// model aborts; there is no recovery edge after this assertion fails.
     Downcast,
+    /// VI.6, `[PAN-1]` — `panic(msg)` and the assertions: the message is a
+    /// `str` operand.
+    Panic { message: Operand },
 }
 
 impl AssertKind {
@@ -1153,7 +1156,7 @@ impl AssertKind {
             AssertKind::ShiftTooLarge => "panic_overflow",
             AssertKind::Bounds { .. } => "panic_bounds",
             AssertKind::RefCellBorrow { .. } => "panic_refcell",
-            AssertKind::Downcast => "panic",
+            AssertKind::Downcast | AssertKind::Panic { .. } => "panic",
         };
         ember_branding::runtime(name)
     }

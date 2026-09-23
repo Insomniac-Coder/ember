@@ -1,4 +1,3 @@
-#! language "0.9.6"
 ## `std.collections` — fixed-capacity Arena-backed collections introduced by
 ## `[ARN-5]`–`[ARN-5g]`.
 ##

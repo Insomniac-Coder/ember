@@ -84,6 +84,9 @@ pub fn check(body: &Body, sink: &mut Sink) {
                     mark_operand(file, &mut read);
                     mark_operand(line, &mut read);
                 }
+                if let ember_mir::AssertKind::Panic { message } = msg {
+                    mark_operand(message, &mut read);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }

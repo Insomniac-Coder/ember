@@ -392,7 +392,7 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     .expect("namespace module is writable");
     let main = ember_branding::source_file("main");
     let main_path = package.join(&main);
-    let typo = "import support.io as io\n\nfn main():\n    io::pritn(1)\n";
+    let typo = "import support.io as io\n\nfn main():\n    io.pritn(1)\n";
     std::fs::write(&main_path, typo).expect("misspelled source is writable");
 
     let check = |json, std_root: &Path| {
@@ -415,13 +415,13 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     let stderr = normalize(&before.stderr);
     assert_eq!(error_codes(&stderr), ["E1010"]);
     assert!(
-        stderr.contains("did you mean `io::print`?"),
+        stderr.contains("did you mean `io.print`?"),
         "N1 should render the source-qualified candidate while preserving its alias:\n{stderr}"
     );
     let lines = stderr.lines().collect::<Vec<_>>();
     let source_line = lines
         .iter()
-        .position(|line| line.contains("io::pritn(1)"))
+        .position(|line| line.contains("io.pritn(1)"))
         .expect("the diagnostic includes the misspelled source line");
     let marker = lines[source_line + 1..]
         .iter()
@@ -449,7 +449,7 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
         "the edit should end after `pritn`:\n{json}"
     );
 
-    let fixed = typo.replace("io::pritn", "io::print");
+    let fixed = typo.replace("io.pritn", "io.print");
     std::fs::write(&main_path, fixed).expect("corrected source is writable");
     let after = check(false, &workspace.join("std"));
     assert!(
@@ -467,7 +467,7 @@ fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     .expect("package-private declaration is writable");
     std::fs::write(
         &main_path,
-        "import std.hidden as foreign\n\nfn main():\n    foreign::pritn(1)\n",
+        "import std.hidden as foreign\n\nfn main():\n    foreign.pritn(1)\n",
     )
     .expect("foreign-package typo source is writable");
     let foreign = check(false, &foreign_std);
@@ -494,9 +494,9 @@ fn qualified_n1_ranking_is_stable_and_bad_prefixes_do_not_search_members() {
     assert_ne!(exit, 0, "the misspelled qualified item must be rejected");
     assert_eq!(error_codes(&first), ["E1010"]);
     let ordered = [
-        "did you mean `picks::prin`?",
-        "did you mean `picks::print`?",
-        "did you mean `picks::prit`?",
+        "did you mean `picks.prin`?",
+        "did you mean `picks.print`?",
+        "did you mean `picks.prit`?",
     ];
     let positions = ordered.map(|suggestion| {
         first
@@ -526,7 +526,7 @@ fn qualified_n1_ranking_is_stable_and_bad_prefixes_do_not_search_members() {
     let lines = prefix_stderr.lines().collect::<Vec<_>>();
     let source_line = lines
         .iter()
-        .position(|line| line.contains("ioo::print(1)"))
+        .position(|line| line.contains("ioo.print(1)"))
         .expect("the unresolved-prefix source line is rendered");
     let marker = lines[source_line + 1..]
         .iter()

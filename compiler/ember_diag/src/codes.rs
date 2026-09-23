@@ -128,7 +128,7 @@ codes! {
     E0003 = (Error, 3, Lex, "[LEX-5]", "inconsistent dedent");
     E0004 = (Error, 4, Lex, "[LEX-9]", "expected an indented block");
     E0005 = (Error, 5, Lex, "[LEX-14]", "reserved keyword used as an identifier");
-    E0006 = (Error, 6, Lex, "[MOD-6]", "unsupported language version");
+    E0006 = (Error, 6, Lex, "[VER-8]", "a language directive names a version other than the current one");
     E0007 = (Error, 7, Lex, "[LT-6]", "named lifetimes are not supported in this version");
 
     // --- parser -------------------------------------------------------------

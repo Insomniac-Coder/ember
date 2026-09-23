@@ -11,11 +11,11 @@ Status words: `compliant`, `defect D-nnn`, `gap`, `fixed`, `not yet probed`.
 
 | Construct | 0.9.9 | Compiler, 2026-09-23 | Status |
 |---|---|---|---|
-| `::` paths | `E0100` with help `use '.' for paths` (`[LEX-21]`, `[GRM-24]`) | `E1010 this expression is not supported yet` | defect: wrong code and help |
-| `#! language "0.9.8"` | `E0006` unless the current version (`[VER-8]`) | accepted | defect |
-| `@latebound` | removed; its fresh-per-call regions are the default for every callable parameter (`[FN-6]`, `[LT-7]`) | accepted; ordinary callable parameters do not get fresh regions | gap (semantic change) |
-| `@thread_local` | removed | accepted | defect |
-| `std.borrow`, `with_views*` | removed (`[LT-44]` elision replaces them) | module present and importable | gap |
+| `::` paths | `E0100` with help `use '.' for paths` (`[LEX-21]`, `[GRM-24]`) | `E1010 this expression is not supported yet` | fixed: `E0100 `::` is not a path separator` with the help, in expressions, patterns and wherever else a `::` stops the parse; `.` reaches nested modules and their types and variants |
+| `#! language "0.9.8"` | `E0006` unless the current version (`[VER-8]`) | accepted | fixed: only `0.9.9` is accepted; `E0006` says to delete the line; the std modules' directives are gone |
+| `@latebound` | removed; its fresh-per-call regions are the default for every callable parameter (`[FN-6]`, `[LT-7]`) | accepted; ordinary callable parameters do not get fresh regions | fixed: `@latebound` is `E0104`. Probed first: an ordinary callable type already has `[LT-7]`'s meaning (its example compiles and prints `42`, `1`), so only the modifier had to go. The inert `latebound` flag in the types, MIR and interface records is still there, set by nothing |
+| `@thread_local` | removed | accepted | fixed: `E0104`, noted as removed in 0.9.9 |
+| `std.borrow`, `with_views*` | removed (`[LT-44]` elision replaces them) | module present and importable | fixed: `std/src/borrow.em` removed |
 | `Callable[…]` in source | not source syntax (`[CLO-14]`) | `E1010 cannot find type` | compliant (code) |
 | `PartialEq`/`PartialOrd` | removed (`[TYP-37]`) | `E1010 cannot find interface` | compliant |
 | `unsafe(reason = …)` | removed (`[UNS-8]`) | `E0100` | compliant |
@@ -197,15 +197,22 @@ are migrated or retired with the construct, each named in the progress log.
 | `for x in span` | `[CTL-1]`: `Span` is iterable | `E2040 Span[i64] cannot be iterated` | gap |
 | `@overflow(wrap)` and shifts | `[TYP-10]`: an out-of-range shift panics in every profile | masked under `@overflow(wrap)` | defect |
 | `Result[T]` | `[ERR-1]`: `Result[T, E = AnyError]` | `E2020 Result takes 2 type arguments` | gap (`AnyError` not built) |
-| `Option.unwrap`, `unwrap_or`; `String.char_count`; `Array.sort` | Part XV (`[STD-15]` …) | `E1010 has no method` | gap: most of Part XV's surface is not built |
+| `Option.unwrap`, `unwrap_or`; `String.char_count`; `Array.sort` | Part XV (`[STD-15]` …) | `E1010 has no method` | partial: `Option.unwrap`, `unwrap_or`, `expect` (`[ERR-4]`) are built, as a `match`; the rest of `[ERR-4]` (`is_some`, `map`, `unwrap_or_else`, …, and every `Result` method) and most of Part XV are not |
+| a range as a value (`r = 0..=2`) | `[TYP-*]`: `Range`/`RangeInclusive` are prelude types | `E1010 this expression is not supported yet` outside a `for` | gap |
+| a type in a diagnostic | the type as written (`Option[int]`) | the compiler's internal name (`` `Option_i64` has no method ``) | gap |
 | `a ** b` | `[TYP-30]`: exact integer powers, float `pow` | `E1010 this operator is not supported yet` | gap |
 | `x if c else y` | Part III ternary (level 3) | `E1010 this expression is not supported yet` | fixed: a two-arm `match` on the condition |
 | `xs[-1]` | `[TYP-31]`, `[LEX-24]`: a negative literal index is `E2011` | compiles; the literal wraps to `usize` and panics with index 18446744073709551615 | fixed: `E2011` with both fix-its; a computed negative index panics as `index -1` |
 | `xs[n]` with `n: i32`; `n: int = xs.len()` | `[TYP-31]`: any integer index; `len()` is `int` | `E2020 expected usize` both ways | fixed: `len()`/`capacity()` are `int`; indices, sizes and counts take any integer |
 | `-x as u8` | Part III precedence table (0.9.9): prefix `-` (16) binds tighter than `as` (15), so it is `(-x) as u8` | parsed as `-(x as u8)`; `-3.5 as u8` printed `253` | fixed (binding powers follow the 0.9.9 table) |
-| `panic(…)`, `todo()`, `unreachable()` | `[MOD-5]` prelude functions | `E1010 cannot find panic` | gap |
+| `panic(…)`, `todo()`, `unreachable()` | `[MOD-5]` prelude functions | `E1010 cannot find panic` | fixed: type `Never`, a MIR assertion that cannot hold, then a block nothing reaches; `assert`, `assert_eq`, `assert_ne`, `debug_assert` (compiled out outside `debug`, `[PRF-3]`; `W2016` not built), `eprint`/`eprintln`. Still missing from the prelude: `input`, `min`, `max`, `abs`, `clamp`, `format`, and `[STD-26]`'s `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`, `all` |
 | `==` on `str`, `String`, structs, tuples, arrays, payload enums | `[STR-5]` implicit `Eq`, field-wise | accepted, then invalid C | fixed (D-187); lexicographic `<` on tuples/arrays/`Array` and `None < Some` still `E2040` |
 | float `as` integer | `[TYP-6]` saturates, NaN to 0 | C's undefined conversion | fixed (D-188) |
 | `ListView()` for a derived class with no `init` | `[CLS-10]`: it gets its base's constructor | `E1010 ... requires an explicit init` | gap |
-| `mem` in the prelude | `[MOD-5]`: `mem` (the module `std.mem`) is a prelude name | `E1010 cannot find mem` | gap |
+| `mem` in the prelude | `[MOD-5]`: `mem` (the module `std.mem`) is a prelude name | `E1010 cannot find mem` | fixed: `std.mem` is always loaded and `mem` is bound in every module; an import replaces it |
 | falling off a non-`void` function | `[FN-10]`: only `void`/`Result[void, E]` have an implicit value | accepted; the C returned an uninitialised slot | fixed (D-186, `E2182`) |
+| unknown attributes | `[ATT-1]`: `E0104`; `[ATT-6]`: a listed attribute whose effect is not built is `E0900`, never accepted and ignored | `@thread_local` (and any unknown name) on a `static` is accepted silently | fixed: every attribute is checked against the table; unknown, reserved and misplaced ones are `E0104`, unbuilt ones `E0900` (built: `@derive(Copy, Clone, Eq)`, `@repr` on enums, `@layout(c)`, `@view`, `@static_safe`, `@overflow`, `@borrows`) |
+| `xs[a..b]` on a `Span` | `[TXT-4]`, `[SPN-2]`: slicing | `E1010 this expression is not supported yet`, then a cascading `E2020` | gap |
+| a run of invalid characters | `[DIA-20]`: one diagnostic | ```` ``` ```` gives one error per character | gap |
+| a view of a local returned | `[DIA-14]`: only the first error of a cascade | `E3021 cannot be written while it is borrowed` and then `E3060` for one `return view(tmp)` | defect D-190 |
+| an `owned fn` returning a view of its own capture | `[LT-42]`, `[CLO-*]` do not say whether calling an `owned fn` keeps its captures alive for the result | `E3060 env.values does not live long enough` | not yet probed against the rules; the old `@latebound` test for it was retired |

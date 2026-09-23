@@ -1379,32 +1379,57 @@ static size_t encode_utf8(uint32_t c, unsigned char* out) {
     return 4;
 }
 
-void ember_print_str(ember_str s) {
+/* `[STD-9]` — each type has one printer taking its stream; `print`/`println`
+ * write to standard output and `eprint`/`eprintln` to standard error. */
+static void print_str_to(FILE* out, ember_str s) {
     if (s.len > 0) {
-        fwrite(s.ptr, 1, s.len, stdout);
+        fwrite(s.ptr, 1, s.len, out);
     }
 }
 
-void ember_println_str(ember_str s) {
-    ember_print_str(s);
-    fputc('\n', stdout);
-}
+static void print_i64_to(FILE* out, int64_t v) { fprintf(out, "%" PRId64, v); }
+static void print_u64_to(FILE* out, uint64_t v) { fprintf(out, "%" PRIu64, v); }
 
-void ember_print_i64(int64_t v) { printf("%" PRId64, v); }
-void ember_println_i64(int64_t v) { printf("%" PRId64 "\n", v); }
-void ember_print_u64(uint64_t v) { printf("%" PRIu64, v); }
-void ember_println_u64(uint64_t v) { printf("%" PRIu64 "\n", v); }
-
-void ember_print_f32(float v) {
+static void print_f32_to(FILE* out, float v) {
     char buffer[32];
     write_shortest_f32(v, buffer, sizeof buffer);
-    fputs(buffer, stdout);
+    fputs(buffer, out);
 }
 
-void ember_println_f32(float v) {
-    ember_print_f32(v);
-    fputc('\n', stdout);
+static void print_f64_to(FILE* out, double v) {
+    char buffer[32];
+    write_shortest_f64(v, buffer, sizeof buffer);
+    fputs(buffer, out);
 }
+
+static void print_bool_to(FILE* out, bool v) { fputs(v ? "true" : "false", out); }
+
+static void print_char_to(FILE* out, uint32_t v) {
+    unsigned char buffer[4];
+    size_t n = encode_utf8(v, buffer);
+    fwrite(buffer, 1, n, out);
+}
+
+#define EMBER_PRINTERS(suffix, type)                                              \
+    void ember_print_##suffix(type v) { print_##suffix##_to(stdout, v); }        \
+    void ember_println_##suffix(type v) {                                       \
+        print_##suffix##_to(stdout, v);                                         \
+        fputc('\n', stdout);                                                    \
+    }                                                                           \
+    void ember_eprint_##suffix(type v) { print_##suffix##_to(stderr, v); }       \
+    void ember_eprintln_##suffix(type v) {                                      \
+        print_##suffix##_to(stderr, v);                                         \
+        fputc('\n', stderr);                                                    \
+    }
+
+EMBER_PRINTERS(str, ember_str)
+EMBER_PRINTERS(i64, int64_t)
+EMBER_PRINTERS(u64, uint64_t)
+EMBER_PRINTERS(f32, float)
+EMBER_PRINTERS(f64, double)
+EMBER_PRINTERS(bool, bool)
+EMBER_PRINTERS(char, uint32_t)
+
 /* -- formatting -------------------------------------------------------------- */
 
 void ember_fmt_i64(ember_vec* out, int64_t value) {
@@ -1448,34 +1473,4 @@ void ember_fmt_char(ember_vec* out, uint32_t value) {
 
 void ember_fmt_str(ember_vec* out, ember_str value) {
     ember_vec_extend(out, value.ptr, value.len);
-}
-
-
-void ember_print_f64(double v) {
-    char buffer[32];
-    write_shortest_f64(v, buffer, sizeof buffer);
-    fputs(buffer, stdout);
-}
-
-void ember_println_f64(double v) {
-    ember_print_f64(v);
-    fputc('\n', stdout);
-}
-
-void ember_print_bool(bool v) { fputs(v ? "true" : "false", stdout); }
-
-void ember_println_bool(bool v) {
-    ember_print_bool(v);
-    fputc('\n', stdout);
-}
-
-void ember_print_char(uint32_t v) {
-    unsigned char buffer[4];
-    size_t n = encode_utf8(v, buffer);
-    fwrite(buffer, 1, n, stdout);
-}
-
-void ember_println_char(uint32_t v) {
-    ember_print_char(v);
-    fputc('\n', stdout);
 }

@@ -10716,8 +10716,11 @@ comparison chains, scripts, multi-argument `print`, `[FN-10]` and `E2182`,
 `Array` list literals, saturating float-to-integer `as`, overflow panics in
 every profile, the Part III binding powers, field-wise `==` and byte-wise
 text comparison, the ternary, `[TYP-31]` (`int` sizes, any integer index,
-`E2011`); D-182–D-189 (D-189: parallel compilations raced on the interface
-cache); ODR-021, ODR-022 and ODR-023. The next ODR is ODR-024. The directory
+`E2011`), the removed constructs (`::`, `#! language`, `@latebound`,
+`std.borrow`, `@thread_local`), `.` paths through modules, the `[ATT-1]`/
+`[ATT-6]` attribute check, and the prelude's panics, assertions, `eprint`,
+`mem` and `Option.unwrap`/`unwrap_or`/`expect`; D-182–D-191 (D-190 is open);
+ODR-021, ODR-022 and ODR-023. The next ODR is ODR-024. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

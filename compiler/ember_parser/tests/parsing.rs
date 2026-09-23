@@ -38,22 +38,17 @@ fn contains(src: &str, needle: &str) -> bool {
 }
 
 #[test]
-fn every_0_9_contract_has_its_own_supported_selector() {
-    // `[MOD-6]`, `[MOD-6a]` — patch-level contracts are not normalized to
-    // `0.9`; each spelling selects its own accepted semantic contract.
-    for version in ["0.9", "0.9.5", "0.9.6", "0.9.7", "0.9.8"] {
+fn only_the_current_language_may_be_named() {
+    // `[VER-8]` (0.9.9) — before 1.0 there is one language, the current one.
+    let out = run("#! language \"0.9.9\"\nfn main():\n    pass\n");
+    assert!(out.codes.is_empty(), "the current version was rejected:\n{}", out.messages);
+    assert!(out.dump.contains("language = \"0.9.9\""), "{}", out.dump);
+    for version in ["0.8.3", "0.9", "0.9.8", "1.0"] {
         let source = format!("#! language \"{version}\"\nfn main():\n    pass\n");
         let out = run(&source);
-        assert!(out.codes.is_empty(), "{version} was rejected:\n{}", out.messages);
-        assert!(out.dump.contains(&format!("language = \"{version}\"")), "{}", out.dump);
+        assert_eq!(out.codes, ["E0006"], "{version}");
+        assert!(out.messages.contains(&format!("`{version}` is not the current language")));
     }
-}
-
-#[test]
-fn an_unknown_0_9_patch_contract_is_rejected() {
-    let out = run("#! language \"0.9.9\"\nfn main():\n    pass\n");
-    assert_eq!(out.codes, ["E0006"]);
-    assert!(out.messages.contains("does not support language version `0.9.9`"));
 }
 
 // -- items -------------------------------------------------------------------

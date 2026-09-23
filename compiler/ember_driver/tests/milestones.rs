@@ -978,7 +978,7 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
 
     let package_arg = package.to_string_lossy().into_owned();
     let qualified = ember(
-        &["explain", "--cycle", &package_arg, "scene::Node.next"],
+        &["explain", "--cycle", &package_arg, "scene.Node.next"],
         &root,
     );
     assert_eq!(
@@ -989,24 +989,24 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
     assert!(
         qualified
             .stdout
-            .contains("scene::Node.next -> scene::Node"),
+            .contains("scene.Node.next -> scene.Node"),
         "qualified explanation did not use Ember qualification:\n{}",
         qualified.stdout
     );
 
     let missing_class = ember(
-        &["explain", "--cycle", &package_arg, "scene::Missing"],
+        &["explain", "--cycle", &package_arg, "scene.Missing"],
         &root,
     );
     assert_ne!(missing_class.exit, 0, "missing class unexpectedly resolved");
     assert!(
-        missing_class.stderr.contains("cannot find class `scene::Missing`"),
+        missing_class.stderr.contains("cannot find class `scene.Missing`"),
         "missing class used the wrong diagnostic:\n{}",
         missing_class.stderr
     );
 
     let missing_field = ember(
-        &["explain", "--cycle", &package_arg, "scene::Node.missing"],
+        &["explain", "--cycle", &package_arg, "scene.Node.missing"],
         &root,
     );
     assert_ne!(missing_field.exit, 0, "missing field unexpectedly resolved");
@@ -1016,10 +1016,22 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
         missing_field.stderr
     );
 
+    // `[GRM-24]` (0.9.9) — `.` is the one path separator, here as in source.
+    let colons = ember(
+        &["explain", "--cycle", &package_arg, "scene::Node.next"],
+        &root,
+    );
+    assert_ne!(colons.exit, 0, "a `::` target unexpectedly resolved");
+    assert!(
+        colons.stderr.contains("use '.' for paths"),
+        "a `::` target did not say to use '.':\n{}",
+        colons.stderr
+    );
+
     let ambiguous = ember(&["explain", "--cycle", &package_arg, "Node"], &root);
     assert_ne!(ambiguous.exit, 0, "ambiguous class unexpectedly resolved");
     assert!(
-        ambiguous.stderr.contains("scene::Node") && ambiguous.stderr.contains("ecs::Node"),
+        ambiguous.stderr.contains("scene.Node") && ambiguous.stderr.contains("ecs.Node"),
         "ambiguity did not name each qualified candidate:\n{}",
         ambiguous.stderr
     );
@@ -1033,7 +1045,7 @@ fn cycle_explanation_resolves_qualified_and_failing_targets_in_one_root() {
         invalid_root.stderr
     );
     assert!(
-        !invalid_root.stderr.contains("scene::Node"),
+        !invalid_root.stderr.contains("scene.Node"),
         "invalid root fell back to the earlier package:\n{}",
         invalid_root.stderr
     );

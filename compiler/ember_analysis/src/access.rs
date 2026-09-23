@@ -290,6 +290,7 @@ fn terminator_uses_root(
                     | ember_mir::AssertKind::SignedDivisionOverflow
                     | ember_mir::AssertKind::ShiftTooLarge
                     | ember_mir::AssertKind::Downcast => false,
+                    ember_mir::AssertKind::Panic { message } => operand_uses_root(message, root),
                 }
         }
         Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => false,

@@ -431,6 +431,15 @@ pub enum PatternKind {
 pub enum Builtin {
     /// `println(x)` for a scalar or `str`.
     Println,
+    /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
+    EPrintln,
+    EPrint,
+    /// VI.6, `[PAN-1]` (0.9.9) — `panic(msg)`, `todo()`, `unreachable()`:
+    /// type `Never`; its one argument is the `str` message.
+    Panic,
+    /// VI.6 — `assert(cond, msg)` and the assertions built on it: panics with
+    /// `msg` when `cond` is false.
+    Assert,
     /// `print(x)` — the same without the newline.
     Print,
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
@@ -720,6 +729,8 @@ impl Builtin {
         match name {
             "println" => Some(Builtin::Println),
             "print" => Some(Builtin::Print),
+            "eprintln" => Some(Builtin::EPrintln),
+            "eprint" => Some(Builtin::EPrint),
             _ => None,
         }
     }
@@ -728,6 +739,10 @@ impl Builtin {
         match self {
             Builtin::Println => "println",
             Builtin::Print => "print",
+            Builtin::EPrintln => "eprintln",
+            Builtin::EPrint => "eprint",
+            Builtin::Panic => "panic",
+            Builtin::Assert => "assert",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
             Builtin::ValueCompare { .. } => "compare",

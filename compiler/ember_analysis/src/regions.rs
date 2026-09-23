@@ -1064,6 +1064,9 @@ impl Regions {
                         self.operand_access_event(point, file, &mut events);
                         self.operand_access_event(point, line, &mut events);
                     }
+                    if let ember_mir::AssertKind::Panic { message } = msg {
+                        self.operand_access_event(point, message, &mut events);
+                    }
                 }
                 Terminator::Return => {
                     for slot in &self.local_regions[ember_mir::RETURN_LOCAL.0 as usize] {
@@ -1340,6 +1343,9 @@ impl Regions {
                 if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
                     self.operand_liveness(file, live);
                     self.operand_liveness(line, live);
+                }
+                if let ember_mir::AssertKind::Panic { message } = msg {
+                    self.operand_liveness(message, live);
                 }
             }
             Terminator::Return => {

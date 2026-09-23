@@ -1,4 +1,3 @@
-#! language "0.8.3"
 ## `std.math` — Part XV's scalar mathematics.
 ##
 ## `[STD-1]` — this module MUST be `@noalloc`-clean except where documented to

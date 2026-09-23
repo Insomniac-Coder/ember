@@ -36,6 +36,18 @@ const BP_POW: u8 = bp(15);
 const BP_POSTFIX: u8 = bp(16);
 
 impl Parser<'_> {
+    /// `[LEX-21]` (0.9.9) — `::` is not a token of the language: `E0100`
+    /// with the help `use '.' for paths`, consuming it.
+    fn report_path_colons(&mut self) {
+        let span = self.span();
+        self.report(
+            Diagnostic::error(codes::E0100, span, "`::` is not a path separator")
+                .primary_label("found `::`")
+                .help("use '.' for paths"),
+        );
+        self.bump();
+    }
+
     // -- blocks ---------------------------------------------------------------
 
     /// Parse a block, with the introducing `:` already consumed.
@@ -1043,10 +1055,11 @@ impl Parser<'_> {
             }
             TokenKind::Ident(_) | TokenKind::RawIdent(_) => {
                 let mut segments = vec![self.expect_ident()];
-                // `Shape::Circle` — an explicit path (`.` also works, and is
-                // handled by postfix field access).
+                // `[LEX-21]`, `[GRM-24]` (0.9.9) — `.` is the one path
+                // separator, handled by postfix field access. A `::` is
+                // reported and read as a path, so the rest still resolves.
                 while self.at_punct(Punct::ColonColon) {
-                    self.bump();
+                    self.report_path_colons();
                     segments.push(self.expect_ident());
                 }
                 ExprKind::Path { segments }
@@ -1469,7 +1482,11 @@ impl Parser<'_> {
             TokenKind::Ident(_) | TokenKind::RawIdent(_) => {
                 let mut path = vec![self.expect_ident()];
                 while self.at_punct(Punct::Dot) || self.at_punct(Punct::ColonColon) {
-                    self.bump();
+                    if self.at_punct(Punct::ColonColon) {
+                        self.report_path_colons();
+                    } else {
+                        self.bump();
+                    }
                     path.push(self.expect_ident());
                 }
                 if self.eat_punct(Punct::LParen) {

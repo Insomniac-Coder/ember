@@ -13,36 +13,11 @@ use ember_span::{FileId, Span, Symbol};
 mod decls;
 mod body;
 
-/// `[MOD-6]`, `[VER-1]` — the language versions whose source this compiler
-/// accepts. "The compiler's supported set MUST include every language version
-/// whose source it still accepts, so pinning an older version stays valid."
-///
-/// Nothing earlier than 0.5 is here because 0.5 changed the grammar under
-/// `let`, `type`, `;` and the jump expressions and no earlier source survives
-/// those changes. Everything from 0.5 forward is, because each revision after
-/// it rejects source the previous one accepted in exactly one documented way
-/// — 0.6.3's `yield`, which its own change log requires `E0104` to name
-/// `r#yield` for — and a program that avoids that one word is accepted under
-/// every version in this list. `[VER-2]`'s compatibility promise comes into
-/// force at 1.0 and makes the list's growth a rule rather than a courtesy.
-pub const LANGUAGE_VERSIONS: &[&str] = &[
-    "0.5", "0.6", "0.6.2", "0.6.3", "0.7.1", "0.7.2", "0.8", "0.8.1", "0.8.2b", "0.8.2c",
-    "0.8.3",
-    // 0.8.5 — three owner rulings of 2026-09-10 (UnsafeCell as a real
-    // primitive, RefCell never Copy, FN-1a). All additive over 0.8.4, so
-    // both stay accepted.
-    "0.8.5",
-    // 0.8.4 — one semantic change over 0.8.3 (S1, the resolution of ERR-044:
-    // a static-region view may be stored where a place has no bounding
-    // region). Additive, so 0.8.3 stays accepted and a file declaring it
-    // compiles unchanged.
-    "0.8.4",
-    // `[MOD-6]`, `[MOD-6a]` — these remain distinct contracts even where
-    // neighboring revisions accept and interpret ordinary source identically.
-    // Recognising a selector does not adopt its frozen development target or
-    // enable it for a module that explicitly selected an earlier contract.
-    "0.9", "0.9.5", "0.9.6", "0.9.7", "0.9.8",
-];
+/// `[VER-8]` (0.9.9) — before 1.0 there is exactly one language, the current
+/// one. A source file does not select a version; a `#! language` directive is
+/// accepted only when it names this one. Selectable versions begin at 1.0
+/// (`[VER-2]`).
+pub const LANGUAGE_VERSION: &str = "0.9.9";
 
 /// Parse one file's token stream into a [`Module`].
 ///
@@ -286,7 +261,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Emit a diagnostic, respecting `[AST-2]`'s cascade limit.
-    fn report(&mut self, diagnostic: Diagnostic) {
+    fn report(&mut self, mut diagnostic: Diagnostic) {
+        // `[LEX-21]` (0.9.9) — there is no `::`; wherever one stops the parse,
+        // say what to write instead.
+        if diagnostic.code == Some(codes::E0100)
+            && self.at_punct(Punct::ColonColon)
+            && !diagnostic.helps.iter().any(|help| help == "use '.' for paths")
+        {
+            diagnostic = diagnostic.help("use '.' for paths");
+        }
         if self.region_start == usize::MAX || self.pos > self.region_start {
             // Real progress since the last error: a new region.
             self.region_start = self.pos;
@@ -499,17 +482,19 @@ impl<'a> Parser<'a> {
             return None;
         };
         self.bump();
-        // `[MOD-6]` — the directive was parsed and then read by nobody, so a
-        // file could pin any version at all and compile.
+        // `[VER-8]` (0.9.9) — only the current language may be named.
         if name.is("language") {
-            if !LANGUAGE_VERSIONS.contains(&value.as_str()) {
+            if value != LANGUAGE_VERSION {
                 self.report(
                     Diagnostic::error(
                         codes::E0006,
                         span,
-                        format!("this compiler does not support language version `{value}`"),
+                        format!("language version `{value}` is not the current language"),
                     )
-                    .help(format!("it supports {}", LANGUAGE_VERSIONS.join(", "))),
+                    .note(format!(
+                        "before 1.0 there is one language, the current one ({LANGUAGE_VERSION}) [VER-8]"
+                    ))
+                    .help("delete the line"),
                 );
             }
         } else {

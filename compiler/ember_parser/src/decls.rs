@@ -960,28 +960,24 @@ impl Parser<'_> {
         let start = self.span();
         let id = self.next_id();
 
-        // `[FN-6b]` — `@latebound` is a modifier on the following callable
-        // type, not an item attribute. Keep it in this parser so ordinary
-        // declaration attributes cannot accidentally acquire its meaning.
-        let latebound = if self.at_punct(Punct::At)
+        // `[ATT-1]`, Appendix H.2 (0.9.9) — `@latebound` was removed: every
+        // callable type now gets fresh regions at each call (`[LT-7]`), which
+        // is what the modifier used to ask for. Report it and read the type.
+        let latebound = false;
+        if self.at_punct(Punct::At)
             && matches!(self.peek_at(1), TokenKind::Ident(name) if name.is("latebound"))
         {
+            let start = self.span();
             self.bump();
             self.bump();
-            if !matches!(self.peek(), TokenKind::Keyword(Kw::Fn | Kw::Extern)) {
-                self.report(
-                    Diagnostic::error(
-                        codes::E0100,
-                        self.span(),
-                        "`@latebound` must modify a callable type",
-                    )
-                    .primary_label("expected `fn` or `extern` `fn` after `@latebound`"),
-                );
-            }
-            true
-        } else {
-            false
-        };
+            let span = start.to(self.prev_span());
+            self.report(
+                Diagnostic::error(codes::E0104, span, "`@latebound` is not an attribute")
+                    .primary_label("removed in 0.9.9")
+                    .note("every callable type gets fresh regions at each call, which is what `@latebound` asked for [LT-7]")
+                    .help("delete `@latebound`"),
+            );
+        }
 
         let kind = match self.peek() {
             TokenKind::Keyword(Kw::Ref) => {

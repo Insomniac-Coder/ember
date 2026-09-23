@@ -583,6 +583,21 @@ void ember_print_bool(bool v);
 void ember_println_bool(bool v);
 void ember_print_char(uint32_t v);
 void ember_println_char(uint32_t v);
+/* `[STD-9]` — `eprint`/`eprintln`, to standard error. */
+void ember_eprint_str(ember_str s);
+void ember_eprintln_str(ember_str s);
+void ember_eprint_i64(int64_t v);
+void ember_eprintln_i64(int64_t v);
+void ember_eprint_u64(uint64_t v);
+void ember_eprintln_u64(uint64_t v);
+void ember_eprint_f32(float v);
+void ember_eprintln_f32(float v);
+void ember_eprint_f64(double v);
+void ember_eprintln_f64(double v);
+void ember_eprint_bool(bool v);
+void ember_eprintln_bool(bool v);
+void ember_eprint_char(uint32_t v);
+void ember_eprintln_char(uint32_t v);
 
 /* -- lifecycle and embedding ------------------------------------------------ */
 

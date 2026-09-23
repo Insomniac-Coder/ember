@@ -2829,6 +2829,10 @@ impl Emitter<'_> {
                         format!("{RT}panic_overflow(\"shift\", {location})")
                     }
                     AssertKind::DivisionByZero => format!("{RT}panic_div_zero({location})"),
+                    AssertKind::Panic { message } => {
+                        let message = self.operand(message, body);
+                        format!("{RT}panic((const char*)({message}).ptr, ({message}).len, {location})")
+                    }
                     AssertKind::Bounds { len, index: at } => format!(
                         "{RT}panic_bounds({}, {}, {location})",
                         self.operand(at, body),
@@ -3682,11 +3686,16 @@ impl Emitter<'_> {
                     Builtin::RangeChecked(_) => {
                         unreachable!("[RNG-3] `checked` is lowered in MIR")
                     }
-                    Builtin::Println | Builtin::Print => {}
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => {}
+                    Builtin::Panic | Builtin::Assert => {
+                        unreachable!("VI.6 — panics and assertions are MIR assertions")
+                    }
                 }
                 let suffix = self.builtin_suffix(*arg_ty);
                 let name = match which {
                     Builtin::Println => "println",
+                    Builtin::EPrintln => "eprintln",
+                    Builtin::EPrint => "eprint",
                     _ => "print",
                 };
                 format!("{RT}{name}_{suffix}({})", rendered.join(", "))
@@ -4618,6 +4627,9 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                 if let AssertKind::RefCellBorrow { file, line } = msg {
                     read_operand(file, &mut read);
                     read_operand(line, &mut read);
+                }
+                if let AssertKind::Panic { message } = msg {
+                    read_operand(message, &mut read);
                 }
             }
             Terminator::Return => read[RETURN_LOCAL.0 as usize] = true,

@@ -189,6 +189,9 @@ fn collect_body_function_symbols(
                     | ember_mir::AssertKind::SignedDivisionOverflow
                     | ember_mir::AssertKind::ShiftTooLarge
                     | ember_mir::AssertKind::Downcast => {}
+                    ember_mir::AssertKind::Panic { message } => {
+                        collect_operand_function_symbols(message, out);
+                    }
                 }
             }
             ember_mir::Terminator::Goto(_)
@@ -434,6 +437,7 @@ fn cycle_analysis(
         &mut sink,
         overflow_policy(Profile::Debug),
         lint_settings.return_intersection,
+        true,
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -595,8 +599,8 @@ fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
         let selected = field
             .as_deref()
             .map_or_else(
-                || cycle_class_name(&class),
-                |field| format!("{}.{}", cycle_class_name(&class), field),
+                || class.clone(),
+                |field| format!("{}.{}", class, field),
             );
         println!("Cycle explanation: {selected}");
         println!("Analysis root: {}", entry.display());
@@ -625,34 +629,50 @@ fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
     })
 }
 
+/// `[WK-9]`, `[GRM-24]` (0.9.9) — `<Class[.field]>`, with `.` the one path
+/// separator. A path resolves left to right, so the whole target names a
+/// class, or all of it but a last segment that names the field.
 fn resolve_cycle_target(
     entry: &Path,
     types: &TypeTable,
     target: &str,
 ) -> Result<(String, Option<String>), String> {
-    let (written_class, field) = match target.rsplit_once('.') {
-        Some((class, field)) => (class, Some(field)),
-        None => (target, None),
-    };
-    if written_class.is_empty() || field.is_some_and(str::is_empty) {
+    if target.contains("::") {
+        return Err(format!(
+            "invalid cycle target `{target}` for analysis root `{}`: use '.' for paths",
+            entry.display()
+        ));
+    }
+    if target.split('.').any(str::is_empty) {
         return Err(format!(
             "invalid cycle target `{target}` for analysis root `{}`",
             entry.display()
         ));
     }
-    let qualified = written_class.replace("::", ".");
-    let is_qualified = written_class.contains("::");
-    let candidates: Vec<_> = types
-        .classes()
-        .filter(|(_, definition)| {
-            let name = definition.name.as_str();
-            if is_qualified {
-                name == qualified
-            } else {
-                name == qualified || name.rsplit('.').next() == Some(qualified.as_str())
-            }
-        })
-        .collect();
+    let classes_named = |written: &str| -> Vec<_> {
+        types
+            .classes()
+            .filter(|(_, definition)| {
+                let name = definition.name.as_str();
+                name == written
+                    || (!written.contains('.') && name.rsplit('.').next() == Some(written))
+            })
+            .collect()
+    };
+    // A prefix that is a module (it qualifies some class) is not a class, so
+    // what is missing is the class the whole target names inside it.
+    let is_module = |written: &str| {
+        let prefix = format!("{written}.");
+        types.classes().any(|(_, definition)| definition.name.as_str().starts_with(&prefix))
+    };
+    let (written_class, field, candidates) = match (classes_named(target), target.rsplit_once('.')) {
+        (whole, _) if !whole.is_empty() => (target, None, whole),
+        (whole, Some((class, _))) if classes_named(class).is_empty() && is_module(class) => {
+            (target, None, whole)
+        }
+        (_, Some((class, field))) => (class, Some(field), classes_named(class)),
+        (whole, None) => (target, None, whole),
+    };
     let Some((class_id, definition)) = candidates.first().copied() else {
         return Err(format!(
             "cannot find class `{written_class}` in cycle analysis root `{}`",
@@ -662,7 +682,7 @@ fn resolve_cycle_target(
     if candidates.len() > 1 {
         let candidates = candidates
             .iter()
-            .map(|(_, definition)| cycle_class_name(definition.name.as_str()))
+            .map(|(_, definition)| definition.name.as_str().to_string())
             .collect::<Vec<_>>()
             .join(", ");
         return Err(format!(
@@ -681,16 +701,12 @@ fn resolve_cycle_target(
         if !exists {
             return Err(format!(
                 "class `{}` has no field `{field_name}` in cycle analysis root `{}`",
-                cycle_class_name(&class),
+                class,
                 entry.display()
             ));
         }
     }
     Ok((class, field))
-}
-
-fn cycle_class_name(name: &str) -> String {
-    name.replace('.', "::")
 }
 
 fn print_cycle_edge(edge: &ember_analysis::OwnershipEdge) {
@@ -709,14 +725,14 @@ fn print_cycle_explanation_edge(edge: &ember_analysis::OwnershipEdge) {
     let target = edge
         .target
         .as_deref()
-        .map(cycle_class_name)
+        .map(str::to_string)
         .unwrap_or_else(|| "<unknown>".to_string());
     println!(
         "  {} {}.{}: {} -> {}",
         edge.kind.name(),
-        cycle_class_name(&edge.source),
+        edge.source,
         edge.field,
-        cycle_class_name(&edge.field_type),
+        edge.field_type,
         target
     );
 }
@@ -739,8 +755,8 @@ fn cycle_explanation_path(edges: &[ember_analysis::OwnershipEdge]) -> String {
     };
     edges
         .iter()
-        .map(|edge| format!("{}.{}", cycle_class_name(&edge.source), edge.field))
-        .chain(std::iter::once(cycle_class_name(&first.source)))
+        .map(|edge| format!("{}.{}", edge.source, edge.field))
+        .chain(std::iter::once(first.source.clone()))
         .collect::<Vec<_>>()
         .join(" -> ")
 }
@@ -1164,7 +1180,7 @@ fn load_modules(
     // public items visible; type checking separately installs only the names
     // in the normative prelude list. Keep the root last so this LIFO worklist
     // still makes it module zero and preserves the command-line entry point.
-    for module in ["core", "collections"] {
+    for module in ["core", "collections", "mem"] {
         let names = vec![ember_branding::STD_PACKAGE.to_string(), module.to_string()];
         let key = names.join(".");
         let Some(file_path) = resolve_module(root_dir, &names) else {
@@ -1477,7 +1493,7 @@ fn module_interface_inputs(
         }
     }
 
-    let implicit_prelude: Vec<String> = ["std.core", "std.collections"]
+    let implicit_prelude: Vec<String> = ["std.core", "std.collections", "std.mem"]
         .into_iter()
         .filter(|module| known_modules.contains(*module))
         .map(str::to_string)
@@ -1514,10 +1530,8 @@ fn module_interface_inputs(
             .as_ref()
             .filter(|directive| directive.name.name.is("language"))
             .map(|directive| directive.value.clone())
-            // The adopted normative source is currently 0.8.5. The compiler
-            // has no manifest parser yet, so this is the explicit default
-            // cache input until package configuration becomes real.
-            .unwrap_or_else(|| "0.8.5".to_string());
+            // `[VER-8]` — the one language; a directive can only repeat it.
+            .unwrap_or_else(|| ember_parser::LANGUAGE_VERSION.to_string());
         inputs.push(ModuleInterfaceInput {
             module,
             source: map.file(loaded.module.span.file).text.clone(),
@@ -1927,6 +1941,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &mut sink,
         overflow_policy(options.profile),
         lint_settings.return_intersection,
+        options.profile == Profile::Debug,
     );
     let program = &checked.program;
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible

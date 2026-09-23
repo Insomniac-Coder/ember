@@ -105,9 +105,11 @@ pub fn check(
     sink: &mut Sink,
     default_overflow: OverflowPolicy,
     lint_return_intersection: bool,
+    debug_assertions: bool,
 ) -> CheckOutput {
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
+    checker.debug_assertions = debug_assertions;
     checker.lint_return_intersection = lint_return_intersection;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
@@ -141,6 +143,10 @@ pub fn check(
     }
     checker.bind_prelude(modules);
     checker.bind_imports(modules);
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.check_attributes(&loaded.module);
+    }
     // Type collection is whole-program and explicitly phased. Imported type
     // names are already bound above, but an imported nominal/generic type did
     // not formerly exist in `named_types`/`generic_structs` until that
@@ -848,6 +854,11 @@ struct Checker<'a> {
     /// `@overflow(...)` of its own.
     default_overflow: OverflowPolicy,
     lint_return_intersection: bool,
+    /// `[ATT-6]` — statement attributes already reported, so a generic body
+    /// checked once per instance reports each once.
+    reported_stmt_attrs: HashSet<Span>,
+    /// `[PRF-3]` — whether `debug_assert` is checked (the `debug` profile).
+    debug_assertions: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -938,6 +949,8 @@ impl<'a> Checker<'a> {
             ret_ty,
             default_overflow: OverflowPolicy::default(),
             lint_return_intersection: false,
+            reported_stmt_attrs: HashSet::new(),
+            debug_assertions: true,
         }
     }
 
@@ -1853,6 +1866,15 @@ impl<'a> Checker<'a> {
         ];
         let by_path: HashMap<String, usize> =
             modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
+
+        // `[MOD-5]` — `mem`, the module `std.mem`, is a prelude name; an
+        // import of another `mem` replaces it.
+        if let Some(&mem) = by_path.get("std.mem") {
+            let name = Symbol::intern("mem");
+            for namespaces in &mut self.namespaces {
+                namespaces.entry(name).or_insert(mem);
+            }
+        }
 
         for &(path, names) in EXPORTS {
             let Some(&module) = by_path.get(path) else { continue };
@@ -9060,7 +9082,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Diagnostic {
         for candidate in self.qualified_name_suggestions(namespace, written, use_span) {
             diagnostic = diagnostic.suggest(
-                format!("did you mean `{source_prefix}::{candidate}`?"),
+                format!("did you mean `{source_prefix}.{candidate}`?"),
                 use_span,
                 candidate,
             );
@@ -9104,7 +9126,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             name_suggestions::Candidate {
                                 name: field.name.as_str().to_owned(),
                                 declaration: field.span,
-                                canonical_name: format!("{canonical_type}::{}", field.name),
+                                canonical_name: format!("{canonical_type}.{}", field.name),
                             }
                         }),
                 );
@@ -9127,7 +9149,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             name_suggestions::Candidate {
                                 name: field.name.as_str().to_owned(),
                                 declaration: field.span,
-                                canonical_name: format!("{canonical_type}::{}", field.name),
+                                canonical_name: format!("{canonical_type}.{}", field.name),
                             }
                         }),
                 );
@@ -9234,6 +9256,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+        // `[ATT-6]` (0.9.9) — `@simd`, `@parallel`, `@unroll` and `@allow`
+        // have no effect built, and an attribute is never accepted and
+        // ignored. Their names and places are the parser's (`[ATT-2]`).
+        for attr in &stmt.attrs {
+            if self.reported_stmt_attrs.insert(attr.span) {
+                let name = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, attr.span, format!("`@{name}` is not implemented yet"))
+                        .note("an attribute whose effect is not built is rejected, not ignored [ATT-6]"),
+                );
+            }
+        }
         match &stmt.kind {
             ast::StmtKind::Pass => {}
             // `[GRM-16]` — a jump written as a statement arrives as an
@@ -9935,6 +9969,153 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(size), to: int_ty }, span }
     }
 
+    /// VI.6, `[PAN-1]` (0.9.9) — `panic(msg)`, `todo()` and `unreachable()`
+    /// have type `Never`. `assert(cond)`, `assert(cond, msg)`, `assert_eq`
+    /// and `assert_ne` are checked in every profile; `debug_assert` only in
+    /// `debug` (`[PRF-3]`), and elsewhere its arguments are checked and not
+    /// evaluated. `None` for any other name.
+    fn synth_panic_or_assert(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        if !matches!(
+            name,
+            "panic" | "todo" | "unreachable" | "assert" | "debug_assert" | "assert_eq" | "assert_ne"
+        ) {
+            return None;
+        }
+        let str_ty = self.common.str_;
+        let bool_ty = self.common.bool_;
+        let text = |text: &str| Expr { ty: str_ty, kind: ExprKind::Str(text.to_string()), span };
+        let (fewest, most) = match name {
+            "panic" => (1, 1),
+            "todo" | "unreachable" => (0, 0),
+            "assert" | "debug_assert" => (1, 2),
+            _ => (2, 2),
+        };
+        if args.iter().any(|a| a.name.is_some()) || args.len() < fewest || args.len() > most {
+            let wanted = match (fewest, most) {
+                (0, 0) => "no arguments".to_string(),
+                (1, 1) => "one argument".to_string(),
+                (a, b) if a == b => format!("{a} arguments"),
+                (a, b) => format!("{a} or {b} arguments"),
+            };
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{name}` takes {wanted}, found {}", args.len()),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let never = self.common.never;
+        let void = self.common.void;
+        let panic = |message: Expr| Expr {
+            ty: never,
+            kind: ExprKind::Builtin { which: Builtin::Panic, args: vec![message] },
+            span,
+        };
+        let assertion = |cond: Expr, message: Expr| Expr {
+            ty: void,
+            kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![cond, message] },
+            span,
+        };
+        Some(match name {
+            "panic" => panic(self.check_expr(&args[0].value, str_ty)),
+            "todo" => panic(text("not implemented yet")),
+            "unreachable" => panic(text("entered unreachable code")),
+            "assert" | "debug_assert" => {
+                let cond = self.check_expr(&args[0].value, bool_ty);
+                let message = match args.get(1) {
+                    Some(arg) => self.check_expr(&arg.value, str_ty),
+                    None => text("assertion failed"),
+                };
+                if name == "debug_assert" && !self.debug_assertions {
+                    // Checked above, and not evaluated: the profile compiles
+                    // it out (`[PRF-3]`).
+                    assertion(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, text(""))
+                } else {
+                    assertion(cond, message)
+                }
+            }
+            _ => {
+                let equal = name == "assert_eq";
+                let op = if equal { ast::BinOp::Eq } else { ast::BinOp::Ne };
+                let cond = self.synth_binary(op, &args[0].value, &args[1].value, span);
+                let message = if equal {
+                    "assertion failed: the two values are not equal"
+                } else {
+                    "assertion failed: the two values are equal"
+                };
+                assertion(cond, text(message))
+            }
+        })
+    }
+
+    /// `unwrap()`, `unwrap_or(default)` and `expect(msg)` on an `Option`, as
+    /// a `match`: `Some(x)` is `x`, and `None` panics or is the default. An
+    /// argument is evaluated before the value is looked at, as any argument
+    /// is, by matching on the pair of the two.
+    fn synth_option_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let option_ty = receiver.ty;
+        let TyKind::Enum(option_id) = *self.types.kind(option_ty) else {
+            unreachable!("an `Option` is a compiler-known enum")
+        };
+        // `option_of` builds `None` then `Some(T)`.
+        let payload = self.types.enum_def(option_id).variants[1].fields[0].ty;
+        let unwrap = name.name.is("unwrap");
+        let wanted = usize::from(!unwrap);
+        if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {wanted} argument(s), found {}", name.name, args.len()),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let never = self.common.never;
+        let bound = self.declare(None, payload, span);
+        let some = |fields| hir::Pattern {
+            ty: option_ty,
+            kind: hir::PatternKind::Variant { enum_id: option_id, variant: 1, fields },
+            span,
+        };
+        let bind = |local, ty| hir::Pattern { ty, kind: hir::PatternKind::Bind { local, sub: None }, span };
+        let wild = |ty| hir::Pattern { ty, kind: hir::PatternKind::Wild, span };
+        let arm = |pattern, body| hir::MatchArm { pattern, guard: None, body: hir::MatchArmBody::Expr(body), span };
+        let value = Expr { ty: payload, kind: ExprKind::Local(bound), span };
+        if unwrap {
+            let panic = Expr {
+                ty: never,
+                kind: ExprKind::Builtin {
+                    which: Builtin::Panic,
+                    args: vec![Expr {
+                        ty: self.common.str_,
+                        kind: ExprKind::Str("called `unwrap` on `None`".to_string()),
+                        span,
+                    }],
+                },
+                span,
+            };
+            let arms = vec![arm(some(vec![bind(bound, payload)]), value), arm(wild(option_ty), panic)];
+            return Expr { ty: payload, kind: ExprKind::Match { scrutinee: Box::new(receiver), arms }, span };
+        }
+        let default = name.name.is("unwrap_or");
+        let arg_ty = if default { payload } else { self.common.str_ };
+        let argument = self.check_expr(&args[0].value, arg_ty);
+        let other = self.declare(None, arg_ty, span);
+        let pair_ty = self.types.intern(TyKind::Tuple(vec![option_ty, arg_ty]));
+        let pair = Expr { ty: pair_ty, kind: ExprKind::TupleLit(vec![receiver, argument]), span };
+        let fields = |items| hir::Pattern { ty: pair_ty, kind: hir::PatternKind::Fields(items), span };
+        let other_value = Expr { ty: arg_ty, kind: ExprKind::Local(other), span };
+        let fallback = if default {
+            other_value
+        } else {
+            Expr { ty: never, kind: ExprKind::Builtin { which: Builtin::Panic, args: vec![other_value] }, span }
+        };
+        let arms = vec![
+            arm(fields(vec![some(vec![bind(bound, payload)]), wild(arg_ty)]), value),
+            arm(fields(vec![wild(option_ty), bind(other, arg_ty)]), fallback),
+        ];
+        Expr { ty: payload, kind: ExprKind::Match { scrutinee: Box::new(pair), arms }, span }
+    }
+
     /// `[EXP-3]` — `x if c else y` evaluates `c`, then exactly one branch: a
     /// two-arm `match` on the condition, lowered like one. With no expected
     /// type the branches settle it the way a binary operator's operands do:
@@ -10243,7 +10424,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 def.variant(variant.name).map(|(i, _)| (id, i))
             }
-            _ => None,
+            // `[GRM-24]` (0.9.9) — `inner.Shape.Square`: the enum through a
+            // module, resolved left to right.
+            [modules @ .., enum_name, variant] => {
+                let module = self.resolve_namespace_prefix(modules).ok()?;
+                let qualified = self.qualified_in_module(module, enum_name.name);
+                if def.name != qualified
+                    && !def.origin.as_ref().is_some_and(|(name, _)| *name == qualified)
+                {
+                    return None;
+                }
+                def.variant(variant.name).map(|(i, _)| (id, i))
+            }
+            [] => None,
         }
     }
 
@@ -12340,6 +12533,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 } else {
                     Symbol::intern(&format!("{prefix}.{}", name.name))
                 };
+                // `[DIA-24]` — a name the module does not have is shape N1,
+                // with the module's own candidates, written as the program
+                // wrote the module.
+                if self.visible[module].get(&name.name) != Some(&qualified) {
+                    let written = self
+                        .namespace_segments(recv)
+                        .expect("just resolved")
+                        .iter()
+                        .map(|segment| segment.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    let diagnostic = Diagnostic::error(
+                        codes::E1010,
+                        name.span,
+                        format!("cannot find `{qualified}` in this scope"),
+                    );
+                    self.sink.emit(self.add_qualified_name_suggestions(
+                        diagnostic,
+                        module,
+                        name.name,
+                        &written,
+                        name.span,
+                    ));
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 let explicit = self.resolve_method_type_args(generic_args);
                 self.synth_qualified_call(qualified, name.span, args, explicit, span)
             }
@@ -12817,7 +13035,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         .iter()
                         .map(|segment| segment.name.as_str())
                         .collect::<Vec<_>>()
-                        .join("::");
+                        .join(".");
                     let diagnostic = Diagnostic::error(
                         codes::E1010,
                         final_segment.span,
@@ -13232,17 +13450,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty, kind: ExprKind::Builtin { which, args: Vec::new() }, span };
         }
 
+        // `[MOD-5]`, VI.6 (0.9.9) — the prelude's panics and assertions. A
+        // function of the same name shadows them.
+        if segments.len() == 1 && !self.fn_ids.contains_key(&self.resolve_name(name)) {
+            if let Some(built) = self.synth_panic_or_assert(name.as_str(), args, span) {
+                return built;
+            }
+        }
+
         if let Some(builtin) = Builtin::from_name(name.as_str()) {
             // `[STD-9]` (0.9.9) — several arguments, `sep=` and `end=`.
             let positional = args.iter().filter(|a| a.name.is_none()).count();
             if positional != 1 || args.iter().any(|a| a.name.is_some()) {
                 return self.synth_print_pieces(builtin, args, span);
             }
+            // D-191 — a `String` prints as the `str` it borrows, as it does
+            // among several arguments; the runtime prints `str`.
+            let str_ty = self.common.str_;
             let args: Vec<Expr> = args
                 .iter()
                 .map(|a| {
                     let arg = self.synth_committed(&a.value);
-                    self.read_through(arg)
+                    let arg = self.read_through(arg);
+                    if matches!(*self.types.kind(arg.ty), TyKind::Vec { elem } if elem == self.common.u8) {
+                        self.coerce(arg, str_ty)
+                    } else {
+                        arg
+                    }
                 })
                 .collect();
             if args.len() != 1 {
@@ -13280,7 +13514,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .iter()
                     .map(|segment| segment.name.as_str())
                     .collect::<Vec<_>>()
-                    .join("::");
+                    .join(".");
                 diagnostic = self.add_qualified_name_suggestions(
                     diagnostic,
                     namespace,
@@ -14093,8 +14327,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// the parameter that carries the callable value.  The latter is a fresh,
     /// hidden generic parameter, so unifying only it learns the concrete
     /// function value but misses facts in the bound's signature such as the
-    /// result `R` in `f: fn(A) -> R`.  `with_views` is the adversarial form:
-    /// every input can solve `A`/`B`, while `R` appears only in the callback.
+    /// result `R` in `f: fn(A) -> R`.  `fn pair[A, B, R](a: A, b: B, f: fn(A, B)
+    /// -> R) -> R` is the adversarial form: every input can solve `A`/`B`,
+    /// while `R` appears only in the callback.
     ///
     /// `[FN-6a]` makes the whole mode-bearing `Fn` signature canonical here;
     /// `TypeTable::unify_with_fixed` rejects a mismatched mode vector rather
@@ -14411,14 +14646,189 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         instance
     }
 
-    /// The module an expression names, if it is a bare path bound by
-    /// `import a.b.c`. A local of the same name wins.
+    /// The module an expression names: a name bound by `import a.b.c`, or a
+    /// module reached from one through `.` (`[GRM-24]`: `support.io`). A
+    /// local of the same name as the first segment wins.
     fn namespace_named(&self, expr: &ast::Expr) -> Option<usize> {
-        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
-        if segments.len() != 1 || self.lookup(segments[0].name).is_some() {
-            return None;
+        let segments = self.namespace_segments(expr)?;
+        self.resolve_namespace_prefix(&segments).ok()
+    }
+
+    /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
+    /// reached through a module, for positions where a type is named.
+    fn item_through_module(&self, expr: &ast::Expr) -> Option<Symbol> {
+        let ast::ExprKind::Field { base, name } = &expr.kind else { return None };
+        let module = self.namespace_named(base)?;
+        Some(self.qualified_in_module(module, name.name))
+    }
+
+    /// `[ATT-1]`, `[ATT-6]` (0.9.9) — every attribute on every declaration of
+    /// one module, against the table: an unknown one is `E0104`, one on a
+    /// declaration it does not apply to is `E0104` naming where it does, and
+    /// one whose effect is not built is `E0900`. Statement attributes are the
+    /// parser's (`[ATT-2]`).
+    fn check_attributes(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            self.check_item_attributes(item, false);
         }
-        self.namespaces[self.current_module].get(&segments[0].name).copied()
+    }
+
+    fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        let site = match &item.kind {
+            _ if in_extern => "extern item",
+            ast::ItemKind::Fn(_) => "fn",
+            ast::ItemKind::Struct(_) => "struct",
+            ast::ItemKind::Class(_) => "class",
+            ast::ItemKind::Enum(_) => "enum",
+            ast::ItemKind::Interface(_) => "interface",
+            ast::ItemKind::Extend(_) => "extend",
+            ast::ItemKind::Const(_) => "const",
+            ast::ItemKind::Static(_) => "static",
+            ast::ItemKind::TypeAlias(_) => "type",
+            ast::ItemKind::ExternBlock(_) => "extern block",
+            ast::ItemKind::ExternClass(_) => "extern item",
+            ast::ItemKind::Comptime(_) => "comptime block",
+        };
+        self.check_attribute_list(&item.attrs, site);
+        let members: &[ast::Member] = match &item.kind {
+            ast::ItemKind::Struct(decl) => &decl.members,
+            ast::ItemKind::Class(decl) => &decl.members,
+            ast::ItemKind::Enum(decl) => {
+                for variant in &decl.variants {
+                    self.check_attribute_list(&variant.attrs, "variant");
+                }
+                &decl.members
+            }
+            ast::ItemKind::Interface(decl) => &decl.members,
+            ast::ItemKind::Extend(decl) => &decl.members,
+            ast::ItemKind::ExternClass(decl) => &decl.members,
+            ast::ItemKind::ExternBlock(block) => {
+                for inner in &block.items {
+                    self.check_item_attributes(inner, true);
+                }
+                &[]
+            }
+            _ => &[],
+        };
+        for member in members {
+            let site = match &member.kind {
+                ast::MemberKind::Field(_) => "field",
+                ast::MemberKind::Fn(_) => "fn",
+                ast::MemberKind::Const(_) => "const",
+                ast::MemberKind::TypeAlias(_) => "type",
+            };
+            self.check_attribute_list(&member.attrs, site);
+        }
+    }
+
+    fn check_attribute_list(&mut self, attrs: &[ast::Attribute], site: &str) {
+        for attr in attrs {
+            let written = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+            let not_an_attribute = |this: &mut Self, note: &str| {
+                this.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, format!("`@{written}` is not an attribute"))
+                        .note(note.to_string()),
+                );
+            };
+            if attr.path.len() != 1 {
+                not_an_attribute(
+                    self,
+                    "a namespaced attribute is a visible `@attribute` struct [RFL-3], and none is declared",
+                );
+                continue;
+            }
+            let name = attr.path[0].name.as_str();
+            // `@nopanic` alone is reserved; `@nopanic(explicit)` is the listed form.
+            if RESERVED_ATTRIBUTES.contains(&name) || (name == "nopanic" && attr.args.is_empty()) {
+                self.sink.emit(Diagnostic::error(
+                    codes::E0104,
+                    attr.span,
+                    format!("`@{name}` is reserved for a later version"),
+                ));
+                continue;
+            }
+            if REMOVED_ATTRIBUTES.contains(&name) {
+                not_an_attribute(self, "removed in 0.9.9 (Appendix H.2)");
+                continue;
+            }
+            let Some(&(_, applies, built)) = ATTRIBUTE_TABLE.iter().find(|(names, _, _)| names.contains(&name))
+            else {
+                not_an_attribute(self, "the attributes are listed in Part V's table [ATT-1]");
+                continue;
+            };
+            let applies_here = applies.contains(&"item") && !matches!(site, "field" | "variant")
+                || applies.contains(&site);
+            if !applies_here {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E0104,
+                        attr.span,
+                        format!("`@{name}` does not apply to a {site}"),
+                    )
+                    .help(format!("it applies to: {}", applies.join(", "))),
+                );
+                continue;
+            }
+            let built = built && !(name == "repr" && site == "struct");
+            if !built {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E0900,
+                        attr.span,
+                        format!("`@{name}` is not implemented yet"),
+                    )
+                    .note("an attribute whose effect is not built is rejected, not ignored [ATT-6]"),
+                );
+                continue;
+            }
+            // `[STR-5]`, `[DRV-1]` — `Copy` and `Clone` are derived; `Eq` is
+            // already implicit. No other derive is built.
+            if name == "derive" {
+                for arg in &attr.args {
+                    let derived = match arg {
+                        ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. })
+                            if segments.len() == 1 =>
+                        {
+                            segments[0].name.as_str()
+                        }
+                        _ => "",
+                    };
+                    if !matches!(derived, "Copy" | "Clone" | "Eq") {
+                        let span = match arg {
+                            ast::AttrArg::Expr(expr) => expr.span,
+                            ast::AttrArg::Named { value, .. } => value.span,
+                        };
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E0900,
+                                span,
+                                format!("deriving `{derived}` is not implemented yet"),
+                            )
+                            .note("`Copy` and `Clone` can be derived; `Eq` is implicit [STR-5]"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The written segments of a `.` chain that starts at a name that is not
+    /// a local: `support.io` is `[support, io]`.
+    fn namespace_segments(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
+        match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                if self.lookup(segments[0].name).is_some() {
+                    return None;
+                }
+                Some(segments.clone())
+            }
+            ast::ExprKind::Field { base, name } => {
+                let mut segments = self.namespace_segments(base)?;
+                segments.push(*name);
+                Some(segments)
+            }
+            _ => None,
+        }
     }
 
     /// A call to a function named by its qualified name, which is what a
@@ -14484,6 +14894,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn enum_named(&mut self, expr: &ast::Expr) -> Option<EnumId> {
         let name = match &expr.kind {
             ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name,
+            ast::ExprKind::Field { .. } => {
+                let qualified = self.item_through_module(expr)?;
+                return self.enum_ids.get(&qualified).copied();
+            }
             ast::ExprKind::IndexOrInstantiate { base, .. } => {
                 let ast::ExprKind::Path { segments } = &base.kind else { return None };
                 if segments.len() != 1 {
@@ -14511,15 +14925,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// A path naming a range type, for `Roughness.checked(x)`.
     fn range_named(&self, expr: &ast::Expr) -> Option<ember_types::RangeId> {
-        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
-        if segments.len() != 1 {
-            return None;
-        }
-        let name = segments[0].name;
-        if self.lookup(name).is_some() {
-            return None;
-        }
-        let ty = *self.named_types.get(&self.resolve_name(name))?;
+        let qualified = match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                if self.lookup(segments[0].name).is_some() {
+                    return None;
+                }
+                self.resolve_name(segments[0].name)
+            }
+            _ => self.item_through_module(expr)?,
+        };
+        let ty = *self.named_types.get(&qualified)?;
         match self.types.kind(ty) {
             TyKind::Range(id) => Some(*id),
             _ => None,
@@ -14542,6 +14957,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .copied()
                     .or_else(|| self.scalar_named(name.as_str()))
                     .or_else(|| self.named_types.get(&self.resolve_name(name)).copied())
+            }
+            ast::ExprKind::Field { .. } => {
+                let qualified = self.item_through_module(expr)?;
+                self.named_types.get(&qualified).copied()
             }
             ast::ExprKind::IndexOrInstantiate { base, .. } => {
                 let ast::ExprKind::Path { segments } = &base.kind else { return None };
@@ -15706,6 +16125,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return self.synth_span_method(receiver, elem, mutable, name, args, span);
         }
+        if self.is_option(receiver.ty)
+            && matches!(name.name.as_str(), "unwrap" | "unwrap_or" | "expect")
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_option_method(receiver, name, args, span);
+        }
         // `[CELL-1]` — a cell is an ordinary struct to every other part of the
         // compiler, so its methods are found here rather than in `self.methods`.
         if let Some(inner) = self.cell_inner(receiver.ty) {
@@ -16287,7 +16720,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let declared_ret = lambda.ret.as_ref().map(|t| self.resolve_type(t));
         // A callback may be the only argument that can solve its result type
-        // (`with_views[A, B, R](..., f: fn(...) -> R)`).  Its parameter types
+        // (`pair[A, B, R](a, b, f: fn(A, B) -> R)`).  Its parameter types
         // are still a useful bidirectional hint, but an unresolved generic
         // result must not be forced on the body before the body can infer it.
         // The post-synthesis callable-bound unification records that inferred
@@ -20774,7 +21207,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let str_ty = self.common.str_;
         let text = |text: &str| Expr { ty: str_ty, kind: ExprKind::Str(text.to_string()), span };
         let mut sep = text(" ");
-        let mut end = text(if builtin == Builtin::Println { "\n" } else { "" });
+        let mut end = text(if matches!(builtin, Builtin::Println | Builtin::EPrintln) { "\n" } else { "" });
         let mut values = Vec::new();
         for arg in args {
             match arg.name {
@@ -20831,7 +21264,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         pieces.push(end);
         Expr {
             ty: self.common.void,
-            kind: ExprKind::Builtin { which: Builtin::Print, args: pieces },
+            kind: ExprKind::Builtin {
+                which: if matches!(builtin, Builtin::EPrint | Builtin::EPrintln) {
+                    Builtin::EPrint
+                } else {
+                    Builtin::Print
+                },
+                args: pieces,
+            },
             span,
         }
     }
@@ -21360,6 +21800,51 @@ fn binding_name(pattern: &ast::Pattern) -> Option<Symbol> {
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
 }
+
+/// `[ATT-1]` (0.9.9) — the attribute table: each name, the declarations it
+/// applies to, and whether its effect is built. `[ATT-6]` rejects a listed
+/// attribute whose effect is not built (`E0900`) rather than ignoring it.
+/// `"item"` means any declaration.
+const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
+    (&["derive"], &["struct", "enum", "class"], true),
+    (&["no_derive"], &["struct", "enum", "class"], false),
+    // `[LAY-2]` — `@layout(c)` is the C ABI layout, every struct's default,
+    // which the C backend always emits.
+    (&["layout"], &["struct", "enum"], true),
+    (&["packed", "align"], &["struct", "enum"], false),
+    // `@repr(T)` is built for enums; a struct's is rejected where it is read.
+    (&["repr"], &["struct", "enum"], true),
+    (&["gpu_layout"], &["struct"], false),
+    (&["static_safe"], &["fn"], true),
+    (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "deterministic", "realtime"], &["fn"], false),
+    (&["overflow"], &["fn"], true),
+    (&["fastmath", "fp", "inline", "noinline", "cold", "hot"], &["fn"], false),
+    (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
+    (&["deprecated", "allow"], &["item"], false),
+    (&["export"], &["fn", "static"], false),
+    (&["export_table"], &["struct"], false),
+    (&["ffi"], &["extern item"], false),
+    (&["test", "bench", "should_panic"], &["fn"], false),
+    // `[TYP-34]` — documentation only: a view type is inferred.
+    (&["view"], &["struct", "enum"], true),
+    (&["sync"], &["class"], false),
+    (&["reflect"], &["struct", "enum", "class", "type"], false),
+    (&["borrows"], &["fn"], true),
+    (&["safety"], &["fn"], false),
+    (&["must_drop"], &["struct", "class"], false),
+    (&["non_exhaustive"], &["enum"], false),
+    (&["component"], &["struct"], false),
+    (&["soa"], &["field"], false),
+    (&["always_specialize", "never_specialize"], &["fn", "struct", "enum", "class", "type"], false),
+    (&["reloadable", "noreload", "renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
+    (&["prelude"], &["module"], false),
+];
+
+/// `[ATT-1]` — reserved, and rejected with `E0104` naming the version.
+const RESERVED_ATTRIBUTES: &[&str] = &["no_runtime_checks", "allocator", "gpu"];
+
+/// Appendix H.2 — attributes 0.9.9 removed, named as such when written.
+const REMOVED_ATTRIBUTES: &[&str] = &["thread_local", "latebound"];
 
 fn has_derive(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| {

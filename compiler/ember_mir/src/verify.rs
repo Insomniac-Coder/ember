@@ -414,6 +414,9 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(file, &at);
                     v.operand(line, &at);
                 }
+                if let crate::AssertKind::Panic { message } = msg {
+                    v.operand(message, &at);
+                }
                 v.target(*next, &at);
             }
             Terminator::Return | Terminator::Unreachable => {}

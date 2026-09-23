@@ -1,4 +1,3 @@
-#! language "0.8.3"
 ## `std.core` — Part XV's prelude module.
 ##
 ## Part IV §8's standard interfaces, spelled as ordinary interfaces exactly as

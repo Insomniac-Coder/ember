@@ -987,6 +987,9 @@ fn capture_temporary_uses(
                     capture_operand_use(file, local, || CaptureTemporaryUse::Other, &mut uses);
                     capture_operand_use(line, local, || CaptureTemporaryUse::Other, &mut uses);
                 }
+                if let ember_mir::AssertKind::Panic { message } = msg {
+                    capture_operand_use(message, local, || CaptureTemporaryUse::Other, &mut uses);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
@@ -2054,6 +2057,9 @@ fn check_body(
                     operand_read(file, &mut accesses);
                     operand_read(line, &mut accesses);
                 }
+                if let ember_mir::AssertKind::Panic { message } = msg {
+                    operand_read(message, &mut accesses);
+                }
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
@@ -3038,6 +3044,9 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
                 if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
                     operand_read(file, &mut accesses);
                     operand_read(line, &mut accesses);
+                }
+                if let ember_mir::AssertKind::Panic { message } = msg {
+                    operand_read(message, &mut accesses);
                 }
             }
             _ => {}

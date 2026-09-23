@@ -2346,19 +2346,54 @@ impl<'a> Builder<'a> {
             // `print` whose arguments are the pieces in order. Every argument
             // is evaluated first, as in Python, and then each piece is printed
             // through the printer for its own type.
-            hir::ExprKind::Builtin { which: hir::Builtin::Print, args } if args.len() > 1 => {
+            hir::ExprKind::Builtin { which: which @ (hir::Builtin::Print | hir::Builtin::EPrint), args }
+                if args.len() > 1 =>
+            {
+                let which = *which;
                 let pieces: Vec<(Operand, Ty)> =
                     args.iter().map(|a| (self.lower_operand_borrowed(a), a.ty)).collect();
                 for (operand, arg_ty) in pieces {
                     let next = self.new_block();
                     self.terminate(Terminator::Call {
-                        func: FuncRef::Builtin { which: hir::Builtin::Print, arg_ty },
+                        func: FuncRef::Builtin { which, arg_ty },
                         args: vec![operand],
                         dest: place.clone(),
                         next,
                     });
                     self.current = next;
                 }
+            }
+            // VI.6, `[PAN-1]` — a panic ends control: the assertion that cannot
+            // hold aborts, and whatever follows lowers into a block nothing
+            // reaches, as after a `return`.
+            hir::ExprKind::Builtin { which: hir::Builtin::Panic, args } => {
+                let message = self.lower_operand_borrowed(&args[0]);
+                self.at(expr.span);
+                let dead = self.new_block();
+                self.terminate(Terminator::Assert {
+                    cond: Operand::Const(Const::Bool(false)),
+                    expected: true,
+                    msg: AssertKind::Panic { message },
+                    next: dead,
+                    span: expr.span,
+                });
+                self.current = dead;
+                self.terminate(Terminator::Unreachable);
+                self.current = self.new_block();
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::Assert, args } => {
+                let cond = self.lower_operand(&args[0]);
+                let message = self.lower_operand_borrowed(&args[1]);
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Assert {
+                    cond,
+                    expected: true,
+                    msg: AssertKind::Panic { message },
+                    next,
+                    span: expr.span,
+                });
+                self.current = next;
             }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.

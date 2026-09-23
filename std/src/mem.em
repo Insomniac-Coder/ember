@@ -1,4 +1,3 @@
-#! language "0.9.6"
 ## `std.mem` — low-level memory facilities.
 ##
 ## `[UNS-10]` gives `UnsafeCell[T]` this public module identity. Its private

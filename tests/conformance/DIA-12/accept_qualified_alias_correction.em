@@ -3,4 +3,4 @@
 import support.io as io
 
 fn main():
-    io::print(7)
+    io.print(7)
