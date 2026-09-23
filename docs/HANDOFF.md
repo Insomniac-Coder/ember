@@ -10508,3 +10508,31 @@ no ODR was needed.
 Verification: `cargo test --locked -p ember_driver --test ui` passed (4 tests),
 and `cargo test --locked -p ember_typeck` passed (3 tests). Both corrected
 field cases compile.
+
+### 0.349 `[DIA-12]` N1 visible module-item suggestions — 2026-09-23
+
+Unresolved unqualified names and direct calls now rank candidates from both
+active local bindings and the current module's visible-item table. Declaration
+spans are retained by qualified item name, and the UI triplet covers a
+misspelled same-file function call plus its compiling correction. The current
+working-tree implementation also gathers imported items, but their declaration
+offsets are file-relative and the focused test does not settle cross-file
+ranking. N1 remains open, including type-position and qualified-name paths;
+unknown method diagnostics remain the separate N3 requirement. This code is
+not committed pending ODR-019.
+
+Verification: `cargo test --locked -p ember_driver --test ui` passed (5 tests),
+and `cargo test --locked -p ember_typeck` passed (3 tests).
+
+### 0.350 ODR-019 — N1 cross-file declaration proximity — 2026-09-23
+
+Reviewing N1's ranking requirement exposed an undefined case: declaration
+proximity is required, while `Span.start` is relative to a particular source
+file. Comparing byte offsets for an imported item or inherited field from
+another file is deterministic but not meaningful. ODR-019 is now open in
+`docs/OWNER-QUEUE.md` with three policies and a recommendation to compare
+same-file offsets only, then define a stable cross-file group order/tie-break.
+
+Pause the N1 cross-file implementation and any push until the owner selects a
+policy. The tested same-file local-binding, field, and function-call slices
+remain valid; N1 is not closed. No accepted-program semantics are affected.
