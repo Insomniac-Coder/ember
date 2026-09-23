@@ -12,6 +12,7 @@ the expected behaviour.
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,10 +32,21 @@ def one_line(text, limit=160):
 
 
 def run(cmd, cwd):
+    # `ember run` executes the compiled program as its own child, so killing
+    # only the driver on timeout leaves an infinitely looping program behind.
+    # Run each command in its own process group and kill the whole group.
+    posix = os.name != "nt"
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=posix)
     try:
-        done = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT)
-        return done.returncode, done.stdout, done.stderr
+        out, err = proc.communicate(timeout=TIMEOUT)
+        return proc.returncode, out, err
     except subprocess.TimeoutExpired:
+        if posix:
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        proc.communicate()
         return None, "", "TIMEOUT"
 
 
