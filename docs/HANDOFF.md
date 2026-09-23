@@ -10492,3 +10492,19 @@ passes its focused rustfmt check. Package-wide `cargo fmt --check` remains
 non-green due to extensive pre-existing formatting drift in these packages;
 the new helper and touched UI-test hunk are formatted, and no broad reformat was
 applied.
+
+### 0.348 `[DIA-12]` N1 struct and inherited-class field suggestions — 2026-09-23
+
+N1 now also suggests nearby visible fields on structs and classes, including
+fields inherited from base classes. Missing struct/class fields are reported
+as `E1010` unresolved names instead of `E2020` `[TYP-4]` mismatched types;
+private fields remain excluded when the current module cannot access them.
+Before/fixed/snapshot cases cover both a struct field and an inherited class
+field. This advances the field portion of N1 but does not close N1: module
+items remain outstanding, while unknown method suggestions are separately N3.
+The behavior and code classification are defined by the current specification;
+no ODR was needed.
+
+Verification: `cargo test --locked -p ember_driver --test ui` passed (4 tests),
+and `cargo test --locked -p ember_typeck` passed (3 tests). Both corrected
+field cases compile.

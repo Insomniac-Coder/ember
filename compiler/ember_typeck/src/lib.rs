@@ -8819,6 +8819,70 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         name_suggestions::rank(written.as_str(), candidates)
     }
 
+    /// `[DIA-12]` N1 — offer nearby fields visible on a struct or class,
+    /// including inherited class fields.
+    fn field_name_suggestions(&self, ty: Ty, written: Symbol, use_span: Span) -> Vec<String> {
+        let mut candidates = Vec::new();
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let definition = self.types.struct_def(id);
+                candidates.extend(
+                    definition
+                        .fields
+                        .iter()
+                        .filter(|field| {
+                            field.vis != FieldVis::Private
+                                || definition.declaring_module == self.current_module
+                        })
+                        .map(|field| {
+                            (
+                                field.name.as_str().to_owned(),
+                                field.span.start.abs_diff(use_span.start) as usize,
+                            )
+                        }),
+                );
+            }
+            TyKind::Class(mut id) => loop {
+                let definition = self.types.class_def(id);
+                candidates.extend(
+                    definition
+                        .fields
+                        .iter()
+                        .filter(|field| {
+                            field.vis != FieldVis::Private
+                                || definition.declaring_module == self.current_module
+                        })
+                        .map(|field| {
+                            (
+                                field.name.as_str().to_owned(),
+                                field.span.start.abs_diff(use_span.start) as usize,
+                            )
+                        }),
+                );
+                match definition.base {
+                    Some(base) => id = base,
+                    None => break,
+                }
+            },
+            _ => {}
+        }
+        name_suggestions::rank(written.as_str(), candidates)
+    }
+
+    fn missing_field_diagnostic(&self, ty: Ty, name: Symbol, span: Span) -> Diagnostic {
+        let shown_type = self.types.display(ty);
+        let mut diagnostic = Diagnostic::error(
+            codes::E1010,
+            span,
+            format!("cannot find field `{name}` on `{shown_type}`"),
+        );
+        for candidate in self.field_name_suggestions(ty, name, span) {
+            diagnostic =
+                diagnostic.suggest(format!("did you mean `{candidate}`?"), span, candidate);
+        }
+        diagnostic
+    }
+
     /// `[CLO-2]` — whether a name a closure body could not find is one the
     /// enclosing function declares, in which case it is a **capture** and not
     /// a typo.
@@ -11510,12 +11574,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                         }
                         None => {
-                            let struct_name = self.types.struct_def(id).name;
-                            self.error(
-                                codes::E2020,
-                                name.span,
-                                format!("`{struct_name}` has no field `{}`", name.name),
-                            );
+                            self.sink
+                                .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
                             Expr { ty: self.common.error, kind: ExprKind::Error, span }
                         }
                     },
@@ -11533,12 +11593,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             field_expr
                         }
                         None => {
-                            let class_name = self.types.class_def(id).name;
-                            self.error(
-                                codes::E2020,
-                                name.span,
-                                format!("`{class_name}` has no field `{}`", name.name),
-                            );
+                            self.sink
+                                .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
                             Expr { ty: self.common.error, kind: ExprKind::Error, span }
                         }
                     },

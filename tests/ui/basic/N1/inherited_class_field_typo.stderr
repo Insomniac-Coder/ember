@@ -1,0 +1,9 @@
+error[E1010]: cannot find field `valeu` on `Derived`
+ --> tests/ui/basic/N1/inherited_class_field_typo.em:8:17
+  |
+8 |     return item.valeu
+  |                 ^^^^^
+  |
+  = help: did you mean `value`?
+
+error: could not compile due to 1 error(s)

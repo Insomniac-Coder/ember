@@ -1,0 +1,10 @@
+error[E1010]: cannot find field `xx` on `Point`
+ --> tests/ui/basic/N1/struct_field_typo.em:7:19
+  |
+7 |     println(point.xx)
+  |                   ^^
+  |
+  = help: did you mean `x`?
+  = help: did you mean `y`?
+
+error: could not compile due to 1 error(s)

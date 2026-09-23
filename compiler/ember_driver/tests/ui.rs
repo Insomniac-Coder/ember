@@ -256,3 +256,67 @@ fn committed_basic_name_suggestion_matches_and_fixed_source_compiles() {
         fixed.display()
     );
 }
+
+#[test]
+fn committed_struct_field_name_suggestion_matches_and_fixed_source_compiles() {
+    let root = workspace_root();
+    let before = root.join("tests/ui/basic/N1/struct_field_typo.em");
+    let snapshot = before.with_extension("stderr");
+    let fixed = root.join("tests/ui/basic/N1/struct_field_typo.fixed.em");
+
+    let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
+    let expected = normalize(&expected);
+    let (before_exit, actual) = check(&before, &root);
+    assert_ne!(before_exit, 0, "{} unexpectedly compiled", before.display());
+    assert_eq!(actual, expected, "{} diagnostic changed", before.display());
+    assert_eq!(
+        error_codes(&actual),
+        ["E1010"],
+        "{} must classify the missing field as an unresolved name",
+        before.display()
+    );
+    assert!(
+        actual.contains("did you mean `x`?"),
+        "N1 should suggest the visible struct field with its exact spelling:\n{actual}"
+    );
+
+    let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+    assert_eq!(
+        fixed_exit,
+        0,
+        "{} does not compile:\n{fixed_stderr}",
+        fixed.display()
+    );
+}
+
+#[test]
+fn committed_inherited_class_field_name_suggestion_matches_and_fixed_source_compiles() {
+    let root = workspace_root();
+    let before = root.join("tests/ui/basic/N1/inherited_class_field_typo.em");
+    let snapshot = before.with_extension("stderr");
+    let fixed = root.join("tests/ui/basic/N1/inherited_class_field_typo.fixed.em");
+
+    let expected = std::fs::read(&snapshot).expect("the snapshot is readable");
+    let expected = normalize(&expected);
+    let (before_exit, actual) = check(&before, &root);
+    assert_ne!(before_exit, 0, "{} unexpectedly compiled", before.display());
+    assert_eq!(actual, expected, "{} diagnostic changed", before.display());
+    assert_eq!(
+        error_codes(&actual),
+        ["E1010"],
+        "{} must classify the missing field as an unresolved name",
+        before.display()
+    );
+    assert!(
+        actual.contains("did you mean `value`?"),
+        "N1 should suggest the inherited field with its exact spelling:\n{actual}"
+    );
+
+    let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+    assert_eq!(
+        fixed_exit,
+        0,
+        "{} does not compile:\n{fixed_stderr}",
+        fixed.display()
+    );
+}
