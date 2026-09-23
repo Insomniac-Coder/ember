@@ -16,7 +16,7 @@ def process(path, fix):
     if fix and hits:
         s = MID.sub(lambda m: '\n* `[' + m.group(1) + ']`', s)
         s = CONT.sub(lambda m: '\n* `[' + m.group(1) + ']`', s)
-        open(path, 'w', encoding='utf-8').write(s)
+        open(path, 'w', encoding='utf-8', newline='\n').write(s)
     return hits
 
 if __name__ == '__main__':

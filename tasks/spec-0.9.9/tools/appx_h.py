@@ -267,7 +267,7 @@ def main():
             missing.append(f)
         rows.append(f'| {f} | {ids} | {REASON.get(f, "TODO")} |')
     h4 = h1_to_h2()
-    open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8').write(
+    open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n')
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1)

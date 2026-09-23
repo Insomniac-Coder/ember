@@ -72,7 +72,7 @@ def write(t):
         title = t.get(fid, ('', '', ''))[2].rstrip('.').replace('|', '\\|')
         r = ', '.join(f'`[{x}]`' for x in rules) or '—'
         lines.append(f'| {fid} — {title} | {kind} | {res.replace("|", chr(92) + "|")} | {r} |')
-    open(os.path.join(HERE, '..', 'parts', 'p25-appx-g.md'), 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
+    open(os.path.join(HERE, '..', 'parts', 'p25-appx-g.md'), 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
     print('wrote p25-appx-g.md')
 
 if __name__ == '__main__':

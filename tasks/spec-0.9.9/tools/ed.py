@@ -13,7 +13,8 @@ def read(p):
 
 
 def write(p, s):
-    open(_path(p), 'w', encoding='utf-8').write(s)
+    # LF, as .gitattributes pins: text mode on Windows would write CRLF.
+    open(_path(p), 'w', encoding='utf-8', newline='\n').write(s)
 
 
 def edit(p, old, new):

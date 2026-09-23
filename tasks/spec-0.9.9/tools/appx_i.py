@@ -34,7 +34,7 @@ def main():
             out.append(f'| `[{rid}]` | {part} | {text} |')
             total += 1
         out.append('')
-    open(os.path.join(HERE, '..', 'parts', 'p27-appx-i.md'), 'w', encoding='utf-8').write('\n'.join(out))
+    open(os.path.join(HERE, '..', 'parts', 'p27-appx-i.md'), 'w', encoding='utf-8', newline='\n').write('\n'.join(out))
     print('indexed', total, 'rules in', len(rows), 'families')
 
 

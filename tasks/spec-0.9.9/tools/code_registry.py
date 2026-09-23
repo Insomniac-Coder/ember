@@ -229,7 +229,7 @@ def write():
     out += ['', '**Retired codes.**', '', '| Code | Why |', '|---|---|']
     for c in sorted(RETIRED, key=key):
         out.append(f'| `{c}` | {RETIRED[c]} |')
-    open(os.path.join(PARTS, 'p17a-codes.md'), 'w', encoding='utf-8').write('\n'.join(out) + '\n')
+    open(os.path.join(PARTS, 'p17a-codes.md'), 'w', encoding='utf-8', newline='\n').write('\n'.join(out) + '\n')
     print('wrote p17a-codes.md')
 
 
