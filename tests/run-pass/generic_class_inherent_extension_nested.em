@@ -7,7 +7,7 @@ class Envelope[Payload]:
     value: Payload
 
 extend[Element] Envelope[Array[Element]]:
-    fn count(self) -> usize:
+    fn count(self) -> int:
         return self.value.len()
 
 fn main():

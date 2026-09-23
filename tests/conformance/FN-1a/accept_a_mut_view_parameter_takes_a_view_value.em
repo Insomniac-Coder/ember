@@ -17,7 +17,7 @@
 # was right" and no code moved.
 
 fn normalize(mut s: MutSpan[i32]):
-    i: usize = 0
+    i: int = 0
     while i < s.len():
         s[i] = s[i] * 2
         i = i + 1

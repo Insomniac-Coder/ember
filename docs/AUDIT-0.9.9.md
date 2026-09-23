@@ -72,7 +72,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[FN-6]` | V | Callable types. A function is a value. A callable type is written … | not yet probed | |
 | `[FN-8]` | V | `main` is `fn main()`, `fn main() -> Result[void, E]` for any `E: … | fixed | scripts; `Result` main unchanged |
 | `[STR-2]` | V | A field default is any expression; it is evaluated at each … | not yet probed | |
-| `[STR-5]` | V | Implicit derives. A struct or enum implements `Eq`, `Debug` and … | **defect** D-187 / gap | `a == b` on a struct is accepted and the C compiler then fails (invalid operands); implicit `Debug` and `Clone` are not built |
+| `[STR-5]` | V | Implicit derives. A struct or enum implements `Eq`, `Debug` and … | partial (D-187 fixed) | `==`/`!=` field-wise works; a component with a hand-written `eq` fails closed (`E2040`); `@no_derive` not parsed; implicit `Debug` and `Clone` are not built |
 | `[CLS-2]` | V | `fn init(self, …)` is the constructor. Before any `init` body runs, … | **gap** | field defaults are not evaluated before a base `init` runs (`[CLS-11]` two-phase) |
 | `[CLS-4]` | V | A class is final unless declared `open` or `abstract`. Methods are … | not yet probed | |
 | `[CLS-7]` | V | Inside a class method, `self` is a handle. Any method may read and … | **gap** | a plain `self` method writing `self.n += 1` is `E3023`; 0.9.9 lets any method write fields, each access checked |
@@ -198,12 +198,13 @@ are migrated or retired with the construct, each named in the progress log.
 | `@overflow(wrap)` and shifts | `[TYP-10]`: an out-of-range shift panics in every profile | masked under `@overflow(wrap)` | defect |
 | `Result[T]` | `[ERR-1]`: `Result[T, E = AnyError]` | `E2020 Result takes 2 type arguments` | gap (`AnyError` not built) |
 | `Option.unwrap`, `unwrap_or`; `String.char_count`; `Array.sort` | Part XV (`[STD-15]` …) | `E1010 has no method` | gap: most of Part XV's surface is not built |
-| `x if c else y` | Part III ternary (level 3) | `E1010 this expression is not supported yet` | gap |
-| `xs[-1]` | `[TYP-31]`, `[LEX-24]`: a negative literal index is `E2011` | compiles; the literal wraps to `usize` and panics with index 18446744073709551615 | defect |
-| `xs[n]` with `n: i32`; `n: int = xs.len()` | `[TYP-31]`: any integer index; `len()` is `int` | `E2020 expected usize` both ways | gap |
-| `-x as u8` | Part III precedence table (0.9.9): prefix `-` (16) binds tighter than `as` (15), so it is `(-x) as u8` | parsed as `-(x as u8)`; `-3.5 as u8` printed `253` | defect (parser binding powers) |
+| `a ** b` | `[TYP-30]`: exact integer powers, float `pow` | `E1010 this operator is not supported yet` | gap |
+| `x if c else y` | Part III ternary (level 3) | `E1010 this expression is not supported yet` | fixed: a two-arm `match` on the condition |
+| `xs[-1]` | `[TYP-31]`, `[LEX-24]`: a negative literal index is `E2011` | compiles; the literal wraps to `usize` and panics with index 18446744073709551615 | fixed: `E2011` with both fix-its; a computed negative index panics as `index -1` |
+| `xs[n]` with `n: i32`; `n: int = xs.len()` | `[TYP-31]`: any integer index; `len()` is `int` | `E2020 expected usize` both ways | fixed: `len()`/`capacity()` are `int`; indices, sizes and counts take any integer |
+| `-x as u8` | Part III precedence table (0.9.9): prefix `-` (16) binds tighter than `as` (15), so it is `(-x) as u8` | parsed as `-(x as u8)`; `-3.5 as u8` printed `253` | fixed (binding powers follow the 0.9.9 table) |
 | `panic(…)`, `todo()`, `unreachable()` | `[MOD-5]` prelude functions | `E1010 cannot find panic` | gap |
-| `==` on `str`, `String`, structs, tuples, arrays, payload enums | `[STR-5]` implicit `Eq`, field-wise | accepted, then invalid C | guarded with `E0900` (D-187); implementation open |
+| `==` on `str`, `String`, structs, tuples, arrays, payload enums | `[STR-5]` implicit `Eq`, field-wise | accepted, then invalid C | fixed (D-187); lexicographic `<` on tuples/arrays/`Array` and `None < Some` still `E2040` |
 | float `as` integer | `[TYP-6]` saturates, NaN to 0 | C's undefined conversion | fixed (D-188) |
 | `ListView()` for a derived class with no `init` | `[CLS-10]`: it gets its base's constructor | `E1010 ... requires an explicit init` | gap |
 | `mem` in the prelude | `[MOD-5]`: `mem` (the module `std.mem`) is a prelude name | `E1010 cannot find mem` | gap |

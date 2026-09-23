@@ -27,9 +27,9 @@ progress record for that work. It is not a second specification.
   silently, and never adopts a reading because it matches what is built.
 * **Process.** `docs/HANDOFF.md` §0.0 governs: probe first, the five-way sort, the four-document
   write path for a defect, break every new test once, claim discipline.
-* **Branch.** Work happens on `phase-0.9.9` (CI runs on `phase-*`) in the worktree `Code/ember-099`, because the main checkout
-  holds another agent's uncommitted `compiler/ember_analysis` work. Owner, 2026-09-23: commit and
-  push about every five features, with CI green.
+* **Branch.** Work happens on `main` (owner, 2026-09-23: "no need for a separate branch ... this
+  language is not close to release"). Commit and push about every five features, with CI green;
+  `tasks/impl-0.9.9/ci_status.py` reports the Actions runs without `gh`.
 
 ## 2. Probe results, 2026-09-23 (compiler at `761ce7c`)
 
@@ -82,10 +82,10 @@ and gates green.
     (`[FN-10]`); `Result[T]` default error (`[ERR-1]`).
 
 **Next batch** (from `docs/AUDIT-0.9.9.md`, defects first):
-1. `-x as T` binds as `(-x) as T` (parser binding powers).
-2. `==`/`!=` field-wise for `str`, `String`, structs, tuples, arrays and enums (`[STR-5]`, D-187).
-3. The ternary `x if c else y`.
-4. `[TYP-31]`: `len()` is `int`, any integer index, `E2011` for a negative literal index.
+1. ~~`-x as T` binds as `(-x) as T`~~ (done).
+2. ~~`==`/`!=` field-wise, text by bytes (D-187)~~ (done; ordering on tuples, arrays and `Option` is not).
+3. ~~The ternary `x if c else y`~~ (done).
+4. ~~`[TYP-31]`: `len()` is `int`, any integer index, `E2011` for a negative literal index~~ (done).
 5. Removed constructs: `::` is `E0100` with `use '.' for paths`; `#! language` other than the
    current version is `E0006`; `@latebound` and `@thread_local` rejected, with the corpus migrated.
 6. Prelude: `mem`, `panic`, `todo`, `unreachable`; `Option.unwrap`/`unwrap_or`.
@@ -103,8 +103,9 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 |---|---|---|---|
 | ODR-021 | float `//`/`%`: `[TYP-29]`'s formula in IEEE arithmetic, or Python's result? | Python's: exact floor modulo rounded once, consistent quotient | H3 |
 | ODR-022 | does a later use change the type of `x = 0` (`[LEX-16]` vs `[TYP-23]`)? | no: the declaration fixes `int`; `E2020` help names the annotation | H3 |
+| ODR-023 | which diagnostic reports a value function that can reach its end (`[FN-10]`)? | `E2182`, with the path's last statement labelled | H4 |
 
-The next number is ODR-023.
+The next number is ODR-024.
 
 ## 5. Progress log
 
@@ -143,3 +144,30 @@ The next number is ODR-023.
   builtin of pieces, and MIR evaluates every argument before printing each piece with its typed
   printer. `return a, b` makes a tuple only outside brackets, where `[LEX-6a]` lets a `,` end a
   colon-bodied lambda.
+* **2026-09-23 — M1 slices 7b–9.** `[FN-10]`: `Result[void, E]` gets its `Ok(())` at the end of the
+  body, and any other value function that can reach its end is `E2182` (ODR-023, H4); before this
+  it fell off its end into undefined C (D-186). `[TYP-38]`: a list literal with no context or an
+  `Array` expectation is an `Array[T]`, one allocation of exactly its elements. `[TYP-6]`:
+  float-to-integer `as` saturates, `NaN` to `0` (D-188: it was C's undefined conversion).
+  `[TYP-8]`: overflow panics in every profile. Pushed to `main` at `d4e81ca`/`3d3966d`.
+* **2026-09-23 — precedence and D-187.** The binding powers follow the 0.9.9 Part III table:
+  `as` is looser than a prefix `-`, so `-3.5 as u8` is `(-3.5) as u8` (`0`). D-187 fixed: a
+  comparison C cannot do is a `ValueCompare` builtin. `str`/`String` take all six comparisons by
+  bytes (runtime `ember_str_cmp`; a `String` beside a `str` is borrowed, `[TYP-21]`+`[TYP-5]` rule
+  4, so nothing allocates). Structs, tuples, fixed arrays, `Array`s and payload enums whose every
+  component has `Eq` take `==`/`!=` through one generated `static bool` function per type, emitted
+  to a fixpoint like drop glue. Ordering a struct is `E2040` (`Ord` is never implicit). Known
+  gaps: lexicographic `<` on tuples, arrays and `Array`, and `None < Some`, are `E2040` until
+  `Ord` is generated; a component with a hand-written `eq` makes the aggregate `E2040` (fails
+  closed) until generated equality can call a method; `@no_derive(Eq)` is not parsed yet.
+* **2026-09-23 — ternary, `[TYP-31]`, D-189.** `x if c else y` (`[EXP-3]`) is a two-arm `match` on
+  the condition, so MIR lowers it as it lowers any `match`; with no expected type an untyped literal
+  branch takes the other branch's type, and a `!` branch takes none. `[TYP-31]`: `len()` and
+  `capacity()` read the runtime's `usize` and are `int` to the program; an index, a size or a count
+  of any integer type is converted with `as`'s wrap, so a negative index fails the bounds check and
+  the runtime prints it back as `index -1`. A negative literal index is `E2011` (new page) with the
+  fix-its `xs.last()` and `xs[xs.len() - 1]`. Corpus: 17 files moved from `usize` counters to `int`
+  (raw-memory `usize` kept, as `[TYP-31]` says), and the std hasher's loop. D-189: parallel
+  compilations raced on the `[LT-40]` interface cache; records are now written aside and renamed
+  into place. `tasks/impl-0.9.9/survey.py` now prints the exit status and output of a rejection
+  that reported no `error[...]`, which is how D-189 was found.

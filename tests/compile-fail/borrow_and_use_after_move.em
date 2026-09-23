@@ -7,7 +7,7 @@
 ## so a borrow is not a move; but a reference into memory whose owner gave it
 ## away dangles, which is a separate rule from `[OWN-3]` and a separate code.
 
-fn borrow_after_move() -> usize:
+fn borrow_after_move() -> int:
     xs: Array[i32] = Array[i32]()
     moved: Array[i32] = xs
     r: ref Array[i32] = ref xs
@@ -15,12 +15,12 @@ fn borrow_after_move() -> usize:
 
 ## `[FN-1]` — `owned` consumes. Until the mode was threaded through argument
 ## lowering, every argument was borrowed and this compiled.
-fn take(owned zs: Array[i32]) -> usize:
+fn take(owned zs: Array[i32]) -> int:
     return zs.len()
 
-fn use_after_owned_call() -> usize:
+fn use_after_owned_call() -> int:
     ys: Array[i32] = Array[i32]()
-    n: usize = take(ys)
+    n: int = take(ys)
     return n + ys.len()
 
 fn main():

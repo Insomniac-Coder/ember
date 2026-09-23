@@ -135,6 +135,7 @@ pub fn emit(
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
             .collect(),
         drop_glue: std::cell::RefCell::new(Vec::new()),
+        eq_fns: std::cell::RefCell::new(Vec::new()),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -252,10 +253,17 @@ struct Emitter<'a> {
     /// an indirection (`struct Tree: kids: Array[Tree]`) is a runtime
     /// recursion instead of an infinite inline expansion.
     drop_glue: std::cell::RefCell<Vec<Ty>>,
+    /// D-187 — the aggregates `==` has been asked of, one generated
+    /// field-wise equality function each, requested and emitted like
+    /// `drop_glue`.
+    eq_fns: std::cell::RefCell<Vec<Ty>>,
 }
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
 const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
+
+/// Replaced the same way by the D-187 equality-function prototypes.
+const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
 
 #[derive(Clone)]
 struct VirtualMethod {
@@ -353,6 +361,7 @@ impl Emitter<'_> {
         self.emit_interface_vtable_types();
         self.emit_prototypes(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
+        self.line(EQ_FN_PROTOTYPES);
         self.emit_interface_adapters();
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
@@ -376,6 +385,120 @@ impl Emitter<'_> {
             self.emit_entry_point(leak_check);
         }
         self.emit_drop_glue();
+        self.emit_eq_fns();
+    }
+
+    /// D-187 — a C expression, true when `a` and `b` (values of `ty`) are
+    /// equal: IEEE `==` on floats, identity on class handles, bytes on text
+    /// and `[STR-5]`'s field-wise equality on aggregates.
+    fn eq_expr(&self, a: &str, b: &str, ty: Ty) -> String {
+        if let Some((a, b)) = self.text_pair(a, b, ty) {
+            return format!("({RT}str_cmp({a}, {b}) == 0)");
+        }
+        match self.types.kind(ty) {
+            TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Vec { .. } => {}
+            TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => {}
+            _ => return format!("(({a}) == ({b}))"),
+        }
+        let mut fns = self.eq_fns.borrow_mut();
+        let index = fns.iter().position(|&known| known == ty).unwrap_or_else(|| {
+            fns.push(ty);
+            fns.len() - 1
+        });
+        format!("{}({a}, {b})", eq_fn_symbol(index))
+    }
+
+    /// `str` and `String` operands as two `str` values, for `{RT}str_cmp`.
+    fn text_pair(&self, a: &str, b: &str, ty: Ty) -> Option<(String, String)> {
+        match self.types.kind(ty) {
+            TyKind::Str => Some((a.to_string(), b.to_string())),
+            TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)) => {
+                let view = |v: &str| format!("(({RT}str){{ (const unsigned char*)({v}).ptr, ({v}).len }})");
+                Some((view(a), view(b)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Define every requested equality function, to a fixpoint, and put
+    /// their prototypes where the marker stands. Values are passed by value
+    /// and never dropped: the comparison borrows.
+    fn emit_eq_fns(&mut self) {
+        let mut emitted = 0;
+        let mut prototypes = Vec::new();
+        loop {
+            let pending: Vec<Ty> = self.eq_fns.borrow()[emitted..].to_vec();
+            if pending.is_empty() {
+                break;
+            }
+            for ty in pending {
+                let symbol = eq_fn_symbol(emitted);
+                let c_ty = self.c_type(ty);
+                let body = match self.types.kind(ty).clone() {
+                    TyKind::Struct(id) => {
+                        let fields = self.types.struct_def(id).fields.clone();
+                        let parts: Vec<String> = fields
+                            .iter()
+                            .map(|f| self.eq_expr(&format!("a.{}", f.name), &format!("b.{}", f.name), f.ty))
+                            .collect();
+                        format!("return {};", conjunction(parts))
+                    }
+                    TyKind::Tuple(items) => {
+                        let parts: Vec<String> = items
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &item)| self.eq_expr(&format!("a._{i}"), &format!("b._{i}"), item))
+                            .collect();
+                        format!("return {};", conjunction(parts))
+                    }
+                    TyKind::Array { elem, len } => {
+                        let each = self.eq_expr("a._0[i]", "b._0[i]", elem);
+                        format!("for (size_t i = 0; i < {len}; ++i) {{ if (!{each}) return 0; }} return 1;")
+                    }
+                    TyKind::Vec { elem } => {
+                        let elem_c = self.c_type(elem);
+                        let each = self.eq_expr(
+                            &format!("(({elem_c}*)a.ptr)[i]"),
+                            &format!("(({elem_c}*)b.ptr)[i]"),
+                            elem,
+                        );
+                        format!(
+                            "if (a.len != b.len) return 0; for (size_t i = 0; i < a.len; ++i) {{ if (!{each}) return 0; }} return 1;"
+                        )
+                    }
+                    TyKind::Enum(id) => {
+                        let def = self.types.enum_def(id).clone();
+                        let mut arms = Vec::new();
+                        for variant in &def.variants {
+                            let parts: Vec<String> = variant
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    let member = format!("payload.{}.{}", variant.name, f.name);
+                                    self.eq_expr(&format!("a.{member}"), &format!("b.{member}"), f.ty)
+                                })
+                                .collect();
+                            if !parts.is_empty() {
+                                arms.push(format!("case {}: return {};", variant.discriminant, conjunction(parts)));
+                            }
+                        }
+                        format!(
+                            "if (a.tag != b.tag) return 0; switch (a.tag) {{ {} default: return 1; }}",
+                            arms.join(" ")
+                        )
+                    }
+                    _ => unreachable!("D-187 equality functions are requested only for aggregates"),
+                };
+                prototypes.push(format!("static bool {symbol}({c_ty} a, {c_ty} b);"));
+                self.line(&format!("static bool {symbol}({c_ty} a, {c_ty} b) {{"));
+                self.line("    (void)a; (void)b;");
+                self.line(&format!("    {body}"));
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        self.out = self.out.replacen(EQ_FN_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
     /// The name of `ty`'s out-of-line drop glue, requesting it. Only
@@ -3276,6 +3399,16 @@ impl Emitter<'_> {
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }
+                    // D-187 — the checker sent here only text (all six
+                    // comparisons, by bytes) and `==`/`!=` on aggregates.
+                    Builtin::ValueCompare { op } => {
+                        let (a, b) = (&rendered[0], &rendered[1]);
+                        if let Some((a, b)) = self.text_pair(a, b, *arg_ty) {
+                            return format!("({RT}str_cmp({a}, {b}) {} 0)", op.spelling());
+                        }
+                        let equal = self.eq_expr(a, b, *arg_ty);
+                        return if matches!(op, ember_mir::BinOp::Ne) { format!("(!{equal})") } else { equal };
+                    }
                     // `[TYP-38]` — one allocation of exactly the literal's
                     // elements, moved (bitwise) out of the fixed array; MIR
                     // has marked the fixed array as moved, so it is not
@@ -4526,6 +4659,16 @@ fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
         }
     }
     referenced
+}
+
+/// D-187 — the `index`th generated equality function.
+fn eq_fn_symbol(index: usize) -> String {
+    ember_branding::mangled(&format!("eq_{index}"))
+}
+
+/// `parts` joined with `&&`; true when there are none.
+fn conjunction(parts: Vec<String>) -> String {
+    if parts.is_empty() { "1".to_string() } else { parts.join(" && ") }
 }
 
 /// D-182 — the `index`th out-of-line drop-glue function.

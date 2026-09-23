@@ -5,7 +5,7 @@
 # `[OWN-2]`, `[DRP-2]` — the buffer is freed when `xs` goes out of scope. Fifty
 # calls allocate fifty arrays and free fifty arrays; before drops existed this
 # leaked every one of them.
-fn build(n: i32) -> usize:
+fn build(n: i32) -> int:
     xs: Array[i32] = Array()
     for i in 0..n:
         xs.push(i)
@@ -13,7 +13,7 @@ fn build(n: i32) -> usize:
 
 # `[OWN-3]` — a move gives the value away, and the new owner drops it. The old
 # owner's drop is removed; dropping both would free the same buffer twice.
-fn moved() -> usize:
+fn moved() -> int:
     xs: Array[i32] = Array()
     xs.push(1)
     ys = xs
@@ -21,10 +21,10 @@ fn moved() -> usize:
 
 # `[OWN-3]` — moved on one path and not the other. A drop flag decides at run
 # time, which is why this is legal rather than an error.
-fn conditional(c: bool) -> usize:
+fn conditional(c: bool) -> int:
     xs: Array[i32] = Array()
     xs.push(1)
-    n: usize = 0
+    n: int = 0
     if c:
         ys = xs
         n = ys.len()
@@ -42,7 +42,7 @@ fn nested() -> i32:
     return h.tag
 
 fn main():
-    total: usize = 0
+    total: int = 0
     for i in 0..50:
         total = total + build(20)
     println(total)

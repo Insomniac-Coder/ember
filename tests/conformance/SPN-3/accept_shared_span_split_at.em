@@ -10,7 +10,7 @@
 # A shared split preserves the source region and permits the boundary at both
 # ends. The boundary element belongs to the right half.
 
-fn left_len[T](span: Span[T], boundary: usize) -> usize:
+fn left_len[T](span: Span[T], boundary: int) -> int:
     parts = span.split_at(boundary)
     return parts.0.len()
 

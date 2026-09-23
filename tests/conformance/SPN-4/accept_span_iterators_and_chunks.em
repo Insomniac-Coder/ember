@@ -5,10 +5,10 @@
 
 from std.collections import SpanIter, MutSpanIter, SpanChunks, MutSpanChunks
 
-fn named_shared[T](span: Span[T]) -> usize:
+fn named_shared[T](span: Span[T]) -> int:
     iterator: SpanIter[T] = span.iter()
     chunks: SpanChunks[T] = span.chunks(2)
-    seen: usize = 0
+    seen: int = 0
     match iterator.next():
         Some(_item):
             seen = seen + 1
@@ -21,7 +21,7 @@ fn named_shared[T](span: Span[T]) -> usize:
             pass
     return seen
 
-fn named_mut[T](mut span: MutSpan[T]) -> usize:
+fn named_mut[T](mut span: MutSpan[T]) -> int:
     iterator: MutSpanIter[T] = span.iter_mut()
     match iterator.next():
         Some(_item):
@@ -53,8 +53,8 @@ fn main():
         replacement: i32 = item + 10
         item = ref mut replacement
 
-    chunk_count: usize = 0
-    last_len: usize = 0
+    chunk_count: int = 0
+    last_len: int = 0
     for chunk in values.as_span().chunks(2):
         chunk_count = chunk_count + 1
         last_len = chunk.len()

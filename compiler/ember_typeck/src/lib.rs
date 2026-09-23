@@ -4911,6 +4911,67 @@ impl<'a> Checker<'a> {
         ) || matches!(self.types.kind(ty), TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)))
     }
 
+    /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
+    fn is_text(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Str)
+            || matches!(self.types.kind(ty), TyKind::Vec { elem } if *elem == self.common.u8)
+    }
+
+    /// `[STR-5]` — a type has `Eq` when every component has it: scalars,
+    /// text, class handles (identity), and tuples, fixed arrays, `Array`s,
+    /// structs and enums of `Eq` components. A user `eq` method is found
+    /// before this is asked. Compiler-known wrappers with private state
+    /// (cells, arenas, views) have none.
+    fn has_implicit_eq(&self, ty: Ty) -> bool {
+        self.has_implicit_eq_in(ty, &mut HashSet::new())
+    }
+
+    fn has_implicit_eq_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::Str
+            | TyKind::Range(_)
+            | TyKind::Class(_)
+            | TyKind::ClassInterface(_) => true,
+            // ponytail: a component with a hand-written `eq` fails closed
+            // (E2040) until generated equality can call a method.
+            TyKind::Struct(_) | TyKind::Enum(_)
+                if self.methods.contains_key(&(ty, Symbol::intern("eq"))) =>
+            {
+                false
+            }
+            TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } => {
+                self.has_implicit_eq_in(*elem, seen)
+            }
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                let name = def.name.as_str();
+                let private_state = ["Cell_", "RefCell_", "Ref_", "RefMut_", "UnsafeCell_", "MaybeUninit_"]
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+                    || ["Arena", "FixedArena", "ScopedArena"].contains(&name);
+                !private_state
+                    && (!seen.insert(ty)
+                        || def.fields.iter().all(|field| self.has_implicit_eq_in(field.ty, seen)))
+            }
+            TyKind::Enum(id) => {
+                !seen.insert(ty)
+                    || self
+                        .types
+                        .enum_def(*id)
+                        .variants
+                        .iter()
+                        .all(|v| v.fields.iter().all(|f| self.has_implicit_eq_in(f.ty, seen)))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether a type is one of the synthesised `Option`s.
     fn is_option(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
@@ -9809,6 +9870,126 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[TYP-31]` (0.9.9) — an index of any integer type. A signed index is
+    /// converted with `as`'s wrap, so a negative one is past every length and
+    /// fails the bounds check (the runtime prints it back as negative). A
+    /// negative literal index is `E2011` (`[LEX-24]`): there is no Python-style
+    /// indexing from the end. `None` when `E2011` was reported.
+    fn check_index(&mut self, index: &ast::Expr, base: Option<&ast::Expr>, span: Span) -> Option<Expr> {
+        if let ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } = &index.kind
+            && let ast::ExprKind::Lit(ast::Literal::Int { value, .. }) = &operand.kind
+            && *value > 0
+        {
+            let mut diagnostic = Diagnostic::error(codes::E2011, index.span, "negative literal index")
+                .primary_label("an index counts from the start and is never negative")
+                .note("Python's `xs[-1]` is written `xs.last()` or `xs[xs.len() - 1]` [TYP-31]");
+            if let Some(ast::ExprKind::Path { segments }) = base.map(|b| &b.kind)
+                && segments.len() == 1
+            {
+                let name = segments[0].name;
+                if *value == 1 {
+                    diagnostic = diagnostic.suggest(
+                        format!("take the last element: `{name}.last()`"),
+                        span,
+                        format!("{name}.last()"),
+                    );
+                }
+                diagnostic = diagnostic.suggest(
+                    format!("count from the length: `{name}[{name}.len() - {value}]`"),
+                    index.span,
+                    format!("{name}.len() - {value}"),
+                );
+            }
+            self.sink.emit(diagnostic);
+            return None;
+        }
+        Some(self.integer_as_usize(index))
+    }
+
+    /// `[TYP-31]` (0.9.9) — an index or a size of any integer type, as the
+    /// `usize` the runtime keeps. A signed value is converted with `as`'s
+    /// wrap, so a negative one is past every length.
+    fn integer_as_usize(&mut self, index: &ast::Expr) -> Expr {
+        let usize_ty = self.common.usize;
+        let found = self.synth(index);
+        if self.types.is_untyped_literal(found.ty) || found.ty == self.common.error {
+            return self.coerce(found, usize_ty);
+        }
+        if !self.types.is_integral(found.ty) {
+            let shown = self.types.display(found.ty);
+            self.error(codes::E2020, index.span, format!("expected an integer, found `{shown}`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: index.span };
+        }
+        if found.ty == usize_ty {
+            return found;
+        }
+        let span = found.span;
+        Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(found), to: usize_ty }, span }
+    }
+
+    /// `[TYP-31]` (0.9.9) — a container's size, read as the `usize` the
+    /// runtime keeps, is an `int` to the program.
+    fn size_as_int(&self, size: Expr) -> Expr {
+        let int_ty = self.common.i64;
+        let span = size.span;
+        Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(size), to: int_ty }, span }
+    }
+
+    /// `[EXP-3]` — `x if c else y` evaluates `c`, then exactly one branch: a
+    /// two-arm `match` on the condition, lowered like one. With no expected
+    /// type the branches settle it the way a binary operator's operands do:
+    /// an untyped literal takes the other branch's type, and a `!` branch
+    /// (`panic(…)`) takes none.
+    fn check_ternary(
+        &mut self,
+        then_expr: &ast::Expr,
+        cond: &ast::Expr,
+        else_expr: &ast::Expr,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let bool_ty = self.common.bool_;
+        let never = self.common.never;
+        let cond = self.check_expr(cond, bool_ty);
+        let (then_v, else_v) = match expected {
+            Some(ty) => (self.check_expr(then_expr, ty), self.check_expr(else_expr, ty)),
+            None => {
+                let mut then_v = self.synth(then_expr);
+                let mut else_v = self.synth(else_expr);
+                let then_lit = self.types.is_untyped_literal(then_v.ty);
+                let else_lit = self.types.is_untyped_literal(else_v.ty);
+                if then_lit && else_lit && (self.types.is_float(then_v.ty) || self.types.is_float(else_v.ty)) {
+                    let float_lit = self.common.float_lit;
+                    then_v = self.adopt_literal(then_v, float_lit);
+                    else_v = self.adopt_literal(else_v, float_lit);
+                } else if then_lit && !else_lit && else_v.ty != never {
+                    then_v = self.coerce(then_v, else_v.ty);
+                }
+                let then_v = self.commit(then_v);
+                let else_v = if then_v.ty == never {
+                    self.commit(else_v)
+                } else {
+                    self.coerce(else_v, then_v.ty)
+                };
+                self.warn_if_literal_loses_precision(then_expr, then_v.ty);
+                self.warn_if_literal_loses_precision(else_expr, else_v.ty);
+                (then_v, else_v)
+            }
+        };
+        let ty = if then_v.ty == never { else_v.ty } else { then_v.ty };
+        let arm = |kind, body: Expr| {
+            let span = body.span;
+            hir::MatchArm {
+                pattern: hir::Pattern { ty: bool_ty, kind, span },
+                guard: None,
+                body: hir::MatchArmBody::Expr(body),
+                span,
+            }
+        };
+        let arms = vec![arm(hir::PatternKind::Int(1), then_v), arm(hir::PatternKind::Wild, else_v)];
+        Expr { ty, kind: ExprKind::Match { scrutinee: Box::new(cond), arms }, span }
+    }
+
     /// `[ENM-2]` — every value the scrutinee can take must be covered, and an
     /// arm that can never run is `W2091`. A guarded arm covers nothing, since
     /// the guard may fail at run time.
@@ -12053,6 +12234,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // instantiation until name resolution; an array base settles it.
             // The bounds check is added when this is lowered to MIR.
             ast::ExprKind::IndexOrInstantiate { base, args } => {
+                let base_ast = base;
                 let mut base = self.synth(base);
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
@@ -12090,8 +12272,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
-                let usize_ty = self.common.usize;
-                let index = self.check_expr(index_expr, usize_ty);
+                let Some(index) = self.check_index(index_expr, Some(base_ast), span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
                 Expr {
                     ty: elem,
                     kind: ExprKind::Index { base: Box::new(base), index: Box::new(index) },
@@ -12390,6 +12573,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     kind: ExprKind::Ref { place: Box::new(inner), mutable: *mutable },
                     span,
                 }
+            }
+
+            ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
+                self.check_ternary(then_expr, cond, else_expr, expected, span)
             }
 
             // `[GRM-16]` — a jump has type `!` and produces no value. Every
@@ -17817,7 +18004,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let capacity = self.check_expr(&args[0].value, self.common.usize);
+        let capacity = self.integer_as_usize(&args[0].value);
         Expr {
             ty: arena,
             kind: ExprKind::Builtin {
@@ -18138,12 +18325,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         span,
                     };
                 }
-                value
+                self.size_as_int(value)
             }
             "get" | "get_mut" => {
                 let mutable = method == "get_mut";
                 let receiver = self.arena_collection_receiver(receiver, mutable, span);
-                let index = self.check_expr(&args[0].value, self.common.usize);
+                let Some(index) = self.check_index(&args[0].value, None, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
                 let reference = self.types.intern(TyKind::Ref { mutable, inner: elem });
                 let result = self.option_of(reference);
                 Expr {
@@ -18174,7 +18363,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             "insert" => {
                 let receiver = self.arena_collection_receiver(receiver, true, span);
-                let index = self.check_expr(&args[0].value, self.common.usize);
+                let Some(index) = self.check_index(&args[0].value, None, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
                 let value = self.check_expr(&args[1].value, elem);
                 let Some(capacity_error) = self.capacity_error_ty() else {
                     self.error(codes::E1010, span, "`std.collections.CapacityError` is unavailable");
@@ -18192,7 +18383,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             "remove" => {
                 let receiver = self.arena_collection_receiver(receiver, true, span);
-                let index = self.check_expr(&args[0].value, self.common.usize);
+                let Some(index) = self.check_index(&args[0].value, None, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
                 let result = self.option_of(elem);
                 Expr {
                     ty: result,
@@ -18490,7 +18683,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                 };
                 if method != "is_empty" {
-                    return length;
+                    return self.size_as_int(length);
                 }
                 Expr {
                     ty: self.common.bool_,
@@ -18701,7 +18894,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let count = self.check_expr(&args[0].value, self.common.usize);
+            let count = self.integer_as_usize(&args[0].value);
             let slot = self.maybe_uninit_of(inner);
             let result = self.types.intern(TyKind::Span { elem: slot, mutable: true });
             let arena_ref = self.types.intern(TyKind::Ref {
@@ -18790,7 +18983,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let count = self.check_expr(&args[0].value, self.common.usize);
+            let count = self.integer_as_usize(&args[0].value);
             let result = self.types.intern(TyKind::Span { elem, mutable: true });
             let arena_ref = self.types.intern(TyKind::Ref {
                 mutable: false,
@@ -19275,7 +19468,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             } else {
                 receiver
             };
-            let width = self.check_expr(&args[0].value, usize_ty);
+            let width = self.integer_as_usize(&args[0].value);
             let iterator = self.instantiate_named_generic(
                 if wants_mut {
                     "std.collections.MutSpanChunks"
@@ -19343,7 +19536,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let index = self.check_expr(&args[0].value, usize_ty);
+            let Some(index) = self.check_index(&args[0].value, None, span) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
             let receiver = if mutable && is_place(&receiver.kind) {
                 self.pass_receiver(receiver, Mode::Mut, span)
             } else if mutable && !self.viewed_place(&receiver) {
@@ -19410,7 +19605,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let mut checked = vec![receiver];
         for arg in args {
-            checked.push(self.check_expr(&arg.value, usize_ty));
+            let Some(index) = self.check_index(&arg.value, None, span) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            checked.push(index);
         }
         // `is_empty` is `len() == 0`, written here rather than given a builtin
         // of its own: one fewer thing for the backend to know.
@@ -19431,7 +19629,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
-        Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span }
+        let call = Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span };
+        if name.name.is("len") { self.size_as_int(call) } else { call }
     }
 
     /// `[SPN-5]`, `[SPN-6]` — derive the source view stored by a named
@@ -19505,7 +19704,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return error;
             }
             self.reject_borrowed_parameter_write(&receiver, span, false);
-            let index = self.check_expr(&args[0].value, self.common.usize);
+            let Some(index) = self.check_index(&args[0].value, None, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
             let value = self.check_expr(&args[1].value, inner);
             let result = self.types.intern(TyKind::Ref { mutable: true, inner });
             return Expr {
@@ -19574,7 +19775,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let index = self.check_expr(&args[0].value, usize_ty);
+            let Some(index) = self.check_index(&args[0].value, None, span) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
             let receiver = self.pass_receiver(receiver, Mode::Mut, span);
             let view = self.types.intern(TyKind::Span { elem, mutable: true });
             let pair = self.types.intern(TyKind::Tuple(vec![view, view]));
@@ -19693,7 +19896,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let Some(param_ty) = takes {
             call_args.push(self.check_expr(&args[0].value, param_ty));
         }
-        Expr { ty: ret, kind: ExprKind::Builtin { which, args: call_args }, span }
+        let call = Expr { ty: ret, kind: ExprKind::Builtin { which, args: call_args }, span };
+        if matches!(which, Builtin::ArrayLen | Builtin::StringLen) { self.size_as_int(call) } else { call }
     }
 
     /// Part IV.11 step 3 — adjust the receiver to the method's declared mode.
@@ -20775,6 +20979,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.warn_if_literal_loses_precision(lhs_ast, lhs.ty);
         self.warn_if_literal_loses_precision(rhs_ast, rhs.ty);
 
+        // `[TYP-21]` makes `s == "x"` the call `s.eq("x")`, whose argument is
+        // a `[TYP-5]` coercion site. Comparing `String` with `str` borrows the
+        // `String` (rule 4): the same bytes compare, with no allocation.
+        if hir_op.is_comparison() {
+            let str_ty = self.common.str_;
+            if lhs.ty == str_ty && self.is_text(rhs.ty) {
+                rhs = self.coerce(rhs, str_ty);
+            } else if rhs.ty == str_ty && self.is_text(lhs.ty) {
+                lhs = self.coerce(lhs, str_ty);
+            }
+        }
+
         if lhs.ty != rhs.ty && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
@@ -20805,9 +21021,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
         }
 
-        // D-187 — C compares only scalars, pointers and unit-only enums. A
-        // comparison of any other type used to reach the C compiler and fail
-        // there; until `[STR-5]`'s field-wise `Eq` is built it is `E0900`.
+        // D-187 — C compares only scalars, pointers and unit-only enums. Every
+        // other comparison is a `ValueCompare` builtin, which borrows both
+        // operands: text by bytes (`[TYP-37]`'s table), and `==`/`!=` field by
+        // field for a type whose every component has `Eq` (`[STR-5]`).
         if hir_op.is_comparison() && !matches!(hir_op, BinOp::Is | BinOp::IsNot) {
             let c_comparable = match self.types.kind(operand_ty) {
                 TyKind::Struct(_)
@@ -20819,12 +21036,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
                 _ => true,
             };
-            if !c_comparable {
+            if !c_comparable && operand_ty != self.common.error {
+                let text = self.is_text(operand_ty);
+                let equality = matches!(hir_op, BinOp::Eq | BinOp::Ne);
+                if text || (equality && self.has_implicit_eq(operand_ty)) {
+                    return Expr {
+                        ty: self.common.bool_,
+                        kind: ExprKind::Builtin {
+                            which: Builtin::ValueCompare { op: hir_op },
+                            args: vec![lhs, rhs],
+                        },
+                        span,
+                    };
+                }
                 let shown = self.types.display(operand_ty);
-                self.error(
-                    codes::E0900,
-                    span,
-                    format!("comparing `{shown}` values with `{}` is not implemented yet", op.as_str()),
+                let interface = if equality { "Eq" } else { "Ord" };
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}` does not implement `{interface}`, which `{}` needs", op.as_str()),
+                    )
+                    .note(if equality {
+                        "a type has `Eq` when every field has it [STR-5]"
+                    } else {
+                        "a struct or enum is ordered only by `@derive(Ord)` [STR-5]"
+                    }),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }

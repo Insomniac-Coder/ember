@@ -7,7 +7,7 @@ struct Pair[T]:
     left: Span[T]
     right: Span[T]
 
-fn left_len[T](pair: Pair[T]) -> usize:
+fn left_len[T](pair: Pair[T]) -> int:
     return pair.left.len()
 
 fn main():

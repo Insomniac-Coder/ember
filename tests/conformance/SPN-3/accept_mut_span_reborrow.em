@@ -8,7 +8,7 @@
 # Explicit reborrow produces a new mutable view without moving its parent.
 # Direct view-producing expressions use the same operation and provenance.
 
-fn view_len[T](mut span: MutSpan[T]) -> usize:
+fn view_len[T](mut span: MutSpan[T]) -> int:
     child = span.reborrow()
     return child.len()
 

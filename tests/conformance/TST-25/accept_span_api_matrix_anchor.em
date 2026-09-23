@@ -3,7 +3,7 @@
 
 from std.collections import SpanIter, SpanChunks
 
-fn surface[T](span: Span[T]) -> usize:
+fn surface[T](span: Span[T]) -> int:
     iterator: SpanIter[T] = span.iter()
     chunks: SpanChunks[T] = span.chunks(1)
     match iterator.next():

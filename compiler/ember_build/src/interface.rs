@@ -250,10 +250,22 @@ impl PreparedInterfaceCache {
 
     pub fn commit(self) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
         for (path, bytes) in self.writes {
-            std::fs::write(&path, bytes).map_err(|source| InterfaceArtifactError::Io {
-                path: path.clone(),
+            // D-189 — compilations running side by side share this directory.
+            // Each writes aside and renames into place, so a reader sees the
+            // old record or the new one, never a half-written file.
+            let temp = path.with_extension(format!("tmp{}", std::process::id()));
+            std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io {
+                path: temp.clone(),
                 source,
             })?;
+            if let Err(source) = std::fs::rename(&temp, &path) {
+                let _ = std::fs::remove_file(&temp);
+                // Another compilation replaced it at the same moment; its
+                // record is complete, and the next read checks its key.
+                if !path.exists() {
+                    return Err(InterfaceArtifactError::Io { path, source });
+                }
+            }
         }
         Ok(self.report)
     }

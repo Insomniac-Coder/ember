@@ -27,7 +27,7 @@ fn sum_of_squares(n: usize) -> i32:
 # `[UNS-2]` â€” an `unsafe` block turns nothing off. It grants the operations
 # above and nothing else: this array is still bounds-checked inside it, and
 # still dropped at the end of the function.
-fn still_checked() -> usize:
+fn still_checked() -> int:
     xs: Array[i32] = Array()
     unsafe:
         xs.push(4)

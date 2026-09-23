@@ -13,7 +13,7 @@ struct CountingHasher implements Hasher:
         return CountingHasher(0)
 
     fn write_bytes(mut self, bytes: Span[u8]):
-        index: usize = 0
+        index = 0
         while index < bytes.len():
             self.state = self.state ^ (bytes[index] as u64)
             index = index + 1

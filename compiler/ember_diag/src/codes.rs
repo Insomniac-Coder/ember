@@ -169,6 +169,7 @@ codes! {
 
     // --- types, inference, interfaces, generics, patterns -------------------
     E2010 = (Error, 2010, Types, "[LEX-16]", "literal does not fit its type");
+    E2011 = (Error, 2011, Types, "[TYP-31]", "negative literal index");
     E2020 = (Error, 2020, Types, "[TYP-4]", "mismatched types");
     E2035 = (Error, 2035, Types, "[CTL-0]", "condition must be `bool`");
     E2036 = (Error, 2036, Types, "[GRM-19]", "this pattern always matches");

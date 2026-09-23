@@ -1211,6 +1211,15 @@ ember_str ember_vec_as_str(const ember_vec* v) {
     return s;
 }
 
+int ember_str_cmp(ember_str a, ember_str b) {
+    size_t n = a.len < b.len ? a.len : b.len;
+    int order = n == 0 ? 0 : memcmp(a.ptr, b.ptr, n);
+    if (order != 0) {
+        return order;
+    }
+    return (a.len > b.len) - (a.len < b.len);
+}
+
 /* -- panics ------------------------------------------------------------------ */
 
 void ember_backtrace_print(void) {
@@ -1248,8 +1257,14 @@ void ember_panic(const char* msg, size_t len, ember_loc loc) { panic_with(msg, l
 
 void ember_panic_bounds(size_t index, size_t len, ember_loc loc) {
     char buffer[128];
-    int written = snprintf(buffer, sizeof buffer,
-                           "index %zu is out of bounds for a length of %zu", index, len);
+    /* [TYP-31] (0.9.9): a signed index arrives wrapped by its conversion to
+     * size_t, and no length reaches the upper half, so print it back signed.
+     * ponytail: an unsigned index of 2^63 or more prints negative too. */
+    int written = index > (size_t)PTRDIFF_MAX
+        ? snprintf(buffer, sizeof buffer, "index %td is out of bounds for a length of %zu",
+                   (ptrdiff_t)index, len)
+        : snprintf(buffer, sizeof buffer, "index %zu is out of bounds for a length of %zu",
+                   index, len);
     panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
 }
 

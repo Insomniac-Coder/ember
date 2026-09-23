@@ -27,9 +27,13 @@ const BP_BITAND: u8 = bp(9);
 const BP_SHIFT: u8 = bp(10);
 const BP_ADD: u8 = bp(11);
 const BP_MUL: u8 = bp(12);
-const BP_UNARY: u8 = bp(13);
-const BP_POW: u8 = bp(14);
-const BP_CAST: u8 = bp(15);
+// 0.9.9 Part III table: `as` (15) binds looser than a prefix `-`, `~` or
+// `ref` (16), so `-x as u8` is `(-x) as u8`; `**` (17) is tighter than both,
+// and postfix `?` sits with calls and indexing (18).
+const BP_CAST: u8 = bp(13);
+const BP_UNARY: u8 = bp(14);
+const BP_POW: u8 = bp(15);
+const BP_POSTFIX: u8 = bp(16);
 
 impl Parser<'_> {
     // -- blocks ---------------------------------------------------------------
@@ -1203,7 +1207,7 @@ impl Parser<'_> {
                     });
                     ExprKind::OptChain { base: Box::new(expr), name, args }
                 }
-                TokenKind::Punct(Punct::Question) if min_bp <= BP_CAST => {
+                TokenKind::Punct(Punct::Question) if min_bp <= BP_POSTFIX => {
                     self.bump();
                     ExprKind::Try(Box::new(expr))
                 }

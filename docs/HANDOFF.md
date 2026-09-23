@@ -10697,20 +10697,48 @@ ODR-020 diagnostics change improves DIA-12 coverage, but DIA-12 is not one of
 Phase 2's `[DIA-7..10]` exit requirements; it therefore does not change the
 formal 1/9 count or Phase 2's estimate.
 
-### 0.355 0.9.9 implementation begins on `phase-0.9.9` — 2026-09-23
+### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_3.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_4.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
-branch `phase-0.9.9` (worktree `Code/ember-099`), because the main checkout
-holds uncommitted `ember_analysis` work that must not be clobbered.
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_3`.
+`main` (the owner retired the separate branch and declared the earlier
+uncommitted `ember_analysis` changes void).
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_4`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
-`tasks/spec-0.9.9/` (canonical on this branch). Landed so far: `int`/`float`
+`tasks/spec-0.9.9/`. Landed so far: `int`/`float`
 and `i64`/`f64` literal defaults, floor `//`/`%` and `E2240`, Python-exact
 float floor operations, `[TXT-9]` string literals, unparenthesised tuples,
-comparison chains; D-182–D-185; ODR-021 and ODR-022. The directory tests now
-report every failing case in one run (`check_file_collecting`).
+comparison chains, scripts, multi-argument `print`, `[FN-10]` and `E2182`,
+`Array` list literals, saturating float-to-integer `as`, overflow panics in
+every profile, the Part III binding powers, field-wise `==` and byte-wise
+text comparison, the ternary, `[TYP-31]` (`int` sizes, any integer index,
+`E2011`); D-182–D-189 (D-189: parallel compilations raced on the interface
+cache); ODR-021, ODR-022 and ODR-023. The next ODR is ODR-024. The directory
+tests now report every failing case in one run (`check_file_collecting`);
+`tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
+`tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.
+
+**Phase estimates against 0.9.9 (2026-09-23).** 0.9.9 dropped Part XXI (F-159:
+phase status is project tracking), so the phases are the ones 0.9.8 defined, by
+rule family. 0.9.9 marks 302 of its 899 rules new or changed. Method: the last
+recorded percentage, scaled by the share of the phase's rules that 0.9.9 left
+alone or that the 0.9.9 work has re-done with tests; a changed rule counts as
+undone until re-verified. Rough, and low for rules that may already comply.
+No phase is formally complete against 0.9.9: Phase 1's exit (conformance for
+Parts II–VI) no longer holds.
+
+| Phase | 0.9.8 record | 0.9.9 estimate | Rules touched by 0.9.9 |
+|---|---:|---:|---|
+| 1 Core language (Parts II–VI) | 100% | ~60% | 109 of 233; ~20 re-done (M1 is about half done) |
+| 2 Ownership | 86% | ~73% | 12 of 72 |
+| 3 Objects | 70% | ~45% | 24 of 68 (CLS/EXC changes; M2) |
+| 4 Effects, comptime, derives | 15% | ~9% | 13 of 35 |
+| 5 C FFI | 10% | ~8% | 15 of 86 |
+| 6 Concurrency and DOD | 5% | ~2% | 30 of 49 |
+| 7 C++ FFI and interpreter | 0% | 0% | — |
+| 7a Iteration, determinism, cost | 5% | ~4% | 11 of 94 |
+| 8 Hardening and 1.0 | 10% | ~9% | gates and corpus survey in place |

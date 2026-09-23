@@ -530,6 +530,10 @@ void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);
 /* A `String`'s bytes as a borrowed `str`. */
 ember_str ember_vec_as_str(const ember_vec* v);
 
+/* D-187, `[TYP-37]`: text compares by bytes. Negative, zero or positive as
+ * `a` sorts before, equal to or after `b`; a prefix sorts first. */
+int ember_str_cmp(ember_str a, ember_str b);
+
 /* -- formatting ------------------------------------------------------------ */
 
 /* `[LEX-19]` f-strings append each piece to a buffer. std.fmt's `Display`

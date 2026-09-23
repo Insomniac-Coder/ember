@@ -440,6 +440,11 @@ pub enum Builtin {
     /// with no context: one allocation holding exactly the elements, moved
     /// out of the fixed array that is the only argument.
     ArrayFromLiteral,
+    /// `[STR-5]`, `[TYP-37]` (0.9.9) — a comparison C cannot perform on the
+    /// values themselves: the six comparisons of `str`/`String` (by bytes),
+    /// and `==`/`!=` of structs, tuples, arrays, `Array`s and payload enums
+    /// (field by field). The two operands are borrowed, never moved.
+    ValueCompare { op: BinOp },
     /// `[CLS-1]` — allocate a class object, optionally followed by its
     /// compiler-known `init` method. The nominal class identity travels with
     /// the builtin so the backend can select the matching `TypeInfo` record;
@@ -725,6 +730,7 @@ impl Builtin {
             Builtin::Print => "print",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
+            Builtin::ValueCompare { .. } => "compare",
             Builtin::ClassNew { .. } => "class",
             Builtin::ClassDowncast { forced: true, .. } => "as!",
             Builtin::ClassDowncast { forced: false, .. } => "as?",

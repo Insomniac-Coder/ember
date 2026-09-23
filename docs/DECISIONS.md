@@ -1344,3 +1344,43 @@ runtime metadata. The ruling is preserved byte-for-byte at
 SHA-256 `BF735AFF393CB5EAEB08D73409AF8DF7F29E7D51773CA38D8E2950A26B5CCD7C`.
 H2 is a frozen development target, not an implementation or conformance claim;
 implementation and executable evidence remain separately required.
+
+## ADR-039 — Float `//` and `%` are Python's
+
+**Ruling on ODR-021 under the owner's delegation for 0.9.9, 2026-09-23.**
+`[TYP-29]` defined float `//` and `%` by a formula that, evaluated in IEEE
+arithmetic, can return a remainder of the wrong sign and lose
+`a == (a // b) * b + a % b` far beyond rounding.
+
+**Decision.** The result is Python's: the floor modulo computed exactly and
+rounded once, and a quotient consistent with it. Zero divisors, infinities and
+NaN follow IEEE through `fmod` and the division. `0.9.9_Hardened_3` states the
+exact definition in `[TYP-29]`; the runtime implements it as
+`ember_floordiv_f32/f64` and `ember_floorrem_f32/f64`.
+
+## ADR-040 — `x = 0` is `int` at its declaration
+
+**Ruling on ODR-022 under the owner's delegation for 0.9.9, 2026-09-23.**
+`[LEX-16]`/`[LEX-17]` left open whether a later use can fix the type of a local
+initialised by an untyped literal.
+
+**Decision.** The declaration fixes it: `total = 0` is `int` and `x = 0.5` is
+`float`, whatever later uses need. A later use cannot change an earlier
+variable's width, and with it where its arithmetic overflows. `[]`, `Map()`
+and `None` stay open because they have no default. A later mismatch is `E2020`
+whose help names the declaration and the annotation that fixes it
+(`total: i32 = 0`). `0.9.9_Hardened_3` states the rule in `[TYP-23]`.
+
+## ADR-041 — A value function that can reach its end is `E2182`
+
+**Ruling on ODR-023 under the owner's delegation for 0.9.9, 2026-09-23.**
+`[FN-10]` gives only `void` and `Result[void, E]` an implicit value at the end
+of a body, but named no diagnostic for any other function whose end is
+reachable; the compiler accepted such a function and returned an
+uninitialised value (D-186).
+
+**Decision.** A dedicated code, `E2182` — "a function that returns a value can
+reach the end of its body" — shown at the function's name, with the help to
+return on every path or end with `panic(…)`. It is not a type mismatch the
+programmer wrote. `0.9.9_Hardened_4` adds the sentence to `[FN-10]` and the row
+to §XVII.9.

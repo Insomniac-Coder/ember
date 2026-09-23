@@ -39,7 +39,9 @@ def survey(path):
             return (rel, 'compile-fail lost ' + ','.join(missing or ['rejection']), errs[:3])
         return None
     if r.returncode != 0:
-        return (rel, 'rejected', errs[:3])
+        # No `error[...]` line means the compiler did not report: show why.
+        detail = '' if errs else f' (exit {r.returncode}: {out.strip()[:200]!r})'
+        return (rel, 'rejected' + detail, errs[:3])
     return None
 
 

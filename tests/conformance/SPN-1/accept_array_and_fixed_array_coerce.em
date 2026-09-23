@@ -5,14 +5,14 @@
 
 fn total(xs: Span[i32]) -> i32:
     sum: i32 = 0
-    i: usize = 0
+    i: int = 0
     while i < xs.len():
         sum = sum + xs[i]
         i = i + 1
     return sum
 
 fn fill(mut xs: MutSpan[i32], v: i32):
-    i: usize = 0
+    i: int = 0
     while i < xs.len():
         xs[i] = v
         i = i + 1

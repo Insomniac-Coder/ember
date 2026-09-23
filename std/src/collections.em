@@ -91,7 +91,7 @@ pub struct DefaultHasher implements Hasher:
         self.state = ((self.state << 7) | (self.state >> 57)) ^ word
 
     fn write_bytes(mut self, bytes: Span[u8]):
-        index: usize = 0
+        index = 0
         while index < bytes.len():
             self.mix(bytes[index] as u64)
             index = index + 1
