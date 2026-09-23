@@ -1,0 +1,25 @@
+# Audit reproducer for DIAG-2 (tasks/audit/TASKS.md).
+# Expected: names the place h.items
+# Observed at 46f225a: names the place `h.0`
+# Run: cargo run -p ember_driver --bin ember -- run tasks/audit/repro/diag_internal_place_names.em --profile debug|release|shipping
+# Memory errors: ember build <file> --emit c > x.c && gcc -std=c11 -O0 -g -fsanitize=address,undefined -I runtime/ember_rt/include x.c runtime/ember_rt/src/ember_rt.c -lm
+
+class Holder:
+    items: Array[i32]
+
+    fn grow(mut self):
+        i: i32 = 0
+        while i < 1000:
+            self.items.push(i)
+            i = i + 1
+
+fn filled() -> Array[i32]:
+    a: Array[i32] = Array()
+    a.push(7)
+    return a
+
+fn main():
+    h = Holder(filled())
+    s: Span[i32] = h.items.as_span()
+    h.grow()
+    println(s[0])
