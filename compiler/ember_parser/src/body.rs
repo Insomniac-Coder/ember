@@ -446,28 +446,7 @@ impl Parser<'_> {
 
     fn parse_for(&mut self, label: Option<Ident>) -> StmtKind {
         self.expect_kw(Kw::For);
-        // `[CTL-1]` permits the concise tuple form `for a, b in pairs`.
-        // Elsewhere tuple patterns carry their own parentheses, but `for`
-        // owns this header grammar and the comma cannot introduce an
-        // expression before the required `in`.
-        let first = self.parse_pattern();
-        let pattern = if self.eat_punct(Punct::Comma) {
-            let start = first.span;
-            let mut items = vec![first];
-            loop {
-                items.push(self.parse_pattern());
-                if !self.eat_punct(Punct::Comma) {
-                    break;
-                }
-            }
-            Pattern {
-                id: self.next_id(),
-                kind: PatternKind::Tuple(items),
-                span: start.to(self.prev_span()),
-            }
-        } else {
-            first
-        };
+        let pattern = self.parse_for_target();
         self.expect_kw(Kw::In);
         let iter = self.parse_consumable_expr();
         self.expect_punct(Punct::Colon);
@@ -1010,7 +989,15 @@ impl Parser<'_> {
                     ExprKind::Tuple(Vec::new())
                 } else {
                     let first = self.parse_expr();
-                    if self.at_punct(Punct::Comma) {
+                    if self.at_kw(Kw::For) {
+                        let clauses = self.parse_comp_clauses();
+                        self.expect_punct(Punct::RParen);
+                        ExprKind::Comprehension {
+                            kind: ComprehensionKind::Generator,
+                            element: Box::new(first),
+                            clauses,
+                        }
+                    } else if self.at_punct(Punct::Comma) {
                         let mut items = vec![first];
                         while self.eat_punct(Punct::Comma) {
                             if self.at_punct(Punct::RParen) {
@@ -1032,7 +1019,15 @@ impl Parser<'_> {
                     ExprKind::ArrayLit(Vec::new())
                 } else {
                     let first = self.parse_expr();
-                    if self.eat_punct(Punct::Semi) {
+                    if self.at_kw(Kw::For) {
+                        let clauses = self.parse_comp_clauses();
+                        self.expect_punct(Punct::RBracket);
+                        ExprKind::Comprehension {
+                            kind: ComprehensionKind::Array,
+                            element: Box::new(first),
+                            clauses,
+                        }
+                    } else if self.eat_punct(Punct::Semi) {
                         // `[value; count]`
                         let count = self.parse_expr();
                         self.expect_punct(Punct::RBracket);
@@ -1250,6 +1245,46 @@ impl Parser<'_> {
         }
     }
 
+    /// `[CTL-1]` permits the concise tuple form `for a, b in pairs`.
+    /// Elsewhere tuple patterns carry their own parentheses, but `for` owns
+    /// this header grammar and the comma cannot introduce an expression
+    /// before the required `in`. Comprehension clauses share it.
+    fn parse_for_target(&mut self) -> Pattern {
+        let first = self.parse_pattern();
+        if !self.eat_punct(Punct::Comma) {
+            return first;
+        }
+        let start = first.span;
+        let mut items = vec![first];
+        loop {
+            items.push(self.parse_pattern());
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+        }
+        Pattern { id: self.next_id(), kind: PatternKind::Tuple(items), span: start.to(self.prev_span()) }
+    }
+
+    /// `[GRM-27]` — `for target in or_expr {for target in or_expr | if
+    /// or_expr}` after a comprehension's element. The iterables and
+    /// conditions are `or_expr`s, so a trailing `if` is a filter, never a
+    /// conditional expression.
+    fn parse_comp_clauses(&mut self) -> Vec<CompClause> {
+        let mut clauses = Vec::new();
+        loop {
+            if self.eat_kw(Kw::For) {
+                let pattern = self.parse_for_target();
+                self.expect_kw(Kw::In);
+                let iter = self.parse_expr_bp(BP_TERNARY + 1, false);
+                clauses.push(CompClause::For { pattern, iter });
+            } else if self.eat_kw(Kw::If) {
+                clauses.push(CompClause::If(self.parse_expr_bp(BP_TERNARY + 1, false)));
+            } else {
+                return clauses;
+            }
+        }
+    }
+
     fn parse_args(&mut self) -> Vec<Arg> {
         let mut args = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
@@ -1264,7 +1299,32 @@ impl Parser<'_> {
             // `small_stmt`, not a block: indentation is not significant here,
             // so there is nothing for a second statement to belong to.
             // `[GRM-17]` is the diagnostic when one is written anyway.
-            let value = self.parse_expr_no_block();
+            let mut value = self.parse_expr_no_block();
+            // `[GRM-38]` — as the only argument, a generator expression needs
+            // no parentheses of its own: `sum(x * x for x in xs)`.
+            if name.is_none() && args.is_empty() && self.at_kw(Kw::For) {
+                let clauses = self.parse_comp_clauses();
+                value = Expr {
+                    id: self.next_id(),
+                    kind: ExprKind::Comprehension {
+                        kind: ComprehensionKind::Generator,
+                        element: Box::new(value),
+                        clauses,
+                    },
+                    span: start.to(self.prev_span()),
+                };
+                if self.at_punct(Punct::Comma) && !self.at_punct_at(1, Punct::RParen) {
+                    let span = value.span;
+                    self.report(
+                        Diagnostic::error(
+                            codes::E0100,
+                            span,
+                            "a generator expression that is not the only argument needs parentheses",
+                        )
+                        .help("write `f((e for x in xs), other)`, as Python requires [GRM-38]"),
+                    );
+                }
+            }
             args.push(Arg { name, value, span: start.to(self.prev_span()) });
             if !self.eat_punct(Punct::Comma) {
                 break;
@@ -1365,9 +1425,9 @@ impl Parser<'_> {
             .into_iter()
             .map(|part| match part {
                 ember_lexer::FStrPart::Text(text) => FStringPart::Text(text),
-                ember_lexer::FStrPart::Expr { span, format_spec } => {
+                ember_lexer::FStrPart::Expr { span, format_spec, echo, conversion } => {
                     let expr = self.parse_subexpression(span);
-                    FStringPart::Expr { expr: Box::new(expr), format_spec }
+                    FStringPart::Expr { expr: Box::new(expr), format_spec, echo, conversion }
                 }
             })
             .collect()

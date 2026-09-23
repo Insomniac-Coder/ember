@@ -1,12 +1,12 @@
 #$ test: run-pass
 #$ rules: TYP-29
 #$ profiles: debug, release, shipping
-#$ stdout: 9
+#$ stdout: 9.0
 #$ 0.09999999999999995
-#$ -4
+#$ -4.0
 #$ 0.5
 #$ -0.5
-#$ -15
+#$ -15.0
 #$ assert-c: contains("ember_floorrem_f64")
 #$ assert-c: contains("ember_floordiv_f64")
 # ODR-021: float `//` and `%` are Python's. `0.1` is slightly more than a

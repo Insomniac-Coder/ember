@@ -122,7 +122,10 @@ pub enum FStrPart {
     Text(String),
     /// An interpolated expression. `span` covers the expression source inside
     /// the braces, so diagnostics from sub-parsing point at the real file.
-    Expr { span: Span, format_spec: Option<String> },
+    /// `[LEX-19]` — `echo` is `Some("x = ")` for `{x = }` (the source text
+    /// through the `=`, printed before the value), and `conversion` is the
+    /// letter of `{x!r}`.
+    Expr { span: Span, format_spec: Option<String>, echo: Option<String>, conversion: Option<char> },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

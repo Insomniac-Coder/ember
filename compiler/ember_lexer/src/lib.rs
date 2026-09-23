@@ -856,11 +856,38 @@ impl<'a> Lexer<'a> {
         let hole_end = self.pos;
         self.pos += 1; // '}'
 
-        let expr_end = spec_at.unwrap_or(hole_end);
+        let mut expr_end = spec_at.unwrap_or(hole_end);
         let format_spec = spec_at.map(|at| self.src[at + 1..hole_end].to_string());
+        // `[LEX-19]` — Python's `{expr=}` and `{expr!r}`, which end the
+        // expression: a trailing `!` and one letter is a conversion, and a
+        // trailing `=` that is not part of `==`, `!=`, `<=` or `>=` asks for
+        // the source text before the value.
+        let mut conversion = None;
+        let text = &self.src[expr_start..expr_end];
+        let trimmed = text.trim_end();
+        let bytes = trimmed.as_bytes();
+        if bytes.len() >= 2
+            && bytes[bytes.len() - 2] == b'!'
+            && bytes[bytes.len() - 1].is_ascii_alphabetic()
+        {
+            conversion = Some(bytes[bytes.len() - 1] as char);
+            expr_end = expr_start + trimmed.len() - 2;
+        }
+        let mut echo = None;
+        let text = &self.src[expr_start..expr_end];
+        let trimmed = text.trim_end();
+        if let Some(before) = trimmed.strip_suffix('=')
+            && !before.ends_with(['=', '!', '<', '>'])
+            && !before.trim().is_empty()
+        {
+            echo = Some(text.to_string());
+            expr_end = expr_start + before.len();
+        }
         Some(FStrPart::Expr {
             span: Span::new(self.file, expr_start as u32, expr_end as u32),
             format_spec,
+            echo,
+            conversion,
         })
     }
 

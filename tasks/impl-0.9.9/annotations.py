@@ -1,7 +1,9 @@
 """Check a directory's annotations against the compiler in seconds, rather than the full
-conformance run: `#$ error[CODE]: message`, `#$ help:`, `#$ not-help:`, and for run tests
+conformance run: `#$ error[CODE]: text`, `#$ help:`, `#$ not-help:`, and for run tests
 `#$ stdout:` (with its `#$` continuation lines) and `#$ panics:`. A run test uses its first
-listed profile.
+listed profile. Matching follows the harness in `ember_driver/tests/milestones.rs`: an
+error's text may appear anywhere in that diagnostic (message or labels), and a help's text
+anywhere in a help line.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
@@ -15,12 +17,14 @@ EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.
 
 
 def expected_stdout(text):
-    """Every `#$ stdout:` line in order, each followed by its `#$` continuations."""
+    """Every `#$ stdout:` line in order, each followed by its `#$` continuations; an empty
+    `#$ stdout:` only opens the block."""
     lines = text.split('\n')
     out = None
     for index, line in enumerate(lines):
         if line.startswith('#$ stdout:'):
-            out = (out or []) + [line[len('#$ stdout:'):].strip()]
+            first = line[len('#$ stdout:'):].strip()
+            out = (out or []) + ([first] if first else [])
             for more in lines[index + 1:]:
                 if more == '#$':
                     out.append('')
@@ -35,6 +39,19 @@ def run(args, path):
     result = subprocess.run([EMBER, *args, path], cwd=ROOT, capture_output=True, text=True,
                             encoding='utf-8', errors='replace')
     return result.returncode, result.stdout.replace('\r\n', '\n'), result.stderr
+
+
+def diagnostics(rendered):
+    """(code, text of the whole diagnostic) for each `error[...]`."""
+    blocks, current = [], None
+    for line in rendered.split('\n'):
+        match = re.match(r'^(error|warning)\[(\w+)\]', line)
+        if match:
+            current = [match[2], line]
+            blocks.append(current)
+        elif current is not None:
+            current[1] += '\n' + line
+    return blocks
 
 
 def check(path):
@@ -55,14 +72,15 @@ def check(path):
         return problems
     code, out, err = run(['check'], path)
     out = out + err
+    help_lines = [line for line in out.split('\n') if 'help:' in line]
     helps = [h.strip() for h in re.findall(r'^\s*#\$ help:(.*)$', text, re.M)]
     absent = [h.strip() for h in re.findall(r'^\s*#\$ not-help:(.*)$', text, re.M)]
-    errors = re.findall(r'#\$ error\[(\w+)\]: (.*)$', text, re.M)
-    problems += [f'missing help: {h}' for h in helps if f'help: {h}' not in out]
-    problems += [f'unwanted help: {h}' for h in absent if f'help: {h}' in out]
-    lines = re.findall(r'^error\[(\w+)\]: (.*)$', out, re.M)
+    errors = re.findall(r'#\$ error\[(\w+)\](?::\s*(.*))?$', text, re.M)
+    problems += [f'missing help: {h}' for h in helps if not any(h in line for line in help_lines)]
+    problems += [f'unwanted help: {h}' for h in absent if any(h in line for line in help_lines)]
+    found = diagnostics(out)
     problems += [f'missing error[{c}]: {m}' for c, m in errors
-                 if not any(code == c and m.strip() in said for code, said in lines)]
+                 if not any(code == c and m.strip() in block for code, block in found)]
     return problems
 
 

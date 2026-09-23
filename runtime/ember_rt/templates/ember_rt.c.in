@@ -1379,38 +1379,100 @@ void ember_panic_unwrap(const char* what, ember_loc loc) {
  * prints 10.0 as "1e+01". Every precision is tried and the shortest result
  * kept, which picks "10" here and still picks "1e+20" over twenty-one
  * digits. */
+/* `[STD-20]` (0.9.9): a float's text is Python's `repr`. The digits are the
+ * fewest that read back as the same value; they are written in fixed notation
+ * when the decimal exponent is in [-4, 16), with `.0` on an integral value
+ * (`1.0`, `0.0001`), and in exponent notation otherwise, with a sign and at
+ * least two exponent digits (`1e+300`, `1e-05`, `1.5e+16`). NaN and the
+ * infinities are `nan`, `inf` and `-inf`. `max_digits` is 17 for f64 and 9
+ * for f32, the counts that always round-trip. */
+static void write_repr(double v, bool single, int max_digits, char* out, size_t cap) {
+    if (isnan(v)) {
+        snprintf(out, cap, "nan");
+        return;
+    }
+    if (isinf(v)) {
+        snprintf(out, cap, v < 0 ? "-inf" : "inf");
+        return;
+    }
+    char scientific[40];
+    for (int digits = 1; digits <= max_digits; ++digits) {
+        snprintf(scientific, sizeof scientific, "%.*e", digits - 1, v);
+        bool same = single ? strtof(scientific, NULL) == (float)v : strtod(scientific, NULL) == v;
+        if (same) {
+            break;
+        }
+    }
+    /* `scientific` is `[-]d[.ddd]e(+|-)XX`: split it into sign, digits and
+     * exponent, dropping the trailing zeros of the digits. */
+    const char* s = scientific;
+    bool negative = *s == '-';
+    if (negative) {
+        ++s;
+    }
+    char digits[40];
+    int n = 0;
+    while (*s != '\0' && *s != 'e' && *s != 'E') {
+        if (*s != '.') {
+            digits[n++] = *s;
+        }
+        ++s;
+    }
+    int exponent = *s != '\0' ? atoi(s + 1) : 0;
+    while (n > 1 && digits[n - 1] == '0') {
+        --n;
+    }
+    char text[64];
+    size_t at = 0;
+    if (negative) {
+        text[at++] = '-';
+    }
+    if (exponent >= -4 && exponent < 16) {
+        if (exponent < 0) {
+            text[at++] = '0';
+            text[at++] = '.';
+            for (int zero = 0; zero < -exponent - 1; ++zero) {
+                text[at++] = '0';
+            }
+            for (int i = 0; i < n; ++i) {
+                text[at++] = digits[i];
+            }
+        } else {
+            int whole = exponent + 1;
+            for (int i = 0; i < whole; ++i) {
+                text[at++] = i < n ? digits[i] : '0';
+            }
+            text[at++] = '.';
+            if (whole >= n) {
+                text[at++] = '0';
+            } else {
+                for (int i = whole; i < n; ++i) {
+                    text[at++] = digits[i];
+                }
+            }
+        }
+        text[at] = '\0';
+    } else {
+        text[at++] = digits[0];
+        if (n > 1) {
+            text[at++] = '.';
+            for (int i = 1; i < n; ++i) {
+                text[at++] = digits[i];
+            }
+        }
+        text[at] = '\0';
+        snprintf(text + at, sizeof text - at, "e%c%02d", exponent < 0 ? '-' : '+',
+                 exponent < 0 ? -exponent : exponent);
+    }
+    snprintf(out, cap, "%s", text);
+}
+
 static void write_shortest_f64(double v, char* buffer, size_t cap) {
-    char candidate[32];
-    buffer[0] = '\0';
-    for (int precision = 1; precision <= 17; ++precision) {
-        snprintf(candidate, sizeof candidate, "%.*g", precision, v);
-        if (strtod(candidate, NULL) != v) {
-            continue;
-        }
-        if (buffer[0] == '\0' || strlen(candidate) < strlen(buffer)) {
-            snprintf(buffer, cap, "%s", candidate);
-        }
-    }
-    if (buffer[0] == '\0') {
-        snprintf(buffer, cap, "%.17g", v);
-    }
+    write_repr(v, false, 17, buffer, cap);
 }
 
 static void write_shortest_f32(float v, char* buffer, size_t cap) {
-    char candidate[32];
-    buffer[0] = '\0';
-    for (int precision = 1; precision <= 9; ++precision) {
-        snprintf(candidate, sizeof candidate, "%.*g", precision, (double)v);
-        if (strtof(candidate, NULL) != v) {
-            continue;
-        }
-        if (buffer[0] == '\0' || strlen(candidate) < strlen(buffer)) {
-            snprintf(buffer, cap, "%s", candidate);
-        }
-    }
-    if (buffer[0] == '\0') {
-        snprintf(buffer, cap, "%.9g", (double)v);
-    }
+    write_repr((double)v, true, 9, buffer, cap);
 }
 
 /* Encode one Unicode scalar value as UTF-8. Returns the byte count. */
@@ -1531,4 +1593,299 @@ void ember_fmt_char(ember_vec* out, uint32_t value) {
 
 void ember_fmt_str(ember_vec* out, ember_str value) {
     ember_vec_extend(out, value.ptr, value.len);
+}
+
+/* -- `[LEX-19]` format specs ------------------------------------------------ */
+
+static size_t utf8_count(const unsigned char* s, size_t n) {
+    size_t count = 0;
+    for (size_t i = 0; i < n; ++i) {
+        count += (s[i] & 0xC0) != 0x80;
+    }
+    return count;
+}
+
+static void push_fill(ember_vec* out, uint32_t fill, size_t count) {
+    unsigned char buffer[4];
+    size_t n = encode_utf8(fill, buffer);
+    for (size_t i = 0; i < count; ++i) {
+        ember_vec_extend(out, buffer, n);
+    }
+}
+
+/* `prefix` (a sign, `0x`) then `body`, padded to the width: `align` or the
+ * type's default, `^` putting the odd fill on the right. */
+static void emit_padded(ember_vec* out, const char* prefix, const unsigned char* body, size_t body_len,
+                        const ember_fmt_spec* spec, char default_align) {
+    size_t prefix_len = strlen(prefix);
+    size_t len = prefix_len + utf8_count(body, body_len);
+    size_t pad = spec->width > len ? spec->width - len : 0;
+    char align = spec->align ? spec->align : default_align;
+    size_t left = align == '>' ? pad : (align == '^' ? pad / 2 : 0);
+    push_fill(out, spec->fill, left);
+    ember_vec_extend(out, prefix, prefix_len);
+    ember_vec_extend(out, body, body_len);
+    push_fill(out, spec->fill, pad - left);
+}
+
+/* `digits` with `sep` every `every` digits from the right, after `zeros`
+ * leading zeros. */
+static void group_digits(ember_vec* out, const char* digits, size_t n, size_t zeros, char sep, int every) {
+    size_t total = n + zeros;
+    for (size_t i = 0; i < total; ++i) {
+        if (sep && i > 0 && (total - i) % (size_t)every == 0) {
+            ember_vec_extend(out, &sep, 1);
+        }
+        char c = i < zeros ? '0' : digits[i - zeros];
+        ember_vec_extend(out, &c, 1);
+    }
+}
+
+static size_t grouped_length(size_t digits, char sep, int every) {
+    return digits + (sep && digits > 0 ? (digits - 1) / (size_t)every : 0);
+}
+
+/* A number: `prefix`, then the integer digits (grouped, and zero-padded to the
+ * width when the `0` flag is set and no alignment is), then `rest` (a
+ * fraction, an exponent, a `%`). */
+static void emit_number(ember_vec* out, const char* prefix, const char* digits, size_t n, const char* rest,
+                        const ember_fmt_spec* spec, int every) {
+    ember_vec body = ember_vec_empty();
+    size_t rest_len = strlen(rest);
+    size_t zeros = 0;
+    if (spec->zero && !spec->align) {
+        size_t need = spec->width > strlen(prefix) + rest_len ? spec->width - strlen(prefix) - rest_len : 0;
+        while (grouped_length(n + zeros, spec->grouping, every) < need) {
+            ++zeros;
+        }
+    }
+    group_digits(&body, digits, n, zeros, spec->grouping, every);
+    ember_vec_extend(&body, rest, rest_len);
+    emit_padded(out, prefix, (const unsigned char*)body.ptr, body.len, spec, '>');
+    ember_vec_free(&body, 1);
+}
+
+static void sign_prefix(char* prefix, bool negative, const ember_fmt_spec* spec) {
+    size_t at = 0;
+    if (negative) {
+        prefix[at++] = '-';
+    } else if (spec->sign == '+' || spec->sign == ' ') {
+        prefix[at++] = spec->sign;
+    }
+    prefix[at] = '\0';
+}
+
+static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_spec spec);
+
+/* `snprintf` of one precision and one double into a buffer of the size it
+ * needs, which the caller frees. */
+static char* print_sized(const char* format, int precision, double value) {
+    int size = snprintf(NULL, 0, format, precision, value);
+    char* text = (char*)malloc((size_t)size + 1);
+    snprintf(text, (size_t)size + 1, format, precision, value);
+    return text;
+}
+
+static void fmt_spec_integer(ember_vec* out, bool negative, uint64_t magnitude, ember_fmt_spec spec) {
+    char kind = spec.kind == 0 || spec.kind == '?' ? 'd' : spec.kind;
+    if (strchr("eEfFgG%", kind)) {
+        double value = (double)magnitude;
+        fmt_spec_float(out, negative ? -value : value, false, spec);
+        return;
+    }
+    unsigned base = kind == 'x' || kind == 'X' ? 16 : kind == 'b' ? 2 : kind == 'o' ? 8 : 10;
+    const char* numerals = kind == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
+    char reversed[72];
+    size_t n = 0;
+    do {
+        reversed[n++] = numerals[magnitude % base];
+        magnitude /= base;
+    } while (magnitude != 0);
+    char digits[72];
+    for (size_t i = 0; i < n; ++i) {
+        digits[i] = reversed[n - 1 - i];
+    }
+    char prefix[8];
+    sign_prefix(prefix, negative, &spec);
+    if (spec.alternate && base != 10) {
+        size_t at = strlen(prefix);
+        prefix[at++] = '0';
+        prefix[at++] = kind;
+        prefix[at] = '\0';
+    }
+    emit_number(out, prefix, digits, n, "", &spec, base == 10 ? 3 : 4);
+}
+
+void ember_fmt_spec_i64(ember_vec* out, int64_t value, ember_fmt_spec spec) {
+    uint64_t magnitude = value < 0 ? (uint64_t)(-(value + 1)) + 1 : (uint64_t)value;
+    fmt_spec_integer(out, value < 0, magnitude, spec);
+}
+
+void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec) {
+    fmt_spec_integer(out, false, value, spec);
+}
+
+static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_spec spec) {
+    bool negative = signbit(value) && !isnan(value);
+    double magnitude = fabs(value);
+    char prefix[4];
+    sign_prefix(prefix, negative, &spec);
+    char kind = spec.kind;
+    bool upper = kind == 'E' || kind == 'F' || kind == 'G';
+    if (!isfinite(magnitude)) {
+        const char* word = isnan(magnitude) ? (upper ? "NAN" : "nan") : (upper ? "INF" : "inf");
+        ember_fmt_spec plain = spec;
+        plain.zero = false;
+        emit_padded(out, prefix, (const unsigned char*)word, strlen(word), &plain, '>');
+        return;
+    }
+    int precision = spec.precision < 0 ? 6 : spec.precision;
+    char format[16];
+    ember_vec text = ember_vec_empty();
+    char* printed = NULL;
+    if (kind == 0 && spec.precision < 0) {
+        char repr[64];
+        write_repr(magnitude, single, single ? 9 : 17, repr, sizeof repr);
+        ember_vec_extend(&text, repr, strlen(repr));
+    } else if (kind == '?') {
+        char repr[64];
+        write_repr(magnitude, single, single ? 9 : 17, repr, sizeof repr);
+        ember_vec_extend(&text, repr, strlen(repr));
+    } else if (kind == 0) {
+        /* A precision and no type is `g` with at least one digit after the
+         * point (CPython's `Py_DTSF_ADD_DOT_0`): exponent notation from an
+         * exponent of `precision - 1` up, one step earlier than `g`, and
+         * trailing zeros dropped. */
+        int digits = precision == 0 ? 1 : precision;
+        char* scientific = print_sized("%.*e", digits - 1, magnitude);
+        int exponent = atoi(strchr(scientific, 'e') + 1);
+        if (exponent < -4 || exponent >= digits - 1) {
+            char* e = strchr(scientific, 'e');
+            size_t end = (size_t)(e - scientific);
+            while (end > 1 && scientific[end - 1] == '0') {
+                --end;
+            }
+            if (scientific[end - 1] == '.') {
+                --end;
+            }
+            ember_vec_extend(&text, scientific, end);
+            ember_vec_extend(&text, e, strlen(e));
+        } else {
+            char* fixed = print_sized("%.*f", digits - 1 - exponent, magnitude);
+            size_t end = strlen(fixed);
+            if (strchr(fixed, '.')) {
+                while (fixed[end - 1] == '0' && fixed[end - 2] != '.') {
+                    --end;
+                }
+                ember_vec_extend(&text, fixed, end);
+            } else {
+                ember_vec_extend(&text, fixed, end);
+                ember_vec_extend(&text, ".0", 2);
+            }
+            free(fixed);
+        }
+        free(scientific);
+    } else {
+        double shown = kind == '%' ? magnitude * 100.0 : magnitude;
+        char letter = kind == '%' ? 'f' : kind;
+        snprintf(format, sizeof format, "%%%s.*%c", spec.alternate ? "#" : "", letter);
+        printed = print_sized(format, precision, shown);
+        ember_vec_extend(&text, printed, strlen(printed));
+        free(printed);
+        if (kind == '%') {
+            ember_vec_extend(&text, "%", 1);
+        }
+    }
+    /* Split the integer digits from the rest, so they can be grouped. */
+    const char* s = (const char*)text.ptr;
+    size_t n = 0;
+    while (n < text.len && s[n] >= '0' && s[n] <= '9') {
+        ++n;
+    }
+    char* rest = (char*)malloc(text.len - n + 1);
+    memcpy(rest, s + n, text.len - n);
+    rest[text.len - n] = '\0';
+    emit_number(out, prefix, s, n, rest, &spec, 3);
+    free(rest);
+    ember_vec_free(&text, 1);
+}
+
+void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec) {
+    fmt_spec_float(out, value, false, spec);
+}
+
+void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec) {
+    fmt_spec_float(out, (double)value, true, spec);
+}
+
+/* Python's `repr` of text: single quotes unless the text holds one and no
+ * double quote; `\\`, the quote, `\n`, `\r`, `\t` and other control bytes
+ * escaped. ponytail: non-printable Unicode above ASCII is written as is;
+ * Python escapes it. */
+static void repr_text(ember_vec* out, const unsigned char* s, size_t n) {
+    bool single_quote = memchr(s, '\'', n) != NULL;
+    bool double_quote = memchr(s, '"', n) != NULL;
+    char quote = single_quote && !double_quote ? '"' : '\'';
+    ember_vec_extend(out, &quote, 1);
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = s[i];
+        char escape[5];
+        if (c == (unsigned char)quote || c == '\\') {
+            escape[0] = '\\';
+            escape[1] = (char)c;
+            ember_vec_extend(out, escape, 2);
+        } else if (c == '\n' || c == '\r' || c == '\t') {
+            escape[0] = '\\';
+            escape[1] = c == '\n' ? 'n' : (c == '\r' ? 'r' : 't');
+            ember_vec_extend(out, escape, 2);
+        } else if (c < 0x20 || c == 0x7F) {
+            snprintf(escape, sizeof escape, "\\x%02x", c);
+            ember_vec_extend(out, escape, 4);
+        } else {
+            ember_vec_extend(out, &c, 1);
+        }
+    }
+    ember_vec_extend(out, &quote, 1);
+}
+
+/* Text, or its `repr` for `?`; a precision keeps that many characters. */
+static void fmt_spec_text(ember_vec* out, const unsigned char* s, size_t n, bool quoted, ember_fmt_spec spec) {
+    ember_vec body = ember_vec_empty();
+    if (quoted) {
+        repr_text(&body, s, n);
+    } else {
+        ember_vec_extend(&body, s, n);
+    }
+    size_t len = body.len;
+    if (spec.precision >= 0) {
+        size_t kept = 0;
+        len = 0;
+        const unsigned char* b = (const unsigned char*)body.ptr;
+        while (len < body.len) {
+            if ((b[len] & 0xC0) != 0x80) {
+                if (kept == (size_t)spec.precision) {
+                    break;
+                }
+                ++kept;
+            }
+            ++len;
+        }
+    }
+    emit_padded(out, "", (const unsigned char*)body.ptr, len, &spec, '<');
+    ember_vec_free(&body, 1);
+}
+
+void ember_fmt_spec_str(ember_vec* out, ember_str value, ember_fmt_spec spec) {
+    fmt_spec_text(out, value.ptr, value.len, spec.kind == '?', spec);
+}
+
+void ember_fmt_spec_bool(ember_vec* out, bool value, ember_fmt_spec spec) {
+    const char* word = value ? "true" : "false";
+    fmt_spec_text(out, (const unsigned char*)word, strlen(word), false, spec);
+}
+
+void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec) {
+    unsigned char buffer[4];
+    size_t n = encode_utf8(value, buffer);
+    fmt_spec_text(out, buffer, n, spec.kind == '?', spec);
 }

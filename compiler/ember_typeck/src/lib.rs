@@ -4933,6 +4933,112 @@ impl<'a> Checker<'a> {
         ) || matches!(self.types.kind(ty), TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)))
     }
 
+    /// `[LEX-19]` — how an f-string hole asks for its value: `{x:spec}`,
+    /// `{x!r}` (`Debug`), and `{x=}`, which is `Debug` unless a spec or
+    /// conversion says otherwise, as in Python. A spec is checked against the
+    /// value's type (`E2250`, naming both).
+    fn fstring_spec(
+        &mut self,
+        text: Option<&str>,
+        conversion: Option<char>,
+        echo: bool,
+        ty: Ty,
+        span: Span,
+    ) -> Option<hir::FormatSpec> {
+        let mut spec = match text.map(hir::FormatSpec::parse) {
+            Some(Ok(spec)) => Some(spec),
+            Some(Err(why)) => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E0100,
+                        span,
+                        format!("`:{}` is not a format spec", text.unwrap_or_default()),
+                    )
+                    .note(why)
+                    .help("a spec is `[[fill]align][sign][#][0][width][,|_][.precision][type]` [LEX-19]"),
+                );
+                return None;
+            }
+            None => None,
+        };
+        match conversion {
+            Some('r') => {
+                let base = spec.unwrap_or(hir::FormatSpec::PLAIN);
+                if base.kind.is_some_and(|kind| kind != '?') {
+                    self.error(codes::E2250, span, "`!r` writes text, so the spec may not name a type");
+                    return None;
+                }
+                spec = Some(hir::FormatSpec { kind: Some('?'), ..base });
+            }
+            Some('s') | None => {}
+            Some(other) => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0100, span, format!("`!{other}` is not a conversion"))
+                        .help("`!r` writes a value's `Debug` text [LEX-19]"),
+                );
+                return None;
+            }
+        }
+        if echo && spec.is_none() && conversion.is_none() {
+            spec = Some(hir::FormatSpec { kind: Some('?'), ..hir::FormatSpec::PLAIN });
+        }
+        let spec = spec?;
+        if ty != self.common.error
+            && let Err(why) = self.format_spec_applies(&spec, ty)
+        {
+            let shown = self.types.display(ty);
+            let written = text.map(|t| format!(":{t}")).unwrap_or_else(|| "!r".to_string());
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2250,
+                    span,
+                    format!("format spec `{written}` does not apply to `{shown}`"),
+                )
+                .note(why),
+            );
+            return None;
+        }
+        Some(spec)
+    }
+
+    /// `[LEX-19]` — which specs a value's type takes. Integers take the
+    /// integer and float kinds, floats the float kinds, and text (`str`,
+    /// `String`, `bool`, `char`) `s` and a precision that shortens it.
+    fn format_spec_applies(&self, spec: &hir::FormatSpec, ty: Ty) -> Result<(), String> {
+        let text = self.is_text(ty) || matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char);
+        let float_kind = matches!(spec.kind, Some('e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%'));
+        match self.types.kind(ty) {
+            TyKind::Int(_) | TyKind::Uint(_) => {
+                if spec.kind == Some('s') {
+                    return Err("`s` formats text".to_string());
+                }
+                if spec.precision.is_some() && !float_kind {
+                    return Err("an integer takes no precision unless it is written as a float".to_string());
+                }
+                if spec.grouping == Some(',') && matches!(spec.kind, Some('x' | 'X' | 'b' | 'o')) {
+                    return Err("`,` groups decimal digits; `_` groups the others".to_string());
+                }
+                Ok(())
+            }
+            TyKind::Float(_) => match spec.kind {
+                Some(kind @ ('d' | 'x' | 'X' | 'b' | 'o' | 's')) => {
+                    Err(format!("`{kind}` does not format a float; cast it, or use `f`, `e`, `g` or `%`"))
+                }
+                _ => Ok(()),
+            },
+            _ if text => {
+                if let Some(kind) = spec.kind.filter(|kind| !matches!(kind, 's' | '?')) {
+                    return Err(format!("`{kind}` formats numbers"));
+                }
+                if spec.sign.is_some() || spec.alternate || spec.zero || spec.grouping.is_some() {
+                    return Err("a sign, `#`, `0` and grouping apply to numbers".to_string());
+                }
+                Ok(())
+            }
+            _ => Err("only numbers, text, `bool` and `char` take a format spec so far".to_string()),
+        }
+    }
+
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
     fn is_text(&self, ty: Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Str)
@@ -8572,6 +8678,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => {
                 items.iter().any(Self::class_init_uses_whole_self)
             }
+            ast::ExprKind::Comprehension { element, clauses, .. } => {
+                Self::class_init_uses_whole_self(element)
+                    || clauses.iter().any(|clause| match clause {
+                        ast::CompClause::For { iter, .. } => Self::class_init_uses_whole_self(iter),
+                        ast::CompClause::If(cond) => Self::class_init_uses_whole_self(cond),
+                    })
+            }
             ast::ExprKind::ArrayRepeat { value, count } => {
                 Self::class_init_uses_whole_self(value) || Self::class_init_uses_whole_self(count)
             }
@@ -11175,6 +11288,287 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some(Stmt::Block(Block { stmts: outer, span }))
     }
 
+    /// `[GRM-27]`, `[GRM-38]` — a comprehension is its loop nest: each `for`
+    /// clause a counted loop over a view of a collection or over a range, each
+    /// `if` a test, left to right as Python nests them, with the loop
+    /// variables scoped to the comprehension. The innermost step pushes the
+    /// element onto a new `Array`, or adds it (`sum`), or tests it and stops
+    /// the whole nest (`any`, `all`). The result is a block expression, so the
+    /// comprehension is one expression.
+    fn synth_gather(&mut self, element: &ast::Expr, clauses: &[ast::CompClause], gather: Gather<'_>, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let loops = clauses.iter().filter(|c| matches!(c, ast::CompClause::For { .. })).count();
+        self.scopes.push(HashMap::new());
+        // The accumulator's type is known once the element is typed, at the
+        // innermost level; it is set there.
+        let acc = self.declare(None, self.common.error, span);
+        let mut element_ty = None;
+        let stmts = self.gather_level(element, clauses, 0, &gather, acc, loops, &mut element_ty, span);
+        self.scopes.pop();
+        let (Some(stmts), Some(element_ty)) = (stmts, element_ty) else { return error };
+        let acc_ty = self.locals[acc.0 as usize].ty;
+        let init = match gather {
+            Gather::Array => Expr { ty: acc_ty, kind: ExprKind::Builtin { which: Builtin::ArrayNew, args: Vec::new() }, span },
+            Gather::Sum(Some(start)) => self.check_expr(start, element_ty),
+            Gather::Sum(None) if self.types.is_float(element_ty) => Expr { ty: element_ty, kind: ExprKind::Float(0.0), span },
+            Gather::Sum(None) => Expr { ty: element_ty, kind: ExprKind::Int(0), span },
+            Gather::Any => Expr { ty: acc_ty, kind: ExprKind::Bool(false), span },
+            Gather::All => Expr { ty: acc_ty, kind: ExprKind::Bool(true), span },
+        };
+        let mut block = vec![Stmt::Let { local: acc, init: Some(init) }];
+        block.extend(stmts);
+        Expr {
+            ty: acc_ty,
+            kind: ExprKind::Block {
+                block: Block { stmts: block, span },
+                value: Box::new(Expr { ty: acc_ty, kind: ExprKind::Local(acc), span }),
+            },
+            span,
+        }
+    }
+
+    /// One level of a comprehension's nest: clause `index`, or the innermost
+    /// step past the last clause. `None` after reporting.
+    #[allow(clippy::too_many_arguments)]
+    fn gather_level(
+        &mut self,
+        element: &ast::Expr,
+        clauses: &[ast::CompClause],
+        index: usize,
+        gather: &Gather<'_>,
+        acc: LocalId,
+        loops: usize,
+        element_ty: &mut Option<Ty>,
+        span: Span,
+    ) -> Option<Vec<Stmt>> {
+        let bool_ty = self.common.bool_;
+        match clauses.get(index) {
+            None => {
+                let value = self.synth_committed(element);
+                let value = self.read_through(value);
+                if value.ty == self.common.error {
+                    return None;
+                }
+                let ty = value.ty;
+                let fits = match gather {
+                    Gather::Array => true,
+                    Gather::Sum(_) => self.types.is_numeric(ty),
+                    Gather::Any | Gather::All => ty == bool_ty,
+                };
+                if !fits {
+                    let shown = self.types.display(ty);
+                    let (name, wanted) = match gather {
+                        Gather::Sum(_) => ("sum", "numbers"),
+                        Gather::Any => ("any", "`bool`s"),
+                        _ => ("all", "`bool`s"),
+                    };
+                    self.error(codes::E2020, element.span, format!("`{name}` needs {wanted}, and these are `{shown}`"));
+                    return None;
+                }
+                *element_ty = Some(ty);
+                let acc_ty = match gather {
+                    Gather::Array => self.types.intern(TyKind::Vec { elem: ty }),
+                    Gather::Sum(_) => ty,
+                    Gather::Any | Gather::All => bool_ty,
+                };
+                self.locals[acc.0 as usize].ty = acc_ty;
+                let local = || Expr { ty: acc_ty, kind: ExprKind::Local(acc), span };
+                Some(vec![match gather {
+                    Gather::Array => {
+                        let receiver = self.pass_receiver(local(), Mode::Mut, span);
+                        Stmt::Expr(Expr {
+                            ty: self.common.void,
+                            kind: ExprKind::Builtin { which: Builtin::ArrayPush, args: vec![receiver, value] },
+                            span,
+                        })
+                    }
+                    Gather::Sum(_) => Stmt::Assign {
+                        place: local(),
+                        value: Expr {
+                            ty,
+                            kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(local()), rhs: Box::new(value) },
+                            span,
+                        },
+                    },
+                    Gather::Any | Gather::All => {
+                        // `any` stops at the first true, `all` at the first
+                        // false, leaving every loop of the nest.
+                        let any = matches!(gather, Gather::Any);
+                        let found = if any {
+                            value
+                        } else {
+                            Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(value) }, span }
+                        };
+                        Stmt::If {
+                            cond: found,
+                            then_block: Block {
+                                stmts: vec![
+                                    Stmt::Assign {
+                                        place: local(),
+                                        value: Expr { ty: bool_ty, kind: ExprKind::Bool(any), span },
+                                    },
+                                    Stmt::Break { depth: loops - 1 },
+                                ],
+                                span,
+                            },
+                            else_block: None,
+                        }
+                    }
+                }])
+            }
+            Some(ast::CompClause::If(cond)) => {
+                let cond = self.check_expr(cond, bool_ty);
+                let inner = self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?;
+                Some(vec![Stmt::If { cond, then_block: Block { stmts: inner, span }, else_block: None }])
+            }
+            Some(ast::CompClause::For { pattern, iter }) => {
+                let mut stmts = Vec::new();
+                self.scopes.push(HashMap::new());
+                let result = self.gather_for(element, clauses, index, gather, acc, loops, element_ty, pattern, iter, &mut stmts, span);
+                self.scopes.pop();
+                result.map(|()| stmts)
+            }
+        }
+    }
+
+    /// A comprehension's `for` clause: a counted loop over a range, or over a
+    /// view of a collection whose elements are borrowed (`[CTL-1]`).
+    #[allow(clippy::too_many_arguments)]
+    fn gather_for(
+        &mut self,
+        element: &ast::Expr,
+        clauses: &[ast::CompClause],
+        index: usize,
+        gather: &Gather<'_>,
+        acc: LocalId,
+        loops: usize,
+        element_ty: &mut Option<Ty>,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        stmts: &mut Vec<Stmt>,
+        span: Span,
+    ) -> Option<()> {
+        let usize_ty = self.common.usize;
+        let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. } | ast::PatternKind::Wild);
+        if let Some((start, end, inclusive)) = self.gather_range(iter)? {
+            if !simple {
+                self.error(codes::E0900, pattern.span, "a pattern over a range is not implemented yet; bind one name");
+                return None;
+            }
+            let local = self.declare(binding_name(pattern), start.ty, pattern.span);
+            let inner = self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?;
+            stmts.push(Stmt::ForRange { local, start, end, inclusive, body: Block { stmts: inner, span }, else_block: None });
+            return Some(());
+        }
+        let value = self.synth_committed(iter);
+        if value.ty == self.common.error {
+            return None;
+        }
+        let elem = match *self.types.kind(value.ty) {
+            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+            _ => {
+                let shown = self.types.display(value.ty);
+                self.error(
+                    codes::E0900,
+                    iter.span,
+                    format!("a comprehension over a `{shown}` is not implemented yet"),
+                );
+                return None;
+            }
+        };
+        let value = self.keep_alive(value, stmts);
+        let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+        let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+            self.view_of(value, span_ty, false, Builtin::SpanFrom { mutable: false })
+        } else {
+            self.coerce(value, span_ty)
+        };
+        let xs = self.declare(None, span_ty, span);
+        self.locals[xs.0 as usize].for_iterator = true;
+        let at = self.declare(None, usize_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        stmts.push(Stmt::Let { local: xs, init: Some(view) });
+        let length = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] },
+            span,
+        };
+        let item_ty = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+        let bind = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+        let item = self.declare(bind.then(|| binding_name(pattern)).flatten(), item_ty, pattern.span);
+        let mut body = vec![Stmt::Let {
+            local: item,
+            init: Some(Expr {
+                ty: item_ty,
+                kind: ExprKind::Ref {
+                    place: Box::new(Expr {
+                        ty: elem,
+                        kind: ExprKind::Index { base: Box::new(local(xs, span_ty)), index: Box::new(local(at, usize_ty)) },
+                        span,
+                    }),
+                    mutable: false,
+                },
+                span,
+            }),
+        }];
+        if !simple {
+            self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut body);
+        }
+        body.extend(self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?);
+        stmts.push(Stmt::ForRange {
+            local: at,
+            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            end: length,
+            inclusive: false,
+            body: Block { stmts: body, span },
+            else_block: None,
+        });
+        Some(())
+    }
+
+    /// A comprehension clause's iterable when it is a range: `a..b`, `a..=b`,
+    /// `range(n)` or `range(a, b)`, typed as a `for` over it would be. The
+    /// outer `None` is an error already reported; `Some(None)` is not a range.
+    fn gather_range(&mut self, iter: &ast::Expr) -> Option<Option<(Expr, Expr, bool)>> {
+        let (lo, hi, inclusive): (Option<&ast::Expr>, &ast::Expr, bool) = match &iter.kind {
+            ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } => (Some(&**lo), &**hi, *inclusive),
+            ast::ExprKind::Call { callee, args }
+                if matches!(&callee.kind, ast::ExprKind::Path { segments } if segments.len() == 1
+                    && segments[0].name.is("range")
+                    && self.lookup(segments[0].name).is_none()
+                    && !self.fn_ids.contains_key(&self.resolve_name(segments[0].name))) =>
+            {
+                match args.as_slice() {
+                    [stop] if stop.name.is_none() => (None, &stop.value, false),
+                    [start, stop] if start.name.is_none() && stop.name.is_none() => {
+                        (Some(&start.value), &stop.value, false)
+                    }
+                    _ => {
+                        self.error(
+                            codes::E0900,
+                            iter.span,
+                            "a `range` with a step in a comprehension is not implemented yet",
+                        );
+                        return None;
+                    }
+                }
+            }
+            _ => return Some(None),
+        };
+        let end = self.synth(hi);
+        let start = match lo {
+            Some(lo) => self.synth(lo),
+            None => Expr { ty: self.common.int_lit, kind: ExprKind::Int(0), span: iter.span },
+        };
+        let (start, end) = self.unify_pair("range", start, end, iter.span)?;
+        if !self.types.is_integral(start.ty) {
+            let shown = self.types.display(start.ty);
+            self.error(codes::E2020, iter.span, format!("cannot count over `{shown}`"));
+            return None;
+        }
+        Some(Some((start, end, inclusive)))
+    }
+
     /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
     /// once: the smaller, and `a` when they are equal. With `pick_greater`,
     /// what `min`, `max`, `clamp` and `zip`'s length are built from.
@@ -11449,8 +11843,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                 }
             }
-            // `sum`, `any`, `all`: a loop over a view of the collection.
+            // `sum`, `any`, `all`: a loop over a view of the collection, or
+            // the loop nest of a generator expression (`[GRM-38]`).
             _ => {
+                if let ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Generator, element, clauses } =
+                    &positional[0].kind
+                {
+                    let gather = match name {
+                        "sum" => Gather::Sum(
+                            args.iter().find(|a| a.name.is_some()).map(|a| &a.value).or(positional.get(1).copied()),
+                        ),
+                        "any" => Gather::Any,
+                        _ => Gather::All,
+                    };
+                    return Some(self.synth_gather(element, clauses, gather, span));
+                }
                 let iterable = self.synth_committed(positional[0]);
                 if iterable.ty == self.common.error {
                     return Some(error);
@@ -13334,15 +13741,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         ast::FStringPart::Text(text) => {
                             checked.push(hir::FStringPart::Text(text.clone()))
                         }
-                        ast::FStringPart::Expr { expr, format_spec } => {
-                            if format_spec.is_some() {
-                                self.error(
-                                    codes::E1010,
-                                    expr.span,
-                                    "a format spec is not supported yet in this phase",
-                                );
+                        ast::FStringPart::Expr { expr, format_spec, echo, conversion } => {
+                            // `{x=}` writes the source text through the `=`
+                            // first (`[LEX-19]`).
+                            if let Some(echo) = echo {
+                                checked.push(hir::FStringPart::Text(echo.clone()));
                             }
                             let value = self.synth_committed(expr);
+                            // D-194 — a `String` is written as the `str` it
+                            // borrows, as `print` writes it (D-191).
+                            let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8) {
+                                let str_ty = self.common.str_;
+                                self.coerce(value, str_ty)
+                            } else {
+                                value
+                            };
                             if !self.is_formattable(value.ty) && value.ty != self.common.error {
                                 let shown = self.types.display(value.ty);
                                 self.error(
@@ -13351,7 +13764,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     format!("`{shown}` cannot be formatted yet; `Display` needs generics"),
                                 );
                             }
-                            checked.push(hir::FStringPart::Value(value));
+                            let spec = self.fstring_spec(
+                                format_spec.as_deref(),
+                                *conversion,
+                                echo.is_some(),
+                                value.ty,
+                                expr.span,
+                            );
+                            checked.push(hir::FStringPart::Value(value, spec));
                         }
                     }
                 }
@@ -13651,6 +14071,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
             ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
                 self.check_ternary(then_expr, cond, else_expr, expected, span)
+            }
+
+            ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Array, element, clauses } => {
+                self.synth_gather(element, clauses, Gather::Array, span)
+            }
+            ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Generator, .. } => {
+                self.error(
+                    codes::E0900,
+                    span,
+                    "a generator expression is only implemented as the argument of `sum`, `any` or `all` so far",
+                );
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
 
             // `[GRM-16]` — a jump has type `!` and produces no value. Every
@@ -18207,7 +18639,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             ExprKind::FString { parts, .. } => {
                 for part in parts {
-                    if let hir::FStringPart::Value(value) = part {
+                    if let hir::FStringPart::Value(value, _) = part {
                         self.collect_mutated_capture_fields_expr(value, environment, fields);
                     }
                 }
@@ -18391,7 +18823,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ExprKind::Ref { place, .. } => self.closure_expr_moves_capture(place, environment, false),
             ExprKind::FString { parts, .. } => parts.iter().any(|part| match part {
                 hir::FStringPart::Text(_) => false,
-                hir::FStringPart::Value(value) => {
+                hir::FStringPart::Value(value, _) => {
                     self.closure_expr_moves_capture(value, environment, false)
                 }
             }),
@@ -22680,6 +23112,16 @@ fn binding_name(pattern: &ast::Pattern) -> Option<Symbol> {
 /// `@view`, `@packed` and the rest: an attribute by bare name.
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
+}
+
+/// What a comprehension's innermost step does (`[GRM-27]`, `[GRM-38]`).
+enum Gather<'a> {
+    /// `[e for …]` — push onto a new `Array`.
+    Array,
+    /// `sum(e for …)`, with `sum`'s `start`.
+    Sum(Option<&'a ast::Expr>),
+    Any,
+    All,
 }
 
 /// `[ATT-1]` (0.9.9) — the attribute table: each name, the declarations it

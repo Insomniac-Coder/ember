@@ -14,4 +14,4 @@ fn main():
     print(a)
     print(b)
     print(c)
-#$ stdout: 0.7511
+#$ stdout: 0.751.01.0

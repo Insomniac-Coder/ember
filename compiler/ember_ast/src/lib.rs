@@ -553,6 +553,21 @@ pub enum MatchArmBody {
 // Expressions
 // ---------------------------------------------------------------------------
 
+/// Which collection a comprehension builds (`[GRM-27]`), or none: a
+/// generator expression (`[GRM-38]`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ComprehensionKind {
+    Array,
+    Generator,
+}
+
+/// One clause of a comprehension, applied left to right as Python nests them.
+#[derive(Clone, Debug)]
+pub enum CompClause {
+    For { pattern: Pattern, iter: Expr },
+    If(Expr),
+}
+
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub id: NodeId,
@@ -596,6 +611,9 @@ pub enum ExprKind {
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
     Tuple(Vec<Expr>),
     ArrayLit(Vec<Expr>),
+    /// `[GRM-27]` — `[e for x in xs if c]`, an `Array`; `[GRM-38]` —
+    /// `(e for x in xs)`, a generator expression.
+    Comprehension { kind: ComprehensionKind, element: Box<Expr>, clauses: Vec<CompClause> },
     /// `[value; count]`.
     ArrayRepeat { value: Box<Expr>, count: Box<Expr> },
     FString(Vec<FStringPart>),
@@ -668,7 +686,9 @@ impl TypeOrExpr {
 #[derive(Clone, Debug)]
 pub enum FStringPart {
     Text(String),
-    Expr { expr: Box<Expr>, format_spec: Option<String> },
+    /// `[LEX-19]` — `{expr=}` keeps the source text through the `=` in
+    /// `echo`; `{expr!r}` keeps the letter in `conversion`.
+    Expr { expr: Box<Expr>, format_spec: Option<String>, echo: Option<String>, conversion: Option<char> },
 }
 
 #[derive(Clone, Debug)]

@@ -206,6 +206,7 @@ codes! {
     // 0.9.9 `[TYP-28]`: `/` is true division; two integer operands are
     // rejected with the `//` and float fix-its.
     E2240 = (Error, 2240, Types, "[TYP-28]", "`/` on two integers");
+    E2250 = (Error, 2250, Types, "[LEX-19]", "format spec does not apply to the value's type");
 
     // --- range and domain types (`[RNG-*]`, 0.6) ------------------------------
     E2210 = (Error, 2210, Types, "[RNG-2]", "a value of one range type where another was expected");

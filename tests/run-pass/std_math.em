@@ -11,7 +11,7 @@ fn main():
     println(min_i32(3, 7))
     println(math.clamp_i32(200, 0, 100))
     println(math.lerp_f32(0.0, 10.0, 0.25))
-#$ stdout: 1
+#$ stdout: 1.0
 #$ 3
 #$ 100
 #$ 2.5

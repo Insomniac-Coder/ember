@@ -382,7 +382,105 @@ pub enum ExprKind {
 #[derive(Debug)]
 pub enum FStringPart {
     Text(String),
-    Value(Expr),
+    /// A value, and how `{x:spec}`, `{x!r}` or `{x=}` asks for it to be
+    /// written (`[LEX-19]`); `None` is its plain text, as `print` writes it.
+    Value(Expr, Option<FormatSpec>),
+}
+
+/// `[LEX-19]` — a format spec in Python's mini-language,
+/// `[[fill]align][sign][#][0][width][,|_][.precision][type]`, parsed. A
+/// `kind` of `?` is `Debug` (`{x!r}`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FormatSpec {
+    pub fill: char,
+    pub align: Option<char>,
+    pub sign: Option<char>,
+    pub alternate: bool,
+    pub zero: bool,
+    pub width: u32,
+    pub grouping: Option<char>,
+    pub precision: Option<u32>,
+    pub kind: Option<char>,
+}
+
+impl FormatSpec {
+    /// No spec at all: the value's plain text.
+    pub const PLAIN: FormatSpec = FormatSpec {
+        fill: ' ',
+        align: None,
+        sign: None,
+        alternate: false,
+        zero: false,
+        width: 0,
+        grouping: None,
+        precision: None,
+        kind: None,
+    };
+
+    pub fn parse(text: &str) -> Result<FormatSpec, String> {
+        fn number(chars: &[char], at: &mut usize) -> Result<Option<u32>, String> {
+            let start = *at;
+            while chars.get(*at).is_some_and(char::is_ascii_digit) {
+                *at += 1;
+            }
+            if *at == start {
+                return Ok(None);
+            }
+            let digits: String = chars[start..*at].iter().collect();
+            digits.parse().map(Some).map_err(|_| format!("`{digits}` is too large"))
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut spec = FormatSpec::PLAIN;
+        let mut at = 0;
+        let is_align = |c: char| matches!(c, '<' | '>' | '^');
+        if chars.len() >= 2 && is_align(chars[1]) {
+            spec.fill = chars[0];
+            spec.align = Some(chars[1]);
+            at = 2;
+        } else if chars.first().is_some_and(|&c| is_align(c)) {
+            spec.align = Some(chars[0]);
+            at = 1;
+        }
+        if let Some(&c) = chars.get(at)
+            && matches!(c, '+' | '-' | ' ')
+        {
+            spec.sign = Some(c);
+            at += 1;
+        }
+        if chars.get(at) == Some(&'#') {
+            spec.alternate = true;
+            at += 1;
+        }
+        if chars.get(at) == Some(&'0') {
+            spec.zero = true;
+            at += 1;
+        }
+        spec.width = number(&chars, &mut at)?.unwrap_or(0);
+        if let Some(&c) = chars.get(at)
+            && matches!(c, ',' | '_')
+        {
+            spec.grouping = Some(c);
+            at += 1;
+        }
+        if chars.get(at) == Some(&'.') {
+            at += 1;
+            match number(&chars, &mut at)? {
+                Some(precision) => spec.precision = Some(precision),
+                None => return Err("a `.` needs a precision after it".to_string()),
+            }
+        }
+        if let Some(&c) = chars.get(at)
+            && "dxXboeEfFgG%s?".contains(c)
+        {
+            spec.kind = Some(c);
+            at += 1;
+        }
+        if at != chars.len() {
+            let rest: String = chars[at..].iter().collect();
+            return Err(format!("`{rest}` is not part of a format spec"));
+        }
+        Ok(spec)
+    }
 }
 
 #[derive(Debug)]
@@ -457,6 +555,8 @@ pub enum Builtin {
     RangeNth,
     /// `[TXT-10]` — `s.char_count()`: the number of Unicode scalar values.
     StrCharCount,
+    /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
+    FormatWith(FormatSpec),
     /// `print(x)` — the same without the newline.
     Print,
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
@@ -764,6 +864,7 @@ impl Builtin {
             Builtin::FloatAbs => "abs",
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
+            Builtin::FormatWith(_) => "format",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
             Builtin::ValueCompare { .. } => "compare",
@@ -1274,7 +1375,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
                 .iter()
                 .map(|p| match p {
                     FStringPart::Text(text) => format!("{text:?}"),
-                    FStringPart::Value(e) => format!("{{{}}}", dump_expr(e, function, types)),
+                    FStringPart::Value(e, _) => format!("{{{}}}", dump_expr(e, function, types)),
                 })
                 .collect();
             format!("f({})", inner.join(" "))

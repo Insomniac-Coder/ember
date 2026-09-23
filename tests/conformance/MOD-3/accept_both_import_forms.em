@@ -12,4 +12,4 @@ fn main():
     println(math.clamp_f32(2.5, 0.0, 1.0))
 #$ stdout: 3
 #$ 7
-#$ 1
+#$ 1.0

@@ -3631,6 +3631,28 @@ impl Emitter<'_> {
                             rendered[1]
                         );
                     }
+                    // `[LEX-19]` — the parsed spec travels as a struct literal.
+                    Builtin::FormatWith(spec) => {
+                        let letter = |c: Option<char>| c.map_or("0".to_string(), |c| format!("'{c}'"));
+                        let spec_c = format!(
+                            "(({RT}fmt_spec){{ {}u, {}, {}, {}, {}, {}u, {}, {}, {} }})",
+                            spec.fill as u32,
+                            letter(spec.align),
+                            letter(spec.sign),
+                            spec.alternate,
+                            spec.zero,
+                            spec.width,
+                            letter(spec.grouping),
+                            spec.precision.map_or(-1, i64::from),
+                            letter(spec.kind)
+                        );
+                        return format!(
+                            "{RT}fmt_spec_{}({}, {}, {spec_c})",
+                            self.format_suffix(*arg_ty),
+                            rendered[0],
+                            rendered[1]
+                        );
+                    }
                     // `[UNS-5]` — the raw memory primitives. `arg_ty` is the
                     // first argument's type, which for `alloc` and `size_of`
                     // is the element type itself.

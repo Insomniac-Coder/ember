@@ -17,5 +17,5 @@ fn main():
     m = midpoint(l)
     println(m.x)
     println(m.y)
-#$ stdout: 2
-#$ 5
+#$ stdout: 2.0
+#$ 5.0

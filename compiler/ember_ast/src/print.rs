@@ -455,6 +455,15 @@ impl Printer {
                     p.expr(e);
                 }
             }),
+            ExprKind::Comprehension { kind, element, clauses } => self.nest(&format!("Comprehension {kind:?}"), |p| {
+                p.expr(element);
+                for clause in clauses {
+                    match clause {
+                        CompClause::For { iter, .. } => p.nest("For", |p| p.expr(iter)),
+                        CompClause::If(cond) => p.nest("If", |p| p.expr(cond)),
+                    }
+                }
+            }),
             ExprKind::ArrayRepeat { value, count } => self.nest("ArrayRepeat", |p| {
                 p.expr(value);
                 p.expr(count);
@@ -463,11 +472,13 @@ impl Printer {
                 for part in parts {
                     match part {
                         FStringPart::Text(t) => p.line(&format!("Text {t:?}")),
-                        FStringPart::Expr { expr, format_spec } => {
-                            let spec = format_spec
-                                .as_ref()
-                                .map(|s| format!(" :{s}"))
-                                .unwrap_or_default();
+                        FStringPart::Expr { expr, format_spec, echo, conversion } => {
+                            let spec = format!(
+                                "{}{}{}",
+                                echo.as_ref().map(|e| format!(" echo {e:?}")).unwrap_or_default(),
+                                conversion.map(|c| format!(" !{c}")).unwrap_or_default(),
+                                format_spec.as_ref().map(|s| format!(" :{s}")).unwrap_or_default(),
+                            );
                             p.nest(&format!("Hole{spec}"), |p| p.expr(expr));
                         }
                     }

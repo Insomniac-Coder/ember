@@ -14,5 +14,5 @@ fn main():
     b = Vec3(x=1.0, y=2.0)
     println(a.z)
     println(b.z)
-#$ stdout: 3
-#$ 0
+#$ stdout: 3.0
+#$ 0.0

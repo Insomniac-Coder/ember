@@ -90,9 +90,9 @@ and gates green.
 6. ~~Prelude: `mem`, `panic`, `todo`, `unreachable`; `Option.unwrap`/`unwrap_or`~~ (done, with the
    assertions and `eprint`).
 
-**Next batch:** f-string specs (`[LEX-19]`) and float `Display` (`[STD-20]`); the rest of `[ERR-4]`
+**Next batch:** ~~f-string specs (`[LEX-19]`)~~ (done); ~~float `Display` (`[STD-20]`)~~ (done); the rest of `[ERR-4]`
 (`is_some`, `map`, …, `Result`'s methods); `sorted` and `Array.sort`; ranges and generator
-expressions (`[GRM-38]`) as values; `input`; `Map`/`Set`.
+expressions (`[GRM-38]`) as values (comprehensions themselves are done); `input`; `Map`/`Set`.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
 (`[EXC-19]`), `@sync`, `Weak` upgrade, callable fields.
@@ -240,3 +240,39 @@ The next number is ODR-024.
   not fail on unexpected diagnostics (`[TST-1]` says it must); recorded in the audit, with a UI test
   pinning D-190's exact code list meanwhile.  `[TXT-10]`: `str` had no methods; `len()` (bytes), `char_count()` (characters) and `is_empty()`
   are built for `str`, and for `String` through its `str` (`E2073`'s page needed them).
+* **2026-09-24 — float `Display` (`[STD-20]`).** A float prints as Python's `repr`: the fewest
+  digits that read back as the same value (17 at most for `f64`, 9 for `f32`), written in fixed
+  notation when the decimal exponent is in [-4, 16) with `.0` on an integral value, and in exponent
+  notation otherwise (`1e+300`, `1e-05`); `nan`, `inf`, `-inf` whatever the C library spells. It
+  serves `print` and f-strings alike. 13 corpus files printed integral floats and were moved to the
+  new text by a script that changes a line only when every differing token is the same number
+  (`9` to `9.0`); three that print several values with no separator were checked by hand.
+  `annotations.py` now matches the harness: an error's text may be anywhere in the diagnostic, a
+  help's anywhere in a help line, and an empty `#$ stdout:` opens a block.
+* **2026-09-24 — f-string specs (`[LEX-19]`), D-194.** The lexer recognises Python's `{x=}` (the
+  source text through the `=` is written first, and the value as `Debug` unless a spec or
+  conversion is given) and `{x!r}` (`Debug`); `!s` is accepted and anything else is `E0100`. The
+  checker parses the spec (`[[fill]align][sign][#][0][width][,|_][.precision][type]`; a malformed one
+  is `E0100`) into `hir::FormatSpec` and checks it against the value's type, `E2250` (new page)
+  naming both: integers take the integer and float kinds, floats the float kinds, and `str`,
+  `String`, `bool`, `char` `s` and a truncating precision. The C backend passes the spec as a
+  struct literal to one runtime formatter per type, which follows CPython: fill and alignment
+  (numbers right, text left, `^` with the odd fill on the right), sign, `#` prefixes, `0` padding
+  that is grouped with the digits (`{n:012,}` is `0,001,234,567`), `,`/`_` grouping, `%`,
+  a precision with no type as CPython's `g` with at least one digit after the point
+  (`{100.0:.3}` is `1e+02`), and `repr` quoting for `?`. Every probe was compared with Python's
+  own output. D-194: an f-string moved a `String` it wrote, and then emitted invalid C for it.
+  Still open in `[LEX-19]`: `Debug` for aggregates and classes (`[TYP-39]`), and Python's escaping
+  of non-printable Unicode in `repr` (the runtime keeps it as is).
+* **2026-09-24 — comprehensions (`[GRM-27]`, `[GRM-38]`).** The parser reads `[e for …]`, `(e for …)`
+  and a generator as the only argument of a call (`sum(x * x for x in xs)`; a bare generator
+  followed by another argument is `E0100`, as in Python), with `for target in or_expr` and
+  `if or_expr` clauses sharing the `for` statement's target parser. The checker lowers a
+  comprehension to a block expression holding its loop nest: each `for` clause a counted loop over
+  a view of a collection (elements borrowed, `[CTL-1]`) or over a range (`a..b`, `range(n)`,
+  `range(a, b)`), each `if` a test, left to right, the loop variables in scopes of their own. The
+  innermost step pushes onto a new `Array`, adds (`sum`, with `start`), or tests and leaves the
+  whole nest (`any`, `all`). The accumulator's type is fixed when the element is typed at the
+  innermost level. Not yet: a generator stored or passed elsewhere, a stepped `range` in a
+  clause, `{…}` comprehensions (they need `Map`/`Set`). `tests/milestones` had one more
+  integral float (`5` is now `5.0`).

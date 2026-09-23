@@ -12,4 +12,4 @@ fn main():
     print(a)
     print(b)
     print(c)
-#$ stdout: 00.250.5
+#$ stdout: 0.00.250.5

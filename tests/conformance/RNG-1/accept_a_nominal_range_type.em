@@ -16,4 +16,4 @@ fn main():
     print(a)
     print(b)
     print(q)
-#$ stdout: 0.5402
+#$ stdout: 0.5402.0

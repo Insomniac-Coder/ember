@@ -534,6 +534,30 @@ ember_str ember_vec_as_str(const ember_vec* v);
  * `a` sorts before, equal to or after `b`; a prefix sorts first. */
 int ember_str_cmp(ember_str a, ember_str b);
 
+/* `[LEX-19]`: an f-string hole's format spec, Python's mini-language
+ * `[[fill]align][sign][#][0][width][,|_][.precision][type]`, parsed by the
+ * compiler. A letter field is 0 when the spec leaves it out; `precision` is -1
+ * then. `kind` `?` is `Debug`. */
+typedef struct ember_fmt_spec {
+    uint32_t fill;
+    char align;
+    char sign;
+    bool alternate;
+    bool zero;
+    uint32_t width;
+    char grouping;
+    int32_t precision;
+    char kind;
+} ember_fmt_spec;
+
+void ember_fmt_spec_i64(ember_vec* out, int64_t value, ember_fmt_spec spec);
+void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec);
+void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec);
+void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec);
+void ember_fmt_spec_str(ember_vec* out, ember_str value, ember_fmt_spec spec);
+void ember_fmt_spec_bool(ember_vec* out, bool value, ember_fmt_spec spec);
+void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec);
+
 /* `[TXT-10]`: the characters in valid UTF-8, counted as the bytes that do not
  * continue a character. */
 size_t ember_str_char_count(ember_str s);

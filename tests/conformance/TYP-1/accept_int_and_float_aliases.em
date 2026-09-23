@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 5000000000
 #$ 5000000000
-#$ 5
+#$ 5.0
 #$ assert-c: contains("int64_t")
 # `int` is `i64` and `float` is `f64`, and they are what unannotated literals
 # become. `5_000_000_000` does not fit 32 bits.

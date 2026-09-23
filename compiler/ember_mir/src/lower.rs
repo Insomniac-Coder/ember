@@ -2541,9 +2541,15 @@ impl<'a> Builder<'a> {
                             vec![target, Operand::Const(Const::Str(text.clone()))],
                             expr.ty,
                         ),
-                        hir::FStringPart::Value(value) => {
-                            let operand = self.lower_operand(value);
-                            (hir::Builtin::Format, vec![target, operand], value.ty)
+                        hir::FStringPart::Value(value, spec) => {
+                            // D-194 — formatting reads the value; it does not
+                            // consume it.
+                            let operand = self.lower_operand_borrowed(value);
+                            let which = match spec {
+                                Some(spec) => hir::Builtin::FormatWith(*spec),
+                                None => hir::Builtin::Format,
+                            };
+                            (which, vec![target, operand], value.ty)
                         }
                     };
                     let next = self.new_block();

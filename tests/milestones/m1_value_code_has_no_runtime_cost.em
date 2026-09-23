@@ -11,5 +11,5 @@ fn add(a: Vec3, b: Vec3) -> Vec3:
 fn main():
     c = add(Vec3(1, 2, 3), Vec3(4, 5, 6))
     println(c.x)
-#$ stdout: 5
+#$ stdout: 5.0
 #$ assert-c: !contains("ember_alloc")
