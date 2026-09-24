@@ -697,6 +697,10 @@ impl Emitter<'_> {
     /// `out`: text quoted, numbers and `bool` as they display, aggregates
     /// through their function.
     fn debug_stmt(&self, out: &str, v: &str, ty: Ty) -> String {
+        // D-227 — a reference inside an aggregate prints what it points to.
+        if let TyKind::Ref { inner, .. } = self.types.kind(ty) {
+            return self.debug_stmt(out, &format!("(*({v}))"), *inner);
+        }
         if let Some((text, _)) = self.text_pair(v, v, ty) {
             return format!("{RT}fmt_repr_str({out}, {text});");
         }

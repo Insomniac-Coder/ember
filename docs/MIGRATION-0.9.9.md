@@ -428,3 +428,8 @@ The next number is ODR-027.
 `; end of input panics at the call, naming
   `std.io.stdin().read_line()`. The harnesses gained `#$ stdin:` (one input line each); a run test
   without it gets a closed standard input, as before.
+* **2026-09-25 — `@no_derive(Eq)`/`(Debug)`; printing through references (D-227).** The three
+  implicit interfaces can each be opted out of; comparing or printing an opted-out type (or a
+  value containing one) is `E2040`, naming the type and the attribute. A `ref T` inside a printed
+  value prints what it points to (`Array.get`'s `Option[ref T]`). Recorded open: D-232 (internal
+  names of generic instances in diagnostics).

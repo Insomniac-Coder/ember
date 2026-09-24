@@ -309,6 +309,8 @@ struct GenericStruct {
     /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
     /// implicit request a struct or enum makes, `None` for none.
     clone_request: Option<bool>,
+    /// `[STR-5]` — `(Eq, Debug)` opted out with `@no_derive`.
+    opted_out: (bool, bool),
     /// The declaration, for code derived for an instance (a `clone` body needs
     /// a real source span).
     decl_span: Span,
@@ -340,6 +342,8 @@ struct GenericEnum {
     /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
     /// implicit request a struct or enum makes, `None` for none.
     clone_request: Option<bool>,
+    /// `[STR-5]` — `(Eq, Debug)` opted out with `@no_derive`.
+    opted_out: (bool, bool),
     /// The declaration, for code derived for an instance (a `clone` body needs
     /// a real source span).
     decl_span: Span,
@@ -359,6 +363,8 @@ struct GenericClass {
     /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
     /// implicit request a struct or enum makes, `None` for none.
     clone_request: Option<bool>,
+    /// `[STR-5]` — `(Eq, Debug)` opted out with `@no_derive`.
+    opted_out: (bool, bool),
     /// The declaration, for code derived for an instance (a `clone` body needs
     /// a real source span).
     decl_span: Span,
@@ -654,6 +660,10 @@ struct Checker<'a> {
     /// Candidates resolved after every source method is known, so field order
     /// never changes whether a legal derived clone is available.
     pending_derived_clones: Vec<(Ty, Span, bool)>,
+    /// `[STR-5]` — types that opt out of the implicit `Eq` or `Debug`
+    /// (`@no_derive(Eq)`, `@no_derive(Debug)`).
+    no_implicit_eq: HashSet<Ty>,
+    no_implicit_debug: HashSet<Ty>,
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
@@ -961,6 +971,8 @@ impl<'a> Checker<'a> {
             lambdas: Vec::new(),
             derived_clone_methods: Vec::new(),
             pending_derived_clones: Vec::new(),
+            no_implicit_eq: HashSet::new(),
+            no_implicit_debug: HashSet::new(),
             captures: None,
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
@@ -2485,6 +2497,7 @@ impl<'a> Checker<'a> {
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
                     clone_request: clone_request(&item.attrs, false),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
                     decl_span: item.span,
                     implements: decl.implements.clone(),
                     methods,
@@ -2551,6 +2564,7 @@ impl<'a> Checker<'a> {
                     repr_is_explicit,
                     derives_copy: has_derive(&item.attrs, "Copy"),
                     clone_request: clone_request(&item.attrs, false),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
                     decl_span: item.span,
                     declaring_module: self.current_module,
                     implements: decl.implements.clone(),
@@ -2636,6 +2650,7 @@ impl<'a> Checker<'a> {
                     fields,
                     defaults,
                     clone_request: clone_request(&item.attrs, true),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
                     decl_span: item.span,
                     base,
                     implements: decl.implements.clone(),
@@ -4560,9 +4575,22 @@ impl<'a> Checker<'a> {
     /// field does, unless `@no_derive(Clone)` opts out or it writes its own
     /// `clone`; a class only when `@derive(Clone)` asks (`[OWN-8]`).
     fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
+        self.record_opt_outs(
+            ty,
+            (has_attribute_argument(attrs, "no_derive", "Eq"), has_attribute_argument(attrs, "no_derive", "Debug")),
+        );
         let is_class = matches!(self.types.kind(ty), TyKind::Class(_));
         if let Some(explicit) = clone_request(attrs, is_class) {
             self.pending_derived_clones.push((ty, span, explicit));
+        }
+    }
+
+    fn record_opt_outs(&mut self, ty: Ty, (eq, debug): (bool, bool)) {
+        if eq {
+            self.no_implicit_eq.insert(ty);
+        }
+        if debug {
+            self.no_implicit_debug.insert(ty);
         }
     }
 
@@ -5044,6 +5072,32 @@ impl<'a> Checker<'a> {
         self.formattable_in(ty, &mut HashSet::new())
     }
 
+    /// The component of `ty` (itself, an element, a field, a payload) that
+    /// opts out of the implicit `Debug`, for a diagnostic that says so.
+    fn opted_out_of_debug(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<Ty> {
+        if self.no_implicit_debug.contains(&ty) {
+            return Some(ty);
+        }
+        if !seen.insert(ty) {
+            return None;
+        }
+        let parts: Vec<Ty> = match self.types.kind(ty) {
+            TyKind::Vec { elem } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
+            TyKind::Ref { inner, .. } => vec![*inner],
+            TyKind::Tuple(items) => items.clone(),
+            TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
+            TyKind::Enum(id) => self
+                .types
+                .enum_def(*id)
+                .variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
+                .collect(),
+            _ => Vec::new(),
+        };
+        parts.into_iter().find_map(|part| self.opted_out_of_debug(part, seen))
+    }
+
     /// `seen` holds the user types already being examined: a recursive type
     /// (`struct Tree: kids: Array[Tree]`) is formattable if the rest is.
     fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
@@ -5056,6 +5110,9 @@ impl<'a> Checker<'a> {
             TyKind::Vec { elem } => *elem == self.common.u8 || self.formattable_in(*elem, seen),
             TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.formattable_in(*elem, seen),
             TyKind::Tuple(items) => items.iter().all(|item| self.formattable_in(*item, seen)),
+            // D-227 — a reference prints as what it points to (`Some(1)` for
+            // an `Option[ref int]`), as a `ref` read through does.
+            TyKind::Ref { inner, .. } => self.formattable_in(*inner, seen),
             // `[TYP-36]` — a class handle has no `Display`, but its `Debug`
             // (class and address) is what printing falls back to ([STD-9]).
             TyKind::Class(_) | TyKind::ClassInterface(_) => true,
@@ -5064,6 +5121,8 @@ impl<'a> Checker<'a> {
             // `[STR-5]` — a struct or enum has `Debug` field-wise when every
             // field does (`Point(x=1, y=2)`, `Shape.Circle(1)`). The
             // compiler-known wrappers (`Box`, `Cell`, …) have no format yet.
+            // `@no_derive(Debug)` opts out of the implicit one.
+            TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_debug.contains(&ty) => false,
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
                 !is_compiler_known_struct(def.name.as_str())
@@ -5257,6 +5316,8 @@ impl<'a> Checker<'a> {
             {
                 false
             }
+            // `@no_derive(Eq)` opts out of the implicit one.
+            TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
             TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
             TyKind::Array { elem, .. } | TyKind::Vec { elem } => {
                 self.has_implicit_eq_in(*elem, seen)
@@ -6220,6 +6281,7 @@ impl<'a> Checker<'a> {
                 });
             }
         }
+        self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
@@ -6406,6 +6468,7 @@ impl<'a> Checker<'a> {
                 });
             }
         }
+        self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
@@ -6671,6 +6734,7 @@ impl<'a> Checker<'a> {
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
         self.validate_concrete_class_abstract_methods(id, span);
+        self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
@@ -17429,8 +17493,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                 }
             }
-            // `[STR-5]` — `@no_derive(Clone)` opts out of the implicit
-            // `Clone`; opting out of `Eq` or `Debug` is not built.
+            // `[STR-5]` — `@no_derive` opts out of an implicit `Eq`,
+            // `Debug` or `Clone`.
             if name == "no_derive" {
                 for arg in &attr.args {
                     let (opted, span) = match arg {
@@ -17442,14 +17506,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         },
                         ast::AttrArg::Named { value, .. } => ("", value.span),
                     };
-                    if opted != "Clone" {
+                    if !matches!(opted, "Eq" | "Debug" | "Clone") {
                         self.sink.emit(
                             Diagnostic::error(
-                                codes::E0900,
+                                codes::E0104,
                                 span,
-                                format!("`@no_derive({opted})` is not implemented yet"),
+                                format!("`@no_derive({opted})` names nothing implicit"),
                             )
-                            .note("`@no_derive(Clone)` is built; `Eq` and `Debug` are not [STR-5]"),
+                            .note("only `Eq`, `Debug` and `Clone` are implicit; the rest are asked for with `@derive` [STR-5]"),
                         );
                     }
                 }
@@ -24305,7 +24369,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     } else {
                         value
                     };
-                    if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                    let opted_out = (!self.is_formattable(value.ty))
+                        .then(|| self.opted_out_of_debug(value.ty, &mut HashSet::new()))
+                        .flatten();
+                    if let Some(component) = opted_out {
+                        let shown = self.types.display(value.ty);
+                        let named = self.types.display(component);
+                        let message = if component == value.ty {
+                            format!("`{shown}` does not implement `Debug`, which printing it needs")
+                        } else {
+                            format!("`{named}` does not implement `Debug`, which printing a `{shown}` needs")
+                        };
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2040, arg.value.span, message)
+                                .note(format!("`{named}`'s declaration opts out with `@no_derive(Debug)` [STR-5]")),
+                        );
+                    } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
                         let shown = self.types.display(value.ty);
                         self.error(
                             codes::E0900,
@@ -24604,7 +24683,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         span,
                         format!("`{shown}` does not implement `{interface}`, which `{}` needs", op.as_str()),
                     )
-                    .note(if equality {
+                    .note(if equality && self.no_implicit_eq.contains(&operand_ty) {
+                        "its declaration opts out with `@no_derive(Eq)` [STR-5]"
+                    } else if equality {
                         "a type has `Eq` when every field has it [STR-5]"
                     } else {
                         "a struct or enum is ordered only by `@derive(Ord)` [STR-5]"
