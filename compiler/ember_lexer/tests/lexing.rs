@@ -310,10 +310,12 @@ fn a_character_literal_holds_one_scalar_value() {
 }
 
 #[test]
-fn a_named_lifetime_is_e0007() {
-    // [LT-6] — reserved for v2, with a message that names the alternative.
+fn a_quote_before_a_name_is_an_unterminated_char_literal() {
+    // [LEX-22] — there is no lifetime syntax: `'a` with no closing quote is an
+    // unterminated character literal, `E0008`, whose note names [LT-6].
     let out = run("fn f['a]():\n    pass\n");
-    assert!(out.codes.contains(&"E0007".to_string()), "{:?}", out.diagnostics);
+    assert!(out.codes.contains(&"E0008".to_string()), "{:?}", out.diagnostics);
+    assert!(!out.codes.contains(&"E0007".to_string()), "{:?}", out.diagnostics);
 }
 
 // -- f-strings ---------------------------------------------------------------

@@ -543,32 +543,16 @@ impl<'a> Lexer<'a> {
     fn lex_char_or_lifetime(&mut self) {
         let start = self.pos;
 
-        // `[LT-6]`: `'ident` is a named lifetime, reserved for v2.
-        if self.peek_nth(1).is_some_and(is_ident_start_or_underscore) {
-            let mut probe = self.pos + 1;
-            while let Some(c) = self.src[probe..].chars().next() {
-                if is_ident_continue(c) {
-                    probe += c.len_utf8();
-                } else {
-                    break;
-                }
-            }
-            if self.src[probe..].chars().next() != Some('\'') {
-                self.pos = probe;
-                let span = self.span(start);
-                let d = Diagnostic::error(codes::E0007, span, "named lifetimes are not supported in this version")
-                    .help("restructure using `@borrows` or a view struct");
-                self.sink.emit(d);
-                self.push(TokenKind::Error, start);
-                return;
-            }
-        }
-
+        // `[LEX-22]` — a `'` begins a character literal and nothing else:
+        // Ember has no lifetime syntax, so `'a` with no closing quote is an
+        // unterminated literal, whose note says what to write instead.
+        let looks_like_lifetime = self.peek_nth(1).is_some_and(is_ident_start_or_underscore)
+            && self.peek_nth(2).is_some_and(|c| c != '\'');
         self.pos += 1; // opening quote
         let value = match self.peek() {
             None | Some('\n') => {
                 let span = self.span(start);
-                let d = Diagnostic::error(codes::E0101, span, "unterminated character literal");
+                let d = Diagnostic::error(codes::E0008, span, "unterminated character literal");
                 self.sink.emit(d);
                 self.push(TokenKind::Error, start);
                 return;
@@ -589,12 +573,16 @@ impl<'a> Lexer<'a> {
             let unterminated = self.peek() != Some('\'');
             self.eat('\'');
             let span = self.span(start);
-            let message = if unterminated {
-                "unterminated character literal"
+            let d = if unterminated {
+                let d = Diagnostic::error(codes::E0008, span, "unterminated character literal");
+                if looks_like_lifetime {
+                    d.note("Ember has no lifetime syntax [LEX-22]; where a relationship between regions cannot be inferred, return an owned value, or use an index, a view struct or `@borrows` [LT-6]")
+                } else {
+                    d
+                }
             } else {
-                "a character literal holds exactly one character"
+                Diagnostic::error(codes::E0101, span, "a character literal holds exactly one character")
             };
-            let d = Diagnostic::error(codes::E0101, span, message);
             self.sink.emit(d);
             self.push(TokenKind::Error, start);
             return;

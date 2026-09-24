@@ -33,11 +33,11 @@ are migrated or retired with the construct, each named in the progress log.
 | `[TIER-1]` | I | Safe code MUST NOT invoke an operation with an unverifiable … | not yet probed | |
 | `[PHIL-2]` | I | No heap allocation happens that the source does not show. The … | not yet probed | |
 | `[PHIL-10]` | I | A program containing no `unsafe` block, no `unsafe fn` and no false … | not yet probed | |
-| `[LEX-2]` | II | Line endings are LF or CRLF, both normalised to LF before … | not yet probed | |
-| `[LEX-10]` | II | There are no block comments. A line beginning `#!` before the first … | not yet probed | |
-| `[LEX-11]` | II | A `##` comment attaches to the next declaration, ignoring blank … | not yet probed | |
+| `[LEX-2]` | II | Line endings are LF or CRLF, both normalised to LF before … | ok | probed 2026-09-25: a CRLF file compiles and runs |
+| `[LEX-10]` | II | There are no block comments. A line beginning `#!` before the first … | ok | probed 2026-09-25: a `#!` line after the first item is a comment |
+| `[LEX-11]` | II | A `##` comment attaches to the next declaration, ignoring blank … | ok | probed 2026-09-25: a `##` comment before nothing, and one ending a code line, are silent |
 | `[LEX-15]` | II | The table above is the complete reserved set. Contextual keywords are … | compliant | `async = 1` is `E0005` naming the reservation |
-| `[LEX-22]` | II | Ember has no lifetime syntax and never will. A `'` begins a character … | not yet probed | |
+| `[LEX-22]` | II | Ember has no lifetime syntax and never will. A `'` begins a character … | fixed | probed 2026-09-25: `'ab` was `E0007` "named lifetimes are not supported in this version"; it is `E0008` (new, with a page), with a note naming `[LT-6]`'s restructurings; the retired `E0007` is no longer emitted |
 | `[LEX-16]` | II | An integer literal without a suffix is an untyped integer: it takes … | fixed | `int` default |
 | `[LEX-17]` | II | A float literal without a suffix is an untyped float: it takes the … | fixed | `float` default |
 | `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and has more significant … | fixed | `W2015` for literals given `f32`/`f16` with too many digits |
@@ -60,7 +60,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[TYP-13]` | IV | `Option[T]` has the size of `T` when `T` has a niche: a class handle, … | not yet probed | |
 | `[TYP-14]` | IV | A reference, and a `Box[T]`, is read through wherever a `T` is wanted … | fixed | an operand reads through a `Box` as through a reference (`TYP-14/accept_a_box_operand_is_read_through.em`) |
 | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … | not yet probed | |
-| `[TYP-24]` | IV | An interface method is found through any implementation visible in … | gap | probed 2026-09-24: two interfaces offering one method name is `E2070`, but the disambiguating call `I.m(recv)` is `E1010` |
+| `[TYP-24]` | IV | An interface method is found through any implementation visible in … | fixed | probed 2026-09-24: `I.m(recv, …)` was `E1010`; built, and D-241 (two interfaces' methods shared one implementation) fixed on the way |
 | `[HASH-2]` | IV | `std.collections.DefaultHasher` is a fixed-seed hasher: the same keys … | not yet probed | |
 | `[HASH-3]` | IV | `Map` and `Set` MUST NOT weaken equality to compensate for an … | not yet probed | |
 | `[TYP-23]` | IV | Inference is local to a function body and bidirectional. Function … | fixed | ODR-022; expected types reach generic calls, constructors and `Arena.alloc`; `x = None` and `xs = []` are left open and fixed by a later assignment, `push`/`insert`, or a site expecting a type (the body is checked again with the type known); one still open is `E2060` at its first use. `Map()` waits for `Map`. ODR-025: an unannotated lambda parameter takes `owned` (never `mut`) from the expected callable type; inference reads `Option`/`Result` instances (D-229); a ternary's `None`/`[]` branch takes the other branch's type (D-230) |
@@ -68,7 +68,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … | fixed | `Array`, views, fixed arrays, tuples (`(7,)`), `Option`, `Result`, nested, each element by its `Debug` (text quoted as Python's `repr` quotes it), in `print` and f-strings; `Map`/`Set` wait for `Map`. A class handle, which has `Debug` but no `Display` (`[TYP-36]`), prints its `Debug`, `<Token at 0x…>`, naming the object's own class (`[STD-9]`'s fallback). After `!r`/`!s`, a spec pads the text as in Python |
 | `[TYP-15]` | IV | Where views may be stored. A view value may be stored only in a … | **defect** | D-198: the type `Array[str]` is rejected (`E3063`) at its formation, so the rule's own `names = ["ann", "bob"]` fails; the rule checks the stored values' regions, as `Box` already does. Open: needs heap-element views to carry the `static` region in the region model (DEFECTS D-198). D-199 fixed the other direction: an inferred `Array` (`[xs[2..]]`) stored non-static views unchecked; a list literal, `push`, `insert` and `a[i] = v` now require `static` views, and a view read out of an `Array` of that view type counts as one of its (static) elements |
 | `[MOD-2]` | V | Items are private to their module unless marked. `pub(package)` makes … | fixed | probed 2026-09-24: a private function was callable through its module; now `E1052`, which every privacy error uses. A qualified type (`m.T`) is not supported in type position yet, so its visibility is untested |
-| `[MOD-3]` | V | `import a.b.c` binds the name `c` to module `a.b.c`, and `import … | not yet probed | |
+| `[MOD-3]` | V | `import a.b.c` binds the name `c` to module `a.b.c`, and `import … | fixed | probed 2026-09-25: `import math` was "cannot find module"; a standard module is now found without `std.` (the loader and the binder), a package module of the name first |
 | `[MOD-5]` | V | The prelude. Every module implicitly imports these names from `std`, … | partly | `mem`, `len`, `range`, `min`/`max`/`abs`/`clamp`, `sum`/`any`/`all`, `sorted`, `input` and the range types are built; `enumerate`/`zip`/`reversed` only as `for` heads, and `Map`/`Set` not at all |
 | `[FN-1]` | V | Parameter modes. `a: A` — borrowed (the default). The callee reads the caller's … | fixed | ODR-024: a borrowed parameter is the caller's place, passed by address (`T*`) unless `[BRW-8]` lets it be copied; `Cell`/`RefCell` writes reach the caller (D-209, D-210). `FN-1/accept_cell_and_refcell_through_borrowed_parameters.em` |
 | `[FN-3]` | V | A function returns by move. Returning a reference or view requires its … | compliant | through `[LT-1]`/`[LT-1a]` as amended |
@@ -81,22 +81,22 @@ are migrated or retired with the construct, each named in the progress log.
 | `[CLS-4]` | V | A class is final unless declared `open` or `abstract`. Methods are … | fixed | probed 2026-09-24: a method without `override` over an inherited one was not checked (ODR-028: `E2111`/`E2110`), and an `override` could not be overridden (D-239) |
 | `[CLS-7]` | V | Inside a class method, `self` is a handle. Any method may read and … | **gap** | a plain `self` method writing `self.n += 1` is `E3023`; 0.9.9 lets any method write fields, each access checked |
 | `[CLS-8]` | V | A class is `Sync` only as `[THR-1]` allows; every field of a `Sync` … | not yet probed | |
-| `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … | not yet probed | |
-| `[STA-1]` | V | `static NAME: T = e` is one value per program with a stable address. … | not yet probed | |
+| `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … | ok | probed 2026-09-25: `extend T:` adds inherent methods |
+| `[STA-1]` | V | `static NAME: T = e` is one value per program with a stable address. … | partly | probed 2026-09-25: a `static` of a literal works; `static NAMES: Array[String] = []` is `E2130` (initialiser must be a literal), which `[STA-3]`'s lazy statics would lift |
 | `[ATT-1]` | V | An attribute that is neither in the table below nor a visible … | not yet probed | |
 | `[EXP-2]` | VI | An assignment evaluates its right side first, into a temporary if it … | ok | probed 2026-09-24: `a[i], a[j] = a[j], a[i]` swaps, `x, y = y, x` swaps, `a[i] += x` evaluates once |
 | `[EXP-4]` | VI | A temporary created while evaluating an expression statement is … | partial | a `for` iterable's temporary under a slice or a view (`for x in make()[1..]:`) lives to the loop's end; one that a call's view result borrows (`for x in tail(make()):`) is still `E3020` (older than 0.9.9) |
 | `[CTL-1]` | VI | `for pattern in e:` iterates: * a place `e` whose type is `Iterable`: … | partly | `Array`, `[T; N]`, `Span`, ranges and `str`/`String` (by `char`) iterate; `Map`/`Set` and generators do not exist yet |
 | `[CTL-3b]` | VI | Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` … | **gap** | `(0..10).step_by(3)` is `E1010 not supported yet` |
-| `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … | not yet probed | |
+| `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … | ok | probed 2026-09-25: a block lambda that writes a capture updates it (`count += 1` twice gives 2) |
 | `[CLO-3]` | VI | What `fn(A) -> R` means depends on where it is written. * As a … | **gap** | The parameter form (implicit generic, monomorphised) is built, constructors included (D-235). The owned callable value of any other position holds only a function or a capture-free lambda: a capturing or `owned fn` lambda, or a callable parameter, cannot be stored in an `fn(...)` field, local or collection (`expected fn(...), found Callable0`). |
 | `[CLO-4]` | VI | A non-`owned` lambda cannot outlive what it borrows: storing it, … | not yet probed | |
 | `[CLO-6]` | VI | A lambda that moves one of its captures out of itself (into an … | not yet probed | |
 | `[CLO-6a]` | VI | An owned `once fn` value, including one inside a `Box` or a … | not yet probed | |
 | `[CLO-7]` | VI | Standard-library APIs that store or send a callback (`thread.spawn`, … | partial | ODR-025 removed `Option.map` from its list (Hardened_6); no callback-storing API is built yet |
-| `[CORO-1]` | VI | A `gen fn` declares a generator. Calling it runs none of its body; it … | not yet probed | |
-| `[CORO-3]` | VI | `Generator[Y, R]` in a signature names the function's own frame type … | not yet probed | |
-| `[CORO-6]` | VI | A reference or view to a local of the generator's own frame may not … | not yet probed | |
+| `[CORO-1]` | VI | A `gen fn` declares a generator. Calling it runs none of its body; it … | gap | probed 2026-09-25: `gen fn` parses (`[GRM-21]`) but is not checked or lowered: `Generator[Y]` is "cannot find type"; no frame, no `yield`, no `next`. Shares its core with generator expressions (`[GRM-38]`) and lazy adapters (`[STD-19]`) |
+| `[CORO-3]` | VI | `Generator[Y, R]` in a signature names the function's own frame type … | gap | probed 2026-09-25: see `[CORO-1]` |
+| `[CORO-6]` | VI | A reference or view to a local of the generator's own frame may not … | gap | probed 2026-09-25: see `[CORO-1]` |
 | `[OWN-6]` | VII | `mem.take(mut place: T) -> T` (leaves `Default`), `mem.replace(mut … | not yet probed | |
 | `[LT-1]` | VII | Signature elision. A source parameter (ODR-024) is: a parameter whose … | fixed | sources fixed by the declared signature, type parameters counted as `Copy` (D-213); a `mut` `Copy` parameter is not one (D-212); rule 1 for any borrowed receiver except a class handle (D-218, open, needs `[EXC-18]`); `E3060`/`E3062` split as ruled; a reference to a view parameter's own slot is `E3060` (D-217). `LT-1/` (thirteen cases) |
 | `[LT-1a]` | VII | `@borrows(p, …)`, on its own line before the function, replaces the … | fixed | names a source or `mut` parameter; `E2031` for a borrowed `Copy` or an `owned` non-view parameter, including an `owned` arena. `LT-1a/` |

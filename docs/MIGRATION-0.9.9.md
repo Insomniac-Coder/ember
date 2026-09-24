@@ -522,3 +522,14 @@ The next number is ODR-027.
   `continue`, `break`): the parser reads a jump as a whole `else` branch, and the checker makes it
   that arm of the `match` the ternary lowers to, as a `match` arm's jump is. `annotations.py` now
   trims `#$` continuation lines as the harness does.
+* **2026-09-25 — `I.m(recv)` (`[TYP-24]`), D-241.** `I.m(x, …)` with `I` an interface calls `I`'s
+  `m` on `x` (the ordinary method-call path, told the interface by the call's span, so a call inside
+  the arguments is not affected); a type without it is `E2040`. D-241: two interfaces offering one
+  method name for a type shared one implementation; each interface's methods are now kept apart
+  (`interface_methods`) for body checking, `dyn` adapters, implementation checks and C symbols.
+* **2026-09-25 — `E0008` and standard modules without `std.`.** `[LEX-22]`: an unterminated
+  character literal is `E0008` (new, with a page); `'a` is no longer a "named lifetime" (`E0007`,
+  retired in 0.9.9) but that literal, with a note naming `[LT-6]`'s restructurings; the `[LT-6]`
+  test was moved to it. `[MOD-3]`: `import math` and `from mem import swap` find `std.math` and
+  `std.mem` when the package has no module of the name (the driver's loader and the checker's
+  import binding).

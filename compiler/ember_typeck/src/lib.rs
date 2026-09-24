@@ -685,6 +685,11 @@ struct Checker<'a> {
     /// Which interfaces each type implements, for `[TYP-20]` coherence and to
     /// report a missing method against the right interface.
     implemented: Vec<(Ty, Symbol, Span)>,
+    /// `[TYP-24]` — each interface's methods for each type, beside
+    /// `methods` (which keeps one per name), for `I.m(recv)`.
+    interface_methods: HashMap<(Ty, Symbol, Symbol), MethodEntry>,
+    /// `[TYP-24]` — the interface an `I.m(recv)` call at this span names.
+    named_interface_call: Option<(Symbol, Span)>,
     /// `const` and `static` values, substituted wherever their name is used.
     constants: HashMap<Symbol, Expr>,
 
@@ -959,6 +964,8 @@ impl<'a> Checker<'a> {
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
             class_virtual_slots: HashMap::new(),
+            interface_methods: HashMap::new(),
+            named_interface_call: None,
             associated: HashMap::new(),
             interfaces: HashMap::new(),
             implemented: Vec::new(),
@@ -2036,7 +2043,11 @@ impl<'a> Checker<'a> {
                     .map(|s| s.name.to_string())
                     .collect::<Vec<_>>()
                     .join(".");
-                let Some(&target) = by_path.get(&key) else {
+                // `[MOD-3]` — a standard module may be named without `std.`,
+                // as in Python (`import math`), unless the package has a
+                // module of that name.
+                let found = by_path.get(&key).or_else(|| by_path.get(&format!("std.{key}")));
+                let Some(&target) = found else {
                     // `[MOD-5]` — the prelude's names are compiler-known until
                     // the library can supply each one, so an import naming a
                     // `std` module with no file yet binds nothing rather than
@@ -3573,7 +3584,10 @@ impl<'a> Checker<'a> {
 
         for (method, declaration, receiver, _) in required {
             let implementation = if receiver.is_some() {
-                self.methods.get(&(ty, method)).map(|entry| (entry.def, Some(entry.receiver)))
+                self.interface_methods
+                    .get(&(ty, interface, method))
+                    .or_else(|| self.methods.get(&(ty, method)))
+                    .map(|entry| (entry.def, Some(entry.receiver)))
             } else {
                 self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
             };
@@ -4323,7 +4337,16 @@ impl<'a> Checker<'a> {
                 {
                     return Some(None);
                 }
-                let entry = self.methods.get(&(concrete, name))?;
+                // `[TYP-24]` — the slot's own interface's implementation, when
+                // two interfaces offer the name.
+                let owner = self
+                    .interfaces
+                    .iter()
+                    .find(|(_, def)| def.methods.iter().any(|(_, decl, _, _)| *decl == declaration))
+                    .map(|(interface, _)| *interface);
+                let entry = owner
+                    .and_then(|interface| self.interface_methods.get(&(concrete, interface, name)))
+                    .or_else(|| self.methods.get(&(concrete, name)))?;
                 Some(Some(hir::InterfaceAdapterSlot {
                     implementation: entry.def,
                     receiver: entry.receiver,
@@ -4616,7 +4639,11 @@ impl<'a> Checker<'a> {
         let def = DefId(self.signatures.len() as u32);
         self.signatures.push(signature);
         let _ = span;
-        self.methods.insert((ty, name), MethodEntry { def, from_interface, receiver });
+        let entry = MethodEntry { def, from_interface, receiver };
+        if let Some(interface) = from_interface {
+            self.interface_methods.insert((ty, interface, name), entry);
+        }
+        self.methods.insert((ty, name), entry);
         Some(def)
     }
 
@@ -8499,6 +8526,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 _ => continue,
             };
+            // `[TYP-24]` — an `extend T implements I:` block's methods are I's,
+            // which `methods` alone cannot tell apart when two interfaces
+            // offer one name.
+            let from_interface = match &item.kind {
+                ast::ItemKind::Extend(decl) => match decl.implements.as_slice() {
+                    [ast::TypeExpr { kind: ast::TypeKind::Path { segments, args }, .. }]
+                        if segments.len() == 1 && args.is_empty() =>
+                    {
+                        let qualified = self.resolve_name(segments[0].name);
+                        self.interfaces.contains_key(&qualified).then_some(qualified)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
             let Some(owner) = owner else { continue };
             for member in members {
                 let ast::MemberKind::Fn(decl) = &member.kind else { continue };
@@ -8508,7 +8550,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .iter()
                     .any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
                 let def = if has_receiver {
-                    let Some(entry) = self.methods.get(&(owner, decl.name.name)) else { continue };
+                    let entry = from_interface
+                        .and_then(|interface| self.interface_methods.get(&(owner, interface, decl.name.name)).copied())
+                        .or_else(|| self.methods.get(&(owner, decl.name.name)).copied());
+                    let Some(entry) = entry else { continue };
                     entry.def
                 } else {
                     let Some(entry) = self.associated.get(&(owner, decl.name.name)) else {
@@ -9004,7 +9049,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             name,
             class_init: is_class_init,
             class_init_default_fields,
-            symbol: method_symbol(&self.types.symbol_name(owner), name),
+            symbol: self.method_symbol_for(owner, name, def),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
             params,
@@ -9643,6 +9688,38 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             use_span,
             local_candidates.chain(item_candidates),
         )
+    }
+
+    /// `[MNG-1]` — a method's C symbol. When two interfaces offer one name
+    /// for a type (`[TYP-24]`), each implementation's symbol also names its
+    /// interface, or the two would collide.
+    fn method_symbol_for(&self, owner: Ty, name: Symbol, def: DefId) -> String {
+        let owner_name = self.types.symbol_name(owner);
+        let offering: Vec<Symbol> = self
+            .interface_methods
+            .iter()
+            .filter(|((ty, _, method), _)| *ty == owner && *method == name)
+            .map(|((_, interface, _), _)| *interface)
+            .collect();
+        if offering.len() > 1
+            && let Some(((_, interface, _), _)) =
+                self.interface_methods.iter().find(|((ty, _, method), entry)| *ty == owner && *method == name && entry.def == def)
+        {
+            return method_symbol(&owner_name, Symbol::intern(&format!("{}_{name}", type_stem(interface.as_str()))));
+        }
+        method_symbol(&owner_name, name)
+    }
+
+    /// `[TYP-24]` — the interface a bare name refers to, unless a local of
+    /// that name hides it.
+    fn interface_named(&self, expr: &ast::Expr) -> Option<Symbol> {
+        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
+        let [single] = segments.as_slice() else { return None };
+        if self.lookup(single.name).is_some() {
+            return None;
+        }
+        let qualified = self.resolve_name(single.name);
+        self.interfaces.contains_key(&qualified).then_some(qualified)
     }
 
     /// `[MOD-2]` — whether the item `qualified`, declared in `module`, may be
@@ -16169,6 +16246,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // constructor. The parser cannot know that the name on the left
             // is a type, so it arrives in the same method-call shape as enum
             // and range constructors.
+            // `[TYP-24]` — `I.m(recv, …)` calls interface `I`'s `m` on `recv`:
+            // how two interfaces offering one name are told apart.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if !args.is_empty() && self.interface_named(recv).is_some() =>
+            {
+                let interface = self.interface_named(recv).expect("just checked");
+                let outer = self.named_interface_call.replace((interface, span));
+                let call = self.synth_method_call(&args[0].value, *name, generic_args, &args[1..], span);
+                self.named_interface_call = outer;
+                call
+            }
+
             // `[TXT-9]` — `String.from(s)` copies a `str` into a new `String`.
             ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if is_single_path(recv, "String")
@@ -20187,7 +20276,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.void, kind: ExprKind::Error, span };
         }
-        let Some(entry) = self.lookup_method(receiver.ty, name.name) else {
+        let named = self.named_interface_call.filter(|(_, at)| *at == span).map(|(interface, _)| interface);
+        let found = match named {
+            Some(interface) => {
+                let found = self.interface_methods.get(&(receiver.ty, interface, name.name)).copied();
+                if found.is_none() {
+                    let shown = self.types.display(receiver.ty);
+                    self.error(
+                        codes::E2040,
+                        name.span,
+                        format!("`{shown}` has no `{}` from `{interface}`", name.name),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                found
+            }
+            None => self.lookup_method(receiver.ty, name.name),
+        };
+        let Some(entry) = found else {
             // `[CLO-11]` — with no method of that name, a field of callable
             // type is called.
             if explicit.is_empty() && self.has_callable_field(receiver.ty, name.name) {
@@ -20249,7 +20355,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         // `[TYP-24]` — the same name reachable through two implemented
         // interfaces has to be disambiguated by the caller.
-        if let Some(interface) = entry.from_interface {
+        if let Some(interface) = entry.from_interface.filter(|_| named.is_none()) {
             let others: Vec<Symbol> = self
                 .implemented
                 .iter()

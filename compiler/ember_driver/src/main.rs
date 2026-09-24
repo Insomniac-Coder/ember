@@ -1248,6 +1248,19 @@ fn load_modules(
                 continue;
             }
             seen.insert(key.clone());
+            // `[MOD-3]` — a standard module may be named without `std.`
+            // (`import math`), unless the package has a module of that name.
+            let mut names = names;
+            if resolve_module(root_dir, &names).is_none() {
+                let mut in_std = vec![ember_branding::STD_PACKAGE.to_string()];
+                in_std.extend(names.iter().cloned());
+                if resolve_module(root_dir, &in_std).is_some() {
+                    if !seen.insert(in_std.join(".")) {
+                        continue;
+                    }
+                    names = in_std;
+                }
+            }
             let Some(file_path) = resolve_module(root_dir, &names) else {
                 // `[MOD-5]`'s prelude names are compiler-known until the
                 // library can supply each one, so an import of a `std` module

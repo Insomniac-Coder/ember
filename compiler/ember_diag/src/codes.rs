@@ -130,6 +130,7 @@ codes! {
     E0005 = (Error, 5, Lex, "[LEX-14]", "reserved keyword used as an identifier");
     E0006 = (Error, 6, Lex, "[VER-8]", "a language directive names a version other than the current one");
     E0007 = (Error, 7, Lex, "[LT-6]", "named lifetimes are not supported in this version");
+    E0008 = (Error, 8, Lex, "[LEX-22]", "unterminated character literal");
 
     // --- parser -------------------------------------------------------------
     E0100 = (Error, 100, Parse, "[AST-2]", "unexpected token");
