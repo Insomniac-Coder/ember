@@ -16,7 +16,7 @@ open class Entity:
         return self.id
 
 class Player(Entity):
-    score: i32
+    score: i32 = 0
 
 fn read_id(entity: Entity) -> i32:
     return entity.id

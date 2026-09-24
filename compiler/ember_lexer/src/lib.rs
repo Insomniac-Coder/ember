@@ -923,9 +923,29 @@ impl<'a> Lexer<'a> {
         }
 
         let c = self.bump().expect("lex_punct called at end of file");
+        // `[DIA-20]` — a run of characters that start no token is one
+        // diagnostic, not one per character.
+        let mut run = c.to_string();
+        while let Some(next) = self.peek()
+            && !next.is_whitespace()
+            && !next.is_ascii_digit()
+            && !is_ident_start(next)
+            && !matches!(next, '#' | '"' | '\'' | '\\')
+            && !self.puncts.iter().any(|(text, _)| self.rest().starts_with(text))
+        {
+            self.bump();
+            run.push(next);
+        }
         let span = self.span(start);
-        let d = Diagnostic::error(codes::E0100, span, format!("unexpected character `{c}`"))
-            .primary_label("this character has no meaning in Ember");
+        let d = if run.chars().count() == 1 {
+            Diagnostic::error(codes::E0100, span, format!("unexpected character `{c}`"))
+                .primary_label("this character has no meaning in Ember")
+        } else {
+            // A run of backticks reads badly inside backticks.
+            let shown = if run.contains('`') { format!("\"{run}\"") } else { format!("`{run}`") };
+            Diagnostic::error(codes::E0100, span, format!("unexpected characters {shown}"))
+                .primary_label("these characters have no meaning in Ember")
+        };
         self.sink.emit(d);
         self.push(TokenKind::Error, start);
     }

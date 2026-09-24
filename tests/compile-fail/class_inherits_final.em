@@ -6,7 +6,7 @@ class Base:
     value: i32
 
 class Child(Base):
-    extra: i32
+    extra: i32 = 0
 
 fn main():
     println(1)

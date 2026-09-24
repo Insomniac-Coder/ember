@@ -557,12 +557,18 @@ pub enum Builtin {
     TotalLess,
     /// `abs` of a float: clears the sign, so `abs(-0.0)` is `+0.0`.
     FloatAbs,
+    /// `[TYP-30]` — a float `**`: C's `pow` or `powf`.
+    FloatPow,
     /// `[STD-26]` — how many values `range(start, stop, step)` has, and the
     /// `k`th of them; a zero step panics.
     RangeCount,
     RangeNth,
     /// `[TXT-10]` — `s.char_count()`: the number of Unicode scalar values.
     StrCharCount,
+    /// `[CTL-1]` — the `char` that starts at a byte index of a `str`.
+    StrCharAt,
+    /// How many bytes UTF-8 gives a `char`.
+    CharUtf8Len,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
@@ -897,8 +903,11 @@ impl Builtin {
             Builtin::Assert => "assert",
             Builtin::TotalLess => "cmp",
             Builtin::FloatAbs => "abs",
+            Builtin::FloatPow => "pow",
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
+            Builtin::StrCharAt => "char_at",
+            Builtin::CharUtf8Len => "len_utf8",
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ArraySort => "sort",

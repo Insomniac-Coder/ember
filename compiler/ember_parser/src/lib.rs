@@ -262,6 +262,11 @@ impl<'a> Parser<'a> {
 
     /// Emit a diagnostic, respecting `[AST-2]`'s cascade limit.
     fn report(&mut self, mut diagnostic: Diagnostic) {
+        // `[DIA-14]` — the parse stopped at a token the lexer has already
+        // reported: one mistake, one error.
+        if matches!(self.peek(), TokenKind::Error) {
+            return;
+        }
         // `[LEX-21]` (0.9.9) — there is no `::`; wherever one stops the parse,
         // say what to write instead.
         if diagnostic.code == Some(codes::E0100)

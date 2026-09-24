@@ -568,6 +568,10 @@ void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec);
 /* `[TXT-10]`: the characters in valid UTF-8, counted as the bytes that do not
  * continue a character. */
 size_t ember_str_char_count(ember_str s);
+/* `[CTL-1]` — the character that starts at byte `i` of valid UTF-8, and the
+ * number of bytes UTF-8 gives a character. */
+uint32_t ember_str_char_at(ember_str s, size_t i);
+size_t ember_char_utf8_len(uint32_t c);
 
 /* `[STD-8b]`: whether `needle` occurs in `text`. UTF-8 matches only at
  * character boundaries, so a character never matches inside another's

@@ -10783,7 +10783,10 @@ moves before the body), and `range_len`/`range_contains` serve `len(r)`,
 spelling (`Range[u8]`), `symbol_name` the instance name every symbol is built
 from. D-222 is fixed (`[CLO-11]` callable fields, and any callee value
 through `call_value`), and D-236 (a generic struct constructor checks each
-argument once, by name). The directory
+argument once, by name). Also built: `**` (`power`), inherited constructors
+(`inherited_init`, `E2101`), `for c in s` (`check_for_text`), `Box` operands, one
+error per run of invalid characters. D-238 is fixed: struct field defaults were never
+evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

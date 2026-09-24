@@ -317,6 +317,9 @@ struct GenericStruct {
     /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
     /// `Buffer[T]` is read-only outside `Buffer`'s module for every `T`.
     declaring_module: usize,
+    /// `[STR-2]` — each field's default expression, carried to every
+    /// instantiation.
+    defaults: Vec<Option<ast::Expr>>,
     /// The interfaces each concrete instantiation implements. They are kept
     /// unresolved until interfaces have been collected globally.
     implements: Vec<ast::TypeExpr>,
@@ -821,6 +824,8 @@ struct Checker<'a> {
     /// They are checked at the construction site so ordinary expression
     /// typing, coercion, and source-order lowering remain the only evaluator.
     class_default_exprs: HashMap<ClassId, Vec<Option<ast::Expr>>>,
+    /// `[STR-2]` — each struct's field default expressions, by field.
+    struct_default_exprs: HashMap<StructId, Vec<Option<ast::Expr>>>,
     /// A field expression is a place, not a read, while the assignment target
     /// is being synthesized. This prevents constructor writes from tripping
     /// the read-before-initialization check on their own left-hand side.
@@ -994,6 +999,7 @@ impl<'a> Checker<'a> {
             class_init: None,
             class_method_receiver: None,
             class_default_exprs: HashMap::new(),
+            struct_default_exprs: HashMap::new(),
             in_assignment_target: false,
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
@@ -2194,6 +2200,31 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let Some(base) = self.types.class_def(id).base else { continue };
+            // `[CLS-10]` — with no `init`, the base's constructor builds the
+            // object, so every field this class adds needs a default.
+            let declares_init = decl.members.iter().any(|member| {
+                matches!(&member.kind, ast::MemberKind::Fn(method) if method.name.name.is("init"))
+            });
+            if !declares_init {
+                for member in &decl.members {
+                    if let ast::MemberKind::Field(field) = &member.kind
+                        && field.default.is_none()
+                    {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2101,
+                                field.name.span,
+                                format!(
+                                    "class `{}` adds a field `{}` with no default, so it must declare `init`",
+                                    decl.name.name, field.name.name
+                                ),
+                            )
+                            .help(format!("give `{}` a default, or write an `init` that sets it and calls `super.init(…)`", field.name.name))
+                            .note("a derived class with no `init` is built by its base's constructor [CLS-10]"),
+                        );
+                    }
+                }
+            }
             let base_def = self.types.class_def(base);
             if base_def.openness == ClassOpenness::Final {
                 // There is no dedicated final-base diagnostic in the current
@@ -2496,6 +2527,14 @@ impl<'a> Checker<'a> {
                 name,
                 GenericStruct {
                     declaring_module: self.current_module,
+                    defaults: decl
+                        .members
+                        .iter()
+                        .filter_map(|member| match &member.kind {
+                            ast::MemberKind::Field(field) => Some(field.default.clone()),
+                            _ => None,
+                        })
+                        .collect(),
                     params,
                     generic_params,
                     fields,
@@ -2917,6 +2956,16 @@ impl<'a> Checker<'a> {
                             _ => {}
                         }
                     }
+                    self.struct_default_exprs.insert(
+                        id,
+                        decl.members
+                            .iter()
+                            .filter_map(|member| match &member.kind {
+                                ast::MemberKind::Field(field) => Some(field.default.clone()),
+                                _ => None,
+                            })
+                            .collect(),
+                    );
                     // `[TYP-14]` — a struct carrying a borrow *is* a view
                     // type whatever it says; the attribute is required as
                     // documentation, because a reader has to know that the
@@ -6256,6 +6305,7 @@ impl<'a> Checker<'a> {
         let ty = self.types.intern(TyKind::Struct(id));
         self.struct_ids.insert(instance, id);
         self.named_types.insert(instance, ty);
+        self.struct_default_exprs.insert(id, decl.defaults.clone());
 
         // The fields were resolved once with the parameters left opaque, so
         // instantiating is a substitution rather than a re-resolve.
@@ -9974,6 +10024,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let value = match op {
                     // `a op= b` is `a = a op b` when no `AddAssign` exists
                     // (`[TYP-21]`); Phase 0 has scalars only, so it always is.
+                    Some(ast::BinOp::Pow) => {
+                        let base = self.synth(target);
+                        let exponent = self.synth(value);
+                        let raised = self.power(base, exponent, value, stmt.span);
+                        self.coerce(raised, place_ty)
+                    }
                     Some(bin) => {
                         let rhs = self.check_expr(value, place_ty);
                         let lhs = self.synth(target);
@@ -11531,6 +11587,96 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }));
         };
         Some(Stmt::ForRange { local, start, end, inclusive, body, else_block })
+    }
+
+    /// `[CTL-1]` — `for c in s` over a `str` or `String` yields its `char`s:
+    /// a counted loop over the bytes of a view of the text (the text is
+    /// borrowed for the loop, `[CTL-2]`), decoding each character and moving
+    /// past it before the body runs, so a `continue` needs nothing more.
+    fn check_for_text(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        text: Expr,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
+        let (str_ty, usize_ty, char_ty, bool_ty) =
+            (self.common.str_, self.common.usize, self.common.char_, self.common.bool_);
+        let mut stmts = Vec::new();
+        let text = self.keep_alive(text, &mut stmts);
+        let view = self.coerce(text, str_ty);
+        self.scopes.push(HashMap::new());
+        let view_local = self.declare(None, str_ty, span);
+        self.locals[view_local.0 as usize].for_iterator = true;
+        let index = self.declare(None, usize_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        stmts.push(Stmt::Let { local: view_local, init: Some(view) });
+        stmts.push(Stmt::Let { local: index, init: Some(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }) });
+
+        self.scopes.push(HashMap::new());
+        let character = self.declare(binding_name(pattern), char_ty, pattern.span);
+        if !matches!(pattern.kind, ast::PatternKind::Bind { .. } | ast::PatternKind::Wild) {
+            self.error(codes::E2020, pattern.span, "a `char` binds to one name");
+        }
+        self.loop_labels.push(label.map(|l| l.name));
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        let mut inner = vec![
+            Stmt::Let {
+                local: character,
+                init: Some(Expr {
+                    ty: char_ty,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::StrCharAt,
+                        args: vec![local(view_local, str_ty), local(index, usize_ty)],
+                    },
+                    span,
+                }),
+            },
+            Stmt::Assign {
+                place: local(index, usize_ty),
+                value: Expr {
+                    ty: usize_ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(local(index, usize_ty)),
+                        rhs: Box::new(Expr {
+                            ty: usize_ty,
+                            kind: ExprKind::Builtin { which: Builtin::CharUtf8Len, args: vec![local(character, char_ty)] },
+                            span,
+                        }),
+                    },
+                    span,
+                },
+            },
+        ];
+        inner.extend(checked.stmts);
+
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
+        }
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+        let more = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Lt,
+                lhs: Box::new(local(index, usize_ty)),
+                rhs: Box::new(Expr {
+                    ty: usize_ty,
+                    kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(view_local, str_ty)] },
+                    span,
+                }),
+            },
+            span,
+        };
+        stmts.push(Stmt::While { cond: more, body: Block { stmts: inner, span }, else_block });
+        Some(Stmt::Block(Block { stmts, span }))
     }
 
     /// `[CTL-3]` (ODR-027) — which of the prelude's range types `ty` is, and
@@ -13898,6 +14044,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         if let Some((shape, bound)) = self.range_parts(iterable.ty) {
             return self.check_for_range_value(label, pattern, (iterable, shape, bound), body, else_block, span);
+        }
+        let referent = match *self.types.kind(iterable.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => iterable.ty,
+        };
+        if self.is_text(referent) {
+            let iterable = self.read_through(iterable);
+            return self.check_for_text(label, pattern, iterable, body, else_block, span);
         }
         // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
         // counted loop over its indices, with no iterator object at all.
@@ -24375,22 +24529,52 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             match values[index].take() {
                 Some(expr) => fields.push(expr),
                 None => {
-                    if !has_default {
-                        self.error(
-                            codes::E2020,
-                            span,
-                            format!("field `{field_name}` of `{name}` has no value"),
-                        );
+                    // `[STR-2]` — a default is evaluated at each construction
+                    // that omits the field, in field order (D-238: a zero
+                    // stood in, and C spread an aggregate's `0` over the
+                    // fields after it).
+                    let default = self.struct_default_exprs.get(&id).and_then(|defaults| defaults.get(index).cloned().flatten());
+                    match default {
+                        Some(default) if *has_default => {
+                            let module = self.types.struct_def(id).declaring_module;
+                            // One mistake in a default is one error, however
+                            // many constructions evaluate it (`[DIA-14]`).
+                            let quiet = (!self.reported_defaults.insert(default.span)).then(|| self.sink.mark());
+                            let value = self.check_field_default(&default, *field_ty, module);
+                            if let Some(mark) = quiet {
+                                self.sink.rollback(mark);
+                            }
+                            fields.push(value);
+                        }
+                        _ => {
+                            if !has_default {
+                                self.error(
+                                    codes::E2020,
+                                    span,
+                                    format!("field `{field_name}` of `{name}` has no value"),
+                                );
+                            }
+                            fields.push(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                        }
                     }
-                    // `[STR-2]` — a defaulted field is filled in at the call
-                    // site. Phase 0 has no const evaluator, so a zero of the
-                    // right type stands in; Phase 4 replaces this.
-                    fields.push(self.zero_of(*field_ty, span));
                 }
             }
         }
 
         Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }
+    }
+
+    /// `[CLS-10]` — the `init` of the nearest base class that has one.
+    fn inherited_init(&self, id: ClassId) -> Option<DefId> {
+        let mut current = self.types.class_def(id).base;
+        while let Some(base) = current {
+            let base_ty = self.class_ty(base)?;
+            if let Some(entry) = self.methods.get(&(base_ty, Symbol::intern("init"))) {
+                return Some(entry.def);
+            }
+            current = self.types.class_def(base).base;
+        }
+        None
     }
 
     fn synth_class_constructor(
@@ -24406,9 +24590,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let def = self.types.class_def(id);
             (def.openness, def.fields.clone(), def.base.is_some())
         };
-        let has_init = self
+        let mut has_init = self
             .methods
             .contains_key(&(ty, Symbol::intern("init")));
+        // `[CLS-10]` — a derived class with no `init` gets its base's
+        // constructor: its own field defaults, then the nearest base `init`
+        // on the new object (a field with no default is `E2101`, reported at
+        // the declaration).
+        let inherited_init = if !has_init && has_base { self.inherited_init(id) } else { None };
+        if inherited_init.is_some() {
+            if fields.iter().any(|field| !field.has_default) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            has_init = true;
+        }
 
         if !explicit.is_empty() {
             self.error(
@@ -24431,11 +24626,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
-            let init = self
-                .methods
-                .get(&(ty, Symbol::intern("init")))
-                .map(|entry| entry.def)
-                .expect("has_init implies a registered constructor");
+            let init = match inherited_init {
+                Some(init) => init,
+                None => self
+                    .methods
+                    .get(&(ty, Symbol::intern("init")))
+                    .map(|entry| entry.def)
+                    .expect("has_init implies a registered constructor"),
+            };
             let signature_params = self.signatures[init.0 as usize].params.clone();
             let Some((_, _, receiver_mode, _)) = signature_params.first() else {
                 self.error(codes::E1010, span, format!("class `{name}` has an invalid `init`"));
@@ -24633,17 +24831,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         defaults
     }
 
-    fn zero_of(&mut self, ty: Ty, span: Span) -> Expr {
-        let kind = if self.types.is_float(ty) {
-            ExprKind::Float(0.0)
-        } else if self.types.is_integral(ty) {
-            ExprKind::Int(0)
-        } else if ty == self.common.bool_ {
-            ExprKind::Bool(false)
-        } else {
-            ExprKind::Error
-        };
-        Expr { ty, kind, span }
+    /// `[STR-2]` — a field default, checked as its declaration reads: its
+    /// names resolve in the declaring module, and the constructing
+    /// function's locals are not in scope.
+    fn check_field_default(&mut self, default: &ast::Expr, ty: Ty, module: usize) -> Expr {
+        let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let caller = self.current_module;
+        if module != usize::MAX {
+            self.current_module = module;
+        }
+        let value = self.check_expr(default, ty);
+        self.current_module = caller;
+        self.scopes = scopes;
+        value
     }
 
     /// `[TYP-21]` — the interface call an operator desugars to, once the
@@ -25059,6 +25259,141 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[TYP-30]` — `a ** b`. An integer base with an integer exponent is
+    /// exact: square and multiply through the ordinary checked `*`, so it
+    /// panics exactly when the true power overflows its type (`[TYP-8]`). A
+    /// negative exponent is `E2151` when it is a literal and a panic when it
+    /// is not. A float base takes a float or integer exponent and is `pow`.
+    /// Anything else is `E2020`. An untyped base takes a float exponent's
+    /// type (`2 ** 0.5`) and is otherwise an `int`.
+    fn power(&mut self, base: Expr, exponent: Expr, exponent_ast: &ast::Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let exponent = self.read_through(exponent);
+        let exponent = self.commit(exponent);
+        let base = self.read_through(base);
+        let base = if self.types.is_untyped_literal(base.ty) && self.types.is_float(exponent.ty) {
+            self.coerce(base, exponent.ty)
+        } else {
+            self.commit(base)
+        };
+        if base.ty == self.common.error || exponent.ty == self.common.error {
+            return error;
+        }
+        let (ty, exponent_ty) = (base.ty, exponent.ty);
+        if self.types.is_float(ty) {
+            if !self.types.is_integral(exponent_ty) && !self.types.is_float(exponent_ty) {
+                let shown = self.types.display(exponent_ty);
+                self.error(codes::E2020, exponent.span, format!("a float `**` takes a number as its exponent, not `{shown}`"));
+                return error;
+            }
+            let exponent = if exponent_ty == ty {
+                exponent
+            } else {
+                let exponent_span = exponent.span;
+                Expr { ty, kind: ExprKind::Cast { expr: Box::new(exponent), to: ty }, span: exponent_span }
+            };
+            return Expr { ty, kind: ExprKind::Builtin { which: Builtin::FloatPow, args: vec![base, exponent] }, span };
+        }
+        if !self.types.is_integral(ty) {
+            let shown = self.types.display(ty);
+            self.error(codes::E2020, base.span, format!("`**` takes a number, not `{shown}`"));
+            return error;
+        }
+        if !self.types.is_integral(exponent_ty) {
+            let shown = self.types.display(exponent_ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, exponent.span, format!("an integer `**` takes an integer exponent, not `{shown}`"))
+                    .help("for a float power, convert the base: `(a as f64) ** b`")
+                    .note("integer powers are exact; a float exponent makes a float [TYP-30]"),
+            );
+            return error;
+        }
+        let mut literal = exponent_ast;
+        while let ast::ExprKind::Paren(inner) = &literal.kind {
+            literal = inner;
+        }
+        if let ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } = &literal.kind
+            && let ast::ExprKind::Lit(ast::Literal::Int { value, .. }) = &operand.kind
+            && *value > 0
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E2151, exponent_ast.span, "an integer `**` with a negative exponent")
+                    .primary_label("an integer to a negative power is a fraction")
+                    .help("use a float base for a fraction: `2.0 ** -1`")
+                    .note("[TYP-30]"),
+            );
+            return error;
+        }
+
+        // result = 1; while e > 0: if e & 1 == 1: result *= b; e >>= 1; if e > 0: b *= b
+        let bool_ty = self.common.bool_;
+        let result = self.declare(None, ty, span);
+        let factor = self.declare(None, ty, span);
+        let left = self.declare(None, exponent_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let number = |value, ty| Expr { ty, kind: ExprKind::Int(value), span };
+        let binary = |op, lhs, rhs, ty| Expr { ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let positive = || binary(BinOp::Gt, local(left, exponent_ty), number(0, exponent_ty), bool_ty);
+        let mut stmts = vec![
+            Stmt::Let { local: factor, init: Some(base) },
+            Stmt::Let { local: left, init: Some(exponent) },
+        ];
+        if matches!(self.types.kind(exponent_ty), TyKind::Int(_)) {
+            stmts.push(Stmt::Expr(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin {
+                    which: Builtin::Assert,
+                    args: vec![
+                        binary(BinOp::Ge, local(left, exponent_ty), number(0, exponent_ty), bool_ty),
+                        Expr { ty: self.common.str_, kind: ExprKind::Str("`**` with a negative exponent".to_string()), span },
+                    ],
+                },
+                span,
+            }));
+        }
+        stmts.push(Stmt::Let { local: result, init: Some(number(1, ty)) });
+        let odd = binary(
+            BinOp::Eq,
+            binary(BinOp::BitAnd, local(left, exponent_ty), number(1, exponent_ty), exponent_ty),
+            number(1, exponent_ty),
+            bool_ty,
+        );
+        let body = vec![
+            Stmt::If {
+                cond: odd,
+                then_block: Block {
+                    stmts: vec![Stmt::Assign {
+                        place: local(result, ty),
+                        value: binary(BinOp::Mul, local(result, ty), local(factor, ty), ty),
+                    }],
+                    span,
+                },
+                else_block: None,
+            },
+            Stmt::Assign {
+                place: local(left, exponent_ty),
+                value: binary(BinOp::Shr, local(left, exponent_ty), number(1, exponent_ty), exponent_ty),
+            },
+            Stmt::If {
+                cond: positive(),
+                then_block: Block {
+                    stmts: vec![Stmt::Assign {
+                        place: local(factor, ty),
+                        value: binary(BinOp::Mul, local(factor, ty), local(factor, ty), ty),
+                    }],
+                    span,
+                },
+                else_block: None,
+            },
+        ];
+        stmts.push(Stmt::While { cond: positive(), body: Block { stmts: body, span }, else_block: None });
+        Expr {
+            ty,
+            kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(local(result, ty)) },
+            span,
+        }
+    }
+
     fn synth_binary(
         &mut self,
         op: ast::BinOp,
@@ -25068,6 +25403,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Expr {
         if matches!(op, ast::BinOp::In | ast::BinOp::NotIn) {
             return self.synth_membership(lhs, rhs, op == ast::BinOp::NotIn, span);
+        }
+        if op == ast::BinOp::Pow {
+            let base = self.synth(lhs);
+            let exponent = self.synth(rhs);
+            return self.power(base, exponent, rhs, span);
         }
         let Some(hir_op) = convert_binop(op) else {
             self.error(codes::E1010, span, "this operator is not supported yet in this phase");
@@ -25119,6 +25459,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `add`, not fail to find one on a reference.
         lhs = self.read_through(lhs);
         rhs = self.read_through(rhs);
+        // `[TYP-14]` — and through a `Box`, as a field access does.
+        while self.box_inner(lhs.ty).is_some() {
+            lhs = self.read_box_through(lhs);
+        }
+        while self.box_inner(rhs.ty).is_some() {
+            rhs = self.read_box_through(rhs);
+        }
 
         // `[CLS-4]`/Part VIII — `is` and `is not` compare class-handle
         // identity. They are deliberately not routed through `Eq`: value

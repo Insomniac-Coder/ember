@@ -2536,6 +2536,8 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StringLen
             | Builtin::StringAsStr
             | Builtin::StrCharCount
+            | Builtin::StrCharAt
+            | Builtin::CharUtf8Len
             | Builtin::StrContains
             | Builtin::StrContainsChar
             | Builtin::StrIsCharBoundary
@@ -2549,6 +2551,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::ValueCompare { .. }
             | Builtin::TotalLess
             | Builtin::FloatAbs
+            | Builtin::FloatPow
             | Builtin::RangeCount
             | Builtin::RangeNth
             | Builtin::SizeOf

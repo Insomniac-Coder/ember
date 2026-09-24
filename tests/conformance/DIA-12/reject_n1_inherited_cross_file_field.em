@@ -5,7 +5,7 @@
 from support.base import Base
 
 class Derived(Base):
-    current: i32
+    current: i32 = 0
 
 fn read(item: Derived) -> i32:
     return item.valeu

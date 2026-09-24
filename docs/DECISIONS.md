@@ -1460,3 +1460,22 @@ counts over a copy of its bounds. `0.9.9_Hardened_8` carries it in `[CTL-3]`.
   spelling in a table of their own rather than in `origin`, which also decides
   how a type resolves (an interface adapter, for one, is refused to a struct
   with an origin and no declaring module).
+
+## ADR-045 — A field default is checked where it is used, as its declaration reads
+
+**Decided 2026-09-24 with D-238's fix.** `[STR-2]` says a struct field default
+is evaluated at each construction that omits the field, in field order. It does
+not say how the expression's names resolve, or how often a mistake in it is
+reported when many constructions evaluate it.
+
+- The default is checked at each construction that omits the field, so it is
+  real code in the constructing function (it may allocate, and each
+  construction gets its own value). Its names resolve as the declaration reads:
+  in the struct's module, with none of the constructing function's locals in
+  scope (`check_field_default` swaps the module and the scope stack). A default
+  that could see its caller's locals would change meaning with each caller.
+- A mistake in a default is reported at its first use and checked quietly after
+  (`reported_defaults`, the set `[FN-5]`'s parameter defaults already use), so
+  one mistake is one error (`[DIA-14]`).
+- Class field defaults still resolve at the construction site; aligning them is
+  a follow-up, not part of D-238.

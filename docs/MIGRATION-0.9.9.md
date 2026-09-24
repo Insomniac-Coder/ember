@@ -465,3 +465,20 @@ The next number is ODR-027.
   is generic (`[CLO-3]`), and constructing the class now instantiates it for the argument, as a
   generic method call does. Storing a callable parameter in a field needs `[CLO-3]`'s owned
   callable value, which is not built (AUDIT).
+* **2026-09-24 — powers, inherited constructors, text iteration and three smaller gaps.**
+  `[TYP-30]`: `a ** b` on integers is exact by square and multiply through the checked `*`, so it
+  panics exactly when the true power overflows; a literal negative exponent is `E2151` and a
+  computed one panics; a float base takes a float or integer exponent through C's `pow`
+  (`FloatPow`); `a **= b` too. `[CLS-10]`: a derived class with no `init` runs the nearest base
+  `init` on the new object after its own field defaults (MIR upcasts the receiver as `super.init`
+  does); a derived field with no default is `E2101` (new, with an error page) at the declaration,
+  and three tests that declared one were given defaults. `[CTL-1]`: `for c in s` over a `str` or
+  `String` yields `char`s (`StrCharAt`, `CharUtf8Len`, runtime `str_char_at`/`char_utf8_len`).
+  `[TYP-14]`: an operand reads through a `Box`. `[DIA-20]`: a run of invalid characters is one
+  `E0100`, and the parser reports nothing at a token the lexer rejected (`[DIA-14]`).
+* **2026-09-24 — struct field defaults are evaluated (D-238).** Found probing `[STR-2]`: a zero
+  stood in for every struct field default, and an omitted `String` or `Array` field's `0` was spread
+  by C's brace elision over the fields after it. Each default is now checked at the construction
+  that omits it, in field order, with its names resolved in the declaring module; a mistake in one
+  is reported once. The fixture of a UI test (`N1/inherited_class_field_typo`) also gave its
+  derived field a default, as `[CLS-10]` requires.

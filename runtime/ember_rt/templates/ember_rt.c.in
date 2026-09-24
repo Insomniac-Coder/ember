@@ -1327,6 +1327,25 @@ size_t ember_str_char_count(ember_str s) {
     return count;
 }
 
+uint32_t ember_str_char_at(ember_str s, size_t i) {
+    const unsigned char* p = s.ptr + i;
+    if (p[0] < 0x80) {
+        return p[0];
+    }
+    if (p[0] < 0xE0) {
+        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
+    }
+    if (p[0] < 0xF0) {
+        return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
+    }
+    return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+}
+
+size_t ember_char_utf8_len(uint32_t c) {
+    return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+}
+
 bool ember_str_contains(ember_str text, ember_str needle) {
     if (needle.len == 0) {
         return true;

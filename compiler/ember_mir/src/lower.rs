@@ -5383,10 +5383,31 @@ impl<'a> Builder<'a> {
                 .first()
                 .map(|param| function.local(param.local).ty)
                 .expect("class constructor has a receiver parameter");
+            // `[CLS-10]` — a derived class with no `init` runs its base's on
+            // the new object, through a non-owning upcast (as `super.init`).
+            let receiver_class = match self.types.kind(receiver_ty) {
+                TyKind::Ref { inner, .. } => *inner,
+                _ => receiver_ty,
+            };
+            let object = if receiver_class != ty {
+                let scratch = LocalId(self.locals.len() as u32);
+                self.locals.push(LocalDecl { ty: receiver_class, kind: LocalKind::Temp, name: None, span });
+                self.push(StmtKind::Assign {
+                    place: Place::local(scratch),
+                    rvalue: Rvalue::Cast {
+                        kind: CastKind::ClassUpcastBorrowed,
+                        operand: Operand::Copy(place.clone()),
+                        to: receiver_class,
+                    },
+                });
+                Place::local(scratch)
+            } else {
+                place.clone()
+            };
             let receiver = self.temp(receiver_ty, span);
             self.push(StmtKind::Assign {
                 place: Place::local(receiver),
-                rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
+                rvalue: Rvalue::Ref { place: object, mutable: true },
             });
             let eval_order = arg_eval_order
                 .map(ToOwned::to_owned)

@@ -3900,6 +3900,12 @@ impl Emitter<'_> {
                             rendered[2]
                         );
                     }
+                    Builtin::StrCharAt => {
+                        return format!("{RT}str_char_at({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::CharUtf8Len => {
+                        return format!("{RT}char_utf8_len({})", rendered[0]);
+                    }
                     Builtin::StrCharCount => {
                         return format!("{RT}str_char_count({})", rendered[0]);
                     }
@@ -3966,6 +3972,13 @@ impl Emitter<'_> {
                             _ => "fabsf",
                         };
                         return format!("{function}({})", rendered[0]);
+                    }
+                    Builtin::FloatPow => {
+                        let function = match self.types.kind(*arg_ty) {
+                            TyKind::Float(FloatTy::F64) => "pow",
+                            _ => "powf",
+                        };
+                        return format!("{function}({}, {})", rendered[0], rendered[1]);
                     }
                     // D-187 — the checker sent here only text (all six
                     // comparisons, by bytes) and `==`/`!=` on aggregates.

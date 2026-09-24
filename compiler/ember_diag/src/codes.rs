@@ -186,6 +186,7 @@ codes! {
     E2080 = (Error, 2080, Types, "[STR-3]", "`@derive(Copy)` on a type with a field that is not Copy");
     E2090 = (Error, 2090, Types, "[ENM-2]", "non-exhaustive match");
     E2100 = (Error, 2100, Types, "[CLS-2]", "field read before it is initialised");
+    E2101 = (Error, 2101, Types, "[CLS-10]", "a derived class with a field that has no default needs an `init`");
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
