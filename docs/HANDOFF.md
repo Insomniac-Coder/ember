@@ -10807,14 +10807,17 @@ Ember in `std/src/core.em`, emitted only when called (`emit_if_used_methods`). D
 methods are checked only per concrete instance, so they are duck-typed (`[TYP-17]`).
 Qualified types `m.T` (`resolve_qualified_type`) and `m.Point(…)` constructors are built; D-249
 (bounds on the undeclared `Display`/`Debug`/`Copy` answered from `[TYP-36]`'s table) is fixed;
-a built-in instance's inherent extension bodies are checked when first called (`deferred_methods`). `docs/DESIGN-MAP-SET-ITERATION.md`
+a built-in instance's inherent extension bodies are checked when first called (`deferred_methods`).
+D-248 and D-250 are fixed: `check_generic_type_methods` checks every generic type's and generic
+extension's methods once with the parameters opaque, and an instance over generic parameters
+(`is_opaque_instance`) has signatures only and no run-time existence (`runtime_classes`). `docs/DESIGN-MAP-SET-ITERATION.md`
 prices the two shapes for `Map`/`Set` and for generators/adapters; it waits for the owner's
 pick. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.
 
-**Phase estimates against 0.9.9 (updated 2026-09-24).** 0.9.9 dropped Part XXI (F-159:
+**Phase estimates against 0.9.9 (updated 2026-09-25).** 0.9.9 dropped Part XXI (F-159:
 phase status is project tracking), so the phases are the ones 0.9.8 defined, by
 rule family. 0.9.9 marks 302 of its 899 rules new or changed. Method: the last
 recorded percentage, scaled by the share of the phase's rules that 0.9.9 left
@@ -10825,12 +10828,12 @@ Parts II–VI) no longer holds.
 
 | Phase | 0.9.8 record | 0.9.9 estimate | Rules touched by 0.9.9 |
 |---|---:|---:|---|
-| 1 Core language (Parts II–VI) | 100% | ~72% | 109 of 233; ~53 re-done (M1 is about three quarters done) |
-| 2 Ownership | 86% | ~80% | 12 of 72 plus ODR-024's; D-190, D-196; ODR-024 re-did `[LT-1]`, `[LT-1a]`, `[LT-44]`, `[BRW-8]` |
-| 3 Objects | 70% | ~45% | 24 of 68 (CLS/EXC changes; M2) |
-| 4 Effects, comptime, derives | 15% | ~9% | 13 of 35 |
-| 5 C FFI | 10% | ~8% | 15 of 86 |
-| 6 Concurrency and DOD | 5% | ~2% | 30 of 49 |
+| 1 Core language (Parts II–VI) | 100% | 85% | 109 of 233; ~74 re-done by 2026-09-24, ~10 more on 2026-09-25 (`LEX-15`, `LEX-22`, `GRM-16`, `GRM-34`, `CTL-10`, `TYP-24`, `TYP-37`, `IFC-1`, `MOD-3`, part of `TYP-36` and `MOD-5`) |
+| 2 Ownership | 86% | 85% | 12 of 72 plus ODR-024's; D-190, D-196; ODR-024 re-did `[LT-1]`, `[LT-1a]`, `[LT-44]`, `[BRW-8]` |
+| 3 Objects | 70% | 47% | 24 of 68 (CLS/EXC changes; M2); ODR-028 re-did `[CLS-4]` |
+| 4 Effects, comptime, derives | 15% | 9% | 13 of 35 |
+| 5 C FFI | 10% | 8% | 15 of 86 |
+| 6 Concurrency and DOD | 5% | 2% | 30 of 49 |
 | 7 C++ FFI and interpreter | 0% | 0% | — |
-| 7a Iteration, determinism, cost | 5% | ~4% | 11 of 94 |
-| 8 Hardening and 1.0 | 10% | ~9% | gates and corpus survey in place |
+| 7a Iteration, determinism, cost | 5% | 4% | 11 of 94 |
+| 8 Hardening and 1.0 | 10% | 13% | gates and corpus survey in place; `[TST-1]` exact-diagnostics harness |

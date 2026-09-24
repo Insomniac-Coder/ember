@@ -11,6 +11,8 @@
 # A generic class can satisfy two independent interfaces inside one dynamic box
 # while owning a Weak[Shared[T]] field. Each interface method uses the same
 # class payload; the weak observer stays non-owning and the box stays a handle.
+# `[TYP-17]` — `write` returns an `i32` field, not the `T` one: a generic
+# class's method must hold for every `T` (D-248).
 interface Read:
     fn read(self) -> i32
 
@@ -23,6 +25,7 @@ struct Token:
 class Pair[T] implements Read, Write:
     weak: Weak[Shared[Token]]
     marker: T
+    score: i32
 
     fn read(self) -> i32:
         match self.weak.upgrade():
@@ -32,10 +35,10 @@ class Pair[T] implements Read, Write:
                 return 0
 
     fn write(self) -> i32:
-        return self.marker
+        return self.score
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Read + Write] = Box(Pair[i32](Weak(strong), 42))
+    boxed: Box[dyn Read + Write] = Box(Pair[i32](Weak(strong), 0, 42))
     println(boxed.read())
     println(boxed.write())

@@ -1139,7 +1139,7 @@ impl Emitter<'_> {
     /// emitted first, so this wrapper remains valid C11 without relying on an
     /// implicit declaration or an incompatible function-pointer conversion.
     fn emit_class_drop_adapters(&mut self) {
-        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in classes {
             let def = self.types.class_def(id);
             if !self.class_has_user_drop(id) {
@@ -1204,7 +1204,7 @@ impl Emitter<'_> {
     /// can reach the generated object fields. The callback walks the most
     /// derived fields first and each declaration list in reverse order.
     fn emit_class_field_drop_glue(&mut self) {
-        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in classes {
             if !self.class_has_dropping_fields(id) {
                 continue;
@@ -1272,7 +1272,7 @@ impl Emitter<'_> {
             })
             .collect();
         let mut layouts = BTreeMap::new();
-        let ids: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let ids: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in ids {
             let layout = self.build_virtual_layout(id, &declared, &mut layouts);
             for slot in 0..layout.len() {
@@ -1869,7 +1869,7 @@ impl Emitter<'_> {
     /// record in a translation unit containing only class field reads, while
     /// keeping the generated names compiler-owned and deterministic.
     fn emit_class_type_infos(&mut self) {
-        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         if classes.is_empty() {
             return;
         }
@@ -1979,7 +1979,7 @@ impl Emitter<'_> {
     /// runtime's live-object SCC pass without giving the runtime permission to
     /// mutate the graph or to infer an edge from an untyped pointer.
     fn emit_debug_edge_enumerators(&mut self) {
-        let classes: Vec<ClassId> = self.types.classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         let shareds: Vec<(StructId, Ty)> = self
             .types
             .structs()
@@ -5043,7 +5043,7 @@ impl Emitter<'_> {
     }
 
     fn emit_debug_edge_registrations(&mut self) {
-        for (_, def) in self.types.classes() {
+        for (_, def) in self.types.runtime_classes() {
             let info = ember_branding::type_info(&def.name.to_string());
             let edges = class_debug_edges_symbol(&def.name.to_string());
             self.line(&format!("    {RT}debug_register_type_edges(&{info}, &{edges});"));
@@ -5087,7 +5087,7 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
     for id in structs {
         planner.visit(TypeNode::Struct(id));
     }
-    let classes: Vec<ClassId> = types.classes().map(|(id, _)| id).collect();
+    let classes: Vec<ClassId> = types.runtime_classes().map(|(id, _)| id).collect();
     for id in classes {
         planner.visit(TypeNode::Class(id));
     }

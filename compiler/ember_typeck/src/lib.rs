@@ -206,6 +206,10 @@ pub fn check(
     // reports the same missing or mismatched member once per loaded module
     // and can run before a later module's extension has been collected.
     checker.check_implementations();
+    // `[TYP-17]` — each generic type's methods, and each generic extension's,
+    // are checked once with the parameters opaque, as a generic function's
+    // body is (D-248).
+    checker.check_generic_type_methods(modules);
     let mut functions = Vec::new();
     let mut main = None;
     for (index, loaded) in modules.iter().enumerate() {
@@ -362,6 +366,9 @@ struct GenericEnum {
 #[derive(Clone)]
 struct GenericClass {
     params: Vec<Symbol>,
+    /// The parameters with their bounds, for checking the methods once with
+    /// the parameters opaque (`[TYP-17]`).
+    generic_params: Vec<GenericParam>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
     /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
@@ -788,6 +795,10 @@ struct Checker<'a> {
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
+    /// The methods `check_generic_type_methods` checked with the parameters
+    /// opaque, by source: a concrete instance of one reports only what that
+    /// check did not.
+    generically_checked: HashSet<(usize, usize, usize)>,
     /// `[TYP-17]` — the interface each call a generic body made through a
     /// bound went to, by the call's span, so that an instantiation checking
     /// the body again on a concrete type calls that interface's method and
@@ -1024,6 +1035,7 @@ impl<'a> Checker<'a> {
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
             bound_calls: HashMap::new(),
+            generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -2796,6 +2808,7 @@ impl<'a> Checker<'a> {
                 name,
                 GenericClass {
                     params,
+                    generic_params: generic_params.clone(),
                     fields,
                     defaults,
                     clone_request: clone_request(&item.attrs, true),
@@ -2939,6 +2952,158 @@ impl<'a> Checker<'a> {
     fn extend_builtin_instance(&mut self, ty: Ty) {
         if let Some((name, args)) = self.builtin_generic_origin(ty) {
             self.apply_generic_extensions(ty, name, &args);
+        }
+    }
+
+    /// `[TYP-17]` — "there is no duck typing": each generic type's methods,
+    /// and each generic extension's, are checked once against the type over
+    /// its own opaque parameters, with those parameters' bounds in scope. A
+    /// method may use only what the bounds provide, and a call it makes
+    /// through a bound is recorded (`bound_calls`) so every concrete instance
+    /// makes the same call (D-245, D-248). Nothing checked here is emitted.
+    /// Methods with type parameters of their own are validated per concrete
+    /// owner instead (`pending_generic_method_validations`).
+    fn check_generic_type_methods(&mut self, modules: &[LoadedModule]) {
+        let saved_module = self.current_module;
+        let mut structs: Vec<(Symbol, GenericStruct)> =
+            self.generic_structs.iter().map(|(name, recipe)| (*name, recipe.clone())).collect();
+        structs.sort_by_key(|(name, _)| name.as_str().to_string());
+        for (name, recipe) in structs {
+            self.current_module = recipe.declaring_module;
+            let args = self.opaque_arguments(&recipe.generic_params);
+            let ty = self.instantiate_struct(name, &recipe, &args, recipe.decl_span);
+            self.check_opaque_methods(ty, &recipe.generic_params, &recipe.methods, None, modules);
+        }
+        let mut enums: Vec<(Symbol, GenericEnum)> =
+            self.generic_enums.iter().map(|(name, recipe)| (*name, recipe.clone())).collect();
+        enums.sort_by_key(|(name, _)| name.as_str().to_string());
+        for (name, recipe) in enums {
+            self.current_module = recipe.declaring_module;
+            let args = self.opaque_arguments(&recipe.generic_params);
+            let ty = self.instantiate_enum(name, &recipe, &args, recipe.decl_span);
+            self.check_opaque_methods(ty, &recipe.generic_params, &recipe.methods, None, modules);
+        }
+        let mut classes: Vec<(Symbol, GenericClass)> =
+            self.generic_classes.iter().map(|(name, recipe)| (*name, recipe.clone())).collect();
+        classes.sort_by_key(|(name, _)| name.as_str().to_string());
+        for (name, recipe) in classes {
+            self.current_module = recipe.declaring_module;
+            let args = self.opaque_arguments(&recipe.generic_params);
+            let ty = self.instantiate_class(name, &recipe, &args, recipe.decl_span);
+            self.check_opaque_methods(ty, &recipe.generic_params, &recipe.methods, None, modules);
+        }
+        let mut extensions: Vec<(Symbol, GenericExtension)> = self
+            .generic_extensions
+            .iter()
+            .flat_map(|(target, extensions)| extensions.iter().map(|extension| (*target, extension.clone())))
+            .collect();
+        extensions.sort_by_key(|(target, extension)| (target.as_str().to_string(), extension.span.start));
+        for (target, extension) in extensions {
+            let args = self.opaque_arguments(&extension.params);
+            let target_args: Vec<Ty> =
+                extension.target_args.iter().map(|&pattern| self.substitute_ty(pattern, &args)).collect();
+            // The bounds decide whether the extension applies to the opaque
+            // instance, so they are in scope while it is made.
+            self.current_generics = extension.params.clone();
+            self.current_module = extension.declaring_module;
+            let Some(ty) = self.generic_target_instance(target, &target_args, extension.span) else {
+                self.current_generics.clear();
+                continue;
+            };
+            self.apply_generic_extensions(ty, target, &target_args);
+            self.current_generics.clear();
+            self.check_opaque_methods(ty, &extension.params, &extension.methods, extension.interface, modules);
+        }
+        self.current_module = saved_module;
+    }
+
+    /// `[TYP-17]` — an instance over generic parameters (a generic
+    /// signature's `Wrapper[T]`, or one `check_generic_type_methods` makes):
+    /// it has signatures only, and nothing of it is emitted. Its arguments
+    /// say so even when its fields do not mention them.
+    fn is_opaque_instance(&self, ty: Ty) -> bool {
+        let origin = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.as_ref(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.as_ref(),
+            TyKind::Class(id) => self.types.class_def(id).origin.as_ref(),
+            _ => None,
+        };
+        origin.is_some_and(|(_, args)| args.iter().any(|&arg| self.types.is_generic(arg)))
+            || self.types.is_generic(ty)
+    }
+
+    /// `$T` for each of `params`, in order: the arguments of a type over its
+    /// own opaque parameters.
+    fn opaque_arguments(&mut self, params: &[GenericParam]) -> Vec<Ty> {
+        params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .collect()
+    }
+
+    /// The instance of `target` an extension names: `Array[$T]` for
+    /// `extend[T] Array[T]`.
+    fn generic_target_instance(&mut self, target: Symbol, args: &[Ty], span: Span) -> Option<Ty> {
+        if let Some(recipe) = self.generic_structs.get(&target).cloned() {
+            return Some(self.instantiate_struct(target, &recipe, args, span));
+        }
+        if let Some(recipe) = self.generic_enums.get(&target).cloned() {
+            return Some(self.instantiate_enum(target, &recipe, args, span));
+        }
+        if let Some(recipe) = self.generic_classes.get(&target).cloned() {
+            return Some(self.instantiate_class(target, &recipe, args, span));
+        }
+        match target.as_str() {
+            "Array" => Some(self.types.intern(TyKind::Vec { elem: *args.first()? })),
+            "Span" | "MutSpan" => {
+                Some(self.types.intern(TyKind::Span { elem: *args.first()?, mutable: target.is("MutSpan") }))
+            }
+            "Option" => Some(self.option_of(*args.first()?)),
+            "Result" => Some(self.result_of(*args.first()?, *args.get(1)?)),
+            _ => None,
+        }
+    }
+
+    /// Check each of `methods` on the opaque instance `owner`, with
+    /// `params`' bounds in scope, keeping the diagnostics and nothing else.
+    fn check_opaque_methods(
+        &mut self,
+        owner: Ty,
+        params: &[GenericParam],
+        methods: &[GenericMethod],
+        interface: Option<Symbol>,
+        modules: &[LoadedModule],
+    ) {
+        for method in methods {
+            if !method.generics.is_empty() || !method.has_body {
+                continue;
+            }
+            let def = match (method.receiver, interface) {
+                (Some(_), Some(interface)) => {
+                    self.interface_methods.get(&(owner, interface, method.name)).map(|entry| entry.def)
+                }
+                (Some(_), None) => self.methods.get(&(owner, method.name)).map(|entry| entry.def),
+                (None, _) => self.associated.get(&(owner, method.name)).map(|entry| entry.def),
+            };
+            let Some(def) = def else { continue };
+            let (module_index, item_index, member_index) = method.source;
+            let item = &modules[module_index].module.items[item_index];
+            let Some(member) = item_members(item).and_then(|members| members.get(member_index)) else {
+                continue;
+            };
+            let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+            let Some(block) = &decl.body else { continue };
+            self.current_module = module_index;
+            let args = self.opaque_arguments(params);
+            self.type_params = params.iter().map(|param| param.name).zip(args).collect();
+            self.current_generics = params.to_vec();
+            let lambdas = self.lambdas.len();
+            let _ = self.check_one_method(owner, decl, block, def, &member.attrs, member.span);
+            self.lambdas.truncate(lambdas);
+            self.generically_checked.insert(method.source);
+            self.type_params.clear();
+            self.current_generics.clear();
         }
     }
 
@@ -3163,6 +3328,12 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+        // `[TYP-17]` — an instance over opaque parameters (a generic
+        // signature's `Wrapper[T]`, or the type's own, made to check its
+        // methods) has signatures only: its bodies are checked once for the
+        // type itself (`check_generic_type_methods`), with the right bounds
+        // in scope, and again for each concrete instance. D-250.
+        let opaque = owner_bindings.iter().any(|&(_, bound)| self.types.is_generic(bound));
         if !method.has_body && matches!(self.types.kind(ty), TyKind::Class(_)) {
             self.abstract_methods.insert(def);
             self.pending_abstract_methods.push(PendingAbstractMethod {
@@ -3170,6 +3341,7 @@ impl<'a> Checker<'a> {
                 owner: ty,
                 span: method.span,
             });
+        } else if opaque {
         } else if generic {
             self.generic_method_sources.insert(
                 def,
@@ -4204,6 +4376,11 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { continue };
+                // `[TYP-17]` — an instance over generic parameters has
+                // signatures only, as its own methods do (D-250).
+                if self.is_opaque_instance(ty) {
+                    continue;
+                }
                 if generic {
                     self.generic_method_sources.insert(
                         def,
@@ -6857,7 +7034,9 @@ impl<'a> Checker<'a> {
             self.register_recipe_method(ty, name, method, &bindings, None, false);
         }
         self.record_opt_outs(ty, decl.opted_out);
-        if let Some(explicit) = decl.clone_request {
+        if let Some(explicit) = decl.clone_request
+            && !args.iter().any(|&arg| self.types.is_generic(arg))
+        {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
@@ -6967,7 +7146,13 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.enum_def_mut(id).variants = variants;
-        self.check_enum_copy_requested(id, decl.derives_copy);
+        // An instance over generic parameters answers no per-instance
+        // question: `@derive(Copy)`, `Clone` and abstract methods are asked of
+        // each concrete instance.
+        let opaque = args.iter().any(|&arg| self.types.is_generic(arg));
+        if !opaque {
+            self.check_enum_copy_requested(id, decl.derives_copy);
+        }
 
         let bindings: Vec<(Symbol, Ty)> =
             decl.params.iter().copied().zip(args.iter().copied()).collect();
@@ -6975,7 +7160,9 @@ impl<'a> Checker<'a> {
             self.register_recipe_method(ty, name, method, &bindings, None, false);
         }
         self.record_opt_outs(ty, decl.opted_out);
-        if let Some(explicit) = decl.clone_request {
+        if let Some(explicit) = decl.clone_request
+            && !args.iter().any(|&arg| self.types.is_generic(arg))
+        {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
@@ -7154,9 +7341,13 @@ impl<'a> Checker<'a> {
         self.class_declared_methods.insert(id, declared_methods);
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
-        self.validate_concrete_class_abstract_methods(id, span);
+        if !args.iter().any(|&arg| self.types.is_generic(arg)) {
+            self.validate_concrete_class_abstract_methods(id, span);
+        }
         self.record_opt_outs(ty, decl.opted_out);
-        if let Some(explicit) = decl.clone_request {
+        if let Some(explicit) = decl.clone_request
+            && !args.iter().any(|&arg| self.types.is_generic(arg))
+        {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
@@ -8369,7 +8560,8 @@ impl<'a> Checker<'a> {
                     self.type_params.insert(*param, *ty);
                 }
 
-                let first = reported.insert((job.report_owner, fn_decl.name.name));
+                let generic = self.generically_checked.contains(&job.source);
+                let first = !generic && reported.insert((job.report_owner, fn_decl.name.name));
                 let quiet_before = (!first).then(|| quiet.diagnostics().len());
                 let saved = if first {
                     None
@@ -8389,7 +8581,23 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(before) = quiet_before {
                     let concrete = quiet.diagnostics()[before..].to_vec();
-                    self.emit_concrete_instantiation_diagnostics(concrete);
+                    if generic {
+                        // The generic check named the type `Wrapper[T]`, the
+                        // instance `Wrapper[i32]`: the same error at the same
+                        // place is the same error.
+                        let concrete: Vec<Diagnostic> = concrete
+                            .into_iter()
+                            .filter(|diagnostic| {
+                                !self.sink.diagnostics().iter().any(|existing| {
+                                    existing.code == diagnostic.code
+                                        && existing.primary.span == diagnostic.primary.span
+                                })
+                            })
+                            .collect();
+                        self.emit_concrete_instantiation_diagnostics(concrete);
+                    } else {
+                        self.emit_concrete_instantiation_diagnostics(concrete);
+                    }
                 }
                 self.type_params.clear();
                 if let Some(mut function) = function {
@@ -9027,7 +9235,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for item in &module.items {
             let ast::ItemKind::Interface(decl) = &item.kind else { continue };
             let interface = self.qualified(decl.name.name);
-            for (ty, _, _) in implementations.iter().filter(|(_, i, _)| *i == interface) {
+            let implementers: Vec<Ty> = implementations
+                .iter()
+                .filter(|(ty, i, _)| *i == interface && !self.is_opaque_instance(*ty))
+                .map(|(ty, _, _)| *ty)
+                .collect();
+            for ty in &implementers {
                 for member in &decl.members {
                     let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                     let Some(block) = &fn_decl.body else { continue };

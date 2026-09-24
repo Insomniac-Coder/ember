@@ -954,6 +954,15 @@ impl TypeTable {
         false
     }
 
+    /// The classes that exist at run time: every class but an instance over
+    /// generic parameters, which the checker makes only to check a generic
+    /// class's methods once (`[TYP-17]`) and which has no method bodies.
+    pub fn runtime_classes(&self) -> impl Iterator<Item = (ClassId, &ClassDef)> {
+        self.classes().filter(|(_, def)| {
+            !def.origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.is_generic(arg)))
+        })
+    }
+
     pub fn classes(&self) -> impl Iterator<Item = (ClassId, &ClassDef)> {
         self.classes.iter().enumerate().map(|(i, d)| (ClassId(i as u32), d))
     }

@@ -589,3 +589,10 @@ The next number is ODR-027.
   takes every matching extension at its first method call; an inherent method's body is now checked
   only when it is called, so an unused `join` does not check against an element type it cannot
   format.
+* **2026-09-25 — no duck typing in generic types (D-248, D-250).** Each generic struct's, enum's
+  and class's methods, and each generic extension's, are checked once against the type over its own
+  opaque parameters, with their bounds in scope, before any concrete instance (`[TYP-17]`); a call
+  made through a bound reaches that interface's method in every instance. An instance over generic
+  parameters (a generic signature's `Wrapper[T]`) has signatures only: no bodies, no per-instance
+  derive or abstract-method checks, no class glue in the C output. Two `TYP-22` tests that relied
+  on duck typing (a `T` field returned as `i32`) were corrected.
