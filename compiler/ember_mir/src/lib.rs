@@ -1341,7 +1341,7 @@ pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
             let _ = writeln!(
                 out,
                 "  let _{i}: {}   // {:?} {name}",
-                types.display(local.ty),
+                types.symbol_name(local.ty),
                 local.kind
             );
         }
@@ -1448,8 +1448,8 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
         Operand::Copy(p) => format!("copy {}", dump_place(p)),
         Operand::Move(p) => format!("move {}", dump_place(p)),
         Operand::Const(c) => match c {
-            Const::Int { value, ty } => format!("const {value}_{}", types.display(*ty)),
-            Const::Float { value, ty } => format!("const {value:?}_{}", types.display(*ty)),
+            Const::Int { value, ty } => format!("const {value}_{}", types.symbol_name(*ty)),
+            Const::Float { value, ty } => format!("const {value:?}_{}", types.symbol_name(*ty)),
             Const::Bool(b) => format!("const {b}"),
             Const::Str(s) => format!("const {s:?}"),
             Const::CStr(s) => format!("const cstr {s:?}"),
@@ -1474,7 +1474,7 @@ fn dump_rvalue(rvalue: &Rvalue, types: &ember_types::TypeTable) -> String {
                 "{:?}({}) as {}",
                 kind,
                 dump_operand(operand, types),
-                types.display(*to)
+                types.symbol_name(*to)
             )
         }
         Rvalue::Aggregate { kind, operands } => {

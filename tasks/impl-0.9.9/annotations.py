@@ -138,7 +138,14 @@ def check(path):
 
 failures = 0
 for directory in sys.argv[1:]:
-    for path in sorted(glob.glob(os.path.join(directory, '*.em'))):
+    paths = sorted(glob.glob(os.path.join(directory, '*.em')))
+    # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
+    if 'conformance' in os.path.normpath(directory).split(os.sep) \
+            and not any(os.path.basename(p).startswith('accept_') for p in paths):
+        failures += 1
+        print(os.path.relpath(directory, ROOT))
+        print('    no accept_* case ([TST-4a])')
+    for path in paths:
         problems = check(path)
         if problems:
             failures += 1

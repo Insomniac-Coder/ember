@@ -1436,3 +1436,27 @@ the expected callable type. `0.9.9_Hardened_6` carries the signatures.
   argument; diagnostics name the method (`routed_method`), not the helper.
 - The helpers take `f: fn(…)` until `once fn` parameter types are built
   (`docs/DEVIATIONS.md` D6).
+
+## ADR-044 — Range values are prelude structs the compiler counts over
+
+**Ruling on ODR-027 under the owner's delegation for 0.9.9, 2026-09-24.** A
+range is a Python-style value: `Range[T]`, `RangeInclusive[T]`, `RangeFrom[T]`
+and `RangeTo[T]` have public bounds and are `Copy` when `T` is; a `for` over one
+counts over a copy of its bounds. `0.9.9_Hardened_8` carries it in `[CTL-3]`.
+
+**Implementation decisions the text does not force.**
+- The types are declared in `std/src/core.em`, and the compiler recognises them
+  by origin (`range_parts`), as it does `SpanIter`; nothing about them is
+  compiler-private except how a `for`, `in` and `len` lower. So they print,
+  compare and copy through the ordinary implicit interfaces.
+- There is one counted loop (`check_for_counted`). `a..` is a `while true`
+  whose counter is advanced before the body, so a `continue` needs no increment
+  of its own and counting to the maximum is the ordinary checked `+`.
+- `len` reuses `RangeCount` (exact in 64 bits) and asserts the count fits an
+  `int` before the conversion, because `as` keeps the low bits (`[TYP-6]`).
+- D-232's fix keeps two spellings of a type in `TypeTable`: `display` for the
+  user and `symbol_name` for everything that names C. The compiler-built
+  generics (`Cell`, `RefCell`, `Ref`, `RefMut`, `MaybeUninit`) record their
+  spelling in a table of their own rather than in `origin`, which also decides
+  how a type resolves (an interface adapter, for one, is refused to a struct
+  with an origin and no declaring module).

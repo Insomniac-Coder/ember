@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_7.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_8.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_7`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_8`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
@@ -10770,8 +10770,17 @@ the dropped place's own storage, a reference to a view parameter's slot is
 `E3060` (`own_slot_returns` keeps it out of `E3062`), views held in locals are
 exempt like parameters', and an `owned self` view is under rule 3 (D-225).
 Open: D-220 (capturing closure through a callable parameter; the design note in
-the ledger says why excluding the environment is not the fix), D-221, D-222,
-D-227. The directory
+the ledger says why excluding the environment is not the fix), D-221, D-222.
+Ranges are values (ODR-027, Hardened_8): the prelude's `Range`,
+`RangeInclusive`, `RangeFrom`, `RangeTo` are `@derive(Copy)` structs in
+`std/src/core.em` with public bounds; `synth_range_value` builds them,
+`check_for_range_value` counts a `for` over one from a copy of its bounds,
+`check_for_counted` is the one counted loop (`a..` is a `while` whose counter
+moves before the body), and `range_len`/`range_contains` serve `len(r)`,
+`r.len()`, `x in r`, `r.contains(x)`; `range(n)`/`range(a, b)` are values
+(`synth_range_call`). D-232 is fixed: `TypeTable::display` is the user's
+spelling (`Range[u8]`), `symbol_name` the instance name every symbol is built
+from. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

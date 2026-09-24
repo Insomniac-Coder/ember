@@ -39,6 +39,29 @@ pub interface Iterator:
     type Item
     fn next(mut self) -> Option[Item]
 
+## `[CTL-3]` (ODR-027) — the range types. `a..b` is a `Range`, `a..=b` a
+## `RangeInclusive`, `a..` a `RangeFrom` and `..b` a `RangeTo`. Each is a plain
+## value, `Copy` when its bound is, with public bounds. A `for` over one of the
+## first three with integer bounds is a counted loop over a copy of its bounds
+## (`[CTL-3b]`), so the range itself is left as it was.
+@derive(Copy)
+pub struct Range[T]:
+    pub start: T
+    pub end: T
+
+@derive(Copy)
+pub struct RangeInclusive[T]:
+    pub start: T
+    pub end: T
+
+@derive(Copy)
+pub struct RangeFrom[T]:
+    pub start: T
+
+@derive(Copy)
+pub struct RangeTo[T]:
+    pub end: T
+
 ## Part IV §8 also declares `Hash`, `Display`, `Debug`, and the operator
 ## interfaces; they remain staged with their dependent surface.
 

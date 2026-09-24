@@ -217,6 +217,10 @@ ODRS = [
      '`[ERR-4]`, `[CLO-7]`, `[TYP-23]`'),
     ('ODR-026', 'a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written '
                 '`clone` gives it one (Hardened_7)', '`[STR-5]`'),
+    ('ODR-027', "a range is a value: the prelude's range types are structs with public bounds, `Copy` "
+                'when the bound is, and a `for` over one counts over a copy of its bounds, leaving it '
+                "unchanged; `a..` overflows at its type's maximum (Hardened_8)",
+     '`[CTL-3]`, `[STD-8]`, `[STD-26]`'),
 ]
 
 H5_HEAD = """
@@ -224,7 +228,8 @@ H5_HEAD = """
 
 Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
-Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026.
+Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+Hardened_8 adds ODR-027.
 
 | ODR | Ruling | Rules |
 |---|---|---|

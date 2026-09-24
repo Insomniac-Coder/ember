@@ -1507,7 +1507,7 @@ impl Emitter<'_> {
 
     fn interface_adapter_concrete_name(&self, concrete: Ty) -> String {
         if self.types.is_primitive_scalar(concrete) {
-            return self.types.display(concrete);
+            return self.types.symbol_name(concrete);
         }
         match self.types.kind(concrete) {
             TyKind::Class(id) => self.types.class_def(*id).name.to_string(),
@@ -2611,7 +2611,7 @@ impl Emitter<'_> {
                 // all* here, so the `Drop` statement lowered to nothing and a
                 // declared destructor never ran.
                 if def.has_drop {
-                    let owner = self.types.display(ty);
+                    let owner = self.types.symbol_name(ty);
                     out.push(format!("{}(&{access});", drop_symbol(&owner)));
                 }
                 if def.drops_fields {
@@ -2646,7 +2646,7 @@ impl Emitter<'_> {
                 // payload is dropped, and a unit-only enum with a `drop` still
                 // has one to run.
                 if def.has_drop {
-                    let owner = self.types.display(ty);
+                    let owner = self.types.symbol_name(ty);
                     out.push(format!("{}(&{access});", drop_symbol(&owner)));
                 }
                 if def.is_unit_only() {
@@ -2782,7 +2782,7 @@ impl Emitter<'_> {
     fn structural_name(&self, ty: Ty) -> String {
         match self.structural.get(&ty) {
             Some(name) => name.clone(),
-            None => panic!("no generated C type for `{}`", self.types.display(ty)),
+            None => panic!("no generated C type for `{}`", self.types.symbol_name(ty)),
         }
     }
 
@@ -5048,7 +5048,7 @@ impl Planner<'_> {
     /// every name already used. The suffix only ever appears when a user type
     /// happens to be named like a generated one.
     fn fresh_name(&mut self, ty: Ty) -> String {
-        let stem = identifier_from(&self.types.display(ty));
+        let stem = identifier_from(&self.types.symbol_name(ty));
         // `[MNG-5]` — the generated-type prefixes are the mangled prefix
         // plus a kind tag, not a second spelling of it.
         let kind = match self.types.kind(ty) {

@@ -46,6 +46,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-024 | **CLOSED** — a borrowed or `mut` parameter that is not `Copy` is a source, passed by address | Language / regions / functions | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_5 |
 | ODR-025 | **CLOSED** — `[ERR-4]`'s function-taking methods are eager, move the payload in, take `once fn`; a lambda infers `owned` | Standard library / closures | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_6 |
 | ODR-026 | **CLOSED** — a type with its own `drop` is `Clone` only when it says so | Language / ownership | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_7 |
+| ODR-027 | **CLOSED** — a range is a `Copy` value with public bounds; a `for` counts over a copy of them | Language / standard library | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_8 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -180,6 +181,61 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-027 — what is a range value? — **CLOSED**
+
+    ID:        ODR-027
+    Status:    CLOSED — ruled 2026-09-24 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_8
+    Category:  LANGUAGE / STANDARD LIBRARY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_7.md [CTL-3], [STD-8], [STD-26], §V prelude table
+
+    Question:  `[CTL-3]` names `Range`, `RangeInclusive` and `RangeFrom`, the prelude
+               table adds `RangeTo`, `[STD-8]` makes `Range[T]` a `Contains` and
+               `[STD-26]` gives a range a `len`. Nothing says what a range *value*
+               is: whether its bounds can be read, whether it is `Copy`, and
+               whether a `for` over it uses it up.
+
+    Blocks implementation:            YES — `r = 0..3` cannot be built without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Why it is visible.** `r = 0..4`, then `for i in r:` twice, then `s = r` and
+`print(r.start)`. Under one reading every line compiles; under another the
+second loop and the last line are use-after-move errors.
+
+**Options.**
+- **(A) Rust's model.** A range is its own iterator: not `Copy` (so advancing
+  a copy is not a silent surprise), consumed by `for`, and `RangeInclusive`
+  hides its bounds behind an "exhausted" flag. Rejected: `[CTL-3]` and
+  `[CTL-3b]` already require a counted loop with no iterator object, so a
+  `for` never advances the range; forbidding its reuse would be a move error
+  with nothing moved.
+- **(B) Python's model.** A range is an immutable value: re-iterable, as
+  Python's `range` is (`[PHIL-14]`), with readable bounds.
+
+**Ruling: (B).** The four range types are prelude structs with public bounds
+(`start` and `end`; a `RangeFrom` has only `start`, a `RangeTo` only `end`),
+`Copy` when the bound type is. A `for` over a range value counts over a copy of
+its bounds and leaves the range as it was. `a..` has no end: counting up to its
+type's maximum is an overflow (`[TYP-8]`), as producing the next value would be.
+`..=b` and `..` name no prelude type, so as values they are `E1010`. Printing a
+range uses the implicit `Debug` of `[STR-5]` (`Range(start=0, end=4)`).
+
+**Implementation (2026-09-24).** `std/src/core.em` declares the four structs
+with `@derive(Copy)` and the prelude exports them. The checker builds `a..b`,
+`a..=b`, `a..` and `..b` as values (an expected range type gives the bound's
+type, as `f(0..3)` for `r: Range[u8]`), counts a `for` over `a..`, over a range
+value, and over `range(n)`/`range(a, b)` values, and gives range values `x in r`
+/ `r.contains(x)` (`[STD-8]`) and `len(r)` / `r.len()` (`[STD-26]`, a count too
+large for an `int` panics). Not built: a stepped `range(a, b, step)` as a value
+(it is a `for` head), `len` of an `i128`/`u128` range, and the `Iterator`
+methods on a range variable, which come with `[STD-19]`'s adapters. Tests:
+`CTL-3/` (three files), `STD-8/accept_a_range_value_contains_by_two_comparisons.em`,
+`STD-26/accept_range_is_a_value.em`, `STD-26/reject_len_of_an_unbounded_or_float_range.em`,
+`STD-26/run_fail_len_of_a_range_too_long_for_an_int.em`.
 
 ---
 

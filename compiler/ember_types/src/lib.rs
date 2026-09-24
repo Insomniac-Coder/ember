@@ -439,6 +439,10 @@ pub struct TypeTable {
     classes: Vec<ClassDef>,
     enums: Vec<EnumDef>,
     ranges: Vec<RangeDef>,
+    /// D-232 — how a compiler-built generic struct (`Cell_i32`) is written
+    /// (`Cell[i32]`). Kept apart from `origin`, which also decides how a
+    /// type resolves.
+    written_as: HashMap<StructId, (Symbol, Vec<Ty>)>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -493,6 +497,7 @@ impl TypeTable {
             classes: Vec::new(),
             enums: Vec::new(),
             ranges: Vec::new(),
+            written_as: HashMap::new(),
             next_infer: 0,
             pointer_size: 8,
         };
@@ -1490,7 +1495,45 @@ impl TypeTable {
     }
 
     /// Render a type the way a diagnostic should show it.
+    /// D-232 — record how a compiler-built generic struct is written.
+    pub fn set_written_as(&mut self, id: StructId, generic: &str, args: Vec<Ty>) {
+        self.written_as.insert(id, (Symbol::intern(generic), args));
+    }
+
+    /// How a type is written in Ember, for the user (`[DIA-2]`): a generic
+    /// instance is `Range[i64]`, and a prelude type has its prelude name.
     pub fn display(&self, ty: Ty) -> String {
+        self.render(ty, true)
+    }
+
+    /// The type's compiler identity: a generic instance by its instance
+    /// name (`std.core.Range_i64`). Symbols and generated C names are built
+    /// from this, so they never move with how a diagnostic spells a type.
+    pub fn symbol_name(&self, ty: Ty) -> String {
+        self.render(ty, false)
+    }
+
+    /// A nominal type's name: for the user, a generic instance is its
+    /// generic's name and arguments, and `std.core.` (the prelude) is left
+    /// off; otherwise the declared or instance name.
+    fn render_named(&self, name: Symbol, origin: Option<&(Symbol, Vec<Ty>)>, user: bool) -> String {
+        if !user {
+            return name.to_string();
+        }
+        let source = |name: Symbol| {
+            let name = name.as_str();
+            name.strip_prefix("std.core.").unwrap_or(name).to_string()
+        };
+        match origin {
+            Some((generic, args)) => {
+                let args: Vec<String> = args.iter().map(|&arg| self.render(arg, user)).collect();
+                format!("{}[{}]", source(*generic), args.join(", "))
+            }
+            None => source(name),
+        }
+    }
+
+    fn render(&self, ty: Ty, user: bool) -> String {
         match self.kind(ty) {
             TyKind::Bool => "bool".into(),
             TyKind::Char => "char".into(),
@@ -1523,18 +1566,27 @@ impl TypeTable {
             TyKind::Str => "str".into(),
             TyKind::Span { elem, mutable } => {
                 let name = if *mutable { "MutSpan" } else { "Span" };
-                format!("{name}[{}]", self.display(*elem))
+                format!("{name}[{}]", self.render(*elem, user))
             }
-            TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
-            TyKind::Class(id) => self.class_def(*id).name.to_string(),
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                self.render_named(def.name, def.origin.as_ref().or(self.written_as.get(id)), user)
+            }
+            TyKind::Class(id) => {
+                let def = self.class_def(*id);
+                self.render_named(def.name, def.origin.as_ref(), user)
+            }
             TyKind::ClassInterface(interface) => interface.to_string(),
             TyKind::Enum(id) => {
                 // The prelude's `Option` and `Result` are built once per
                 // payload type; they print as they are written.
                 let def = self.enum_def(*id);
+                if user && def.origin.is_some() {
+                    return self.render_named(def.name, def.origin.as_ref(), user);
+                }
                 let name = def.name.as_str();
                 let payload = |index: usize| {
-                    def.variants.get(index).and_then(|v| v.fields.first()).map(|f| self.display(f.ty))
+                    def.variants.get(index).and_then(|v| v.fields.first()).map(|f| self.render(f.ty, user))
                 };
                 let named = |a: &str, b: &str| {
                     def.variants.len() == 2 && def.variants[0].name.is(a) && def.variants[1].name.is(b)
@@ -1546,7 +1598,7 @@ impl TypeTable {
                     (Some(ok), Some(err)) if name.starts_with("Result_") && named("Ok", "Err") => {
                         format!("Result[{ok}, {err}]")
                     }
-                    _ => name.to_string(),
+                    _ => self.render_named(def.name, None, user),
                 }
             }
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
@@ -1564,20 +1616,20 @@ impl TypeTable {
             TyKind::Vec { elem } if matches!(self.kind(*elem), TyKind::Uint(UintTy::U8)) => {
                 "String".into()
             }
-            TyKind::Vec { elem } => format!("Array[{}]", self.display(*elem)),
+            TyKind::Vec { elem } => format!("Array[{}]", self.render(*elem, user)),
             TyKind::Tuple(items) => {
-                let inner: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
+                let inner: Vec<String> = items.iter().map(|&t| self.render(t, user)).collect();
                 format!("({})", inner.join(", "))
             }
             TyKind::Ref { mutable, inner } => {
                 let kw = if *mutable { "ref mut " } else { "ref " };
-                format!("{kw}{}", self.display(*inner))
+                format!("{kw}{}", self.render(*inner, user))
             }
             TyKind::Ptr { mutable, inner } => {
                 let kw = if *mutable { "*mut " } else { "*" };
-                format!("{kw}{}", self.display(*inner))
+                format!("{kw}{}", self.render(*inner, user))
             }
-            TyKind::Array { elem, len } => format!("[{}; {len}]", self.display(*elem)),
+            TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::Fn { latebound, params, ret } => {
                 let inner: Vec<String> = params
                     .iter()
@@ -1587,14 +1639,14 @@ impl TypeTable {
                             FnParamMode::Mut => "mut ",
                             FnParamMode::Owned => "owned ",
                         };
-                        format!("{mode}{}", self.display(param.ty))
+                        format!("{mode}{}", self.render(param.ty, user))
                     })
                     .collect();
                 format!(
                     "{}fn({}) -> {}",
                     if *latebound { "@latebound " } else { "" },
                     inner.join(", "),
-                    self.display(*ret)
+                    self.render(*ret, user)
                 )
             }
             TyKind::Infer(_) => "_".into(),

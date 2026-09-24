@@ -91,8 +91,9 @@ and gates green.
    assertions and `eprint`).
 
 **Next batch:** ~~f-string specs (`[LEX-19]`)~~ (done); ~~float `Display` (`[STD-20]`)~~ (done); the rest of `[ERR-4]`
-(~~`is_some`, `Result`'s methods~~ (done); the ones taking a function: `map`, `and_then`, …); ~~`sorted` and `Array.sort`~~ (done); ranges and generator
-expressions (`[GRM-38]`) as values (comprehensions themselves are done); `input`; `Map`/`Set`.
+(~~`is_some`, `Result`'s methods~~ (done); the ones taking a function: `map`, `and_then`, …); ~~`sorted` and `Array.sort`~~ (done); ~~ranges as values~~
+(done, ODR-027); generator expressions (`[GRM-38]`) as values, which need `[STD-19]`'s adapters
+(comprehensions themselves are done); ~~`input`~~ (done); `Map`/`Set`.
 
 **M2 — classes and exclusivity** (Part VIII): two-phase init (`[CLS-11]`), per-field access words
 (`[EXC-19]`), `@sync`, `Weak` upgrade, callable fields.
@@ -428,8 +429,23 @@ The next number is ODR-027.
 `; end of input panics at the call, naming
   `std.io.stdin().read_line()`. The harnesses gained `#$ stdin:` (one input line each); a run test
   without it gets a closed standard input, as before.
-* **2026-09-25 — `@no_derive(Eq)`/`(Debug)`; printing through references (D-227).** The three
+* **2026-09-24 — `@no_derive(Eq)`/`(Debug)`; printing through references (D-227).** The three
   implicit interfaces can each be opted out of; comparing or printing an opted-out type (or a
   value containing one) is `E2040`, naming the type and the attribute. A `ref T` inside a printed
   value prints what it points to (`Array.get`'s `Option[ref T]`). Recorded open: D-232 (internal
   names of generic instances in diagnostics).
+* **2026-09-24 — ranges as values (`[CTL-3]`, `[STD-8]`, `[STD-26]`); ODR-027; Hardened_8 cut;
+  D-232, D-233.** `a..b`, `a..=b`, `a..` and `..b` are values of the prelude's `Range`,
+  `RangeInclusive`, `RangeFrom` and `RangeTo`, which `std/src/core.em` declares as
+  `@derive(Copy)` structs with public `start`/`end`; ODR-027 rules them Python-style values (a
+  `for` counts over a copy of the bounds, so a range can be iterated again). An expected range
+  type gives the bound's type. A `for` over a range value, over `a..` (a `while` whose counter
+  moves before the body, so counting to the maximum is `[TYP-8]`'s overflow) and over
+  `range(n)`/`range(a, b)` values is a counted loop. Range values have `x in r`/`r.contains(x)`
+  and `len(r)`/`r.len()` (`RangeCount`, then a check that the count fits an `int`). Not built:
+  a stepped `range` as a value, `len` over `i128`/`u128`, and a range's `Iterator` methods
+  (`[STD-19]`). D-232: diagnostics spell a generic instance as written (`Range[u8]`, `Cell[i32]`)
+  while every symbol keeps the instance name (`symbol_name`); eight tests had pinned the old
+  names. D-233: a help with 18 stray spaces. `annotations.py` now also flags a conformance
+  directory with no `accept_*` case (`[TST-4a]`): the cargo harness stops at the first one, so
+  every directory after it goes unchecked.

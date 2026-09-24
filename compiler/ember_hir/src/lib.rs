@@ -1133,14 +1133,14 @@ pub fn dump(program: &Program, types: &ember_types::TypeTable) -> String {
                     Mode::Owned => "owned ",
                 };
                 let name = decl.name.map(|n| n.to_string()).unwrap_or_else(|| "_".into());
-                format!("{mode}{name}: {}", types.display(decl.ty))
+                format!("{mode}{name}: {}", types.symbol_name(decl.ty))
             })
             .collect();
         out.push_str(&format!(
             "fn {} ({}) -> {}\n",
             function.symbol,
             params.join(", "),
-            types.display(function.ret)
+            types.symbol_name(function.ret)
         ));
         dump_block(&function.body, function, types, 1, &mut out);
     }
@@ -1160,7 +1160,7 @@ fn dump_block(
             Stmt::Let { local, init } => {
                 let decl = function.local(*local);
                 let name = decl.name.map(|n| n.to_string()).unwrap_or_else(|| format!("_{}", local.0));
-                out.push_str(&format!("{pad}let {name}: {}", types.display(decl.ty)));
+                out.push_str(&format!("{pad}let {name}: {}", types.symbol_name(decl.ty)));
                 match init {
                     Some(e) => out.push_str(&format!(" = {}\n", dump_expr(e, function, types))),
                     None => out.push('\n'),
@@ -1179,7 +1179,7 @@ fn dump_block(
                     .unwrap_or_else(|| format!("_{}", temp.0));
                 out.push_str(&format!(
                     "{pad}destructure {name}: {} = {}\n",
-                    types.display(function.local(*temp).ty),
+                    types.symbol_name(function.local(*temp).ty),
                     dump_expr(value, function, types)
                 ));
                 for binding in bindings {
@@ -1190,7 +1190,7 @@ fn dump_block(
                                 .name
                                 .map(|n| n.to_string())
                                 .unwrap_or_else(|| format!("_{}", local.0));
-                            out.push_str(&format!("{pad}  let {target}: {}", types.display(decl.ty)));
+                            out.push_str(&format!("{pad}  let {target}: {}", types.symbol_name(decl.ty)));
                             out.push_str(&format!(" = {}", dump_expr(value, function, types)));
                             out.push('\n');
                         }
@@ -1351,7 +1351,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             format!("({op:?} {})", dump_expr(operand, function, types))
         }
         ExprKind::Cast { expr: inner, to } => {
-            format!("({} as {})", dump_expr(inner, function, types), types.display(*to))
+            format!("({} as {})", dump_expr(inner, function, types), types.symbol_name(*to))
         }
         ExprKind::InterfaceUpcast { interfaces, expr: inner, .. } => {
             let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
@@ -1365,7 +1365,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             format!("(erase {})", dump_expr(inner, function, types))
         }
         ExprKind::Widen { expr: inner, to } => {
-            format!("widen({} -> {})", dump_expr(inner, function, types), types.display(*to))
+            format!("widen({} -> {})", dump_expr(inner, function, types), types.symbol_name(*to))
         }
         ExprKind::Builtin { which, args } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
@@ -1429,5 +1429,5 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         }
         ExprKind::Error => "<error>".to_string(),
     };
-    format!("{body}:{}", types.display(expr.ty))
+    format!("{body}:{}", types.symbol_name(expr.ty))
 }

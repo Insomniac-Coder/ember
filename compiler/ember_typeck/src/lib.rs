@@ -1972,7 +1972,10 @@ impl<'a> Checker<'a> {
     /// bound afterwards and may deliberately replace the prelude spelling.
     fn bind_prelude(&mut self, modules: &[LoadedModule]) {
         const EXPORTS: &[(&str, &[&str])] = &[
-            ("std.core", &["Eq", "Ord", "Default", "Clone", "Iterator"]),
+            (
+                "std.core",
+                &["Eq", "Ord", "Default", "Clone", "Iterator", "Range", "RangeInclusive", "RangeFrom", "RangeTo"],
+            ),
             ("std.collections", &["Hash"]),
         ];
         let by_path: HashMap<String, usize> =
@@ -2412,7 +2415,8 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 if self.abstract_methods.contains(&def) {
-                    let owner = self.types.class_def(id).name;
+                    let owner = self.types.intern(TyKind::Class(id));
+                    let owner = self.types.display(owner);
                     self.error(
                         codes::E2020,
                         span,
@@ -3992,7 +3996,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         }
-        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
         let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
         if self.interfaces.contains_key(&instance) {
             return Some(instance);
@@ -4469,7 +4473,7 @@ impl<'a> Checker<'a> {
                     let signature = &self.signatures[def.0 as usize];
                     self.member_callable_declarations.push(self.callable_declaration(
                         member.span,
-                        method_symbol(&self.types.display(ty), decl.name.name),
+                        method_symbol(&self.types.symbol_name(ty), decl.name.name),
                         self.signature_parameters(signature),
                         signature.ret,
                         signature.borrows.clone(),
@@ -6148,7 +6152,7 @@ impl<'a> Checker<'a> {
             return self.common.error;
         }
         let stem: Vec<String> =
-            args.iter().map(|&t| type_stem(&self.types.display(t))).collect();
+            args.iter().map(|&t| type_stem(&self.types.symbol_name(t))).collect();
         let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -6347,7 +6351,7 @@ impl<'a> Checker<'a> {
             return self.common.error;
         }
         let stem: Vec<String> =
-            args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+            args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
         let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -6529,7 +6533,7 @@ impl<'a> Checker<'a> {
             return self.common.error;
         }
         let stem: Vec<String> =
-            args.iter().map(|&ty| type_stem(&self.types.display(ty))).collect();
+            args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
         let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -6788,7 +6792,7 @@ impl<'a> Checker<'a> {
 
     /// `Option[T]`, as a two-variant enum built once per `T`.
     fn option_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.symbol_name(inner))));
         self.builtin_enum(name, &[(Symbol::intern("None"), Vec::new()), (Symbol::intern("Some"), vec![inner])])
     }
 
@@ -6800,7 +6804,7 @@ impl<'a> Checker<'a> {
     /// from pretending to own an inline `T`. The C backend supplies the real
     /// glue: drop `*value`, then free the allocation.
     fn box_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Box_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("Box_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -6874,7 +6878,7 @@ impl<'a> Checker<'a> {
     /// to the runtime object header and materializes that pointer at the
     /// payload offset; no raw field is visible to source programs.
     fn shared_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Shared_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("Shared_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -6929,7 +6933,7 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
-        let name = Symbol::intern(&format!("Weak_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("Weak_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -7035,7 +7039,7 @@ impl<'a> Checker<'a> {
     /// must "not depend on compiler extensions". It compiled, and only
     /// `-pedantic` said so. Privacy is the mechanism; the name is just a name.
     fn cell_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Cell_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("Cell_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -7058,6 +7062,7 @@ impl<'a> Checker<'a> {
             origin: None,
             declaring_module: usize::MAX,
         });
+        self.types.set_written_as(id, "Cell", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.cells.insert(id, inner);
@@ -7084,7 +7089,7 @@ impl<'a> Checker<'a> {
     fn maybe_uninit_of(&mut self, inner: Ty) -> Ty {
         let name = Symbol::intern(&format!(
             "MaybeUninit_{}",
-            type_stem(&self.types.display(inner))
+            type_stem(&self.types.symbol_name(inner))
         ));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
@@ -7108,6 +7113,7 @@ impl<'a> Checker<'a> {
             origin: None,
             declaring_module: usize::MAX,
         });
+        self.types.set_written_as(id, "MaybeUninit", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.maybe_uninit.insert(id, inner);
@@ -7131,7 +7137,7 @@ impl<'a> Checker<'a> {
     fn unsafe_cell_of(&mut self, inner: Ty) -> Ty {
         let name = Symbol::intern(&format!(
             "UnsafeCell_{}",
-            type_stem(&self.types.display(inner))
+            type_stem(&self.types.symbol_name(inner))
         ));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
@@ -7260,7 +7266,7 @@ impl<'a> Checker<'a> {
     /// ordinary struct move. `needs_drop` stays field-derived (`has_drop`
     /// clear), so a `RefCell` needs drop iff `T` does.
     fn refcell_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("RefCell_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("RefCell_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -7317,6 +7323,7 @@ impl<'a> Checker<'a> {
             origin: None,
             declaring_module: usize::MAX,
         });
+        self.types.set_written_as(id, "RefCell", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.refcells.insert(id, inner);
@@ -7344,7 +7351,7 @@ impl<'a> Checker<'a> {
     /// update rather than a `drop` method call.
     fn ref_guard_of(&mut self, inner: Ty, mutable: bool) -> Ty {
         let prefix = if mutable { "RefMut" } else { "Ref" };
-        let name = Symbol::intern(&format!("{prefix}_{}", type_stem(&self.types.display(inner))));
+        let name = Symbol::intern(&format!("{prefix}_{}", type_stem(&self.types.symbol_name(inner))));
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -7368,6 +7375,7 @@ impl<'a> Checker<'a> {
             origin: None,
             declaring_module: usize::MAX,
         });
+        self.types.set_written_as(id, prefix, vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.ref_guards.insert(id, (inner, mutable));
@@ -7569,8 +7577,8 @@ impl<'a> Checker<'a> {
     fn result_of(&mut self, ok: Ty, err: Ty) -> Ty {
         let name = Symbol::intern(&format!(
             "Result_{}_{}",
-            type_stem(&self.types.display(ok)),
-            type_stem(&self.types.display(err))
+            type_stem(&self.types.symbol_name(ok)),
+            type_stem(&self.types.symbol_name(err))
         ));
         self.builtin_enum(name, &[(Symbol::intern("Ok"), vec![ok]), (Symbol::intern("Err"), vec![err])])
     }
@@ -7996,7 +8004,7 @@ impl<'a> Checker<'a> {
                     name: Symbol::intern("abstract"),
                     class_init: false,
                     class_init_default_fields: Vec::new(),
-                    symbol: method_symbol(&self.types.display(job.owner), Symbol::intern("abstract")),
+                    symbol: method_symbol(&self.types.symbol_name(job.owner), Symbol::intern("abstract")),
                     is_unsafe: false,
                     abi: None,
                     params,
@@ -8547,7 +8555,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     name: Symbol::intern("clone"),
                     class_init: false,
                     class_init_default_fields: Vec::new(),
-                    symbol: method_symbol(&self.types.display(ty), Symbol::intern("clone")),
+                    symbol: method_symbol(&self.types.symbol_name(ty), Symbol::intern("clone")),
                     is_unsafe: false,
                     abi: None,
                     params: vec![Param { local: self_local, mode: Mode::Borrow }],
@@ -8818,7 +8826,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             name,
             class_init: is_class_init,
             class_init_default_fields,
-            symbol: method_symbol(&self.types.display(owner), name),
+            symbol: method_symbol(&self.types.symbol_name(owner), name),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
             params,
@@ -11320,16 +11328,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             );
         }
-        let incoming_class_init = self.class_init.clone();
-        let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &iter.kind else {
+        let ast::ExprKind::Range { lo: Some(lo), hi, inclusive } = &iter.kind else {
             // `[CTL-1]` — anything else is driven through `next()`.
             return self.check_for_iterator(label, pattern, iter, body, else_block, span);
         };
+        let (start, end) = match hi {
+            Some(hi) => {
+                let (start, end) = self.range_ends(lo, hi);
+                (start, Some(end))
+            }
+            None => (self.synth_committed(lo), None),
+        };
+        self.check_for_counted(label, pattern, (start, end, *inclusive), body, else_block, iter.span)
+    }
 
-        // Either end may be an untyped literal, and it is the other end that
-        // says what it should be: `for i in 0..xs.len()` counts in `usize`.
-        let mut start = self.synth(lo);
-        let mut end = self.synth(hi);
+    /// `[CTL-3]` — both ends of a range have one type. Either may be an
+    /// untyped literal, and it is the other end that says what it should be:
+    /// `for i in 0..xs.len()` counts in `usize`.
+    fn range_ends(&mut self, lo: &ast::Expr, hi: &ast::Expr) -> (Expr, Expr) {
+        let start = self.synth(lo);
+        let end = self.synth(hi);
+        self.unify_range_ends(start, end)
+    }
+
+    fn unify_range_ends(&mut self, mut start: Expr, mut end: Expr) -> (Expr, Expr) {
         match (
             self.types.is_untyped_literal(start.ty),
             self.types.is_untyped_literal(end.ty),
@@ -11352,11 +11374,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 end = self.coerce(end, target);
             }
         }
+        (start, end)
+    }
+
+    /// `[CTL-3]` — a counted loop from `start`, to `end` when there is one.
+    /// `a..` has none: its counter is advanced before the body, so a
+    /// `continue` needs no increment of its own, and counting past the
+    /// type's maximum panics as any overflowing `+` does (`[TYP-8]`).
+    fn check_for_counted(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        (start, end, inclusive): (Expr, Option<Expr>, bool),
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
         if !self.types.is_integral(start.ty) && start.ty != self.common.error {
             let shown = self.types.display(start.ty);
-            self.error(codes::E2020, iter.span, format!("cannot count over `{shown}`"));
+            self.error(codes::E2020, span, format!("cannot count over `{shown}`"));
             return None;
         }
+        let incoming_class_init = self.class_init.clone();
 
         // The loop variable is the counter, so it is in scope for the body
         // and nowhere else.
@@ -11375,15 +11414,342 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
         }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        let Some(end) = end else {
+            let ty = start.ty;
+            let next = self.declare(None, ty, span);
+            let read = |ty| Expr { ty, kind: ExprKind::Local(next), span };
+            let mut stmts = vec![
+                Stmt::Let { local, init: Some(read(ty)) },
+                Stmt::Assign {
+                    place: read(ty),
+                    value: Expr {
+                        ty,
+                        kind: ExprKind::Binary {
+                            op: BinOp::Add,
+                            lhs: Box::new(read(ty)),
+                            rhs: Box::new(Expr { ty, kind: ExprKind::Int(1), span }),
+                        },
+                        span,
+                    },
+                },
+            ];
+            stmts.extend(body.stmts);
+            let bool_ty = self.common.bool_;
+            return Some(Stmt::Block(Block {
+                stmts: vec![
+                    Stmt::Let { local: next, init: Some(start) },
+                    Stmt::While {
+                        cond: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+                        body: Block { stmts, span: body.span },
+                        else_block,
+                    },
+                ],
+                span,
+            }));
+        };
+        Some(Stmt::ForRange { local, start, end, inclusive, body, else_block })
+    }
+
+    /// `[CTL-3]` (ODR-027) — which of the prelude's range types `ty` is, and
+    /// its bound.
+    fn range_parts(&self, ty: Ty) -> Option<(&'static str, Ty)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        let path = ["std.core.Range", "std.core.RangeInclusive", "std.core.RangeFrom", "std.core.RangeTo"]
+            .into_iter()
+            .find(|path| origin.as_str() == *path)?;
+        (args.len() == 1).then(|| (path, args[0]))
+    }
+
+    /// `[STD-8]` (ODR-027) — a range contains `x` when `start <= x` and
+    /// `x < end` (`x <= end` for `a..=b`); a `RangeFrom` has no upper test and
+    /// a `RangeTo` no lower one. The range and `x` are each evaluated once,
+    /// `x` first when `needle_first` (`x in r`, as Python's `in` does).
+    fn range_contains(
+        &mut self,
+        range: Expr,
+        (shape, bound): (&'static str, Ty),
+        needle: Expr,
+        needle_first: bool,
+        span: Span,
+    ) -> Expr {
+        let bool_ty = self.common.bool_;
+        if !self.totally_ordered(bound) {
+            if bound != self.common.error {
+                let shown = self.types.display(bound);
+                self.error(codes::E2226, span, format!("a range of `{shown}` does not implement `Contains`"));
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let (range_ty, range_span) = (range.ty, range.span);
+        let r = self.declare(None, range_ty, range_span);
+        let x = self.declare(None, bound, span);
+        let mut stmts = vec![Stmt::Let { local: r, init: Some(range) }, Stmt::Let { local: x, init: Some(needle) }];
+        if needle_first {
+            stmts.reverse();
+        }
+        let field = |index| Expr {
+            ty: bound,
+            kind: ExprKind::Field {
+                base: Box::new(Expr { ty: range_ty, kind: ExprKind::Local(r), span: range_span }),
+                index,
+            },
+            span,
+        };
+        let value = || Expr { ty: bound, kind: ExprKind::Local(x), span };
+        let test = |op, lhs, rhs| Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+            span,
+        };
+        let found = match shape {
+            "std.core.RangeTo" => test(BinOp::Lt, value(), field(0)),
+            "std.core.RangeFrom" => test(BinOp::Le, field(0), value()),
+            _ => {
+                let upper = if shape == "std.core.RangeInclusive" { BinOp::Le } else { BinOp::Lt };
+                test(BinOp::And, test(BinOp::Le, field(0), value()), test(upper, value(), field(1)))
+            }
+        };
+        Expr { ty: bool_ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(found) }, span }
+    }
+
+    /// `[STD-26]` (ODR-027) — `len` of `a..b` or `a..=b` over integers: how
+    /// many values it has, counted exactly in 64 bits (`RangeCount`), as an
+    /// `int`. A count an `int` cannot hold panics rather than wrapping, as
+    /// Python's `len` raises.
+    fn range_len(&mut self, range: Expr, (shape, bound): (&'static str, Ty), span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let shown = self.types.display(range.ty);
+        if !matches!(shape, "std.core.Range" | "std.core.RangeInclusive") {
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{shown}` has no length"))
+                    .note("`a..b` and `a..=b` have one; `a..` and `..b` are unbounded [STD-26]"),
+            );
+            return error;
+        }
+        if !self.types.is_integral(bound) {
+            if bound != self.common.error {
+                self.error(codes::E2040, span, format!("`{shown}` has no length: only a range of integers counts"));
+            }
+            return error;
+        }
+        if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
+            self.error(codes::E0900, span, format!("`len` of a `{shown}` is not implemented yet"));
+            return error;
+        }
+        let (usize_ty, int_ty, bool_ty) = (self.common.usize, self.common.i64, self.common.bool_);
+        let (range_ty, range_span) = (range.ty, range.span);
+        let r = self.declare(None, range_ty, range_span);
+        let n = self.declare(None, usize_ty, span);
+        let field = |index| Expr {
+            ty: bound,
+            kind: ExprKind::Field {
+                base: Box::new(Expr { ty: range_ty, kind: ExprKind::Local(r), span: range_span }),
+                index,
+            },
+            span,
+        };
+        let count = || Expr { ty: usize_ty, kind: ExprKind::Local(n), span };
+        let mut stmts = vec![
+            Stmt::Let { local: r, init: Some(range) },
+            Stmt::Let {
+                local: n,
+                init: Some(Expr {
+                    ty: usize_ty,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::RangeCount,
+                        args: vec![field(0), field(1), Expr { ty: bound, kind: ExprKind::Int(1), span }],
+                    },
+                    span,
+                }),
+            },
+        ];
+        // `a..=b` has `b` too, when it is not empty.
+        if shape == "std.core.RangeInclusive" {
+            stmts.push(Stmt::If {
+                cond: Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(field(0)), rhs: Box::new(field(1)) },
+                    span,
+                },
+                then_block: Block {
+                    stmts: vec![Stmt::Assign {
+                        place: count(),
+                        value: Expr {
+                            ty: usize_ty,
+                            kind: ExprKind::Binary {
+                                op: BinOp::Add,
+                                lhs: Box::new(count()),
+                                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(1), span }),
+                            },
+                            span,
+                        },
+                    }],
+                    span,
+                },
+                else_block: None,
+            });
+        }
+        let fits = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Le,
+                lhs: Box::new(count()),
+                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(i64::MAX as u128), span }),
+            },
+            span,
+        };
+        let message = Expr {
+            ty: self.common.str_,
+            kind: ExprKind::Str("len: the range has more values than an `int` can hold".to_string()),
+            span,
+        };
+        stmts.push(Stmt::Expr(Expr {
+            ty: self.common.void,
+            kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![fits, message] },
+            span,
+        }));
+        Expr {
+            ty: int_ty,
+            kind: ExprKind::Block {
+                block: Block { stmts, span },
+                value: Box::new(Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(count()), to: int_ty }, span }),
+            },
+            span,
+        }
+    }
+
+    /// `[CTL-3]` (ODR-027) — a range written as a value is one of the
+    /// prelude's range structs. An expected range type of the same shape
+    /// gives its bound's type; otherwise the ends agree as a loop's do.
+    fn synth_range_value(
+        &mut self,
+        (lo, hi, inclusive): (Option<&ast::Expr>, Option<&ast::Expr>, bool),
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let path = match (lo.is_some(), hi.is_some(), inclusive) {
+            (true, true, false) => "std.core.Range",
+            (true, true, true) => "std.core.RangeInclusive",
+            (true, false, false) => "std.core.RangeFrom",
+            (false, true, false) => "std.core.RangeTo",
+            _ => {
+                self.error(
+                    codes::E1010,
+                    span,
+                    "this range has no type: the prelude's are `a..b`, `a..=b`, `a..` and `..b`",
+                );
+                return error;
+            }
+        };
+        let bound = expected.and_then(|ty| self.range_parts(ty)).filter(|(shape, _)| *shape == path);
+        let fields = match (bound, lo, hi) {
+            (Some((_, bound)), _, _) => lo.into_iter().chain(hi).map(|end| self.check_expr(end, bound)).collect(),
+            (None, Some(lo), Some(hi)) => {
+                let (start, end) = self.range_ends(lo, hi);
+                vec![start, end]
+            }
+            (None, _, _) => lo.into_iter().chain(hi).map(|end| self.synth_committed(end)).collect::<Vec<_>>(),
+        };
+        self.range_struct(path, fields, span)
+    }
+
+    /// The prelude range `path` with these bounds, in field order.
+    fn range_struct(&mut self, path: &str, fields: Vec<Expr>, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if fields.iter().any(|field| field.ty == self.common.error) {
+            return error;
+        }
+        let ty = self.instantiate_named_generic(path, &[fields[0].ty], span);
+        let TyKind::Struct(struct_id) = *self.types.kind(ty) else { return error };
+        Expr { ty, kind: ExprKind::StructLit { struct_id, fields }, span }
+    }
+
+    /// `[STD-26]` — `range(stop)` is `0..stop` and `range(start, stop)` is
+    /// `start..stop`, as values as well as in a `for` header. A stepped
+    /// `range` is a counted loop in a `for` header; as a value it needs a
+    /// stepped range type, which is not built.
+    fn synth_range_call(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.iter().any(|arg| arg.name.is_some()) || !(1..=3).contains(&args.len()) {
+            self.error(codes::E2020, span, format!("`range` takes 1, 2 or 3 argument(s), found {}", args.len()));
+            return error;
+        }
+        let (start, end) = match args {
+            [stop] => {
+                let start = Expr { ty: self.common.int_lit, kind: ExprKind::Int(0), span };
+                let end = self.synth(&stop.value);
+                self.unify_range_ends(start, end)
+            }
+            [start, stop] => self.range_ends(&start.value, &stop.value),
+            _ => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, span, "a `range` with a step as a value is not implemented yet")
+                        .note("it is built as the head of a `for` loop [STD-26]"),
+                );
+                return error;
+            }
+        };
+        if !self.types.is_integral(start.ty) && start.ty != self.common.error {
+            let shown = self.types.display(start.ty);
+            self.error(codes::E2020, span, format!("`range` counts over integers, not `{shown}`"));
+            return error;
+        }
+        self.range_struct("std.core.Range", vec![start, end], span)
+    }
+
+    /// `[CTL-3]` (ODR-027) — `for x in r` over a range value counts over a
+    /// copy of its bounds, as the same range written in place would.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_range_value(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        range: (Expr, &'static str, Ty),
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let (range, shape, bound) = range;
+        if shape == "std.core.RangeTo" {
+            let shown = self.types.display(range.ty);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2040,
+                    range.span,
+                    format!("`{shown}` cannot be iterated: it has no start"),
+                )
+                .help("give it one: `0..b` counts from zero"),
+            );
+            return None;
+        }
+        let mut stmts = Vec::new();
+        let range_span = range.span;
+        let (range_ty, range) = match range.kind {
+            ExprKind::Local(local) => (range.ty, local),
+            _ => {
+                let (ty, local) = (range.ty, self.declare(None, range.ty, range_span));
+                stmts.push(Stmt::Let { local, init: Some(range) });
+                (ty, local)
+            }
+        };
+        let field = |index| Expr {
+            ty: bound,
+            kind: ExprKind::Field {
+                base: Box::new(Expr { ty: range_ty, kind: ExprKind::Local(range), span: range_span }),
+                index,
+            },
+            span: range_span,
+        };
+        let (start, end) = match shape {
+            "std.core.RangeFrom" => (field(0), None),
+            _ => (field(0), Some(field(1))),
+        };
+        let inclusive = shape == "std.core.RangeInclusive";
+        stmts.push(self.check_for_counted(label, pattern, (start, end, inclusive), body, else_block, range_span)?);
         let _ = span;
-        Some(Stmt::ForRange {
-            local,
-            start,
-            end,
-            inclusive: *inclusive,
-            body,
-            else_block,
-        })
+        Some(Stmt::Block(Block { stmts, span }))
     }
 
     /// `[CTL-1]` — `for x in xs` over an `Array[T]` borrows the place for the
@@ -12493,6 +12859,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if haystack.ty == self.common.error {
             return error;
         }
+        if let Some(parts) = self.range_parts(haystack.ty) {
+            let value = self.check_expr(needle, parts.1);
+            return negated(self.range_contains(haystack, parts, value, true, span));
+        }
         // Text: a `str` or a `char` needle.
         if self.is_text(haystack.ty) {
             let str_ty = self.common.str_;
@@ -12950,9 +13320,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         )
     }
 
-    /// `[STD-26]`, `[MOD-5]` (0.9.9) — the prelude's `len`, `min`, `max`,
-    /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
-    /// other name.
     /// `[STD-10]` — `input(prompt="") -> String`: the prompt, then a line of
     /// standard input without its ending.
     fn synth_input(&mut self, args: &[ast::Arg], span: Span) -> Expr {
@@ -12969,9 +13336,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr { ty: string_ty, kind: ExprKind::Builtin { which: Builtin::Input, args: vec![prompt] }, span }
     }
 
+    /// `[STD-26]`, `[MOD-5]` (0.9.9) — the prelude's `len`, `min`, `max`,
+    /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
+    /// other name.
     fn synth_python_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
-        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted" | "input") {
+        if !matches!(
+            name,
+            "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted" | "input" | "range"
+        ) {
             return None;
+        }
+        if name == "range" {
+            return Some(self.synth_range_call(args, span));
         }
         if name == "sorted" {
             return Some(self.synth_sorted(args, span));
@@ -13004,6 +13380,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             "len" => {
                 let value = self.synth_committed(positional[0]);
                 let value = self.read_through(value);
+                if let Some(parts) = self.range_parts(value.ty) {
+                    return Some(self.range_len(value, parts, span));
+                }
                 match *self.types.kind(value.ty) {
                     _ if self.is_text(value.ty) => {
                         self.sink.emit(
@@ -13433,6 +13812,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let iterable = self.synth_committed(iter);
         if iterable.ty == self.common.error {
             return None;
+        }
+        if let Some((shape, bound)) = self.range_parts(iterable.ty) {
+            return self.check_for_range_value(label, pattern, (iterable, shape, bound), body, else_block, span);
         }
         // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
         // counted loop over its indices, with no iterator object at all.
@@ -14754,6 +15136,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::ExprKind::Lambda(lambda) => self.synth_lambda(lambda, expected, span),
 
             ast::ExprKind::Lit(lit) => self.synth_literal(lit, span),
+
+            ast::ExprKind::Range { lo, hi, inclusive } => {
+                self.synth_range_value((lo.as_deref(), hi.as_deref(), *inclusive), expected, span)
+            }
 
             // `self` inside a method is the receiver parameter, which is a
             // local like any other.
@@ -17951,7 +18337,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if def.declaring_module == self.current_module {
             return;
         }
-        let owner = def.name.to_string();
+        let owner = self.types.intern(TyKind::Struct(id));
+        let owner = self.types.display(owner);
         self.sink.emit(
             Diagnostic::error(
                 codes::E1020,
@@ -17959,7 +18346,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("`{field}` is private to `{owner}`'s module"),
             )
             .help(format!(
-                "declare it `pub {field}: …` to read it anywhere,                  or `pub(read) {field}: …` to make it readable and not writable"
+                "declare it `pub {field}: …` to read it anywhere, or `pub(read) {field}: …` to make it readable and not writable"
             ))
             .note("a field is private unless it says otherwise [MOD-2]"),
         );
@@ -17979,7 +18366,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if def.declaring_module == self.current_module {
             return;
         }
-        let owner = def.name.to_string();
+        let owner = self.types.intern(TyKind::Class(id));
+        let owner = self.types.display(owner);
         self.sink.emit(
             Diagnostic::error(
                 codes::E1020,
@@ -18318,7 +18706,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         if reassigns_let_field {
                             let (owner_id, field_name, _, _) =
                                 field.expect("a reassignable class field has metadata");
-                            let owner = self.types.class_def(owner_id).name;
+                            let owner = self.types.intern(TyKind::Class(owner_id));
+                            let owner = self.types.display(owner);
                             self.error(
                                 codes::E1010,
                                 span,
@@ -18886,6 +19275,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 },
                 span,
             };
+        }
+        // `[STD-8]`, `[STD-26]` (ODR-027) — a range's `contains(x)` and
+        // `len()`, as `x in r` and `len(r)`.
+        let referent = match *self.types.kind(receiver.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => receiver.ty,
+        };
+        if let Some(parts) = self.range_parts(referent)
+            && explicit.is_empty()
+            && matches!(name.name.as_str(), "contains" | "len")
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            let wanted = if name.name.is("len") { 0 } else { 1 };
+            if args.len() != wanted || args.iter().any(|arg| arg.name.is_some()) {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes {wanted} argument(s), found {}", name.name, args.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let receiver = self.read_through(receiver);
+            if wanted == 0 {
+                return self.range_len(receiver, parts, span);
+            }
+            let value = self.check_expr(&args[0].value, parts.1);
+            return self.range_contains(receiver, parts, value, false, span);
         }
         // `Array` and `String` carry their methods in the compiler until
         // Phase 2's generics let the standard library declare them.

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-16, TYP-17, IFC-1, TYP-22
-#$ error[E2020]: expected `ref dyn Measure`, found `ref Holder_Plain`
+#$ error[E2020]: expected `ref dyn Measure`, found `ref Holder[Plain]`
 
 interface Display:
     fn score(self) -> i32

@@ -5,4 +5,4 @@
 
 fn main():
     slot: MaybeUninit[i32] = MaybeUninit[i32].uninit()
-    println(slot.value) #$ error[E1020]: `value` is private to `MaybeUninit_i32`'s module
+    println(slot.value) #$ error[E1020]: `value` is private to `MaybeUninit[i32]`'s module

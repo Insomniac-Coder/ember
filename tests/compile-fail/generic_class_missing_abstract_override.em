@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-4
-#$ error[E2020]: concrete class `Square_bool` does not implement abstract method `area`
+#$ error[E2020]: concrete class `Square[bool]` does not implement abstract method `area`
 
 abstract class Shape[T]:
     virtual fn area(self) -> i32
