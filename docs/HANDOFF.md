@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_10.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_11.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_10`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_11`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
@@ -10792,7 +10792,12 @@ evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). `E10
 (a name declared twice in one block) is `E1020`. `[CTL-10]` branch hoisting is built
 (`hoist_branch_names`, `check_block_scoped`, `check_match_scoped`). `to_string`,
 `String.from` and the first `str` methods are built (`to_string_of`, `synth_text_method`).
-`I.m(recv)` is built, and D-241 (`interface_methods`) fixed. `docs/DESIGN-MAP-SET-ITERATION.md`
+`I.m(recv)` is built, and D-241 (`interface_methods`) fixed. ODR-030 (Hardened_11) makes
+`extend` contextual (the parser's `at_extend_decl`), so `Array` can have `extend`.
+D-242 is fixed: `extend[T]` of any generic type, the built-in ones included
+(`apply_generic_extensions`, `extend_builtin_instance`, `synth_registered_method`), and
+D-244 (an interface method behind an inherent one of its name). Open: D-243 (`E2120`
+never reported) and D-245 (a bound's method in a generic body can reach an inherent one). `docs/DESIGN-MAP-SET-ITERATION.md`
 prices the two shapes for `Map`/`Set` and for generators/adapters; it waits for the owner's
 pick. The directory
 tests now report every failing case in one run (`check_file_collecting`);

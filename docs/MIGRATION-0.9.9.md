@@ -551,3 +551,16 @@ The next number is ODR-027.
   `as_bytes()` reads the text as its `Span[u8]` (a new `StrAsBytes`, listed with `Slice` among the
   builtins whose result borrows their argument, so the bytes of a temporary cannot outlive it);
   `is_char_boundary(i)`. The splitting methods that return iterators wait for the iteration design.
+* **2026-09-25 — `extend` is contextual (ODR-030, Hardened_11).** `[STD-15]` names an `Array`
+  method `extend` and the keyword table reserved the word, so `xs.extend(ys)` could not parse.
+  Under the owner's rule for such collisions `extend` is now a contextual keyword: it begins an item
+  only before the type it extends (after any generic parameters), and is a name everywhere else.
+  The keyword table has 48 words.
+* **2026-09-25 — generic extensions of every generic type (D-242, D-244).** `extend[T]` worked only
+  on generic classes. Structs, enums and classes now share one path, and an instance made before
+  the extensions were read gets them afterwards. `Array`, `Span`, `Option` and `Result` take their
+  extensions when a method is first looked up on an instance (they have no instantiation step), and
+  `implements` reads the recipes. `Array`/`Span` try the compiler's methods first (`[TYP-24]`). An
+  interface method arriving after an inherent one of its name is kept for its interface (D-244).
+  Open: D-243 (`E2120` is never reported) and D-245 (in a generic body, a bound's method can reach
+  an inherent method of the same name once the body is instantiated).

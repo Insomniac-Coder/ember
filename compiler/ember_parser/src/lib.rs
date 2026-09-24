@@ -318,7 +318,6 @@ impl<'a> Parser<'a> {
                         | Kw::Class
                         | Kw::Enum
                         | Kw::Interface
-                        | Kw::Extend
                         | Kw::Const
                         | Kw::Static
                         | Kw::Pub
@@ -329,7 +328,7 @@ impl<'a> Parser<'a> {
             ) {
                 return;
             }
-            if matches!(self.peek(), TokenKind::Punct(Punct::At)) {
+            if matches!(self.peek(), TokenKind::Punct(Punct::At)) || self.at_extend_decl() {
                 return;
             }
             self.bump();

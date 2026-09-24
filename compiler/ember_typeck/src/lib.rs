@@ -176,9 +176,10 @@ pub fn check(
     }
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
-        checker.collect_generic_class_extensions(&loaded.module);
+        checker.collect_generic_extensions(&loaded.module);
     }
     checker.resolve_pending_generic_implements();
+    checker.extend_early_instances();
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -381,18 +382,24 @@ struct GenericClass {
     declaring_module: usize,
 }
 
-/// An `extend[P] Class[...P...]` recipe. The extension's binders belong to
-/// the extension rather than the class declaration, so each class
-/// materialization matches its concrete arguments against this target before
-/// registering the extension's methods and interface implementations.
+/// `[GRM-34]` — the built-in generic types an `extend[...]` may name.
+const BUILTIN_GENERICS: [&str; 5] = ["Array", "Span", "MutSpan", "Option", "Result"];
+
+/// An `extend[P] T[...P...]` recipe, for a generic struct, enum or class
+/// `T` (`[GRM-34]`). The extension's binders belong to the extension rather
+/// than the type's declaration, so each materialization matches its concrete
+/// arguments against this target before registering the extension's methods
+/// and interface implementations.
 #[derive(Clone)]
-struct GenericClassExtension {
+struct GenericExtension {
     params: Vec<GenericParam>,
     target_args: Vec<Ty>,
     methods: Vec<GenericMethod>,
     /// The first implemented interface owns extension methods, matching the
     /// ordinary `extend T implements I` collection path.
     interface: Option<Symbol>,
+    /// Every interface the extension implements, resolved.
+    interfaces: Vec<Symbol>,
     implements: Vec<ast::TypeExpr>,
     span: Span,
     declaring_module: usize,
@@ -776,8 +783,11 @@ struct Checker<'a> {
     /// interface implementations stay explicitly rejected until their
     /// substitution paths are implemented.
     generic_classes: HashMap<Symbol, GenericClass>,
-    /// Extensions whose target is a generic class recipe.
-    generic_class_extensions: HashMap<Symbol, Vec<GenericClassExtension>>,
+    /// Extensions whose target is a generic struct, enum or class recipe.
+    generic_extensions: HashMap<Symbol, Vec<GenericExtension>>,
+    /// `(instance, index in generic_extensions)` for each extension an
+    /// instance has been given, so none is registered twice.
+    applied_extensions: HashSet<(Ty, usize)>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
@@ -997,7 +1007,8 @@ impl<'a> Checker<'a> {
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
-            generic_class_extensions: HashMap::new(),
+            generic_extensions: HashMap::new(),
+            applied_extensions: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -2385,7 +2396,7 @@ impl<'a> Checker<'a> {
             self.current_module = module;
             for item in &loaded.module.items {
                 let ast::ItemKind::Extend(decl) = &item.kind else { continue };
-                if !decl.implements.is_empty() || self.is_generic_class_extension(decl) {
+                if !decl.implements.is_empty() || self.is_generic_extension(decl) {
                     continue;
                 }
                 let ty = self.resolve_type(&decl.target);
@@ -2761,19 +2772,19 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Collect generic class extensions after generic class recipes and
-    /// interfaces have names, but before the ordinary extension pass tries to
-    /// resolve `Class[T]` without `T` in scope.
-    fn collect_generic_class_extensions(&mut self, module: &ast::Module) {
+    /// Collect generic extensions after the generic recipes and interfaces
+    /// have names, but before the ordinary extension pass tries to resolve
+    /// `Holder[T]` without `T` in scope.
+    fn collect_generic_extensions(&mut self, module: &ast::Module) {
         for (item_index, item) in module.items.iter().enumerate() {
             let ast::ItemKind::Extend(decl) = &item.kind else { continue };
-            if !self.is_generic_class_extension(decl) {
+            if !self.is_generic_extension(decl) {
                 continue;
             }
             let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
                 continue;
             };
-            let name = self.resolve_name(segments[0].name);
+            let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
             let params = self.declare_generics(&decl.generics);
             let mut target_args = Vec::with_capacity(args.len());
             for arg in args {
@@ -2814,19 +2825,18 @@ impl<'a> Checker<'a> {
                 });
             }
             self.type_params.clear();
-            let interface = decl
-                .implements
-                .first()
-                .and_then(interface_name)
-                .map(|name| self.resolve_name(name));
-            self.generic_class_extensions
+            let interfaces: Vec<Symbol> =
+                decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
+            let interface = interfaces.first().copied();
+            self.generic_extensions
                 .entry(name)
                 .or_default()
-                .push(GenericClassExtension {
+                .push(GenericExtension {
                     params,
                     target_args,
                     methods,
                     interface,
+                    interfaces,
                     implements: decl.implements.clone(),
                     span: item.span,
                     declaring_module: self.current_module,
@@ -2834,21 +2844,268 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn is_generic_class_extension(&self, decl: &ast::ExtendDecl) -> bool {
+    fn is_generic_extension(&self, decl: &ast::ExtendDecl) -> bool {
         if decl.generics.is_empty() {
             return false;
         }
         let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
             return false;
         };
-        segments.len() == 1
-            && !args.is_empty()
-            && self.generic_classes.contains_key(&self.resolve_name(segments[0].name))
+        segments.len() == 1 && !args.is_empty() && self.generic_extension_target(&segments[0]).is_some()
     }
 
-    fn generic_class_extension_bindings(
+    /// The name an extension of the generic type written `segment` is kept
+    /// under: a generic struct, enum or class recipe's, or one of the
+    /// built-in generic types'.
+    fn generic_extension_target(&self, segment: &ast::Ident) -> Option<Symbol> {
+        let name = self.resolve_name(segment.name);
+        if self.generic_classes.contains_key(&name)
+            || self.generic_structs.contains_key(&name)
+            || self.generic_enums.contains_key(&name)
+        {
+            return Some(name);
+        }
+        BUILTIN_GENERICS.contains(&segment.name.as_str()).then_some(segment.name)
+    }
+
+    /// `[GRM-34]` — the built-in generic type and arguments `ty` is an
+    /// instance of, for their extensions. (A user's generic type records its
+    /// own `origin`.)
+    fn builtin_generic_origin(&self, ty: Ty) -> Option<(Symbol, Vec<Ty>)> {
+        let payload = |id: EnumId, variant: usize| self.types.enum_def(id).variants[variant].fields[0].ty;
+        match *self.types.kind(ty) {
+            // ponytail: `String` is `Array[u8]` inside the checker, so an
+            // `Array[u8]` takes no `Array` extension; a `String` of its own kind lifts this.
+            TyKind::Vec { elem } if elem != self.common.u8 => Some((Symbol::intern("Array"), vec![elem])),
+            TyKind::Span { elem, mutable } => {
+                Some((Symbol::intern(if mutable { "MutSpan" } else { "Span" }), vec![elem]))
+            }
+            TyKind::Enum(id) if self.is_option(ty) => Some((Symbol::intern("Option"), vec![payload(id, 1)])),
+            TyKind::Enum(id) if self.is_result(ty) => {
+                Some((Symbol::intern("Result"), vec![payload(id, 0), payload(id, 1)]))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[GRM-34]` — a built-in generic type has no instantiation step to take
+    /// its extensions at, so an instance takes them when a method is first
+    /// looked up on it.
+    fn extend_builtin_instance(&mut self, ty: Ty) {
+        if let Some((name, args)) = self.builtin_generic_origin(ty) {
+            self.apply_generic_extensions(ty, name, &args);
+        }
+    }
+
+    /// `[GRM-34]` — whether an extension of a built-in generic type gives
+    /// `ty` the interface: `implements` is asked before any method of an
+    /// instance may have been looked up.
+    fn builtin_extension_implements(&self, ty: Ty, interface: Symbol) -> bool {
+        let Some((name, args)) = self.builtin_generic_origin(ty) else { return false };
+        self.generic_extensions.get(&name).is_some_and(|extensions| {
+            extensions.iter().any(|extension| {
+                extension.interfaces.contains(&interface)
+                    && self
+                        .generic_extension_bindings(extension, &args)
+                        .is_some_and(|bound| self.generic_extension_bounds_hold(extension, &bound))
+            })
+        })
+    }
+
+    /// The extensions of the generic type `name` that match the instance `ty`
+    /// (arguments `args`) and that it has not been given yet, each with its
+    /// index and its parameters bound.
+    fn matching_generic_extensions(
         &self,
-        extension: &GenericClassExtension,
+        ty: Ty,
+        name: Symbol,
+        args: &[Ty],
+    ) -> Vec<(usize, GenericExtension, Vec<(Symbol, Ty)>)> {
+        let Some(extensions) = self.generic_extensions.get(&name) else { return Vec::new() };
+        extensions
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.applied_extensions.contains(&(ty, *index)))
+            .filter_map(|(index, extension)| {
+                let extension_args = self.generic_extension_bindings(extension, args)?;
+                self.generic_extension_bounds_hold(extension, &extension_args).then(|| {
+                    let bindings =
+                        extension.params.iter().map(|param| param.name).zip(extension_args).collect();
+                    (index, extension.clone(), bindings)
+                })
+            })
+            .collect()
+    }
+
+    /// `[GRM-34]` — give an instance of the generic type `name` the methods
+    /// and interfaces of each matching `extend[...]` it lacks. Struct and enum
+    /// instantiation call this; a class registers its extensions' methods with
+    /// its own, for their vtable slots. `extend_early_instances` calls it for
+    /// every kind.
+    fn apply_generic_extensions(&mut self, ty: Ty, name: Symbol, args: &[Ty]) {
+        let matching = self.matching_generic_extensions(ty, name, args);
+        if matching.is_empty() {
+            return;
+        }
+        let class = match *self.types.kind(ty) {
+            TyKind::Class(id) => Some(id),
+            _ => None,
+        };
+        let inherited_virtuals = match class.and_then(|id| self.types.class_def(id).base) {
+            Some(base) => self.class_virtual_layout(base, &mut HashMap::new()),
+            None => HashMap::new(),
+        };
+        for (index, extension, bindings) in matching {
+            self.applied_extensions.insert((ty, index));
+            let mut declared = Vec::new();
+            for method in &extension.methods {
+                if class.is_some()
+                    && method.dispatch == ast::Dispatch::Override
+                    && !inherited_virtuals.contains_key(&method.name)
+                    && self.reported_generic_override_errors.insert(method.source)
+                {
+                    self.error(codes::E2110, method.span, "override of a method that is not virtual");
+                }
+                let Some(def) =
+                    self.register_recipe_method(ty, name, method, &bindings, extension.interface)
+                else {
+                    continue;
+                };
+                if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
+                    declared.push((method.name, def, method.dispatch));
+                }
+            }
+            if let Some(id) = class {
+                self.class_declared_methods.entry(id).or_default().extend(declared);
+            }
+            let owner_params =
+                std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
+            let implementations = self.register_instantiated_implements(
+                ty,
+                &extension.implements,
+                extension.span,
+                extension.declaring_module,
+            );
+            self.type_params = owner_params;
+            for (implemented_ty, interface, interface_span) in implementations {
+                self.check_implementation(implemented_ty, interface, interface_span);
+            }
+        }
+    }
+
+    /// `[GRM-34]` — an instance can be made before any extension is collected
+    /// (a type named in an interface's signature is); it gets them here.
+    /// D-242.
+    fn extend_early_instances(&mut self) {
+        let structs = self.types.structs().filter_map(|(id, def)| {
+            def.origin.clone().map(|(name, args)| (TyKind::Struct(id), name, args))
+        });
+        let enums = self.types.enums().filter_map(|(id, def)| {
+            def.origin.clone().map(|(name, args)| (TyKind::Enum(id), name, args))
+        });
+        let classes = self.types.classes().filter_map(|(id, def)| {
+            def.origin.clone().map(|(name, args)| (TyKind::Class(id), name, args))
+        });
+        let instances: Vec<(TyKind, Symbol, Vec<Ty>)> = structs
+            .chain(enums)
+            .chain(classes)
+            .filter(|(_, name, _)| self.generic_extensions.contains_key(name))
+            .collect();
+        for (kind, name, args) in instances {
+            let ty = self.types.intern(kind);
+            self.apply_generic_extensions(ty, name, &args);
+        }
+    }
+
+    /// Register one method recipe of a generic type — from its body, or from
+    /// a matching `extend[...]` — on the instance `ty`. `owner_bindings` bind
+    /// the recipe's owner parameters: the type's for a body method, the
+    /// extension's (which need not match) for an extension method. Bodies are
+    /// queued rather than checked here: an instantiation is usually reached
+    /// in the middle of checking some other body, which is not a place to
+    /// start checking a new one.
+    fn register_recipe_method(
+        &mut self,
+        ty: Ty,
+        report_owner: Symbol,
+        method: &GenericMethod,
+        owner_bindings: &[(Symbol, Ty)],
+        interface: Option<Symbol>,
+    ) -> Option<DefId> {
+        // Owner parameters occupy the first slots in the stored recipe;
+        // method parameters follow them. Substitute the owner and map the
+        // method parameters back to zero-based indices for ordinary call
+        // inference/monomorphisation.
+        let method_params: Vec<Ty> = method
+            .generics
+            .iter()
+            .enumerate()
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .collect();
+        let mut combined: Vec<Ty> = owner_bindings.iter().map(|&(_, ty)| ty).collect();
+        combined.extend(method_params);
+        let mut params = Vec::new();
+        if let Some(receiver) = method.receiver {
+            params.push((Symbol::intern("self"), ty, receiver, method.span));
+        }
+        for &(param_name, param_ty, mode, param_span) in &method.params {
+            params.push((param_name, self.substitute_ty(param_ty, &combined), mode, param_span));
+        }
+        let signature = Signature {
+            params,
+            ret: self.substitute_ty(method.ret, &combined),
+            generics: method
+                .generics
+                .iter()
+                .map(|param| self.substitute_generic_param(param, &combined))
+                .collect(),
+            borrows: method.borrows.clone(),
+        };
+        let generic = !signature.generics.is_empty();
+        let def = match method.receiver {
+            Some(receiver) => {
+                self.register_method(ty, method.name, signature, receiver, interface, method.span)
+            }
+            None => self.register_associated(ty, method.name, signature, interface, method.span),
+        }?;
+        // `[DRP-1]` — a generic that writes `fn drop` gives every one of its
+        // instantiations a destructor.
+        if method.name.is("drop") {
+            match *self.types.kind(ty) {
+                TyKind::Struct(id) => self.types.struct_def_mut(id).has_drop = true,
+                TyKind::Enum(id) => self.types.enum_def_mut(id).has_drop = true,
+                TyKind::Class(id) => self.types.class_def_mut(id).has_drop = true,
+                _ => {}
+            }
+        }
+        if !method.has_body && matches!(self.types.kind(ty), TyKind::Class(_)) {
+            self.abstract_methods.insert(def);
+            self.pending_abstract_methods.push(PendingAbstractMethod {
+                def,
+                owner: ty,
+                span: method.span,
+            });
+        } else if generic {
+            self.generic_method_sources.insert(
+                def,
+                MethodSource { owner: ty, source: method.source, owner_bindings: owner_bindings.to_vec() },
+            );
+            self.pending_generic_method_validations.push(def);
+        } else {
+            self.pending_methods.push(PendingMethod {
+                def,
+                owner: ty,
+                bindings: owner_bindings.to_vec(),
+                report_owner,
+                source: method.source,
+            });
+        }
+        Some(def)
+    }
+
+    fn generic_extension_bindings(
+        &self,
+        extension: &GenericExtension,
         args: &[Ty],
     ) -> Option<Vec<Ty>> {
         if extension.target_args.len() != args.len() {
@@ -2865,9 +3122,9 @@ impl<'a> Checker<'a> {
 
     /// A bounded extension is conditional: `Holder[Plain]` remains a valid
     /// class, but it does not receive an `extend[T: Display]` implementation.
-    fn generic_class_extension_bounds_hold(
+    fn generic_extension_bounds_hold(
         &self,
-        extension: &GenericClassExtension,
+        extension: &GenericExtension,
         args: &[Ty],
     ) -> bool {
         extension
@@ -3524,7 +3781,7 @@ impl<'a> Checker<'a> {
                     self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
-                    if self.is_generic_class_extension(decl) {
+                    if self.is_generic_extension(decl) {
                         continue;
                     }
                     let ty = self.resolve_type(&decl.target);
@@ -4298,10 +4555,13 @@ impl<'a> Checker<'a> {
     /// bound. Conformance has already checked these signatures; the adapter
     /// keeps their concrete receiver ABI behind `[TYP-22]`'s `void*` receiver.
     fn dyn_concrete_adapter(
-        &self,
+        &mut self,
         concrete: Ty,
         interfaces: &[Symbol],
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
+        // `[GRM-34]` — an `Option` or `Result` may implement the interface
+        // through an extension it has not been given yet.
+        self.extend_builtin_instance(concrete);
         if !self.types.is_primitive_scalar(concrete) {
             match self.types.kind(concrete) {
                 TyKind::Class(_) => {}
@@ -4633,9 +4893,13 @@ impl<'a> Checker<'a> {
                 // An inherent method arriving later replaces the interface
                 // one in the table, which is what `[TYP-24]` asks for.
                 (Some(_), None) => {}
-                (None, Some(_)) => return None,
+                // One arriving earlier stays there; the interface method is
+                // its interface's only (`I.m(x)`, a bound, a `dyn I`).
+                (None, Some(_)) => {}
             }
         }
+        let behind_inherent = from_interface.is_some()
+            && self.methods.get(&(ty, name)).is_some_and(|existing| existing.from_interface.is_none());
         let def = DefId(self.signatures.len() as u32);
         self.signatures.push(signature);
         let _ = span;
@@ -4643,7 +4907,9 @@ impl<'a> Checker<'a> {
         if let Some(interface) = from_interface {
             self.interface_methods.insert((ty, interface, name), entry);
         }
-        self.methods.insert((ty, name), entry);
+        if !behind_inherent {
+            self.methods.insert((ty, name), entry);
+        }
         Some(def)
     }
 
@@ -6398,97 +6664,11 @@ impl<'a> Checker<'a> {
         self.types.struct_def_mut(id).fields = fields;
 
         // The methods are substituted the same way, each getting a `DefId` of
-        // its own. Their bodies are queued rather than checked here: an
-        // instantiation is usually reached in the middle of checking some
-        // other body, which is not a place to start checking a new one.
+        // its own.
+        let bindings: Vec<(Symbol, Ty)> =
+            decl.params.iter().copied().zip(args.iter().copied()).collect();
         for method in &decl.methods {
-            // Owner parameters occupy the first slots in the stored recipe;
-            // method parameters follow them. Substitute the owner and map the
-            // method parameters back to zero-based indices for ordinary call
-            // inference/monomorphisation.
-            let method_params: Vec<Ty> = method
-                .generics
-                .iter()
-                .enumerate()
-                .map(|(index, param)| {
-                    self.types.intern(TyKind::Param {
-                        index: index as u32,
-                        name: param.name,
-                    })
-                })
-                .collect();
-            let mut combined = args.to_vec();
-            combined.extend(method_params);
-            let mut params = Vec::new();
-            if let Some(receiver) = method.receiver {
-                params.push((Symbol::intern("self"), ty, receiver, method.span));
-            }
-            for &(field_name, param_ty, mode, param_span) in &method.params {
-                params.push((
-                    field_name,
-                    self.substitute_ty(param_ty, &combined),
-                    mode,
-                    param_span,
-                ));
-            }
-            let ret = self.substitute_ty(method.ret, &combined);
-            let generics = method
-                .generics
-                .iter()
-                .map(|param| self.substitute_generic_param(param, &combined))
-                .collect();
-            let signature =
-                Signature { params, ret, generics, borrows: method.borrows.clone() };
-            let generic = !signature.generics.is_empty();
-            let def = if let Some(receiver) = method.receiver {
-                self.register_method(
-                    ty,
-                    method.name,
-                    signature,
-                    receiver,
-                    None,
-                    method.span,
-                )
-            } else {
-                self.register_associated(ty, method.name, signature, None, method.span)
-            };
-            let Some(def) = def else {
-                continue;
-            };
-            // `[DRP-1]` — a generic that writes `fn drop` gives every one of
-            // its instantiations a destructor.
-            if method.name.is("drop") {
-                self.types.struct_def_mut(id).has_drop = true;
-            }
-            if generic {
-                self.generic_method_sources.insert(
-                    def,
-                    MethodSource {
-                        owner: ty,
-                        source: method.source,
-                        owner_bindings: decl
-                            .params
-                            .iter()
-                            .copied()
-                            .zip(args.iter().copied())
-                            .collect(),
-                    },
-                );
-                self.pending_generic_method_validations.push(def);
-            } else {
-                self.pending_methods.push(PendingMethod {
-                    def,
-                    owner: ty,
-                    bindings: decl
-                        .params
-                        .iter()
-                        .copied()
-                        .zip(args.iter().copied())
-                        .collect(),
-                    report_owner: name,
-                    source: method.source,
-                });
-            }
+            self.register_recipe_method(ty, name, method, &bindings, None);
         }
         self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
@@ -6534,6 +6714,7 @@ impl<'a> Checker<'a> {
             });
         }
         self.type_params = saved_interface_params;
+        self.apply_generic_extensions(ty, name, args);
         ty
     }
 
@@ -6602,80 +6783,10 @@ impl<'a> Checker<'a> {
         self.types.enum_def_mut(id).variants = variants;
         self.check_enum_copy_requested(id, decl.derives_copy);
 
+        let bindings: Vec<(Symbol, Ty)> =
+            decl.params.iter().copied().zip(args.iter().copied()).collect();
         for method in &decl.methods {
-            let method_params: Vec<Ty> = method
-                .generics
-                .iter()
-                .enumerate()
-                .map(|(index, param)| {
-                    self.types.intern(TyKind::Param {
-                        index: index as u32,
-                        name: param.name,
-                    })
-                })
-                .collect();
-            let mut combined = args.to_vec();
-            combined.extend(method_params);
-            let mut params = Vec::new();
-            if let Some(receiver) = method.receiver {
-                params.push((Symbol::intern("self"), ty, receiver, method.span));
-            }
-            for &(field_name, param_ty, mode, param_span) in &method.params {
-                params.push((
-                    field_name,
-                    self.substitute_ty(param_ty, &combined),
-                    mode,
-                    param_span,
-                ));
-            }
-            let ret = self.substitute_ty(method.ret, &combined);
-            let generics = method
-                .generics
-                .iter()
-                .map(|param| self.substitute_generic_param(param, &combined))
-                .collect();
-            let signature = Signature { params, ret, generics, borrows: method.borrows.clone() };
-            let generic = !signature.generics.is_empty();
-            let def = if let Some(receiver) = method.receiver {
-                self.register_method(ty, method.name, signature, receiver, None, method.span)
-            } else {
-                self.register_associated(ty, method.name, signature, None, method.span)
-            };
-            let Some(def) = def else {
-                continue;
-            };
-            if method.name.is("drop") {
-                self.types.enum_def_mut(id).has_drop = true;
-            }
-            if generic {
-                self.generic_method_sources.insert(
-                    def,
-                    MethodSource {
-                        owner: ty,
-                        source: method.source,
-                        owner_bindings: decl
-                            .params
-                            .iter()
-                            .copied()
-                            .zip(args.iter().copied())
-                            .collect(),
-                    },
-                );
-                self.pending_generic_method_validations.push(def);
-            } else {
-                self.pending_methods.push(PendingMethod {
-                    def,
-                    owner: ty,
-                    bindings: decl
-                        .params
-                        .iter()
-                        .copied()
-                        .zip(args.iter().copied())
-                        .collect(),
-                    report_owner: name,
-                    source: method.source,
-                });
-            }
+            self.register_recipe_method(ty, name, method, &bindings, None);
         }
         self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
@@ -6716,6 +6827,7 @@ impl<'a> Checker<'a> {
             });
         }
         self.type_params = saved_interface_params;
+        self.apply_generic_extensions(ty, name, args);
         ty
     }
 
@@ -6822,27 +6934,9 @@ impl<'a> Checker<'a> {
                 )
             })
             .collect();
-        let matching_extensions: Vec<(GenericClassExtension, Vec<(Symbol, Ty)>)> = self
-            .generic_class_extensions
-            .get(&name)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|extension| {
-                let extension_args = self.generic_class_extension_bindings(&extension, args)?;
-                self.generic_class_extension_bounds_hold(&extension, &extension_args)
-                    .then(|| {
-                        let bindings = extension
-                            .params
-                            .iter()
-                            .map(|param| param.name)
-                            .zip(extension_args)
-                            .collect();
-                        (extension, bindings)
-                    })
-            })
-            .collect();
-        for (extension, bindings) in &matching_extensions {
+        let matching_extensions = self.matching_generic_extensions(ty, name, args);
+        for (index, extension, bindings) in &matching_extensions {
+            self.applied_extensions.insert((ty, *index));
             method_recipes.extend(extension.methods.iter().cloned().map(|method| {
                 (method, bindings.clone(), extension.interface)
             }));
@@ -6862,81 +6956,13 @@ impl<'a> Checker<'a> {
                     "override of a method that is not virtual",
                 );
             }
-            let method_params: Vec<Ty> = method
-                .generics
-                .iter()
-                .enumerate()
-                .map(|(index, param)| {
-                    self.types.intern(TyKind::Param {
-                        index: index as u32,
-                        name: param.name,
-                    })
-                })
-                .collect();
-            let mut combined = owner_bindings.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
-            combined.extend(method_params);
-            let mut params = Vec::new();
-            if let Some(receiver) = method.receiver {
-                params.push((Symbol::intern("self"), ty, receiver, method.span));
-            }
-            for &(param_name, param_ty, mode, param_span) in &method.params {
-                params.push((
-                    param_name,
-                    self.substitute_ty(param_ty, &combined),
-                    mode,
-                    param_span,
-                ));
-            }
-            let signature = Signature {
-                params,
-                ret: self.substitute_ty(method.ret, &combined),
-                generics: method
-                    .generics
-                    .iter()
-                    .map(|param| self.substitute_generic_param(param, &combined))
-                    .collect(),
-                borrows: method.borrows.clone(),
+            let Some(def) =
+                self.register_recipe_method(ty, name, &method, &owner_bindings, interface)
+            else {
+                continue;
             };
-            let generic = !signature.generics.is_empty();
-            let def = if let Some(receiver) = method.receiver {
-                self.register_method(ty, method.name, signature, receiver, interface, method.span)
-            } else {
-                self.register_associated(ty, method.name, signature, interface, method.span)
-            };
-            let Some(def) = def else { continue };
             if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
                 declared_methods.push((method.name, def, method.dispatch));
-            }
-            if method.name.is("drop") {
-                self.types.class_def_mut(id).has_drop = true;
-            }
-            if !method.has_body {
-                self.abstract_methods.insert(def);
-                self.pending_abstract_methods.push(PendingAbstractMethod {
-                    def,
-                    owner: ty,
-                    span: method.span,
-                });
-                continue;
-            }
-            if generic {
-                self.generic_method_sources.insert(
-                    def,
-                    MethodSource {
-                        owner: ty,
-                        source: method.source,
-                        owner_bindings: owner_bindings.clone(),
-                    },
-                );
-                self.pending_generic_method_validations.push(def);
-            } else {
-                self.pending_methods.push(PendingMethod {
-                    def,
-                    owner: ty,
-                    bindings: owner_bindings,
-                    report_owner: name,
-                    source: method.source,
-                });
             }
         }
         self.class_declared_methods.insert(id, declared_methods);
@@ -6972,13 +6998,18 @@ impl<'a> Checker<'a> {
             for (implemented_ty, interface, interface_span) in implementations {
                 self.check_implementation(implemented_ty, interface, interface_span);
             }
-            for (extension, _) in &matching_extensions {
+            for (_, extension, bindings) in &matching_extensions {
+                // The extension's own parameters, which need not be the
+                // class's, name the interface's arguments.
+                let class_params =
+                    std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
                 let implementations = self.register_instantiated_implements(
                     ty,
                     &extension.implements,
                     extension.span,
                     extension.declaring_module,
                 );
+                self.type_params = class_params;
                 for (implemented_ty, interface, interface_span) in implementations {
                     self.check_implementation(implemented_ty, interface, interface_span);
                 }
@@ -8506,7 +8537,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut out = Vec::new();
         for item in &module.items {
             if let ast::ItemKind::Extend(decl) = &item.kind
-                && self.is_generic_class_extension(decl)
+                && self.is_generic_extension(decl)
             {
                 continue;
             }
@@ -9691,8 +9722,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     /// `[MNG-1]` — a method's C symbol. When two interfaces offer one name
-    /// for a type (`[TYP-24]`), each implementation's symbol also names its
-    /// interface, or the two would collide.
+    /// for a type, or an interface and the type itself do (`[TYP-24]`), each
+    /// interface's implementation's symbol also names its interface, or the
+    /// symbols would collide.
     fn method_symbol_for(&self, owner: Ty, name: Symbol, def: DefId) -> String {
         let owner_name = self.types.symbol_name(owner);
         let offering: Vec<Symbol> = self
@@ -9701,7 +9733,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .filter(|((ty, _, method), _)| *ty == owner && *method == name)
             .map(|((_, interface, _), _)| *interface)
             .collect();
-        if offering.len() > 1
+        let inherent = self
+            .methods
+            .get(&(owner, name))
+            .is_some_and(|entry| entry.from_interface.is_none() && entry.def != def);
+        if (offering.len() > 1 || inherent)
             && let Some(((_, interface, _), _)) =
                 self.interface_methods.iter().find(|((ty, _, method), entry)| *ty == owner && *method == name && entry.def == def)
         {
@@ -15535,12 +15571,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // checked concrete adapter metadata as a `ref dyn` coercion: lowering
         // uses it to populate the class's TypeInfo table, but the value itself
         // stays the original counted object pointer.
-        if let (TyKind::Class(_), TyKind::ClassInterface(interface)) =
-            (self.types.kind(expr.ty), self.types.kind(expected))
-            && let Some(implementations) = self.dyn_concrete_adapter(expr.ty, &[*interface])
+        if matches!(self.types.kind(expr.ty), TyKind::Class(_))
+            && let TyKind::ClassInterface(interface) = *self.types.kind(expected)
+            && let Some(implementations) = self.dyn_concrete_adapter(expr.ty, &[interface])
         {
             let span = expr.span;
-            let interfaces = vec![*interface];
+            let interfaces = vec![interface];
             let layout = self.dyn_vtable_layout(&interfaces);
             return Expr {
                 ty: expected,
@@ -18657,6 +18693,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
         }
+        if self.builtin_extension_implements(ty, interface) {
+            return true;
+        }
         // `[ARN-5c]`, `[ARN-5d]`, `[SPN-4]` — the compiler-lowered, named
         // Arena-backed and Span iterators implement the one standard
         // associated-type Iterator contract. Their `next` operations are
@@ -20192,7 +20231,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             receiver = self.read_through(receiver);
         }
+        self.extend_builtin_instance(receiver.ty);
         let explicit = self.resolve_method_type_args(generic_args);
+        // `[TYP-24]` — `I.m(recv)` names the interface's method, which an
+        // extension may give a type the compiler knows a method `m` of.
+        if let Some((interface, _)) = self.named_interface_call.filter(|(_, at)| *at == span)
+            && self.interface_methods.contains_key(&(receiver.ty, interface, name.name))
+        {
+            return self.synth_registered_method(receiver, recv.span, name, args, explicit, span);
+        }
         // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
         // auto-dereference to the object because that would make a dead
         // control block look like a live class handle.
@@ -20431,7 +20478,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.synth_array_change(receiver, elem, name, args, span);
         }
-        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty) {
+        // No compiler-known method takes type arguments, so with some written
+        // the call is an extension's generic method (`[GRM-34]`), found below.
+        let extension_generic = !explicit.is_empty() && self.lookup_method(receiver.ty, name.name).is_some();
+        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
+            && !extension_generic
+        {
             if !explicit.is_empty() {
                 self.error(
                     codes::E2020,
@@ -20440,9 +20492,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            return self.synth_vec_method(receiver, elem, name, args, span);
+            return self.synth_vec_method(receiver, recv.span, elem, name, args, span);
         }
-        if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty) {
+        if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty)
+            && !extension_generic
+        {
             if !explicit.is_empty() {
                 self.error(
                     codes::E2020,
@@ -20451,7 +20505,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            return self.synth_span_method(receiver, elem, mutable, name, args, span);
+            return self.synth_span_method(receiver, recv.span, elem, mutable, name, args, span);
         }
         // `[ERR-4]` (ODR-025) — the methods that take a function are
         // `std.core`'s `option_*`/`result_*` generics.
@@ -20669,6 +20723,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.void, kind: ExprKind::Error, span };
         }
+        self.synth_registered_method(receiver, recv.span, name, args, explicit, span)
+    }
+
+    /// Part IV.11 — a call of a method `self.methods` holds (or a base
+    /// class's, or a callable field): the path a receiver takes once no
+    /// compiler-known method has claimed the name.
+    fn synth_registered_method(
+        &mut self,
+        mut receiver: Expr,
+        recv_span: Span,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        explicit: Vec<Ty>,
+        span: Span,
+    ) -> Expr {
         let named = self.named_interface_call.filter(|(_, at)| *at == span).map(|(interface, _)| interface);
         let found = match named {
             Some(interface) => {
@@ -20729,7 +20798,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.synth_generic_method_call(
                 def,
                 name.name,
-                Some((receiver, receiver_mode, recv.span)),
+                Some((receiver, receiver_mode, recv_span)),
                 true,
                 args,
                 explicit,
@@ -20789,7 +20858,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
         let ret = self.resolve_assoc(ret, receiver.ty);
-        let checked_receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
+        let checked_receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv_span);
         let checked_receiver = if inherited && receiver_mode == Mode::Mut {
             // `[CLS-4]` — an inherited mutable method operates on the same
             // object through the base receiver type.  The receiver is already
@@ -20808,7 +20877,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             expr: Box::new(checked_receiver),
                             to: expected,
                         },
-                        span: recv.span,
+                        span: recv_span,
                     }
                 } else {
                     checked_receiver
@@ -24452,6 +24521,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn synth_span_method(
         &mut self,
         receiver: Expr,
+        recv_span: Span,
         elem: Ty,
         mutable: bool,
         name: ast::Ident,
@@ -24677,6 +24747,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         } else if name.name.is("is_empty") {
             (Builtin::SpanLen, 0, self.common.bool_)
         } else {
+            // `[GRM-34]` — an extension's method, as for `Array`.
+            if self.lookup_method(receiver.ty, name.name).is_some() {
+                return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
+            }
             let shown = self.types.display(receiver.ty);
             self.error(
                 codes::E2020,
@@ -24835,6 +24909,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn synth_vec_method(
         &mut self,
         receiver: Expr,
+        recv_span: Span,
         elem: Ty,
         name: ast::Ident,
         args: &[ast::Arg],
@@ -24974,6 +25049,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         } else if name.name.is("as_str") && is_string {
             (Builtin::StringAsStr, None, str_ty)
         } else {
+            // `[GRM-34]` — not a method the compiler knows: an extension's, if
+            // one is registered (`[TYP-24]`: the inherent method comes first).
+            if self.lookup_method(receiver.ty, name.name).is_some() {
+                return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
+            }
             let shown = self.types.display(receiver.ty);
             self.error(
                 codes::E1010,

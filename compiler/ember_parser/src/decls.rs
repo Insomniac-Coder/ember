@@ -210,7 +210,6 @@ impl Parser<'_> {
                 | Kw::Open
                 | Kw::Enum
                 | Kw::Interface
-                | Kw::Extend
                 | Kw::Const
                 | Kw::Static
                 | Kw::Comptime
@@ -220,7 +219,7 @@ impl Parser<'_> {
                 self.at_kw_at(1, Kw::Fn) || self.at_kw_at(1, Kw::Extern)
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
-            TokenKind::Ident(_) => self.at_gen_fn(),
+            TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl(),
             _ => false,
         }
     }
@@ -291,7 +290,7 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Interface) => {
                 Some(ItemKind::Interface(self.parse_interface()))
             }
-            TokenKind::Keyword(Kw::Extend) => Some(ItemKind::Extend(self.parse_extend())),
+            TokenKind::Ident(_) if self.at_extend_decl() => Some(ItemKind::Extend(self.parse_extend())),
             TokenKind::Keyword(Kw::Const) => Some(ItemKind::Const(self.parse_const())),
             TokenKind::Keyword(Kw::Static) => Some(ItemKind::Static(self.parse_static())),
             TokenKind::Keyword(Kw::Comptime) => {
@@ -506,6 +505,36 @@ impl Parser<'_> {
     pub(crate) fn at_gen_fn(&self) -> bool {
         matches!(self.peek(), TokenKind::Ident(s) if s.is("gen"))
             && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn))
+    }
+
+    /// True where an `extend` block begins. `extend` is contextual (ODR-030):
+    /// a keyword only before the type it extends — a name, or generic
+    /// parameters and then a name — so `xs.extend(ys)` is a call and a script
+    /// may still write `extend = 1` or `extend[0] = 1`.
+    pub(crate) fn at_extend_decl(&self) -> bool {
+        if !self.at_contextual("extend") {
+            return false;
+        }
+        let mut n = 1;
+        if self.at_punct_at(1, Punct::LBracket) {
+            let mut depth = 0;
+            loop {
+                match self.peek_at(n) {
+                    TokenKind::Punct(Punct::LBracket) => depth += 1,
+                    TokenKind::Punct(Punct::RBracket) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    TokenKind::Newline | TokenKind::Eof => return false,
+                    _ => {}
+                }
+                n += 1;
+            }
+            n += 1;
+        }
+        matches!(self.peek_at(n), TokenKind::Ident(_) | TokenKind::RawIdent(_))
     }
 
     pub(crate) fn parse_fn(&mut self) -> FnDecl {
@@ -735,7 +764,8 @@ impl Parser<'_> {
     }
 
     fn parse_extend(&mut self) -> ExtendDecl {
-        self.expect_kw(Kw::Extend);
+        // The contextual `extend` that `at_extend_decl` saw.
+        self.bump();
         let generics = self.parse_generic_params();
         let target = self.parse_type();
         let implements = self.parse_implements();

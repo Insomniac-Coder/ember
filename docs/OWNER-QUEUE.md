@@ -49,6 +49,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-027 | **CLOSED** — a range is a `Copy` value with public bounds; a `for` counts over a copy of them | Language / standard library | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_8 |
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
+| ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -183,6 +184,49 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-030 — how does `Array` have a method named `extend`? — **CLOSED**
+
+    ID:        ODR-030
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_11
+    Category:  LANGUAGE / LEXICAL
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_10.md Part II §4 (keyword table, `[LEX-15]`),
+               `[STD-15]`, Appendix E
+
+    Question:  Part II §4 reserves `extend` everywhere, but `[STD-15]` gives `Array`
+               a method `extend(iterable)` and Appendix E maps Python's
+               `xs.extend(ys)` to `xs.extend(ys)`. A reserved word cannot be a
+               method name, so `xs.extend(ys)` does not parse; only
+               `xs.r#extend(ys)` (`[LEX-14]`) would.
+
+    Blocks implementation:            YES — `Array.extend` cannot be called
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options.**
+- **(A) Rename the method.** Rejected: the owner's standing rule for a keyword
+  that blocks a standard-library method name is to make the word contextual,
+  never to rename the member; and Appendix E promises `xs.extend(ys)`.
+- **(B) Write `xs.r#extend(ys)`.** Rejected under the same rule.
+- **(C) Accept any keyword as a member name after `.`.** Rejected: it changes
+  every keyword to settle one.
+- **(D) Make `extend` contextual**, as ERR-017 did for `from` so that
+  `interface From` can declare `from`.
+
+**Ruling: (D).** `extend` leaves the keyword table (48 words) and joins
+`[LEX-15]`'s contextual keywords: it is a keyword at the start of an item when
+the type it extends follows, directly or after generic parameters
+(`extend Point:`, `extend[T] Holder[T]:`), and an identifier everywhere else, so
+a field, method or variable may be named `extend`.
+
+**Implementation (2026-09-25).** The lexer no longer has `Kw::Extend`;
+`"extend"` is in `CONTEXTUAL_KEYWORDS`. The parser's `at_extend_decl` decides:
+`extend` followed by a name, or by a bracketed list whose closing `]` is
+followed by a name, begins an `extend` block, so a script's `extend[0] = 1` and
+`extend = 1` are still statements. Test: `LEX-15/accept_extend_is_contextual.em`.
 
 ---
 

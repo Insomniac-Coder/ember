@@ -222,7 +222,7 @@ keywords! { Kw,
     And => "and", As => "as", Break => "break", Class => "class",
     Comptime => "comptime", Const => "const", Continue => "continue",
     Defer => "defer", Dyn => "dyn", Elif => "elif", Else => "else",
-    Enum => "enum", Extend => "extend", Extern => "extern", False => "false",
+    Enum => "enum", Extern => "extern", False => "false",
     Fn => "fn", For => "for", If => "if", Implements => "implements",
     Import => "import", In => "in", Interface => "interface", Is => "is",
     Let => "let", Match => "match", Mut => "mut", Not => "not",
@@ -275,8 +275,13 @@ impl Reserved {
 /// an ordinary identifier everywhere else, so a field or variable named `gen`
 /// is unaffected. Part II §4 lists it in neither table, which is what
 /// "contextual" means.
+///
+/// `extend` is here for the reason `from` is: `[STD-15]` gives `Array` a method
+/// named `extend`, and Appendix E maps Python's `xs.extend(ys)` to itself. It
+/// is a keyword only where it begins an item, before the type it extends
+/// (ODR-030, 0.9.9_Hardened_11).
 pub const CONTEXTUAL_KEYWORDS: &[&str] =
-    &["abstract", "final", "lazy", "test", "bench", "from", "gen"];
+    &["abstract", "final", "lazy", "test", "bench", "from", "gen", "extend"];
 
 // ---------------------------------------------------------------------------
 // Punctuation
@@ -342,12 +347,10 @@ mod tests {
 
     #[test]
     fn the_v1_keyword_list_is_the_one_in_the_spec() {
-        // Part II §4 lists seven keywords on each of six rows and six on the
-        // seventh, and `[LEX-15b]` adds `yield`: 49. A count that drifts means
-        // the table and this enum disagree. `[LEX-15]`'s own sentence says 48
-        // and `[LEX-15b]` says in terms that it supersedes that count and
-        // nothing else in the rule — errata ERR-025.
-        assert_eq!(Kw::ALL.len(), 49);
+        // Part II §4 lists 48: seven on each of six rows and six on the
+        // seventh, `yield` included (ERR-025) and `extend` not (ODR-030). A
+        // count that drifts means the table and this enum disagree.
+        assert_eq!(Kw::ALL.len(), 48);
         assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
         assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
         assert_eq!(Reserved::ALL.len(), 9);
@@ -366,6 +369,13 @@ mod tests {
         // ERR-017 — `interface From[T]: fn from(…)` must parse.
         assert_eq!(Kw::from_str("from"), None);
         assert!(CONTEXTUAL_KEYWORDS.contains(&"from"));
+    }
+
+    #[test]
+    fn extend_is_contextual_so_that_array_can_declare_it() {
+        // ODR-030 — `xs.extend(ys)` must parse.
+        assert_eq!(Kw::from_str("extend"), None);
+        assert!(CONTEXTUAL_KEYWORDS.contains(&"extend"));
     }
 
     #[test]
