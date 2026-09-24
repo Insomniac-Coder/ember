@@ -3,7 +3,7 @@
 
 # The integration suite asks `ember explain --cycle` to render this graph.
 class Root:
-    child: Child
+    child: Child    #$ warning[L3001]: potential reference cycle
 
 class Child:
     root: Root

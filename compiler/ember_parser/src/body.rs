@@ -1441,6 +1441,24 @@ impl Parser<'_> {
                     .help("bind it on a preceding line: `h = fn(e): …` then pass `h`")
                     .note("indentation is not significant inside brackets [LEX-6]"),
                 );
+                // The rest of the body, up to the enclosing `,` or closing
+                // bracket, is the same mistake ([DIA-14]): skip it, keeping
+                // count of brackets it opens.
+                let mut depth = 0usize;
+                while !self.at_eof() {
+                    let closing = self.at_punct(Punct::RParen)
+                        || self.at_punct(Punct::RBracket)
+                        || self.at_punct(Punct::RBrace);
+                    if depth == 0 && (closing || self.at_punct(Punct::Comma)) {
+                        break;
+                    }
+                    if self.at_punct(Punct::LParen) || self.at_punct(Punct::LBracket) || self.at_punct(Punct::LBrace) {
+                        depth += 1;
+                    } else if closing {
+                        depth -= 1;
+                    }
+                    self.bump();
+                }
             }
             LambdaBody::Expr(Box::new(body))
         } else {

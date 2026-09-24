@@ -1,12 +1,14 @@
 """Check a directory's annotations against the compiler in seconds, rather than the full
-conformance run: `#$ error[CODE]: text`, `#$ help:`, `#$ not-help:`, and for run tests
-`#$ stdout:` (with its `#$` continuation lines) and `#$ panics:`. A run test uses its first
-listed profile. Matching follows the harness in `ember_driver/tests/milestones.rs`: an
-error's text may appear anywhere in that diagnostic (message or labels), and a help's text
-anywhere in a help line.
+conformance run. Matching follows the harness in `ember_driver/tests/milestones.rs`
+(`[TST-1]`): each `#$ error[CODE]: text` or `#$ warning[CODE]: text` claims one diagnostic
+with that code whose text (message, labels, notes or helps) contains `text`; one that trails a
+line of code also needs the diagnostic's primary span on that line. A missing diagnostic and an
+unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
+`#$` continuation lines) and `#$ panics:`. A test uses its first listed profile.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
+import json
 import os
 import re
 import subprocess
@@ -41,24 +43,78 @@ def run(args, path):
     return result.returncode, result.stdout.replace('\r\n', '\n'), result.stderr
 
 
-def diagnostics(rendered):
-    """(code, text of the whole diagnostic) for each `error[...]`."""
-    blocks, current = [], None
-    for line in rendered.split('\n'):
-        match = re.match(r'^(error|warning)\[(\w+)\]', line)
+def annotations(text):
+    """(kind, code, message, line or None) for each `error[...]`/`warning[...]` annotation."""
+    out = []
+    for number, line in enumerate(text.split('\n'), 1):
+        stripped = line.lstrip()
+        if stripped.startswith('#$'):
+            rest, trailing = stripped[2:], None
+        else:
+            at = line.find('#$')
+            if at <= 0 or not line[:at][-1:].isspace():
+                continue
+            rest, trailing = line[at + 2:], number
+        match = re.match(r'\s*(error|warning)\[(\w+)\](?::(.*))?$', rest)
         if match:
-            current = [match[2], line]
-            blocks.append(current)
-        elif current is not None:
-            current[1] += '\n' + line
-    return blocks
+            out.append((match[1], match[2], (match[3] or '').strip(), trailing))
+    return out
+
+
+def produced(path, profile):
+    code, out, err = run(['check', '--json', '--profile', profile], path)
+    found = []
+    for line in (out + '\n' + err).split('\n'):
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if not value.get('code'):
+            continue
+        text = value.get('message') or ''
+        primary = None
+        for label in value.get('labels') or []:
+            text += '\n' + (label.get('message') or '')
+            if label.get('primary') and primary is None:
+                primary = label['span']['line_start']
+        for extra in ('notes', 'helps'):
+            text += ''.join('\n' + (item or '') for item in (value.get(extra) or []))
+        found.append({'code': value['code'], 'text': text, 'line': primary,
+                      'rendered': value.get('rendered', '')})
+    return code, found
 
 
 def check(path):
     text = open(path, encoding='utf-8').read()
     kind = (re.search(r'^#\$ test:\s*(\S+)', text, re.M) or [None, ''])[1]
+    if kind in ('parse-pass', 'parse-fail'):
+        return []
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
     problems = []
+    exit_code, found = produced(path, profile)
+    claimed = [False] * len(found)
+    for _, code, message, line in annotations(text):
+        index = next((i for i, d in enumerate(found)
+                      if not claimed[i] and d['code'] == code and message in d['text']
+                      and (line is None or d['line'] == line)), None)
+        if index is None:
+            problems.append(f'missing {code}: {message!r}' + (f' on line {line}' if line else ''))
+        else:
+            claimed[index] = True
+    for d, taken in zip(found, claimed):
+        if not taken:
+            problems.append(f'unexpected {d["code"]} on line {d["line"]}: {d["text"].splitlines()[0]}')
+    rendered = '\n'.join(d['rendered'] for d in found)
+    help_lines = [line for line in rendered.split('\n') if 'help:' in line]
+    helps = [h.strip() for h in re.findall(r'^\s*#\$ help:(.*)$', text, re.M)]
+    absent = [h.strip() for h in re.findall(r'^\s*#\$ not-help:(.*)$', text, re.M)]
+    problems += [f'missing help: {h}' for h in helps if not any(h in line for line in help_lines)]
+    problems += [f'unwanted help: {h}' for h in absent if any(h in line for line in help_lines)]
+    if kind == 'compile-fail' and exit_code == 0:
+        problems.append('expected compilation to fail')
     if kind in ('run-pass', 'run-fail'):
         code, out, err = run(['run', '--profile', profile], path)
         stdout = expected_stdout(text)
@@ -69,18 +125,6 @@ def check(path):
             problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')
         if kind == 'run-pass' and code != 0:
             problems.append(f'exit {code}: {err.strip()[:200]!r}')
-        return problems
-    code, out, err = run(['check'], path)
-    out = out + err
-    help_lines = [line for line in out.split('\n') if 'help:' in line]
-    helps = [h.strip() for h in re.findall(r'^\s*#\$ help:(.*)$', text, re.M)]
-    absent = [h.strip() for h in re.findall(r'^\s*#\$ not-help:(.*)$', text, re.M)]
-    errors = re.findall(r'#\$ error\[(\w+)\](?::\s*(.*))?$', text, re.M)
-    problems += [f'missing help: {h}' for h in helps if not any(h in line for line in help_lines)]
-    problems += [f'unwanted help: {h}' for h in absent if any(h in line for line in help_lines)]
-    found = diagnostics(out)
-    problems += [f'missing error[{c}]: {m}' for c, m in errors
-                 if not any(code == c and m.strip() in block for code, block in found)]
     return problems
 
 

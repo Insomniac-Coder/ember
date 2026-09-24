@@ -11,4 +11,4 @@ class Token:
         retained.push(self) #$ error[E3016]: `self` escapes its own drop
 
 fn main():
-    token = Token()
+    _token = Token()

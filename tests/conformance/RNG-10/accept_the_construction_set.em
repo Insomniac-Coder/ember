@@ -16,6 +16,6 @@ fn main():
     print(y)
     print(z)
     match Percent.checked(50):           # (b) the fallible form
-        Ok(p) => print(1)
-        Err(e) => print(0)
+        Ok(_p) => print(1)
+        Err(_e) => print(0)
 #$ stdout: 10100101

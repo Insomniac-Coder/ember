@@ -14,7 +14,7 @@ class LoopElse:
         else:
             self.first = 7
         self.items = Array()
-        for item in self.items:
+        for _item in self.items:
             pass
         else:
             self.second = 9

@@ -3,6 +3,6 @@
 ## A struct carrying a borrow **is** a view type, and the attribute is required
 ## as documentation.
 
-struct Holder:
-    s: Span[i32]                   #$ error[E2030]: `Holder` carries a borrow, so it is a view type
+struct Holder:    #$ error[E2030]: `Holder` carries a borrow, so it is a view type
+    s: Span[i32]
 fn main(): pass

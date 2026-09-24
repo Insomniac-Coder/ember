@@ -6,4 +6,4 @@
 fn main():
     data: [i32; 3] = [1, 2, 3]
     view: Span[i32] = data
-    boxed: Box[Span[i32]] = Box(view) #$ error[E3063]: `Span[i32]` is a view, so it may not be stored in a Box's contents
+    _boxed: Box[Span[i32]] = Box(view) #$ error[E3063]: `Span[i32]` is a view, so it may not be stored in a Box's contents

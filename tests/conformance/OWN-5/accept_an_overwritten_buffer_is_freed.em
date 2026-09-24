@@ -26,8 +26,8 @@ fn make(n: i32) -> Bag:
     return Bag(xs)
 
 fn main():
-    b = make(1)
-    b = make(2)
+    _b = make(1)
+    _b = make(2)
     println(0)
 #$ stdout: 1
 #$ 0

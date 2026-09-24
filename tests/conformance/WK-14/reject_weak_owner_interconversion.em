@@ -12,4 +12,4 @@ fn main():
     class_weak = Weak(class_owner)
     shared = Shared(Token(2))
     shared_weak = Weak(shared)
-    class_weak = shared_weak
+    class_weak = shared_weak    #$ error[E2020]: expected

@@ -1,8 +1,6 @@
 #$ test: compile-fail
 #$ rules: ENM-2, CTL-5
-#$ error[E2090]: `match` on `Color` does not cover every value
 #$ error[E2090]: `Color.Green`, `Color.Blue` not covered
-#$ error[E2090]: `match` on `Shape` does not cover every value
 #$ error[E2090]: `Shape.Rect(_, _)` not covered
 
 enum Color:

@@ -4,7 +4,7 @@
 # A view a callback returns is still a view: a Box may not hold it.
 
 fn stash(f: fn(Span[i32]) -> Span[i32], view: Span[i32]):
-    stored: Box[Span[i32]] = Box(f(view))
+    _stored: Box[Span[i32]] = Box(f(view))
 
 fn identity(value: Span[i32]) -> Span[i32]:
     return value

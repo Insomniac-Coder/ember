@@ -55,7 +55,7 @@ fn describe(s: Shape) -> i32:
     match s:
         Circle(r) if r > 10.0:
             return 100
-        Circle(r):
+        Circle(_r):
             return 1
         Rect(w, h) if w == h:
             return 200
@@ -84,11 +84,11 @@ fn degrees(d: Dir) -> i32:
 # Patterns nest through tuples, structs and other enums.
 fn nested(p: (Shape, i32)) -> i32:
     match p:
-        (Circle(r), 0):
+        (Circle(_r), 0):
             return 1
-        (Circle(r), n):
+        (Circle(_r), _n):
             return 2
-        (Rect(w, h), _):
+        (Rect(_w, _h), _):
             return 3
         (Empty, _):
             return 4
@@ -97,7 +97,7 @@ fn origin(p: Point) -> i32:
     match p:
         Point(0, 0):
             return 1
-        Point(x, 0):
+        Point(_x, 0):
             return 2
         Point(_, _):
             return 3

@@ -7,5 +7,5 @@ fn identity(value: i32) -> i32:
 
 fn main():
     operation: fn(mut i32) -> i32 = identity
-    value = 1
+    value: i32 = 1
     println(operation(value))

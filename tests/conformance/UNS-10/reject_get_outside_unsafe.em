@@ -5,5 +5,4 @@ from std.mem import UnsafeCell
 
 fn main():
     cell = UnsafeCell(1)
-    pointer = cell.get() #$ error[E3100]: `UnsafeCell.get` needs an `unsafe` block
-    println(pointer)
+    _pointer = cell.get() #$ error[E3100]: `UnsafeCell.get` needs an `unsafe` block

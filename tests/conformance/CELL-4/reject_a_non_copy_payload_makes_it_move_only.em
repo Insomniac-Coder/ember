@@ -12,6 +12,6 @@ struct Bag:
 
 fn main():
     a: Cell[Bag] = Cell(Bag(Array[i32]()))
-    b = a
-    c = a.replace(Bag(Array[i32]()))   #$ error[E3040]: `a` has been moved out of
+    _b = a
+    _c = a.replace(Bag(Array[i32]()))   #$ error[E3040]: `a` has been moved out of
     println(0)

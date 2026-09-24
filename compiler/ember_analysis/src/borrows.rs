@@ -2211,7 +2211,9 @@ fn check_body(
         // `[CELL-7]` — `L3011` fires when a `RefCell` guard is live across a
         // call that could re-enter the same cell. Conservative: any call while
         // a guard loan is live lints (a lint, never an error, and not opt-in).
-        if let Terminator::Call { .. } = &block.terminator {
+        if let Terminator::Call { func, .. } = &block.terminator
+            && !builtin_cannot_reach_a_cell(func)
+        {
             check_refcell_call(
                 body,
                 types,
@@ -2376,6 +2378,47 @@ fn is_growing_arena_ty(types: &TypeTable, ty: Ty) -> bool {
 fn is_arena_ty(types: &TypeTable, ty: Ty) -> bool {
     matches!(types.kind(ty), TyKind::Struct(id)
         if matches!(types.struct_def(*id).name.as_str(), "Arena" | "FixedArena" | "ScopedArena"))
+}
+
+/// `[CELL-7]` (F-187) — `L3011` fires only for calls that can reach the cell,
+/// never across one that provably cannot. These compiler-known operations
+/// run no Ember code: they print, format, read or build text and views,
+/// compare, or grow an `Array` without dropping anything. An operation that
+/// may drop a value (whose `drop` could reach the cell) or call a function
+/// is not listed.
+fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
+    let FuncRef::Builtin { which, .. } = func else { return false };
+    matches!(
+        which,
+        Builtin::Print
+            | Builtin::EPrint
+            | Builtin::Println
+            | Builtin::EPrintln
+            | Builtin::Format
+            | Builtin::FormatWith(_)
+            | Builtin::StringNew
+            | Builtin::StringPush
+            | Builtin::StringLen
+            | Builtin::StringAsStr
+            | Builtin::StrCharCount
+            | Builtin::StrContains
+            | Builtin::StrContainsChar
+            | Builtin::StrIsCharBoundary
+            | Builtin::Slice { .. }
+            | Builtin::SpanLen
+            | Builtin::SpanGet
+            | Builtin::SpanFrom { .. }
+            | Builtin::ArrayLen
+            | Builtin::ArrayNew
+            | Builtin::ArrayPush
+            | Builtin::ValueCompare { .. }
+            | Builtin::TotalLess
+            | Builtin::FloatAbs
+            | Builtin::RangeCount
+            | Builtin::RangeNth
+            | Builtin::SizeOf
+            | Builtin::AlignOf
+    )
 }
 
 /// `[CELL-7]` — `L3011 RefCell guard held across a call`.

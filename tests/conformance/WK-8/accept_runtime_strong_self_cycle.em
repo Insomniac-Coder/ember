@@ -6,7 +6,7 @@
 # runtime; ordinary `run-pass` verification confirms the program itself is
 # still valid when the diagnostic mode is disabled.
 class Node:
-    next: Option[Node] = None
+    next: Option[Node] = None    #$ warning[L3001]: potential reference cycle
     previous: Weak[Node] = Weak[Node].empty()
 
     fn link(mut self):

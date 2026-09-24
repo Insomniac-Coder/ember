@@ -1,7 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-16, TYP-22, OWN-3
 #$ profiles: debug, release, shipping
-#$ error[E3040]: `pixel` has been moved out of
 
 interface Render:
     fn render(self) -> i32
@@ -15,5 +14,5 @@ class Pixel[T] implements Render:
 
 fn main():
     pixel = Pixel[bool](42, false)
-    boxed: Box[dyn Render] = Box(pixel)
+    _boxed: Box[dyn Render] = Box(pixel)
     println(pixel.value) #$ error[E3040]: `pixel` has been moved out of

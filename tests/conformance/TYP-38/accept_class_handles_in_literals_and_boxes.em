@@ -16,7 +16,7 @@ fn main():
     xs = [token, token]
     ys = [Token(id=2)]
     println(xs[1].id, ys[0].id, len(xs))
-    boxed = Box(token)
-    shared = Shared(token)
+    _boxed = Box(token)
+    _shared = Shared(token)
     println(xs[0] is token)
     println(token.id)

@@ -248,6 +248,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
         errors: 0,
         reported: vec![false; body.locals.len()],
         in_loop: false,
+        point: (0, 0),
     };
     let mut plan: BTreeMap<(usize, usize), DropAction> = BTreeMap::new();
     for (index, entry) in block_entry.iter().enumerate() {
@@ -261,8 +262,10 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
                         plan_drop(place, paths.state(place, &state), &state, &paths, body, types),
                     );
                 }
+                reporter.point = (index, position);
                 step(stmt, &mut state, Some(&mut reporter), body, &paths);
             }
+            reporter.point = (index, body.blocks[index].stmts.len());
             step_terminator(body, index, &mut state, Some(&mut reporter), &paths);
         }
     }
@@ -1352,6 +1355,82 @@ fn blocks_in_a_cycle(body: &Body) -> Vec<bool> {
     cyclic
 }
 
+/// `[OWN-4]` — the moves of `local` that can reach `point` with no assignment
+/// to it in between, earliest in the source first: which move left the value
+/// gone for a use in the next iteration. Run only when `E3041` is reported.
+fn moves_reaching(body: &Body, local: LocalId, point: (usize, usize)) -> Vec<Span> {
+    let touches = |place: &Place| place.local == local;
+    // What one statement (or the terminator, `None`) does to the set of
+    // moves in flight: a move adds its span, an assignment to the whole
+    // local clears it.
+    let apply = |stmt: Option<&Stmt>, block: usize, set: &mut BTreeSet<(u32, u32)>, spans: &mut Vec<Span>| {
+        let mut moved = Vec::new();
+        let (span, assigned) = match stmt {
+            Some(stmt) => {
+                let assigned = match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } => {
+                        moved_by_rvalue(rvalue, &mut moved);
+                        (place.local == local && place.projection.is_empty()).then_some(())
+                    }
+                    _ => None,
+                };
+                (stmt.span, assigned)
+            }
+            None => {
+                let block = &body.blocks[block];
+                let Terminator::Call { func, args, dest, .. } = &block.terminator else { return };
+                // Calling an `owned fn` consumes it, as `step_terminator` says.
+                if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
+                    moved_by_operand(callee, &mut moved);
+                }
+                for arg in args {
+                    moved_by_operand(arg, &mut moved);
+                }
+                (block.terminator_span, (dest.local == local && dest.projection.is_empty()).then_some(()))
+            }
+        };
+        if moved.iter().any(touches) {
+            let key = (span.start, span.end);
+            if !spans.contains(&span) {
+                spans.push(span);
+            }
+            set.clear();
+            set.insert(key);
+        }
+        if assigned.is_some() {
+            set.clear();
+        }
+    };
+    let mut spans = Vec::new();
+    let mut entry: Vec<Option<BTreeSet<(u32, u32)>>> = vec![None; body.blocks.len()];
+    entry[0] = Some(BTreeSet::new());
+    let mut worklist = vec![0usize];
+    while let Some(index) = worklist.pop() {
+        let Some(mut set) = entry[index].clone() else { continue };
+        for stmt in &body.blocks[index].stmts {
+            apply(Some(stmt), index, &mut set, &mut spans);
+        }
+        apply(None, index, &mut set, &mut spans);
+        for successor in successors(body, index) {
+            let merged = match &entry[successor] {
+                Some(existing) if set.is_subset(existing) => continue,
+                Some(existing) => existing.union(&set).copied().collect(),
+                None => set.clone(),
+            };
+            entry[successor] = Some(merged);
+            worklist.push(successor);
+        }
+    }
+    let (block, index) = point;
+    let Some(mut set) = entry[block].clone() else { return Vec::new() };
+    for stmt in body.blocks[block].stmts.iter().take(index) {
+        apply(Some(stmt), block, &mut set, &mut spans);
+    }
+    let mut reaching: Vec<Span> = spans.into_iter().filter(|span| set.contains(&(span.start, span.end))).collect();
+    reaching.sort_by_key(|span| (span.start, span.end));
+    reaching
+}
+
 fn successors(body: &Body, index: usize) -> Vec<usize> {
     match &body.blocks[index].terminator {
         Terminator::Goto(bb) => vec![bb.0 as usize],
@@ -1378,6 +1457,9 @@ struct Reporter<'a> {
     /// before each block rather than threaded through `step`, which does not
     /// otherwise need to know where it is.
     in_loop: bool,
+    /// The statement being reported on, `(block, index)`; the terminator is
+    /// index `stmts.len()`.
+    point: (usize, usize),
 }
 
 impl Reporter<'_> {
@@ -1391,6 +1473,12 @@ impl Reporter<'_> {
         // taught about; only user variables are reported.
         let decl = body.local(local);
         if decl.kind == LocalKind::Temp || decl.name.is_none() {
+            return;
+        }
+        // A local no move reaches was never given a value on that path:
+        // definite initialisation reports that read (`E3050`), and one error
+        // is enough ([DIA-14]).
+        if !state.is_partial() && moves_reaching(body, local, self.point).is_empty() {
             return;
         }
         self.reported[index] = true;
@@ -1425,11 +1513,19 @@ impl Reporter<'_> {
         // a cycle is exactly `[OWN-4]`'s shape.
         let in_loop = self.in_loop && !state.is_moved();
         let diagnostic = if in_loop {
-            Diagnostic::error(
+            // The use is where the analysis notices; the move that left the
+            // value gone for the next iteration is what to point at.
+            let moved_at = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span);
+            let diagnostic = Diagnostic::error(
                 codes::E3041,
-                span,
+                moved_at.unwrap_or(span),
                 format!("`{name}` is moved in a loop"),
-            )
+            );
+            let diagnostic = match moved_at {
+                Some(_) => diagnostic.secondary(span, "and used here on the next iteration"),
+                None => diagnostic,
+            };
+            diagnostic
             .primary_label("moved here, and the loop comes back")
             .note(concat!(
                 "the first iteration moves it and the second finds it gone; a value ",

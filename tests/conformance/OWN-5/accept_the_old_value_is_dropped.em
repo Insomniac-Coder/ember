@@ -18,8 +18,8 @@ struct R:
         println(self.n)
 
 fn main():
-    r = R(1)
-    r = R(2)
+    _r = R(1)
+    _r = R(2)
     println(0)
 #$ stdout: 1
 #$ 0

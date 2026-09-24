@@ -10,4 +10,4 @@ class Child(Base):
 
 fn main():
     base = Base()
-    bad: Child = base as! Child
+    _child: Child = base as! Child

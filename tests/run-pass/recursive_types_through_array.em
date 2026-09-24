@@ -16,7 +16,7 @@ struct Tree:
 
 class Node:
     id: i64
-    children: Array[Node]
+    children: Array[Node]    #$ warning[L3001]: potential reference cycle
 
     fn add(mut self, child: Node):
         self.children.push(child)

@@ -23,7 +23,7 @@ fn make(n: i32) -> Bag:
 
 fn main():
     plain: Cell[i32] = Cell(5)
-    owning: Cell[Bag] = Cell(make(2))
+    _owning: Cell[Bag] = Cell(make(2))
     println(plain.get())
 #$ stdout: 5
 #$ 2

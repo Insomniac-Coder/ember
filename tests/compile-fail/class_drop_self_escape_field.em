@@ -8,8 +8,8 @@ class Holder:
 
 class Token:
     fn drop(mut self):
-        holder = Holder(Token())
-        holder.saved = self #$ error[E3016]: `self` escapes its own drop
+        _holder = Holder(Token())
+        _holder.saved = self #$ error[E3016]: `self` escapes its own drop
 
 fn main():
-    token = Token()
+    _token = Token()

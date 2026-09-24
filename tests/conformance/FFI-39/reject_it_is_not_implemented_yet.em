@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-39
+#$ error[E0900]: `@ffi` is not implemented yet
 # And the honest half. The production exists, and the C++ importer and the
 # trampoline that give it meaning are Phase 7, so it is refused by name.
 #

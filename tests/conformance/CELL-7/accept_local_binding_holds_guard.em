@@ -7,7 +7,7 @@
 fn main():
     c: RefCell[i32] = RefCell(1)
     if true:
-        g = c.borrow()
+        _g = c.borrow()
         println(1)
     with _b = c.borrow_mut():
         println(2)

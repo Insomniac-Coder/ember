@@ -3,6 +3,9 @@
 #$ error[E2110]: override of a method that is not virtual
 
 open class Base:
+    fn init(mut self):
+        pass
+
     fn tick(self):
         pass
 

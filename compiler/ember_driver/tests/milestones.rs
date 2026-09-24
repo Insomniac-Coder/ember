@@ -67,12 +67,11 @@ struct Expectations {
     /// this text.
     panics: Option<String>,
     /// `#$ error[EXXXX]: text` — a diagnostic the compiler must produce.
-    ///
-    /// `[TST-1]` also ties an annotation to the line its primary span starts
-    /// on. That form waits for the conformance suite; here the code and a
-    /// substring of the message are matched anywhere in the output, which is
-    /// what a `compile-fail` test in `tests/` needs.
     errors: Vec<(String, String)>,
+    /// `[TST-1]` — for each of `errors`, the line the annotation trails,
+    /// which its diagnostic's primary span must start on; `None` for an
+    /// annotation on a line of its own, which may match anywhere.
+    error_lines: Vec<Option<usize>>,
     /// Ordered `= help:` substrings required from a diagnostic.
     helps: Vec<String>,
     /// Text that must not occur in any `= help:` line. This pins negative
@@ -82,6 +81,8 @@ struct Expectations {
     /// lint the compiler must produce. These were parsed by nobody until
     /// 2026-09-08, so a file could assert any warning at all and pass.
     warnings: Vec<(String, String)>,
+    /// As `error_lines`, for `warnings`.
+    warning_lines: Vec<Option<usize>>,
 }
 
 /// The text after `error[` or `warning[`: `E3062]: message`, or `E3062]`
@@ -97,7 +98,7 @@ fn parse_expectations(source: &str) -> Expectations {
     let mut collecting_stdout = false;
     let mut stdout_lines: Vec<String> = Vec::new();
 
-    for line in source.lines() {
+    for (index, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
         // An annotation may open the line, or trail the code it is about:
         //
@@ -112,10 +113,10 @@ fn parse_expectations(source: &str) -> Expectations {
         // fail" — and it did fail, for whatever reason, related or not.
         // `#` opens a comment in Ember, so the text from `#$` onward is
         // already inert to the compiler either way.
-        let rest = match trimmed.strip_prefix("#$") {
-            Some(rest) => rest,
+        let (rest, trailing) = match trimmed.strip_prefix("#$") {
+            Some(rest) => (rest, None),
             None => match line.find("#$") {
-                Some(at) if line[..at].ends_with(char::is_whitespace) => &line[at + 2..],
+                Some(at) if line[..at].ends_with(char::is_whitespace) => (&line[at + 2..], Some(index + 1)),
                 _ => {
                     collecting_stdout = false;
                     continue;
@@ -190,11 +191,13 @@ fn parse_expectations(source: &str) -> Expectations {
             // It used to be dropped, so eight cases passed on any rejection.
             if let Some((code, message)) = code_and_message(value) {
                 expectations.errors.push((code, message));
+                expectations.error_lines.push(trailing);
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("warning[") {
             if let Some((code, message)) = code_and_message(value) {
                 expectations.warnings.push((code, message));
+                expectations.warning_lines.push(trailing);
             }
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("help:") {
@@ -271,6 +274,93 @@ fn without_source_echo(stderr: &str) -> String {
             "
 ",
         )
+}
+
+/// `[TST-1]` — "`#$ error[E…]: text`, `#$ warning[…]` and `#$ note` assert a
+/// diagnostic whose primary span starts on that line; unexpected and missing
+/// diagnostics both fail." Each annotation claims one diagnostic with its code
+/// whose text (message, labels, notes or helps) contains the annotation's; one
+/// that trails a line of code also needs the diagnostic's primary span to
+/// start on that line. A diagnostic no annotation claims fails the test, as a
+/// missing one does. The diagnostics are read from `--json`, so a source
+/// excerpt that happens to show an annotation cannot satisfy it. Returns the
+/// exit status and the diagnostics as a person would read them.
+fn assert_exact_diagnostics(
+    relative: &str,
+    profile: &str,
+    root: &Path,
+    expectations: &Expectations,
+) -> (i32, String) {
+    let checked = ember(&["check", "--json", relative, "--profile", profile], root);
+    struct Produced {
+        code: String,
+        text: String,
+        line: Option<usize>,
+        rendered: String,
+    }
+    let mut produced = Vec::new();
+    for line in checked.stdout.lines().chain(checked.stderr.lines()) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
+        let Some(code) = value["code"].as_str() else { continue };
+        let mut text = value["message"].as_str().unwrap_or_default().to_string();
+        let mut primary = None;
+        for label in value["labels"].as_array().into_iter().flatten() {
+            text.push('\n');
+            text.push_str(label["message"].as_str().unwrap_or_default());
+            if label["primary"].as_bool() == Some(true) && primary.is_none() {
+                primary = label["span"]["line_start"].as_u64().map(|line| line as usize);
+            }
+        }
+        for extra in ["notes", "helps"] {
+            for item in value[extra].as_array().into_iter().flatten() {
+                text.push('\n');
+                text.push_str(item.as_str().unwrap_or_default());
+            }
+        }
+        produced.push(Produced {
+            code: code.to_string(),
+            text,
+            line: primary,
+            rendered: value["rendered"].as_str().unwrap_or_default().to_string(),
+        });
+    }
+    let expected = expectations
+        .errors
+        .iter()
+        .zip(&expectations.error_lines)
+        .chain(expectations.warnings.iter().zip(&expectations.warning_lines));
+    let mut claimed = vec![false; produced.len()];
+    let mut missing = Vec::new();
+    for ((code, message), line) in expected {
+        let found = (0..produced.len()).find(|&index| {
+            let candidate = &produced[index];
+            !claimed[index]
+                && &candidate.code == code
+                && candidate.text.contains(message.as_str())
+                && line.is_none_or(|line| candidate.line == Some(line))
+        });
+        match found {
+            Some(index) => claimed[index] = true,
+            None => missing.push(match line {
+                Some(line) => format!("{code}: {message:?} on line {line}"),
+                None => format!("{code}: {message:?}"),
+            }),
+        }
+    }
+    let rendered: Vec<&str> = produced.iter().map(|p| p.rendered.as_str()).collect();
+    let unexpected: Vec<&str> = produced
+        .iter()
+        .zip(&claimed)
+        .filter(|(_, claimed)| !**claimed)
+        .map(|(p, _)| p.rendered.as_str())
+        .collect();
+    assert!(
+        missing.is_empty() && unexpected.is_empty(),
+        "{relative} [{profile}]: [TST-1] the diagnostics differ from the annotations\nmissing: {missing:?}\nunexpected:\n{}\nall diagnostics:\n{}",
+        unexpected.join("\n"),
+        rendered.join("\n")
+    );
+    (checked.exit, rendered.join("\n"))
 }
 
 fn ember(args: &[&str], root: &Path) -> Run {
@@ -1399,55 +1489,27 @@ fn check_file(path: &Path, root: &Path) {
     // A `compile-fail` test must be rejected, with the diagnostics it names.
     if !expectations.errors.is_empty() || expectations.kind.as_deref() == Some("compile-fail") {
         for profile in &profiles {
-            let checked = ember(&["check", &relative, "--profile", profile], root);
+            let (exit, rendered) = assert_exact_diagnostics(&relative, profile, root, &expectations);
             assert_ne!(
-                checked.exit, 0,
+                exit, 0,
                 "{relative} [{profile}]: expected compilation to fail, but it succeeded"
             );
-            let said = without_source_echo(&checked.stderr);
-            for (code, message) in &expectations.errors {
-                assert!(
-                    said.contains(code.as_str()),
-                    "{relative} [{profile}]: expected {code}
-stderr:
-{}",
-                    checked.stderr
-                );
-                assert!(
-                    said.contains(message.as_str()),
-                    "{relative} [{profile}]: expected a message containing {message:?}
-stderr:
-{}",
-                    checked.stderr
-                );
-            }
-            assert_diagnostic_helps(&relative, &checked.stderr, &expectations);
+            assert_diagnostic_helps(&relative, &rendered, &expectations);
         }
         return;
     }
 
-    // `[TST-1]` — warnings and lints the file names must be produced.
-    if !expectations.warnings.is_empty() {
+    // `[TST-1]` — a program that compiles produces exactly the warnings and
+    // lints it names, and none it does not.
+    if expectations.warnings.is_empty() {
+        let (_, rendered) = assert_exact_diagnostics(&relative, profiles[0], root, &expectations);
+        if !expectations.helps.is_empty() || !expectations.forbidden_helps.is_empty() {
+            assert_diagnostic_helps(&relative, &rendered, &expectations);
+        }
+    } else {
         for profile in &profiles {
-            let checked = ember(&["check", &relative, "--profile", profile], root);
-            let said = without_source_echo(&checked.stderr);
-            for (code, message) in &expectations.warnings {
-                assert!(
-                    said.contains(code.as_str()),
-                    "{relative} [{profile}]: expected {code}
-stderr:
-{}",
-                    checked.stderr
-                );
-                assert!(
-                    said.contains(message.as_str()),
-                    "{relative} [{profile}]: expected a warning containing {message:?}
-stderr:
-{}",
-                    checked.stderr
-                );
-            }
-            assert_diagnostic_helps(&relative, &checked.stderr, &expectations);
+            let (_, rendered) = assert_exact_diagnostics(&relative, profile, root, &expectations);
+            assert_diagnostic_helps(&relative, &rendered, &expectations);
         }
     }
 

@@ -2993,6 +2993,8 @@ impl<'a> Checker<'a> {
                         value.kind,
                         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
                     ) && value.ty != self.common.error
+                        // Already reported: the value did not check ([DIA-14]).
+                        && !matches!(value.kind, ExprKind::Error)
                     {
                         self.error(
                             codes::E2130,
@@ -3042,6 +3044,8 @@ impl<'a> Checker<'a> {
                         value.kind,
                         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
                     ) && value.ty != self.common.error
+                        // Already reported: the value did not check ([DIA-14]).
+                        && !matches!(value.kind, ExprKind::Error)
                     {
                         self.error(
                             codes::E2130,
@@ -9034,6 +9038,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         format!("class `init` cannot overwrite conditionally initialized field `{field}` in this phase"),
                     );
                 }
+                // The write happens on every path from here, so the field is
+                // not also reported as uninitialised ([DIA-14]).
+                if let Some(state) = self.class_init.as_mut()
+                    && let Some(initialized) = state.initialized.get_mut(index)
+                {
+                    *initialized = ClassFieldInit::Init;
+                }
             }
             Some(ClassFieldInit::Uninit) => {
                 if let Some(state) = self.class_init.as_mut() {
@@ -13981,10 +13992,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
         let span = expr.span;
-        let diagnostic =
+        let mut diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
-                .primary_label(format!("this is `{found}`"))
-                .note("Ember does not convert between numeric types implicitly [TYP-4]");
+                .primary_label(format!("this is `{found}`"));
+        // `[TYP-4]` — the note is for two numbers, and only for two numbers.
+        let numeric = |ty| self.types.is_numeric(ty) || self.types.is_untyped_literal(ty);
+        if numeric(expr.ty) && numeric(expected) {
+            diagnostic = diagnostic.note("Ember does not convert between numeric types implicitly [TYP-4]");
+        }
         let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
         self.sink.emit(diagnostic);
         Expr { ty: expected, kind: ExprKind::Error, span }
@@ -16207,6 +16222,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             checked_args[index] = Some(value);
         }
         let checked_args = checked_args.into_iter().flatten().collect::<Vec<_>>();
+        // One error per cascade ([DIA-14]): an argument that already failed
+        // would be checked again below and would instantiate a body around
+        // the hole.
+        if checked_args.iter().any(|arg| arg.ty == self.common.error) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         // `[TYP-18]` — a parameter no argument mentions must be written out.
         let mut substitution = Vec::new();
@@ -16228,6 +16249,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         // `[TYP-17]` — every bound must actually be implemented.
+        let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in &param.bounds {
                 if !self.implements(ty, *bound) {
@@ -16237,8 +16259,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         span,
                         format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
                     );
+                    unmet = true;
                 }
             }
+        }
+        // Instantiating the body with a type that misses a bound would only
+        // report the same mistake again inside it ([DIA-14]).
+        if unmet {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         self.reject_once_closures_for_callable_bounds(
             args,
@@ -16450,6 +16478,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
 
+        let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in &param.bounds {
                 if !self.implements(ty, *bound) {
@@ -16462,8 +16491,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             param.name
                         ),
                     );
+                    unmet = true;
                 }
             }
+        }
+        // As for a generic function: no instance around a missed bound
+        // ([DIA-14]).
+        if unmet {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         self.reject_once_closures_for_callable_bounds(
             args,
@@ -18198,13 +18233,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E1010, span, "the direct base class type is unavailable");
             return error();
         };
+        // From here a failed call still counts as the one `super.init`, so
+        // `E2100` does not follow it ([DIA-14]).
         let Some(entry) = self.methods.get(&(base_ty, Symbol::intern("init"))).copied() else {
             self.error(codes::E1010, span, "the direct base class has no explicit `init`");
+            if let Some(state) = self.class_init.as_mut() {
+                state.base_initialized = true;
+            }
             return error();
         };
         let signature = self.signatures[entry.def.0 as usize].params.clone();
         if signature.first().is_none_or(|(_, _, mode, _)| *mode != Mode::Mut) {
             self.error(codes::E1010, span, "the direct base constructor must declare `mut self`");
+            if let Some(state) = self.class_init.as_mut() {
+                state.base_initialized = true;
+            }
             return error();
         }
         let params = &signature[1..];
@@ -19229,6 +19272,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 env: Some((LocalId(0), probe_id)),
                 captures_by_move: lambda.is_owned,
             };
+            // The probe checks the body only to learn what it writes; the
+            // final check below reports ([DIA-14]: one error, not two).
+            let quiet = self.sink.mark();
             let (probe_body, _, _, _) = self.check_lambda_body(
                 lambda,
                 &params,
@@ -19241,6 +19287,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                 )),
             );
+            self.sink.rollback(quiet);
             (
                 self.closure_body_mutated_capture_fields(&probe_body, LocalId(0)),
                 lambda.is_owned && self.closure_body_moves_capture(&probe_body, LocalId(0)),
@@ -22931,7 +22978,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 list.iter().find(|(n, _)| *n == name).map(|(_, expr)| (*module, expr.clone()))
             });
             let Some((module, default)) = default else {
-                self.error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                // An argument that did not bind (an unknown or repeated name)
+                // was reported already, and may be the one meant here.
+                if slots.iter().all(Option::is_some) {
+                    self.error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                }
                 checked.push(Expr { ty, kind: ExprKind::Error, span });
                 continue;
             };
@@ -23061,7 +23112,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if !through_shared_ref {
             self.reject_borrowed_parameter_write(&place, arg.span, false);
         }
-        if !is_place(&place.kind) && place.ty != self.common.error {
+        // A value that did not check was reported already ([DIA-14]).
+        if !is_place(&place.kind) && place.ty != self.common.error && !matches!(place.kind, ExprKind::Error) {
             self.emit_mut_argument_place_error(arg.span);
             return place;
         }

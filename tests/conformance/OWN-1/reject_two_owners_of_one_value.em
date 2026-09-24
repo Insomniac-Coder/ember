@@ -6,5 +6,5 @@
 fn main():
     a: Array[i32] = Array[i32]()
     a.push(1)
-    b = a
+    _b = a
     println(a[0])          #$ error[E3040]: `a` has been moved out of

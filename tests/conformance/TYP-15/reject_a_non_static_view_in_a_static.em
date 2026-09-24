@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-15, LT-3, DIA-7a
+#$ error[E2130]: must be comptime-evaluable
 # And the half the decision must not weaken. The exception is on the region, so
 # an initialiser that is not known to be static-region is refused — a view
 # whose region the compiler cannot bound would outlive whatever it borrows.

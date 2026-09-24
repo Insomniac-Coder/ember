@@ -6,5 +6,5 @@ fn apply(f: fn(mut i32) -> i32, mut value: i32) -> i32:
     return f(value)
 
 fn main():
-    value = 4
+    value: i32 = 4
     println(apply(fn(x) => x, value))

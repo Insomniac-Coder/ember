@@ -5,7 +5,7 @@ type Wide = i32 in -100 ..= 100
 type Narrow = i32 in -10 ..= 10
 
 fn quotient(value: Wide, divisor: i32) -> Narrow:
-    return value / divisor    #$ error[E2215]
+    return value // divisor    #$ error[E2215]
 
 fn remainder(value: Wide, divisor: i32) -> Narrow:
     return value % divisor    #$ error[E2215]

@@ -345,3 +345,14 @@ The next number is ODR-024.
   `Array[u8]`), D-202 (views of class fields start no access), `[MNG-1]` (mangling not injective,
   which also lets `fn fmt_0` collide with a generated helper). One finding was wrong:
   `println(())` printing `()` is `[TYP-36]`'s `Debug` of `void` through `[STD-9]`'s fallback.
+* **2026-09-24 — `[TST-1]` in the harness (D-205).** The conformance harness now fails on
+  unexpected diagnostics as well as missing ones, reading `--json` so a source excerpt cannot
+  satisfy an annotation, and tying a trailing annotation to its line. Migrating the corpus (72
+  files) found real defects: `L3011` across `print` (D-206), `E3041` at the wrong line (D-207),
+  and eleven cascades (D-208), all fixed; and stale tests written before 0.9.9's `/` and `int`
+  changes. Every rule directory and suite now passes with exact diagnostics.
+* **2026-09-24 — ODR-024 ruled (panel of 4 agents).** A borrowed or `mut` parameter whose type
+  is not `Copy` is a source of a returned view (`[LT-1]` rules 2–3) and is passed by address;
+  rule 1 keeps any borrowed receiver. It also fixes by-copy defects the panel reproduced: `Cell`
+  writes lost through a borrowed parameter, and `RefCell` through one corrupting the heap. To be
+  implemented next, with Hardened_5.

@@ -64,12 +64,12 @@ fn main():
     println(total)
 
     # `[CTL-4]` — `else` runs when the iterator is exhausted, not on `break`.
-    for x in Counting(0, 3):
+    for _x in Counting(0, 3):
         total = total + 0
     else:
         println(111)
 
-    for x in Counting(0, 3):
+    for _x in Counting(0, 3):
         break
     else:
         println(-1)
