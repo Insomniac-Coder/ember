@@ -574,3 +574,18 @@ The next number is ODR-027.
   standard-library methods written that way; one a program does not call is not emitted. D-247 (the
   interface cache recorded a generic extension's specializations) fixed on the way. Not built:
   `sort_by`, `sort_by_key` (a comparator inside the runtime's sort), `windows`, `drain`, `join`.
+* **2026-09-25 — `E2120` (D-243) and bound calls (D-245).** An `extend` with no `implements` for
+  another package's type is `E2120` (`[IFC-2]`): the language's and the standard library's types
+  take new methods through an interface of one's own (`[TYP-20]`) or a wrapper. A call a generic
+  function makes through a bound reaches that interface's method in every instantiation, even where
+  the type has an inherent method of the name. Found on the way, open: D-248, a generic type's
+  methods are checked only per instance and so are duck-typed.
+* **2026-09-25 — `m.T`, `Array.join`, and `Display`/`Debug`/`Copy` bounds (D-249).** A type named
+  through its module works in type position (`geometry.Pair[int]`), and a struct or class is
+  constructed through it (`geometry.Point(3, 4)`), with `[MOD-2]`'s visibility. `xs.join(sep)` is
+  Ember in `std.core`, bounded by `Display`. Bounds on the prelude's `Display`, `Debug` and `Copy`,
+  which the standard library does not declare yet, are answered from `[TYP-36]`'s table instead of
+  accepting every type, and a generic body formats a parameter so bounded. A built-in instance
+  takes every matching extension at its first method call; an inherent method's body is now checked
+  only when it is called, so an unused `join` does not check against an element type it cannot
+  format.

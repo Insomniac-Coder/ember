@@ -10802,7 +10802,12 @@ Then D-246 (a bound met by what the compiler provides: `implements` asks `sortab
 `is_cloneable`, `has_implicit_eq`; `cmp`, `Ordering` exported), D-247 (a generic extension's
 public members are declarations, not per-instance records), and `[STD-15]`'s next `Array`
 methods: builtins, delegation through a view, and `retain`/`dedup`/`binary_search` written in
-Ember in `std/src/core.em`, emitted only when called (`emit_if_used_methods`). `docs/DESIGN-MAP-SET-ITERATION.md`
+Ember in `std/src/core.em`, emitted only when called (`emit_if_used_methods`). D-243 (`E2120`,
+`declared_in_this_package`) and D-245 (`bound_calls`) are fixed; D-248 is open: a generic type's
+methods are checked only per concrete instance, so they are duck-typed (`[TYP-17]`).
+Qualified types `m.T` (`resolve_qualified_type`) and `m.Point(…)` constructors are built; D-249
+(bounds on the undeclared `Display`/`Debug`/`Copy` answered from `[TYP-36]`'s table) is fixed;
+a built-in instance's inherent extension bodies are checked when first called (`deferred_methods`). `docs/DESIGN-MAP-SET-ITERATION.md`
 prices the two shapes for `Map`/`Set` and for generators/adapters; it waits for the owner's
 pick. The directory
 tests now report every failing case in one run (`check_file_collecting`);

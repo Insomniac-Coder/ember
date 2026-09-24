@@ -190,3 +190,14 @@ extend[T: Ord] Array[T]:
                 Ordering.Equal: return Ok(mid)
                 Ordering.Greater: hi = mid
         return Err(lo)
+
+extend[T: Display] Array[T]:
+    ## The elements' text with `sep` between each two, as Python's
+    ## `sep.join(xs)`.
+    pub fn join(self, sep: str) -> String:
+        out = String.from("")
+        for i in range(self.len()):
+            if i > 0:
+                out += sep
+            out += f"{self[i]}"
+        return out

@@ -788,9 +788,18 @@ struct Checker<'a> {
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
+    /// `[TYP-17]` — the interface each call a generic body made through a
+    /// bound went to, by the call's span, so that an instantiation checking
+    /// the body again on a concrete type calls that interface's method and
+    /// not an inherent one of the same name (D-245).
+    bound_calls: HashMap<Span, Symbol>,
     /// `[COST-1]` — the inherent extension methods a built-in instance took
     /// when a method was first looked up on it: emitted only if called.
     emit_if_used_methods: HashSet<DefId>,
+    /// The bodies of those methods, checked only once one is called: an
+    /// instance takes every matching extension at its first method call, and
+    /// a body need not hold for an instance that never calls it.
+    deferred_methods: HashMap<DefId, PendingMethod>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
@@ -1013,6 +1022,8 @@ impl<'a> Checker<'a> {
             generic_extensions: HashMap::new(),
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
+            deferred_methods: HashMap::new(),
+            bound_calls: HashMap::new(),
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -2813,6 +2824,12 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
+            // `[IFC-2]`, as for `extend T:`.
+            if decl.implements.is_empty() && !self.generic_target_in_this_package(name) {
+                let shown = segments[0].name.to_string();
+                self.report_foreign_extension(&shown, decl.target.span);
+                continue;
+            }
             let params = self.declare_generics(&decl.generics);
             let mut target_args = Vec::with_capacity(args.len());
             for arg in args {
@@ -3029,12 +3046,13 @@ impl<'a> Checker<'a> {
                 {
                     self.error(codes::E2110, method.span, "override of a method that is not virtual");
                 }
+                let deferred = builtin && extension.interface.is_none();
                 let Some(def) =
-                    self.register_recipe_method(ty, name, method, &bindings, extension.interface)
+                    self.register_recipe_method(ty, name, method, &bindings, extension.interface, deferred)
                 else {
                     continue;
                 };
-                if builtin && extension.interface.is_none() {
+                if deferred {
                     self.emit_if_used_methods.insert(def);
                 }
                 if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
@@ -3097,6 +3115,7 @@ impl<'a> Checker<'a> {
         method: &GenericMethod,
         owner_bindings: &[(Symbol, Ty)],
         interface: Option<Symbol>,
+        deferred: bool,
     ) -> Option<DefId> {
         // Owner parameters occupy the first slots in the stored recipe;
         // method parameters follow them. Substitute the owner and map the
@@ -3158,13 +3177,18 @@ impl<'a> Checker<'a> {
             );
             self.pending_generic_method_validations.push(def);
         } else {
-            self.pending_methods.push(PendingMethod {
+            let job = PendingMethod {
                 def,
                 owner: ty,
                 bindings: owner_bindings.to_vec(),
                 report_owner,
                 source: method.source,
-            });
+            };
+            if deferred {
+                self.deferred_methods.insert(def, job);
+            } else {
+                self.pending_methods.push(job);
+            }
         }
         Some(def)
     }
@@ -3852,6 +3876,14 @@ impl<'a> Checker<'a> {
                     }
                     let ty = self.resolve_type(&decl.target);
                     if ty == self.common.error {
+                        continue;
+                    }
+                    // `[IFC-2]` — inherent methods only in the type's own
+                    // package; another package's type takes methods through
+                    // an interface, or a wrapper.
+                    if decl.implements.is_empty() && !self.declared_in_this_package(ty) {
+                        let shown = self.types.display(ty);
+                        self.report_foreign_extension(&shown, decl.target.span);
                         continue;
                     }
                     // `[IFC-1]` — `extend T:` with no `implements` adds
@@ -5258,6 +5290,11 @@ impl<'a> Checker<'a> {
                     None => self.common.error,
                 }
             }
+            // `[MOD-3]` — `m.T` names the type `T` of the module `import` bound
+            // to `m` (`import a.b.m`), with any arguments: `m.Pair[int]`.
+            ast::TypeKind::Path { segments, args } if segments.len() > 1 => {
+                self.resolve_qualified_type(segments, args, ty.span)
+            }
             // `[ERR-1]` — `Option[T]` and `Result[T, E]` are ordinary payload
             // enums, synthesised on demand. Part XX.1 makes them compiler-known
             // until Phase 2 gives the standard library generics of its own.
@@ -5350,6 +5387,59 @@ impl<'a> Checker<'a> {
                 self.common.error
             }
         }
+    }
+
+    /// `[MOD-3]` — the type `m.T` (or `a.b.T`) names: `T` in the module the
+    /// prefix binds, if that module lets this one see it (`[MOD-2]`).
+    fn resolve_qualified_type(&mut self, segments: &[ast::Ident], args: &[ast::GenericArg], span: Span) -> Ty {
+        let last = segments[segments.len() - 1];
+        let module = match self.resolve_namespace_prefix(&segments[..segments.len() - 1]) {
+            Ok(module) => module,
+            Err(index) => {
+                let unresolved = segments[index];
+                self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                return self.common.error;
+            }
+        };
+        let qualified = self.qualified_in_module(module, last.name);
+        if !self.named_types.contains_key(&qualified)
+            && !self.interfaces.contains_key(&qualified)
+            && !self.generic_structs.contains_key(&qualified)
+            && !self.generic_enums.contains_key(&qualified)
+            && !self.generic_classes.contains_key(&qualified)
+        {
+            let module_name = segments[..segments.len() - 1].iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+            self.error(codes::E1010, last.span, format!("cannot find type `{}` in module `{module_name}`", last.name));
+            return self.common.error;
+        }
+        if !self.item_accessible(module, qualified) {
+            self.report_item_not_visible(module, qualified, last.span);
+            return self.common.error;
+        }
+        if args.is_empty() {
+            if self.interfaces.contains_key(&qualified) {
+                return self.class_interface_type(qualified, span);
+            }
+            if let Some(&ty) = self.named_types.get(&qualified) {
+                return ty;
+            }
+        }
+        let mut resolved = Vec::with_capacity(args.len());
+        for arg in args {
+            let ast::GenericArg::Type(t) = arg else {
+                self.error(codes::E1010, span, "expected a type argument");
+                return self.common.error;
+            };
+            resolved.push((self.resolve_type(t), t.span));
+        }
+        if let Some(definition) = self.interfaces.get(&qualified).cloned() {
+            let types = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+            let Some(interface) = self.instantiate_interface(qualified, &definition, &types, span) else {
+                return self.common.error;
+            };
+            return self.class_interface_type(interface, span);
+        }
+        self.resolve_type_application(qualified, &resolved, span, last.span)
     }
 
     /// Resolve a named type application after bracket ambiguity has been
@@ -5555,6 +5645,24 @@ impl<'a> Checker<'a> {
         parts.into_iter().find_map(|part| self.opted_out_of_debug(part, seen))
     }
 
+    /// `[TYP-36]` — whether `ty` implements `Display`: the scalars and text,
+    /// and the collections, tuples, `Option` and `Result` whose parts have
+    /// `Debug` (`[TYP-39]`). A struct or enum has it only when it says so,
+    /// and a class handle never (printing either falls back to `Debug`).
+    fn has_display(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
+            TyKind::Error => true,
+            TyKind::Vec { .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => {
+                self.is_formattable(ty)
+            }
+            TyKind::Ref { inner, .. } => self.has_display(*inner),
+            TyKind::Enum(_) if self.is_option(ty) || self.is_result(ty) => self.is_formattable(ty),
+            TyKind::Param { index, .. } => self.param_bound_named(*index, &["Display"]),
+            _ => false,
+        }
+    }
+
     /// `seen` holds the user types already being examined: a recursive type
     /// (`struct Tree: kids: Array[Tree]`) is formattable if the rest is.
     fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
@@ -5595,8 +5703,20 @@ impl<'a> Checker<'a> {
                         .flat_map(|variant| variant.fields.iter())
                         .all(|field| self.formattable_in(field.ty, seen))
             }
+            // `[TYP-36]` — a type parameter formats when a bound says it does;
+            // each instantiation formats its concrete type.
+            TyKind::Param { index, .. } => self.param_bound_named(*index, &["Display", "Debug"]),
             _ => false,
         }
+    }
+
+    /// Whether the generic parameter `index` is bounded by an interface
+    /// whose last name is one of `names` (`Display` in any module's
+    /// spelling, while the standard library does not declare it).
+    fn param_bound_named(&self, index: u32, names: &[&str]) -> bool {
+        self.current_generics.get(index as usize).is_some_and(|param| {
+            param.bounds.iter().any(|bound| names.contains(&bound.as_str().rsplit('.').next().unwrap_or_default()))
+        })
     }
 
     /// `[LEX-19]` — how an f-string hole asks for its value: `{x:spec}`,
@@ -6734,7 +6854,7 @@ impl<'a> Checker<'a> {
         let bindings: Vec<(Symbol, Ty)> =
             decl.params.iter().copied().zip(args.iter().copied()).collect();
         for method in &decl.methods {
-            self.register_recipe_method(ty, name, method, &bindings, None);
+            self.register_recipe_method(ty, name, method, &bindings, None, false);
         }
         self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
@@ -6852,7 +6972,7 @@ impl<'a> Checker<'a> {
         let bindings: Vec<(Symbol, Ty)> =
             decl.params.iter().copied().zip(args.iter().copied()).collect();
         for method in &decl.methods {
-            self.register_recipe_method(ty, name, method, &bindings, None);
+            self.register_recipe_method(ty, name, method, &bindings, None, false);
         }
         self.record_opt_outs(ty, decl.opted_out);
         if let Some(explicit) = decl.clone_request {
@@ -7023,7 +7143,7 @@ impl<'a> Checker<'a> {
                 );
             }
             let Some(def) =
-                self.register_recipe_method(ty, name, &method, &owner_bindings, interface)
+                self.register_recipe_method(ty, name, &method, &owner_bindings, interface, false)
             else {
                 continue;
             };
@@ -9882,11 +10002,61 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// The current loader admits the root package and the separate `std`
     /// package. Keep package visibility aligned with those existing roots.
     fn same_package(&self, left: usize, right: usize) -> bool {
-        let is_std = |module: usize| {
-            let path = self.prefixes[module].as_str();
-            path == "std" || path.starts_with("std.")
-        };
-        is_std(left) == is_std(right)
+        self.is_std_module(left) == self.is_std_module(right)
+    }
+
+    fn is_std_module(&self, module: usize) -> bool {
+        let path = self.prefixes[module].as_str();
+        path == "std" || path.starts_with("std.")
+    }
+
+    /// `[IFC-2]` — whether `ty` belongs to the package of the module being
+    /// checked. A struct or class knows its declaring module, and an enum is
+    /// named with its module's path; everything the compiler knows (the
+    /// scalars, text, `Array`, `Span`, `Option`, `Result`, tuples, …) is the
+    /// standard library's.
+    fn declared_in_this_package(&self, ty: Ty) -> bool {
+        let here = self.current_module;
+        let std_name = |name: Symbol| name.as_str() == "std" || name.as_str().starts_with("std.");
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) if self.types.struct_def(id).declaring_module != usize::MAX => {
+                self.same_package(here, self.types.struct_def(id).declaring_module)
+            }
+            TyKind::Class(id) => self.same_package(here, self.types.class_def(id).declaring_module),
+            TyKind::Enum(id) if !self.is_option(ty) && !self.is_result(ty) => {
+                std_name(self.types.enum_def(id).name) == self.is_std_module(here)
+            }
+            _ => self.is_std_module(here),
+        }
+    }
+
+    /// `[IFC-2]` — `declared_in_this_package` for the generic type a generic
+    /// extension names.
+    fn generic_target_in_this_package(&self, target: Symbol) -> bool {
+        let declaring = self
+            .generic_structs
+            .get(&target)
+            .map(|generic| generic.declaring_module)
+            .or_else(|| self.generic_enums.get(&target).map(|generic| generic.declaring_module))
+            .or_else(|| self.generic_classes.get(&target).map(|generic| generic.declaring_module));
+        match declaring {
+            Some(module) => self.same_package(self.current_module, module),
+            None => self.is_std_module(self.current_module),
+        }
+    }
+
+    /// `[IFC-2]` — `E2120`: `extend T:` with methods of its own for a type
+    /// from another package.
+    fn report_foreign_extension(&mut self, shown: &str, span: Span) {
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E2120,
+                span,
+                format!("`{shown}` is another package's type, so `extend` cannot give it methods of its own"),
+            )
+            .help(format!("declare an interface and write `extend {shown} implements` it, or wrap the value in a type of your own"))
+            .note("inherent methods belong to the package that declares the type [IFC-2]"),
+        );
     }
 
     fn add_qualified_name_suggestions(
@@ -18909,6 +19079,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if provided {
             return true;
         }
+        // `[TYP-36]`, `[MOD-5]` — `Display`, `Debug` and `Copy` are prelude
+        // names the standard library does not declare yet. A bound on one is
+        // answered from the table, not waved through as an undeclared name.
+        if !self.interfaces.contains_key(&interface) {
+            match interface.as_str().rsplit('.').next().unwrap_or_default() {
+                "Display" => return self.has_display(ty),
+                "Debug" => return self.is_formattable(ty),
+                "Copy" => return self.types.is_copy(ty),
+                _ => {}
+            }
+        }
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
         }
@@ -19268,6 +19449,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // source-backed public declaration.
         if let Some(built) = self.synth_memory_builtin(qualified, args, &explicit, span) {
             return built;
+        }
+        // `[MOD-3]`, `[STR-1]` — `m.Point(3, 4)`: a type's constructor, reached
+        // through its module as a function is.
+        if let Some(&id) = self.struct_ids.get(&qualified) {
+            return self.synth_struct_literal(id, qualified, args, span);
+        }
+        if let Some(&id) = self.class_ids.get(&qualified) {
+            return self.synth_class_constructor(id, qualified, args, &explicit, span);
+        }
+        if let Some(decl) = self.generic_structs.get(&qualified).cloned() {
+            return self.synth_generic_struct_literal(qualified, &decl, args, &explicit, None, span);
+        }
+        if let Some(decl) = self.generic_classes.get(&qualified).cloned() {
+            return self.synth_generic_class_constructor(qualified, &decl, args, &explicit, None, span);
         }
         let Some(&def) = self.fn_ids.get(&qualified) else {
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
@@ -20453,10 +20648,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.extend_builtin_instance(receiver.ty);
         let explicit = self.resolve_method_type_args(generic_args);
         // `[TYP-24]` — `I.m(recv)` names the interface's method, which an
-        // extension may give a type the compiler knows a method `m` of.
-        if let Some((interface, _)) = self.named_interface_call.filter(|(_, at)| *at == span)
+        // extension may give a type the compiler knows a method `m` of. So
+        // does a call a generic body made through a bound (`[TYP-17]`), when
+        // an instantiation checks it again on the concrete type (D-245).
+        let through = self
+            .named_interface_call
+            .filter(|(_, at)| *at == span)
+            .map(|(interface, _)| interface)
+            .or_else(|| self.bound_calls.get(&span).copied());
+        if let Some(interface) = through
             && self.interface_methods.contains_key(&(receiver.ty, interface, name.name))
         {
+            self.named_interface_call = Some((interface, span));
             return self.synth_registered_method(receiver, recv.span, name, args, explicit, span);
         }
         // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
@@ -21025,6 +21228,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let def = entry.def;
         let receiver_mode = entry.receiver;
+        if let Some(job) = self.deferred_methods.remove(&def) {
+            self.pending_methods.push(job);
+        }
 
         let inherited = !self.methods.contains_key(&(receiver.ty, name.name));
         if receiver_mode != Mode::Mut {
@@ -21187,7 +21393,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
 
-        let Some((def, receiver_mode, _)) = found else {
+        let Some((def, receiver_mode, bound)) = found else {
             let candidates: Vec<Symbol> = self
                 .interfaces
                 .iter()
@@ -21211,6 +21417,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        self.bound_calls.insert(span, bound);
 
         if !self.signatures[def.0 as usize].generics.is_empty() {
             return self.synth_generic_method_call(
