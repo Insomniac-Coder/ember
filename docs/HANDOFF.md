@@ -10740,6 +10740,10 @@ branch (D-230). `Clone` for `Array`/`String` followed (D-228): typeck's
 `is_cloneable`/`clone_value`, the `ArrayClone` builtin and codegen's
 `ArrayHelper::Clone` (element clones found in `clone_fns`, built from the MIR
 bodies); testing it exposed nested drop loops sharing one index (D-231).
+Then `[STR-5]`: implicit `Clone` (ODR-026 keeps it off types with `drop`;
+`ember_mir::prune_unused_implicit` drops an unused one) and implicit `Debug`
+(typeck `formattable_in`, codegen's `Struct` fmt arm, `unit_display` for a
+unit-only enum's `Display`).
 
 **ODR-024 (2026-09-24, Hardened_5, ADR-042).** A borrowed parameter whose type
 is not `Copy` (or holds a `Cell`) is a `ref T` local passed as `T*`; views pass

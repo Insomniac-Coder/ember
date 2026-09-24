@@ -629,11 +629,37 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Vec { elem } => !matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)),
             TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => true,
-            TyKind::Enum(id) => !self.types.enum_def(*id).is_unit_only(),
+            // `[STR-5]` — structs and enums have `Debug` field-wise; a
+            // unit-only enum's `Display` is its variant name (`unit_display`).
+            TyKind::Enum(_) | TyKind::Struct(_) => true,
             // `[TYP-36]` — a class handle has `Debug`: its class and address.
             TyKind::Class(_) | TyKind::ClassInterface(_) => true,
             _ => false,
         }
+    }
+
+    /// `[TYP-36]` — a unit-only enum's `Display`, its bare variant name, as
+    /// a C `str` expression over the value `v`; `None` for any other type
+    /// (whose `Display` is its `Debug` text).
+    fn unit_display(&self, v: &str, ty: Ty) -> Option<String> {
+        let TyKind::Enum(id) = self.types.kind(ty) else { return None };
+        let def = self.types.enum_def(*id);
+        if !def.is_unit_only() {
+            return None;
+        }
+        let mut expr = format!("{RT}str_lit(\"\", 0)");
+        for variant in def.variants.iter().rev() {
+            let name = variant.name.as_str();
+            expr = format!("(({v}) == {} ? {RT}str_lit(\"{name}\", {}) : {expr})", variant.discriminant, name.len());
+        }
+        Some(expr)
+    }
+
+    /// The name `Debug` shows for a user struct or enum: its own, without a
+    /// module path or generic arguments (`Point`, `Pair`).
+    fn debug_type_name(&self, name: &str, origin: Option<&(Symbol, Vec<Ty>)>) -> String {
+        let name = origin.map(|(name, _)| name.as_str()).unwrap_or(name);
+        name.rsplit('.').next().unwrap_or(name).to_string()
     }
 
     /// The generated `Display` function of `ty`, requesting it.
@@ -725,16 +751,45 @@ impl Emitter<'_> {
                         parts.push(text(")"));
                         parts.join(" ")
                     }
+                    // `[STR-5]`, `[TYP-36]` — `Point(x=1, y=2)`.
+                    TyKind::Struct(id) => {
+                        let def = self.types.struct_def(id).clone();
+                        let name = self.debug_type_name(def.name.as_str(), def.origin.as_ref());
+                        let mut parts = vec![text(&format!("{name}("))];
+                        for (i, field) in def.fields.iter().enumerate() {
+                            if i > 0 {
+                                parts.push(text(", "));
+                            }
+                            parts.push(text(&format!("{}=", field.name)));
+                            parts.push(self.debug_stmt("out", &format!("v->{}", field.name), field.ty));
+                        }
+                        parts.push(text(")"));
+                        parts.join(" ")
+                    }
                     TyKind::Enum(id) => {
                         let def = self.types.enum_def(id).clone();
+                        // `Option` and `Result` show `Some(1)`, `Err('x')`;
+                        // a program's enum shows its name, `Shape.Circle(1)`.
+                        let compiler_known = def.name.as_str().starts_with("Option_")
+                            || def.name.as_str().starts_with("Result_");
+                        let prefix = if compiler_known {
+                            String::new()
+                        } else {
+                            format!("{}.", self.debug_type_name(def.name.as_str(), def.origin.as_ref()))
+                        };
                         let mut arms = Vec::new();
                         for variant in &def.variants {
-                            let mut parts = vec![text(variant.name.as_str())];
+                            let mut parts = vec![text(&format!("{prefix}{}", variant.name))];
                             if !variant.fields.is_empty() {
                                 parts.push(text("("));
                                 for (i, field) in variant.fields.iter().enumerate() {
                                     if i > 0 {
                                         parts.push(text(", "));
+                                    }
+                                    // A named payload field shows its name;
+                                    // a positional one (`_0`) does not.
+                                    if !field.name.as_str().starts_with('_') {
+                                        parts.push(text(&format!("{}=", field.name)));
                                     }
                                     let member = format!("v->payload.{}.{}", variant.name, field.name);
                                     parts.push(self.debug_stmt("out", &member, field.ty));
@@ -743,7 +798,9 @@ impl Emitter<'_> {
                             }
                             arms.push(format!("case {}: {} break;", variant.discriminant, parts.join(" ")));
                         }
-                        format!("switch (v->tag) {{ {} default: break; }}", arms.join(" "))
+                        // A unit-only enum is its tag.
+                        let tag = if def.is_unit_only() { "*v" } else { "v->tag" };
+                        format!("switch ({tag}) {{ {} default: break; }}", arms.join(" "))
                     }
                     _ => unreachable!("[TYP-39] Display functions are requested only for aggregates"),
                 };
@@ -4083,6 +4140,17 @@ impl Emitter<'_> {
                             Builtin::FormatWith(spec) => Some(*spec),
                             _ => None,
                         };
+                        let debug = spec.is_some_and(|spec| spec.kind == Some('?'));
+                        if !debug && let Some(name) = self.unit_display(&rendered[1], *arg_ty) {
+                            return match spec.filter(|spec| hir_spec_is_more_than_a_conversion(spec)) {
+                                None => format!("{RT}fmt_str({}, {name})", rendered[0]),
+                                Some(spec) => format!(
+                                    "{RT}fmt_spec_str({}, {name}, {})",
+                                    rendered[0],
+                                    fmt_spec_literal(&ember_mir::FormatSpec { kind: None, ..spec })
+                                ),
+                            };
+                        }
                         return match spec.filter(|spec| hir_spec_is_more_than_a_conversion(spec)) {
                             None => format!("{}({}, &({}))", self.fmt_fn(*arg_ty), rendered[0], rendered[1]),
                             Some(spec) => format!(
@@ -4230,6 +4298,15 @@ impl Emitter<'_> {
                     Builtin::Panic | Builtin::Assert => {
                         unreachable!("VI.6 — panics and assertions are MIR assertions")
                     }
+                }
+                if let Some(name) = self.unit_display(&rendered[0], *arg_ty) {
+                    let printer = match which {
+                        Builtin::Println => "println",
+                        Builtin::EPrintln => "eprintln",
+                        Builtin::EPrint => "eprint",
+                        _ => "print",
+                    };
+                    return format!("{RT}{printer}_str({name})");
                 }
                 if self.is_display_aggregate(*arg_ty) {
                     let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln));

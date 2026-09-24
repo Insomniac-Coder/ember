@@ -5041,27 +5041,44 @@ impl<'a> Checker<'a> {
     /// Whether the runtime has a formatter for this type. `Display` replaces
     /// this once interfaces carry generics.
     fn is_formattable(&self, ty: Ty) -> bool {
+        self.formattable_in(ty, &mut HashSet::new())
+    }
+
+    /// `seen` holds the user types already being examined: a recursive type
+    /// (`struct Tree: kids: Array[Tree]`) is formattable if the rest is.
+    fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
             // `[TYP-39]` — collections, tuples, `Option` and `Result` show as
             // Python's `str()` shows them, each element by its `Debug`. The
             // built-in types' `Debug` is their `Display` with text quoted, so
             // one test covers both.
-            TyKind::Vec { elem } => *elem == self.common.u8 || self.is_formattable(*elem),
-            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.is_formattable(*elem),
-            TyKind::Tuple(items) => items.iter().all(|item| self.is_formattable(*item)),
+            TyKind::Vec { elem } => *elem == self.common.u8 || self.formattable_in(*elem, seen),
+            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.formattable_in(*elem, seen),
+            TyKind::Tuple(items) => items.iter().all(|item| self.formattable_in(*item, seen)),
             // `[TYP-36]` — a class handle has no `Display`, but its `Debug`
             // (class and address) is what printing falls back to ([STD-9]).
             TyKind::Class(_) | TyKind::ClassInterface(_) => true,
             // Already reported: one error per cascade ([DIA-14]).
             TyKind::Error => true,
-            TyKind::Enum(id) if self.is_option(ty) || self.is_result(ty) => self
-                .types
-                .enum_def(*id)
-                .variants
-                .iter()
-                .flat_map(|variant| variant.fields.iter())
-                .all(|field| self.is_formattable(field.ty)),
+            // `[STR-5]` — a struct or enum has `Debug` field-wise when every
+            // field does (`Point(x=1, y=2)`, `Shape.Circle(1)`). The
+            // compiler-known wrappers (`Box`, `Cell`, …) have no format yet.
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                !is_compiler_known_struct(def.name.as_str())
+                    && (!seen.insert(ty) || def.fields.iter().all(|field| self.formattable_in(field.ty, seen)))
+            }
+            TyKind::Enum(id) => {
+                !seen.insert(ty)
+                    || self
+                        .types
+                        .enum_def(*id)
+                        .variants
+                        .iter()
+                        .flat_map(|variant| variant.fields.iter())
+                        .all(|field| self.formattable_in(field.ty, seen))
+            }
             _ => false,
         }
     }
@@ -24927,6 +24944,15 @@ const RESERVED_ATTRIBUTES: &[&str] = &["no_runtime_checks", "allocator", "gpu"];
 
 /// Appendix H.2 — attributes 0.9.9 removed, named as such when written.
 const REMOVED_ATTRIBUTES: &[&str] = &["thread_local", "latebound"];
+
+/// A struct the compiler supplies rather than a program declares, recognised
+/// by the prefix its builder names it with. These have no `Debug` yet.
+fn is_compiler_known_struct(name: &str) -> bool {
+    ["Box_", "Shared_", "Weak_", "Cell_", "RefCell_", "UnsafeCell_", "MaybeUninit_", "closure"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+        || matches!(name, "Arena" | "FixedArena" | "ScopedArena")
+}
 
 /// `[STR-5]` — what `Clone` a declaration asks for: `Some(true)` when it
 /// writes `@derive(Clone)`, `Some(false)` for a struct's or enum's implicit

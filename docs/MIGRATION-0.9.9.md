@@ -417,3 +417,8 @@ The next number is ODR-027.
   `drop` (a field-wise copy of a pointer it frees is a double free reachable from Safe code); a
   missing `clone` there says so. `@no_derive(Eq)`/`(Debug)` stay `E0900`.  An implicit `clone` nothing calls is pruned after lowering (`[COST-1]`), so a program pays for
   one only where it clones (`STR-5/accept_an_unused_implicit_clone_is_not_emitted.em`).
+* **2026-09-24 — `[STR-5]` implicit `Debug`.** Structs and enums print with nothing written, in
+  `[TYP-36]`'s forms: `Point(x=1, y=2.5)`, `Shape.Circle(1.5)`, `Mode.Fast`; a struct or payload
+  enum displays as its `Debug`, a unit-only enum as its variant name (`{m!r}` for the `Debug`). A
+  generic struct shows its name alone; recursive types print to any depth. The compiler-known
+  wrappers (`Box`, `Cell`, …) still have no format, and `@no_derive(Debug)` stays `E0900`.
