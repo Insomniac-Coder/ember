@@ -3922,6 +3922,31 @@ impl Emitter<'_> {
                     Builtin::StrTrimStart => {
                         return format!("{RT}str_trim_start({})", rendered[0]);
                     }
+                    Builtin::ParseStatus { kind } => {
+                        use ember_mir::ParseKind;
+                        return match kind {
+                            ParseKind::Signed => {
+                                format!("{RT}parse_signed_status({}, (int64_t)({}))", rendered[0], rendered[1])
+                            }
+                            ParseKind::Unsigned => {
+                                format!("{RT}parse_unsigned_status({}, (uint64_t)({}))", rendered[0], rendered[1])
+                            }
+                            ParseKind::F32 | ParseKind::F64 => format!("{RT}parse_float_status({})", rendered[0]),
+                            ParseKind::Bool => format!("{RT}parse_bool_status({})", rendered[0]),
+                            ParseKind::Char => format!("{RT}parse_char_status({})", rendered[0]),
+                        };
+                    }
+                    Builtin::ParseValue { kind } => {
+                        use ember_mir::ParseKind;
+                        return match kind {
+                            ParseKind::Signed => format!("{RT}parse_signed_value({})", rendered[0]),
+                            ParseKind::Unsigned => format!("{RT}parse_unsigned_value({})", rendered[0]),
+                            ParseKind::F32 => format!("{RT}parse_f32_value({})", rendered[0]),
+                            ParseKind::F64 => format!("{RT}parse_f64_value({})", rendered[0]),
+                            ParseKind::Bool => format!("(({}).len == 4)", rendered[0]),
+                            ParseKind::Char => format!("{RT}str_char_at({}, 0)", rendered[0]),
+                        };
+                    }
                     Builtin::StrToUpper => {
                         return format!("{RT}str_to_upper({})", rendered[0]);
                     }

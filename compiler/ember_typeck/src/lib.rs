@@ -10890,6 +10890,123 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[TXT-10]` (ODR-029) — `s.parse[T]() -> Result[T, ParseError]` for an
+    /// integer, a float, `bool` or `char`: the runtime says whether the text is
+    /// a whole literal of `T` that fits, and only then reads it.
+    fn synth_text_parse(&mut self, receiver: Expr, explicit: Vec<Ty>, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (str_ty, int_ty, u8_ty, bool_ty) = (self.common.str_, self.common.i64, self.common.u8, self.common.bool_);
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`parse` takes 0 argument(s), found {}", args.len()));
+            return error;
+        }
+        let [target] = explicit.as_slice() else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2060, span, "cannot tell what to parse the text into")
+                    .help("name the type: `s.parse[int]()`, `s.parse[float]()`"),
+            );
+            return error;
+        };
+        let target = *target;
+        if target == self.common.error {
+            return error;
+        }
+        let u64_ty = self.common.u64;
+        // The largest value of the type; a signed type's least is `-max - 1`.
+        let bound = |ty, value: u128| Expr { ty, kind: ExprKind::Int(value), span };
+        let (kind, bounds): (hir::ParseKind, Vec<Expr>) = match *self.types.kind(target) {
+            TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128) => {
+                let shown = self.types.display(target);
+                self.error(codes::E0900, span, format!("parsing a `{shown}` is not implemented yet"));
+                return error;
+            }
+            TyKind::Int(_) => {
+                let bits = ember_types::bit_width(&self.types, target).unwrap_or(64);
+                let max = (1u128 << (bits - 1)) - 1;
+                (hir::ParseKind::Signed, vec![bound(int_ty, max)])
+            }
+            TyKind::Uint(_) => {
+                let bits = ember_types::bit_width(&self.types, target).unwrap_or(64);
+                let max = if bits >= 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
+                (hir::ParseKind::Unsigned, vec![bound(u64_ty, max)])
+            }
+            TyKind::Float(ember_types::FloatTy::F32) => (hir::ParseKind::F32, Vec::new()),
+            TyKind::Float(_) => (hir::ParseKind::F64, Vec::new()),
+            TyKind::Bool => (hir::ParseKind::Bool, Vec::new()),
+            TyKind::Char => (hir::ParseKind::Char, Vec::new()),
+            _ => {
+                let shown = self.types.display(target);
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`parse` reads integers, floats, `bool` and `char`, not `{shown}`"),
+                );
+                return error;
+            }
+        };
+        let Some(parse_error) = self.named_types.get(&Symbol::intern("std.string.ParseError")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.string.ParseError`");
+            return error;
+        };
+        let TyKind::Enum(parse_error_id) = *self.types.kind(parse_error) else { return error };
+        let result_ty = self.result_of(target, parse_error);
+        let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { return error };
+        let receiver = self.read_through(receiver);
+        let text = if receiver.ty == str_ty { receiver } else { self.coerce(receiver, str_ty) };
+        let view = self.declare(None, str_ty, span);
+        let status = self.declare(None, u8_ty, span);
+        let text_local = || Expr { ty: str_ty, kind: ExprKind::Local(view), span };
+        let mut status_args = vec![text_local()];
+        status_args.extend(bounds);
+        let raw_ty = match kind {
+            hir::ParseKind::Signed => int_ty,
+            hir::ParseKind::Unsigned => u64_ty,
+            hir::ParseKind::Bool => bool_ty,
+            _ => target,
+        };
+        let raw = Expr { ty: raw_ty, kind: ExprKind::Builtin { which: Builtin::ParseValue { kind }, args: vec![text_local()] }, span };
+        let value = if raw_ty == target { raw } else { Expr { ty: target, kind: ExprKind::Cast { expr: Box::new(raw), to: target }, span } };
+        let ok = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![value] }, span };
+        let failed = |variant: usize| {
+            let reason = Expr { ty: parse_error, kind: ExprKind::EnumLit { enum_id: parse_error_id, variant, fields: vec![] }, span };
+            Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![reason] }, span }
+        };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: u8_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let chosen = Expr {
+            ty: result_ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(Expr { ty: u8_ty, kind: ExprKind::Local(status), span }),
+                arms: vec![
+                    arm(hir::PatternKind::Int(0), ok),
+                    arm(hir::PatternKind::Int(1), failed(0)),
+                    arm(hir::PatternKind::Int(2), failed(1)),
+                    arm(hir::PatternKind::Wild, failed(2)),
+                ],
+            },
+            span,
+        };
+        let status_value = Expr { ty: u8_ty, kind: ExprKind::Builtin { which: Builtin::ParseStatus { kind }, args: status_args }, span };
+        Expr {
+            ty: result_ty,
+            kind: ExprKind::Block {
+                block: Block {
+                    stmts: vec![
+                        Stmt::Let { local: view, init: Some(text) },
+                        Stmt::Let { local: status, init: Some(status_value) },
+                    ],
+                    span,
+                },
+                value: Box::new(chosen),
+            },
+            span,
+        }
+    }
+
     /// `[TXT-10]` — `s.get(range) -> Option[str]`: the slice when the range is
     /// in order, within the text and on character boundaries, else `None`
     /// (where `s[range]` panics). Any of the prelude's ranges.
@@ -20127,6 +20244,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_text_method(receiver, name, args, span);
+        }
+        // `[TXT-10]` (ODR-029) — `s.parse[T]()`.
+        if self.is_text(receiver.ty) && name.name.is("parse") && !self.methods.contains_key(&(receiver.ty, name.name)) {
+            return self.synth_text_parse(receiver, explicit, args, span);
         }
         // `[TXT-9]` — `x.to_string()` is `f"{x}"`: the text `print` writes.
         if name.name.is("to_string")

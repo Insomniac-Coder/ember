@@ -540,3 +540,8 @@ The next number is ODR-027.
   `tools/unicode_case.py` from Python's own mappings, with `--check`), and a word-final `Σ` lowers
   to `ς` (Python also skips case-ignorable characters around it; this looks only at the neighbours).
   `parse` waits for ODR-029 (`ParseError` is named by the spec but not defined).
+* **2026-09-25 — `parse[T]()` (ODR-029, Hardened_10).** Strict, as Rust's: the whole text, no
+  white space; integers (sign and digits, fitting `T`), floats (with `inf`/`nan` and exponents),
+  `bool`, `char`. `ParseError` (`Empty`, `Invalid`, `Overflow`) is in the new `std/src/string.em`,
+  loaded with the prelude modules. The runtime validates (`ember_parse_*_status`) and reads the value
+  only once the text is known good. Not built: 128-bit integers.

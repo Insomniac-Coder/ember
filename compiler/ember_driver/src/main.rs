@@ -1180,7 +1180,7 @@ fn load_modules(
     // public items visible; type checking separately installs only the names
     // in the normative prelude list. Keep the root last so this LIFO worklist
     // still makes it module zero and preserves the command-line entry point.
-    for module in ["core", "collections", "mem"] {
+    for module in ["core", "collections", "mem", "string"] {
         let names = vec![ember_branding::STD_PACKAGE.to_string(), module.to_string()];
         let key = names.join(".");
         let Some(file_path) = resolve_module(root_dir, &names) else {

@@ -598,6 +598,22 @@ bool ember_str_slice_ok(ember_str s, int64_t start, int64_t end, bool inclusive)
 /* `[TXT-10]` — Unicode full case mapping (one character may become up to
  * three); `to_lower` writes a final `Σ` as `ς`. No locale is consulted. */
 ember_vec ember_str_to_upper(ember_str s);
+/* `[TXT-10]` (ODR-029) — `parse`. Each `_status` gives 0 when `s` is a whole
+ * literal of its kind that fits, else 1 (empty), 2 (invalid) or 3 (out of
+ * range), the first problem met from the left; the `_value` function reads
+ * a text whose status was 0. Integers: an optional sign (`-` only where
+ * signed) and ASCII digits. Floats: Rust's grammar, `inf`/`infinity`/`nan` in
+ * any case, or digits with an optional point and exponent; never out of
+ * range. `bool`: `true` or `false`. `char`: exactly one character. */
+uint8_t ember_parse_signed_status(ember_str s, int64_t max);
+int64_t ember_parse_signed_value(ember_str s);
+uint8_t ember_parse_unsigned_status(ember_str s, uint64_t max);
+uint64_t ember_parse_unsigned_value(ember_str s);
+uint8_t ember_parse_float_status(ember_str s);
+double ember_parse_f64_value(ember_str s);
+float ember_parse_f32_value(ember_str s);
+uint8_t ember_parse_bool_status(ember_str s);
+uint8_t ember_parse_char_status(ember_str s);
 ember_vec ember_str_to_lower(ember_str s);
 
 /* `[TYP-37]`: `a < b` by IEEE totalOrder, the order `min`, `max` and `clamp`

@@ -2546,6 +2546,8 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StrTrimEnd
             | Builtin::StrSliceOk
             | Builtin::StrToUpper
+            | Builtin::ParseStatus { .. }
+            | Builtin::ParseValue { .. }
             | Builtin::StrToLower
             | Builtin::StrCharAt
             | Builtin::CharUtf8Len

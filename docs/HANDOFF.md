@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_9.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_10.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_9`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_10`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in

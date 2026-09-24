@@ -395,6 +395,17 @@ pub enum FStringPart {
     Value(Expr, Option<FormatSpec>),
 }
 
+/// `[TXT-10]` (ODR-029) — what `parse` reads.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum ParseKind {
+    Signed,
+    Unsigned,
+    F32,
+    F64,
+    Bool,
+    Char,
+}
+
 /// `[LEX-19]` — a format spec in Python's mini-language,
 /// `[[fill]align][sign][#][0][width][,|_][.precision][type]`, parsed. A
 /// `kind` of `?` is `Debug` (`{x!r}`).
@@ -576,6 +587,10 @@ pub enum Builtin {
     StrTrimEnd,
     StrSliceOk,
     StrToUpper,
+    /// `[TXT-10]` (ODR-029) — `parse`: the status (0 when the text is a
+    /// literal of the kind that fits) and, once it is 0, the value.
+    ParseStatus { kind: ParseKind },
+    ParseValue { kind: ParseKind },
     StrToLower,
     /// `[CTL-1]` — the `char` that starts at a byte index of a `str`.
     StrCharAt,
@@ -928,6 +943,7 @@ impl Builtin {
             Builtin::StrTrimEnd => "trim_end",
             Builtin::StrSliceOk => "slice_ok",
             Builtin::StrToUpper => "to_upper",
+            Builtin::ParseStatus { .. } | Builtin::ParseValue { .. } => "parse",
             Builtin::StrToLower => "to_lower",
             Builtin::StrCharAt => "char_at",
             Builtin::CharUtf8Len => "len_utf8",

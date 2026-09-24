@@ -48,6 +48,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-026 | **CLOSED** — a type with its own `drop` is `Clone` only when it says so | Language / ownership | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_7 |
 | ODR-027 | **CLOSED** — a range is a `Copy` value with public bounds; a `for` counts over a copy of them | Language / standard library | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_8 |
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
+| ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -182,6 +183,49 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-029 — what does `parse[T]()` accept, and what is a `ParseError`? — **CLOSED**
+
+    ID:        ODR-029
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_10
+    Category:  STANDARD LIBRARY / TEXT
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_9.md [TXT-10], §XV module table (`std.string`)
+
+    Question:  `[TXT-10]` lists `parse[T]() -> Result[T, ParseError]` and the module
+               table puts `ParseError` in `std.string`, but nothing says which `T`
+               it reads, what text each accepts (white space? `+`? underscores?
+               `inf`?), or what a `ParseError` is.
+
+    Blocks implementation:            YES — `parse` cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options.**
+- **(A) Python's `int()`/`float()`:** white space around the number, `_` between
+  digits. Rejected: `parse` is not a Python spelling (`int(s)` is, and the
+  Python-habit table maps it to `s.parse[int]()`), and every example in the
+  document trims before parsing (`value.trim().parse[int]()`), which only makes
+  sense if `parse` does not.
+- **(B) Strict, as Rust's `str::parse`:** the whole text, no white space.
+
+**Ruling: (B).** `parse[T]()` reads an integer type, a float type, `bool` or
+`char`, from the whole text: an integer is an optional sign (`-` only for a
+signed type) and ASCII decimal digits, and must fit `T`; a float is an optional
+sign and `inf`, `infinity` or `nan` in any case, or decimal digits with an
+optional `.`, fraction and exponent, rounded to the nearest `T`; a `bool` is
+`true` or `false`; a `char` is exactly one character. `ParseError` is a
+unit-only enum in `std.string`, `Empty`, `Invalid` or `Overflow`, naming the
+first problem from the left.
+
+**Implementation (2026-09-25).** `std/src/string.em` declares `ParseError` and
+is loaded with the prelude modules. The checker builds the `Result` from a
+runtime status (`ember_parse_*_status`, strict validation) and reads the value
+only when the status is 0 (`strtod`/`strtof` in the "C" locale for floats). Not
+built: `i128`/`u128`. Tests: `TXT-10/accept_parse_is_strict.em`,
+`TXT-10/reject_parse_needs_a_type_it_reads.em`.
 
 ---
 

@@ -4565,6 +4565,167 @@ static ember_vec case_map(ember_str s, const ember_case_entry* table, size_t len
     return out;
 }
 
+/* The digits after `at`, checked against `limit` as they accumulate. */
+static uint8_t parse_digits(ember_str s, size_t at, uint64_t limit) {
+    if (at >= s.len) {
+        return 2;
+    }
+    uint64_t value = 0;
+    for (; at < s.len; ++at) {
+        unsigned char c = s.ptr[at];
+        if (c < '0' || c > '9') {
+            return 2;
+        }
+        uint64_t digit = (uint64_t)(c - '0');
+        if (value > (limit - digit) / 10) {
+            return 3;
+        }
+        value = value * 10 + digit;
+    }
+    return 0;
+}
+
+static uint64_t digits_value(ember_str s, size_t at) {
+    uint64_t value = 0;
+    for (; at < s.len; ++at) {
+        value = value * 10 + (uint64_t)(s.ptr[at] - '0');
+    }
+    return value;
+}
+
+/* A signed type's range is `-max - 1 ..= max`. */
+uint8_t ember_parse_signed_status(ember_str s, int64_t max) {
+    if (s.len == 0) {
+        return 1;
+    }
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    uint64_t limit = negative ? (uint64_t)max + 1 : (uint64_t)max;
+    return parse_digits(s, at, limit);
+}
+
+int64_t ember_parse_signed_value(ember_str s) {
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    uint64_t magnitude = digits_value(s, at);
+    return negative ? (int64_t)(0 - magnitude) : (int64_t)magnitude;
+}
+
+uint8_t ember_parse_unsigned_status(ember_str s, uint64_t max) {
+    if (s.len == 0) {
+        return 1;
+    }
+    return parse_digits(s, s.ptr[0] == '+' ? 1 : 0, max);
+}
+
+uint64_t ember_parse_unsigned_value(ember_str s) {
+    return digits_value(s, s.ptr[0] == '+' ? 1 : 0);
+}
+
+static bool same_letters(const unsigned char* p, size_t len, const char* word) {
+    size_t n = strlen(word);
+    if (len != n) {
+        return false;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = p[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = (unsigned char)(c - 'A' + 'a');
+        }
+        if (c != (unsigned char)word[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+uint8_t ember_parse_float_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    const unsigned char* rest = s.ptr + at;
+    size_t len = s.len - at;
+    if (same_letters(rest, len, "inf") || same_letters(rest, len, "infinity") || same_letters(rest, len, "nan")) {
+        return 0;
+    }
+    size_t digits = 0;
+    while (at < s.len && s.ptr[at] >= '0' && s.ptr[at] <= '9') {
+        ++at;
+        ++digits;
+    }
+    if (at < s.len && s.ptr[at] == '.') {
+        ++at;
+        while (at < s.len && s.ptr[at] >= '0' && s.ptr[at] <= '9') {
+            ++at;
+            ++digits;
+        }
+    }
+    if (digits == 0) {
+        return 2;
+    }
+    if (at < s.len && (s.ptr[at] == 'e' || s.ptr[at] == 'E')) {
+        ++at;
+        if (at < s.len && (s.ptr[at] == '-' || s.ptr[at] == '+')) {
+            ++at;
+        }
+        size_t exponent = 0;
+        while (at < s.len && s.ptr[at] >= '0' && s.ptr[at] <= '9') {
+            ++at;
+            ++exponent;
+        }
+        if (exponent == 0) {
+            return 2;
+        }
+    }
+    return at == s.len ? 0 : 2;
+}
+
+/* A validated float literal, NUL-terminated for the C library (whose "C"
+ * locale reads `.` as the point: the program never changes it). */
+static char* float_text(ember_str s, char* small, size_t small_len) {
+    char* text = s.len < small_len ? small : (char*)ember_alloc(s.len + 1, 1);
+    memcpy(text, s.ptr, s.len);
+    text[s.len] = '\0';
+    return text;
+}
+
+double ember_parse_f64_value(ember_str s) {
+    char small[64];
+    char* text = float_text(s, small, sizeof small);
+    double value = strtod(text, NULL);
+    if (text != small) {
+        ember_free(text, s.len + 1, 1);
+    }
+    return value;
+}
+
+float ember_parse_f32_value(ember_str s) {
+    char small[64];
+    char* text = float_text(s, small, sizeof small);
+    float value = strtof(text, NULL);
+    if (text != small) {
+        ember_free(text, s.len + 1, 1);
+    }
+    return value;
+}
+
+uint8_t ember_parse_bool_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    bool is_true = s.len == 4 && memcmp(s.ptr, "true", 4) == 0;
+    bool is_false = s.len == 5 && memcmp(s.ptr, "false", 5) == 0;
+    return (is_true || is_false) ? 0 : 2;
+}
+
+uint8_t ember_parse_char_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    return ember_char_utf8_len(ember_str_char_at(s, 0)) == s.len ? 0 : 2;
+}
+
 ember_vec ember_str_to_upper(ember_str s) {
     return case_map(s, ember_upper_table, ember_upper_table_len, false);
 }
