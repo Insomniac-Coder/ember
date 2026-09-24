@@ -593,6 +593,13 @@ ember_vec ember_str_replace(ember_str s, ember_str from, ember_str to);
 ember_vec ember_str_repeat(ember_str s, int64_t n);
 size_t ember_str_trim_start(ember_str s);
 size_t ember_str_trim_end(ember_str s);
+/* `[TXT-10]` — whether `start..end` is a slice of `s`: in order, within it,
+ * and on character boundaries (`end` itself included when `inclusive`). */
+bool ember_str_slice_ok(ember_str s, int64_t start, int64_t end, bool inclusive);
+/* `[TXT-10]` — Unicode full case mapping (one character may become up to
+ * three); `to_lower` writes a final `Σ` as `ς`. No locale is consulted. */
+ember_vec ember_str_to_upper(ember_str s);
+ember_vec ember_str_to_lower(ember_str s);
 
 /* `[TYP-37]`: `a < b` by IEEE totalOrder, the order `min`, `max` and `clamp`
  * use for floats: -NaN < -inf < ... < -0.0 < +0.0 < ... < +inf < +NaN. */

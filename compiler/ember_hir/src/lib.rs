@@ -574,6 +574,9 @@ pub enum Builtin {
     StrRepeat,
     StrTrimStart,
     StrTrimEnd,
+    StrSliceOk,
+    StrToUpper,
+    StrToLower,
     /// `[CTL-1]` — the `char` that starts at a byte index of a `str`.
     StrCharAt,
     /// How many bytes UTF-8 gives a `char`.
@@ -923,6 +926,9 @@ impl Builtin {
             Builtin::StrRepeat => "repeat",
             Builtin::StrTrimStart => "trim_start",
             Builtin::StrTrimEnd => "trim_end",
+            Builtin::StrSliceOk => "slice_ok",
+            Builtin::StrToUpper => "to_upper",
+            Builtin::StrToLower => "to_lower",
             Builtin::StrCharAt => "char_at",
             Builtin::CharUtf8Len => "len_utf8",
             Builtin::FormatWith(_) => "format",

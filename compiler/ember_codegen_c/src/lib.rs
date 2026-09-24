@@ -3922,6 +3922,15 @@ impl Emitter<'_> {
                     Builtin::StrTrimStart => {
                         return format!("{RT}str_trim_start({})", rendered[0]);
                     }
+                    Builtin::StrToUpper => {
+                        return format!("{RT}str_to_upper({})", rendered[0]);
+                    }
+                    Builtin::StrToLower => {
+                        return format!("{RT}str_to_lower({})", rendered[0]);
+                    }
+                    Builtin::StrSliceOk => {
+                        return format!("{RT}str_slice_ok({}, {}, {}, {})", rendered[0], rendered[1], rendered[2], rendered[3]);
+                    }
                     Builtin::StrTrimEnd => {
                         return format!("{RT}str_trim_end({})", rendered[0]);
                     }

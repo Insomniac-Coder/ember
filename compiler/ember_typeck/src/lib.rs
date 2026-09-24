@@ -10890,6 +10890,129 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[TXT-10]` — `s.get(range) -> Option[str]`: the slice when the range is
+    /// in order, within the text and on character boundaries, else `None`
+    /// (where `s[range]` panics). Any of the prelude's ranges.
+    fn text_get(&mut self, text: Expr, range: &ast::Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (str_ty, int_ty, usize_ty, bool_ty) = (self.common.str_, self.common.i64, self.common.usize, self.common.bool_);
+        let range = self.synth_committed(range);
+        let Some((shape, bound)) = self.range_parts(range.ty) else {
+            if range.ty != self.common.error {
+                let shown = self.types.display(range.ty);
+                self.error(codes::E2020, range.span, format!("`get` takes a range, not `{shown}`"));
+            }
+            return error;
+        };
+        if !self.types.is_integral(bound) {
+            let shown = self.types.display(range.ty);
+            self.error(codes::E2020, range.span, format!("`get` takes a range of integers, not `{shown}`"));
+            return error;
+        }
+        if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
+            let shown = self.types.display(range.ty);
+            self.error(codes::E0900, range.span, format!("`get` with a `{shown}` is not implemented yet"));
+            return error;
+        }
+        let range_ty = range.ty;
+        let view = self.declare(None, str_ty, span);
+        let held = self.declare(None, range_ty, span);
+        let text_local = || Expr { ty: str_ty, kind: ExprKind::Local(view), span };
+        let bound_as_int = |this: &mut Self, index: usize| {
+            let field = Expr {
+                ty: bound,
+                kind: ExprKind::Field { base: Box::new(Expr { ty: range_ty, kind: ExprKind::Local(held), span }), index },
+                span,
+            };
+            if bound == int_ty { field } else { this.coerce_numeric_to_int(field) }
+        };
+        let length = || {
+            let len = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![text_local()] }, span };
+            Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(len), to: int_ty }, span }
+        };
+        let (start, end) = match shape {
+            "std.core.RangeTo" => (Expr { ty: int_ty, kind: ExprKind::Int(0), span }, bound_as_int(self, 0)),
+            "std.core.RangeFrom" => (bound_as_int(self, 0), length()),
+            _ => (bound_as_int(self, 0), bound_as_int(self, 1)),
+        };
+        let lo = self.declare(None, int_ty, span);
+        let hi = self.declare(None, int_ty, span);
+        let int_local = |id| Expr { ty: int_ty, kind: ExprKind::Local(id), span };
+        // `a..=b` includes `b`: the check takes the flag, and `b + 1` is
+        // formed only once `b` is known to be inside the text.
+        let inclusive = shape == "std.core.RangeInclusive";
+        let ok = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::StrSliceOk,
+                args: vec![text_local(), int_local(lo), int_local(hi), Expr { ty: bool_ty, kind: ExprKind::Bool(inclusive), span }],
+            },
+            span,
+        };
+        let as_usize = |id| Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(int_local(id)), to: usize_ty }, span };
+        let slice_end = if inclusive {
+            Expr {
+                ty: usize_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(as_usize(hi)),
+                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(1), span }),
+                },
+                span,
+            }
+        } else {
+            as_usize(hi)
+        };
+        let slice = Expr {
+            ty: str_ty,
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![text_local(), as_usize(lo), slice_end] },
+            span,
+        };
+        let option_ty = self.option_of(str_ty);
+        let TyKind::Enum(option_id) = *self.types.kind(option_ty) else { return error };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let some = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![slice] }, span };
+        let none = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
+        let chosen = Expr {
+            ty: option_ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(ok),
+                arms: vec![arm(hir::PatternKind::Int(1), some), arm(hir::PatternKind::Wild, none)],
+            },
+            span,
+        };
+        Expr {
+            ty: option_ty,
+            kind: ExprKind::Block {
+                block: Block {
+                    stmts: vec![
+                        Stmt::Let { local: view, init: Some(text) },
+                        Stmt::Let { local: held, init: Some(range) },
+                        Stmt::Let { local: lo, init: Some(start) },
+                        Stmt::Let { local: hi, init: Some(end) },
+                    ],
+                    span,
+                },
+                value: Box::new(chosen),
+            },
+            span,
+        }
+    }
+
+    /// An integer converted to `int` for a bounds test. A `u64` past `int`'s
+    /// maximum wraps negative, which the test rejects as out of bounds, as
+    /// the value is.
+    fn coerce_numeric_to_int(&mut self, value: Expr) -> Expr {
+        let int_ty = self.common.i64;
+        let span = value.span;
+        Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(value), to: int_ty }, span }
+    }
+
     /// `[TXT-10]` — `to_string`, `starts_with`, `ends_with`, `find`, `rfind`,
     /// `count`, `replace`, `repeat`, `trim`, `trim_start` and `trim_end`. A
     /// search is by bytes over valid UTF-8, so it matches whole characters;
@@ -10900,7 +11023,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
         let method = name.name.as_str();
         let wanted = match method {
-            "to_string" | "trim" | "trim_start" | "trim_end" => 0,
+            "to_string" | "trim" | "trim_start" | "trim_end" | "to_upper" | "to_lower" => 0,
             "replace" => 2,
             _ => 1,
         };
@@ -10913,6 +11036,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let builtin = |which, args: Vec<Expr>, ty| Expr { ty, kind: ExprKind::Builtin { which, args }, span };
         match method {
             "to_string" => self.to_string_of(text, span),
+            "to_upper" => builtin(Builtin::StrToUpper, vec![text], string_ty),
+            "to_lower" => builtin(Builtin::StrToLower, vec![text], string_ty),
             "starts_with" | "ends_with" => {
                 let needle = self.check_expr(&args[0].value, str_ty);
                 let which = if method == "starts_with" { Builtin::StrStartsWith } else { Builtin::StrEndsWith };
@@ -10922,6 +11047,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let needle = self.check_expr(&args[0].value, str_ty);
                 builtin(Builtin::StrCount, vec![text, needle], int_ty)
             }
+            // `s.get(range)` — `Some` of the slice when it is one, else `None`.
+            "get" => self.text_get(text, &args[0].value, span),
             "replace" => {
                 let from = self.check_expr(&args[0].value, str_ty);
                 let to = self.check_expr(&args[1].value, str_ty);
@@ -19995,7 +20122,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && matches!(
                 name.name.as_str(),
                 "to_string" | "starts_with" | "ends_with" | "find" | "rfind" | "count" | "replace" | "repeat"
-                    | "trim" | "trim_start" | "trim_end"
+                    | "trim" | "trim_start" | "trim_end" | "get" | "to_upper" | "to_lower"
             )
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
