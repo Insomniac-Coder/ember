@@ -690,6 +690,18 @@ impl Parser<'_> {
                 break;
             }
             self.bump_infix(op);
+            // `[CTL-3]` — `a..` has no upper bound (`xs[1..]`, `for i in 0..`).
+            if let InfixOp::Range { inclusive: false } = op
+                && !self.starts_expression()
+            {
+                let id = self.next_id();
+                lhs = Expr {
+                    id,
+                    kind: ExprKind::Range { lo: Some(Box::new(lhs)), hi: None, inclusive: false },
+                    span: start.to(self.prev_span()),
+                };
+                continue;
+            }
             let rhs = self.parse_expr_bp(rbp, allow_block_lambda);
 
             if non_assoc && matches!(op, InfixOp::Bin(b) if b.is_comparison()) {
@@ -1176,10 +1188,38 @@ impl Parser<'_> {
                     // decides which.
                     self.bump();
                     let mut args = Vec::new();
-                    while !self.at_punct(Punct::RBracket) && !self.at_eof() {
-                        args.push(self.parse_type_or_expr());
-                        if !self.eat_punct(Punct::Comma) {
-                            break;
+                    let first = (!self.at_punct(Punct::Colon) && !self.at_punct(Punct::RBracket))
+                        .then(|| self.parse_type_or_expr());
+                    if self.at_punct(Punct::Colon) {
+                        // `[DIA-21]` — Python's slice `xs[a:b]` is `xs[a..b]`.
+                        // Reported once with the fix-it, then read as that
+                        // range so nothing else cascades from it.
+                        let colon = self.span();
+                        let range_start = self.span();
+                        self.bump();
+                        let hi = self.starts_expression().then(|| Box::new(self.parse_expr()));
+                        self.report(
+                            Diagnostic::error(codes::E0100, colon, "a slice is written `xs[a..b]` in Ember")
+                                .primary_label("Python's `:`")
+                                .suggest("write `..`", colon, ".."),
+                        );
+                        let lo = match first {
+                            Some(TypeOrExpr::Expr(lo)) => Some(Box::new(lo)),
+                            _ => None,
+                        };
+                        let id = self.next_id();
+                        args.push(TypeOrExpr::Expr(Expr {
+                            id,
+                            kind: ExprKind::Range { lo, hi, inclusive: false },
+                            span: range_start.to(self.prev_span()),
+                        }));
+                    } else {
+                        args.extend(first);
+                        while (args.is_empty() || self.eat_punct(Punct::Comma))
+                            && !self.at_punct(Punct::RBracket)
+                            && !self.at_eof()
+                        {
+                            args.push(self.parse_type_or_expr());
                         }
                     }
                     self.expect_punct(Punct::RBracket);

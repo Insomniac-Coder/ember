@@ -623,6 +623,13 @@ pub enum Builtin {
     WeakEmpty { weak: Ty },
     /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
     ArrayPush,
+    /// Part VI's slice row, `[TXT-4]` — `v[lo..hi]` of a view (`Span` or
+    /// `str`), as a view of the same kind; `args` are the view and the two
+    /// bounds, already checked. `text` slices a `str`.
+    Slice { text: bool },
+    /// `[TXT-4]` — whether a byte offset of a `str` starts a character (or
+    /// is its end).
+    StrIsCharBoundary,
     /// `a.len()`.
     ArrayLen,
     /// `String()` — an empty string.
@@ -926,6 +933,8 @@ impl Builtin {
                 if mutable { "as_mut_span" } else { "as_span" }
             }
             Builtin::ArraySplitAtMut { .. } => "split_at_mut",
+            Builtin::Slice { .. } => "slice",
+            Builtin::StrIsCharBoundary => "is_char_boundary",
             Builtin::SpanSplitAt { .. } => "split_at",
             Builtin::SpanReborrow => "reborrow",
             Builtin::SpanSharedReborrow => "reborrow",

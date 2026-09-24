@@ -59,13 +59,14 @@ are migrated or retired with the construct, each named in the progress log.
 | `[RNG-5a1]` | IV | The operators on range types come from compiler-generated … | not yet probed | |
 | `[TYP-13]` | IV | `Option[T]` has the size of `T` when `T` has a niche: a class handle, … | not yet probed | |
 | `[TYP-14]` | IV | A reference, and a `Box[T]`, is read through wherever a `T` is wanted … | **gap** | `Box(5) + 1` is `E2020`; a `Box` is not read through in an operator |
-| `[TYP-15]` | IV | Where views may be stored. A view value may be stored only in a place … | not yet probed | |
 | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … | not yet probed | |
 | `[TYP-24]` | IV | An interface method is found through any implementation visible in … | not yet probed | |
 | `[HASH-2]` | IV | `std.collections.DefaultHasher` is a fixed-seed hasher: the same keys … | not yet probed | |
 | `[HASH-3]` | IV | `Map` and `Set` MUST NOT weaken equality to compensate for an … | not yet probed | |
 | `[TYP-23]` | IV | Inference is local to a function body and bidirectional. Function … | fixed | ODR-022; expected types reach generic calls, constructors and `Arena.alloc`; `x = None` and `xs = []` are left open and fixed by a later assignment, `push`/`insert`, or a site expecting a type (the body is checked again with the type known); one still open is `E2060` at its first use. `Map()` waits for `Map` |
 | `[TYP-26]` | IV | There is no overloading: two functions of one name in one scope are … | compliant | two `f` in one module is `E1030` |
+| `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … | fixed | `Array`, views, fixed arrays, tuples (`(7,)`), `Option`, `Result`, nested, each element by its `Debug` (text quoted as Python's `repr` quotes it), in `print` and f-strings; `Map`/`Set` wait for `Map`. A class handle, which has `Debug` but no `Display` (`[TYP-36]`), prints its `Debug`, `<Token at 0x…>`, naming the object's own class (`[STD-9]`'s fallback). After `!r`/`!s`, a spec pads the text as in Python |
+| `[TYP-15]` | IV | Where views may be stored. A view value may be stored only in a … | **defect** | D-198: the type `Array[str]` is rejected (`E3063`) at its formation, so the rule's own `names = ["ann", "bob"]` fails; the rule checks the stored values' regions, as `Box` already does. Open: needs heap-element views to carry the `static` region in the region model (DEFECTS D-198). D-199 fixed the other direction: an inferred `Array` (`[xs[2..]]`) stored non-static views unchecked; a list literal, `push`, `insert` and `a[i] = v` now require `static` views, and a view read out of an `Array` of that view type counts as one of its (static) elements |
 | `[MOD-2]` | V | Items are private to their module unless marked. `pub(package)` makes … | not yet probed | |
 | `[MOD-3]` | V | `import a.b.c` binds the name `c` to module `a.b.c`, and `import … | not yet probed | |
 | `[MOD-5]` | V | The prelude. Every module implicitly imports these names from `std`, … | **gap** | `mem` is not a prelude name; the 0.9.9 prelude functions (`len`, `range`, …) are not built |
@@ -82,7 +83,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[STA-1]` | V | `static NAME: T = e` is one value per program with a stable address. … | not yet probed | |
 | `[ATT-1]` | V | An attribute that is neither in the table below nor a visible … | not yet probed | |
 | `[EXP-2]` | VI | An assignment evaluates its right side first, into a temporary if it … | not yet probed | |
-| `[EXP-4]` | VI | A temporary created while evaluating an expression statement is … | not yet probed | |
+| `[EXP-4]` | VI | A temporary created while evaluating an expression statement is … | partial | a `for` iterable's temporary under a slice or a view (`for x in make()[1..]:`) lives to the loop's end; one that a call's view result borrows (`for x in tail(make()):`) is still `E3020` (older than 0.9.9) |
 | `[CTL-1]` | VI | `for pattern in e:` iterates: * a place `e` whose type is `Iterable`: … | **gap** | `for x in xs` over `Array` works; over a `str` (chars) and a `Span` is `E2040`; `Map` iteration not built |
 | `[CTL-3b]` | VI | Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` … | **gap** | `(0..10).step_by(3)` is `E1010 not supported yet` |
 | `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … | not yet probed | |
@@ -105,7 +106,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[OBJ-1]` | VIII | The header is 24 bytes on 64-bit targets and is part of the runtime … | not yet probed | |
 | `[RC-3]` | VIII | Further elisions are allowed only when semantics are preserved … | not yet probed | |
 | `[RC-4]` | VIII | A non-`Sync` class's counts, and a `Shared`'s, use plain loads and … | not yet probed | |
-| `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … | not yet probed | |
+| `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … | **defect** | D-202: a view of a class field (`v = b.items[1..]`, or `v: Span[int] = b.items`) begins no read access, so `c.items.clear()` through another handle frees what `v` points into (ASan: heap-use-after-free) |
 | `[EXC-2]` | VIII | Beginning a read access to a field while a write access to it is … | not yet probed | |
 | `[EXC-6]` | VIII | A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and … | not yet probed | |
 | `[EXC-7]` | VIII | The opt-in lint `L3013` reports a long-term access held across a … | not yet probed | |
@@ -175,7 +176,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[CG-C-1]` | XVIII | The emitted C has no undefined behaviour. Checked signed arithmetic … | not yet probed | |
 | `[CG-C-2]` | XVIII | Accepted programs compile. A program Ember accepts never produces C … | not yet probed | |
 | `[CG-C-4]` | XVIII | Aliasing facts. For each loop, the base pointer of every view whose … | not yet probed | |
-| `[MNG-1]` | XVIII | Mangling is injective. A symbol is `em_` followed by each path … | not yet probed | |
+| `[MNG-1]` | XVIII | Mangling is injective. A symbol is `em_` followed by each path … | **gap** | the compiler still writes `em_` plus the path with `.` as `_`, which is not injective (`a_b.c` and `a.b_c`), and a user function named `fmt_0` or `eq_0` collides with the generated `em_fmt_0`/`em_eq_0` helpers; MNG-1's length-prefixed components fix both, since a user symbol then always has a digit after `em_` |
 | `[RT-1]` | XVIII | The runtime `ember_rt` is C11 depending on libc and the OS only. … | not yet probed | |
 | `[RT-7]` | XVIII | A reference count never wraps: a retain that would overflow panics … | not yet probed | |
 | `[HR-14]` | ? |  | not yet probed | |
@@ -201,7 +202,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `Option.unwrap`, `unwrap_or`; `String.char_count`; `Array.sort` | Part XV (`[STD-15]` …) | `E1010 has no method` | partial: `Array` has `is_empty`, `contains`, `index_of`, `get`, `first`, `last`, `sort` (stable; scalars and text), `sorted` (`Copy` elements), `reverse`, `pop`, `remove`, `insert`, `clear` (`[STD-15]`); `x in c` for collections, text and ranges (`[STD-8]`); `[ERR-4]`'s `is_some`/`is_none`, `is_ok`/`is_err`, `unwrap`, `expect`, `unwrap_or`, `unwrap_or_default`, `ok`, `err`, `ok_or` are built for both wrappers, each as a `match` (a failed `unwrap`/`expect` panics with the error's text, after `expect`'s message); the methods that take a function (`map`, `and_then`, `unwrap_or_else`, …), `take`/`replace`/`as_ref`/`as_mut`/`iter`/`filter`/`context`, and most of Part XV are not |
 | a range as a value (`r = 0..=2`) | `[TYP-*]`: `Range`/`RangeInclusive` are prelude types | `E1010 this expression is not supported yet` outside a `for` | gap |
 | a float's text | `[STD-20]`: Python's `repr` (`1.0`, `1e+300`, `0.30000000000000004`) | the shortest round trip in `%g` form: `1` for `1.0`, the C library's exponent and NaN spellings | fixed: the shortest digits, fixed notation in [1e-4, 1e16) with `.0` on integral values, exponent notation otherwise, `nan`/`inf`/`-inf`; 13 corpus expectations moved from `9` to `9.0` |
-| `f"{x:>8}"`, `{x=}`, `{x!r}` | `[LEX-19]`: Python's format spec, debugging form and `repr` | `E1010 a format spec is not supported yet` | fixed for numbers, text, `bool` and `char`; `Debug` of aggregates (`[TYP-39]`) is not built |
+| `f"{x:>8}"`, `{x=}`, `{x!r}` | `[LEX-19]`: Python's format spec, debugging form and `repr` | `E1010 a format spec is not supported yet` | fixed for numbers, text, `bool`, `char`, and (`[TYP-39]`) collections, tuples, `Option` and `Result`, which take no spec but `!r`/`=`; structs' derived `Debug` (`[STR-5]`) is not built |
 | `[x * x for x in xs if x > 0]`, `sum(x for x in xs)` | `[GRM-27]`, `[GRM-38]` | comprehensions did not parse | fixed for `Array` comprehensions over collections and ranges, and generator expressions as the argument of `sum`, `any`, `all`; `{…}` comprehensions wait for `Map`/`Set`, and a generator anywhere else is `E0900` |
 | a type in a diagnostic | the type as written (`Option[int]`) | the compiler's internal name (`` `Option_i64` has no method ``) | gap |
 | `a ** b` | `[TYP-30]`: exact integer powers, float `pow` | `E1010 this operator is not supported yet` | gap |
@@ -216,7 +217,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `mem` in the prelude | `[MOD-5]`: `mem` (the module `std.mem`) is a prelude name | `E1010 cannot find mem` | fixed: `std.mem` is always loaded and `mem` is bound in every module; an import replaces it |
 | falling off a non-`void` function | `[FN-10]`: only `void`/`Result[void, E]` have an implicit value | accepted; the C returned an uninitialised slot | fixed (D-186, `E2182`) |
 | unknown attributes | `[ATT-1]`: `E0104`; `[ATT-6]`: a listed attribute whose effect is not built is `E0900`, never accepted and ignored | `@thread_local` (and any unknown name) on a `static` is accepted silently | fixed: every attribute is checked against the table; unknown, reserved and misplaced ones are `E0104`, unbuilt ones `E0900` (built: `@derive(Copy, Clone, Eq)`, `@repr` on enums, `@layout(c)`, `@view`, `@static_safe`, `@overflow`, `@borrows`) |
-| `xs[a..b]` on a `Span` | `[TXT-4]`, `[SPN-2]`: slicing | `E1010 this expression is not supported yet`, then a cascading `E2020` | gap |
+| `xs[a..b]` on a `Span` | `[TXT-4]`, `[SPN-2]`: slicing | `E1010 this expression is not supported yet`, then a cascading `E2020` | fixed: `a[i..j]`, `a[..j]`, `a[i..]`, `a[..]`, `a[i..=j]` of an `Array`, a fixed array, a `Span` (a shared `Span`) or text (a `str`, by byte offset, panicking off a character boundary); bounds checked once when the slice is taken; the slice borrows its source. Not built: slicing a `MutSpan`, and `s.get(a..b)` (`[TXT-4]`'s total form) |
 | a run of invalid characters | `[DIA-20]`: one diagnostic | ```` ``` ```` gives one error per character | gap |
 | a view of a local returned | `[DIA-14]`: only the first error of a cascade | `E3021 cannot be written while it is borrowed` and then `E3060` for one `return view(tmp)` | fixed (D-190) |
 | a panicking accessor's message | `[ERR-13]`: names its non-panicking twin (`index 7 out of range for length 3; use .get(i) for an Option`) | `index 7 is out of bounds for a length of 3`, shared by indexing, `split_at`, chunk sizes and `insert` | gap: each site needs its own twin |

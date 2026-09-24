@@ -136,6 +136,9 @@ pub fn emit(
             .collect(),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
+        fmt_fns: std::cell::RefCell::new(Vec::new()),
+        fmt_prints: std::cell::RefCell::new(Vec::new()),
+        fmt_specs: std::cell::RefCell::new(Vec::new()),
         array_helpers: std::cell::RefCell::new(Vec::new()),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
@@ -262,6 +265,14 @@ struct Emitter<'a> {
     /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
     /// like `eq_fns`.
     array_helpers: std::cell::RefCell<Vec<(ArrayHelper, Ty)>>,
+    /// `[TYP-39]` — the aggregates printed or formatted, one generated
+    /// `Display` function each; and those printed, which also get a wrapper
+    /// that formats into a buffer and writes it.
+    fmt_fns: std::cell::RefCell<Vec<Ty>>,
+    fmt_prints: std::cell::RefCell<Vec<Ty>>,
+    /// And those formatted with a spec after `!r`/`!s`, whose wrapper pads
+    /// the text the conversion made.
+    fmt_specs: std::cell::RefCell<Vec<Ty>>,
 }
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
@@ -272,6 +283,9 @@ const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
 
 /// And by the `[STD-15]` Array helpers' prototypes.
 const ARRAY_HELPER_PROTOTYPES: &str = "/* @@array-helper-prototypes@@ */";
+
+/// And by the `[TYP-39]` formatting functions' prototypes.
+const FMT_FN_PROTOTYPES: &str = "/* @@fmt-fn-prototypes@@ */";
 
 /// One per-type helper an Array method calls. `Pop` is keyed by the
 /// `Option[T]` it returns, the rest by the element type.
@@ -382,6 +396,7 @@ impl Emitter<'_> {
         self.line(DROP_GLUE_PROTOTYPES);
         self.line(EQ_FN_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
+        self.line(FMT_FN_PROTOTYPES);
         self.emit_interface_adapters();
         self.emit_virtual_tables();
         self.emit_class_drop_adapters();
@@ -404,6 +419,7 @@ impl Emitter<'_> {
         if has_main {
             self.emit_entry_point(leak_check);
         }
+        self.emit_fmt_fns();
         // The Array helpers first: `clear` drops through glue it may request.
         self.emit_array_helpers();
         self.emit_drop_glue();
@@ -547,6 +563,174 @@ impl Emitter<'_> {
             fns.len() - 1
         });
         format!("{}({a}, {b})", eq_fn_symbol(index))
+    }
+
+    /// `[TYP-39]` — a value whose `Display` is a generated function: an
+    /// `Array` that is not a `String`, a view, a fixed array, a tuple, and
+    /// the payload-carrying enums the checker lets through (`Option`,
+    /// `Result`).
+    fn is_display_aggregate(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Vec { elem } => !matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)),
+            TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => true,
+            TyKind::Enum(id) => !self.types.enum_def(*id).is_unit_only(),
+            // `[TYP-36]` — a class handle has `Debug`: its class and address.
+            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
+            _ => false,
+        }
+    }
+
+    /// The generated `Display` function of `ty`, requesting it.
+    fn fmt_fn(&self, ty: Ty) -> String {
+        let mut fns = self.fmt_fns.borrow_mut();
+        let index = fns.iter().position(|&known| known == ty).unwrap_or_else(|| {
+            fns.push(ty);
+            fns.len() - 1
+        });
+        fmt_fn_symbol(index)
+    }
+
+    /// The wrapper that formats `ty` with a spec after a conversion,
+    /// requesting it.
+    fn fmt_spec_fn(&self, ty: Ty) -> String {
+        let name = format!("{}_spec", self.fmt_fn(ty));
+        let mut specs = self.fmt_specs.borrow_mut();
+        if !specs.contains(&ty) {
+            specs.push(ty);
+        }
+        name
+    }
+
+    /// The wrapper that prints `ty`, requesting it.
+    fn fmt_print_fn(&self, ty: Ty) -> String {
+        let name = format!("{}_print", self.fmt_fn(ty));
+        let mut prints = self.fmt_prints.borrow_mut();
+        if !prints.contains(&ty) {
+            prints.push(ty);
+        }
+        name
+    }
+
+    /// `[TYP-39]` — a C statement appending `v`'s `Debug` to the buffer
+    /// `out`: text quoted, numbers and `bool` as they display, aggregates
+    /// through their function.
+    fn debug_stmt(&self, out: &str, v: &str, ty: Ty) -> String {
+        if let Some((text, _)) = self.text_pair(v, v, ty) {
+            return format!("{RT}fmt_repr_str({out}, {text});");
+        }
+        match self.types.kind(ty) {
+            TyKind::Char => format!("{RT}fmt_repr_char({out}, {v});"),
+            _ if self.is_display_aggregate(ty) => format!("{}({out}, &({v}));", self.fmt_fn(ty)),
+            _ => format!("{RT}fmt_{}({out}, {v});", self.builtin_suffix(ty)),
+        }
+    }
+
+    /// Define every requested `Display` function, to a fixpoint, then the
+    /// print wrappers, and put their prototypes where the marker stands.
+    fn emit_fmt_fns(&mut self) {
+        let text = |s: &str| format!("{RT}vec_extend(out, \"{s}\", {});", s.len());
+        let mut emitted = 0;
+        let mut prototypes = Vec::new();
+        loop {
+            let pending: Vec<Ty> = self.fmt_fns.borrow()[emitted..].to_vec();
+            if pending.is_empty() {
+                break;
+            }
+            for ty in pending {
+                let symbol = fmt_fn_symbol(emitted);
+                let c_ty = self.c_type(ty);
+                let each = |this: &Self, elem: Ty, at: &str| {
+                    let elem_c = this.c_type(elem);
+                    let item = this.debug_stmt("out", &format!("((const {elem_c}*){at})[i]"), elem);
+                    format!("for (size_t i = 0; i < {{len}}; ++i) {{ if (i) {} {item} }}", text(", "))
+                };
+                let body = match self.types.kind(ty).clone() {
+                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+                        format!("{} {} {}", text("["), each(self, elem, "v->ptr").replace("{len}", "v->len"), text("]"))
+                    }
+                    TyKind::Array { elem, len } => {
+                        format!("{} {} {}", text("["), each(self, elem, "v->_0").replace("{len}", &len.to_string()), text("]"))
+                    }
+                    TyKind::Class(_) | TyKind::ClassInterface(_) => {
+                        format!("{RT}fmt_handle(out, (const void*)(*v));")
+                    }
+                    TyKind::Tuple(items) => {
+                        let mut parts = vec![text("(")];
+                        for (i, &item) in items.iter().enumerate() {
+                            if i > 0 {
+                                parts.push(text(", "));
+                            }
+                            parts.push(self.debug_stmt("out", &format!("v->_{i}"), item));
+                        }
+                        // Python writes a one-element tuple `(1,)`.
+                        if items.len() == 1 {
+                            parts.push(text(","));
+                        }
+                        parts.push(text(")"));
+                        parts.join(" ")
+                    }
+                    TyKind::Enum(id) => {
+                        let def = self.types.enum_def(id).clone();
+                        let mut arms = Vec::new();
+                        for variant in &def.variants {
+                            let mut parts = vec![text(variant.name.as_str())];
+                            if !variant.fields.is_empty() {
+                                parts.push(text("("));
+                                for (i, field) in variant.fields.iter().enumerate() {
+                                    if i > 0 {
+                                        parts.push(text(", "));
+                                    }
+                                    let member = format!("v->payload.{}.{}", variant.name, field.name);
+                                    parts.push(self.debug_stmt("out", &member, field.ty));
+                                }
+                                parts.push(text(")"));
+                            }
+                            arms.push(format!("case {}: {} break;", variant.discriminant, parts.join(" ")));
+                        }
+                        format!("switch (v->tag) {{ {} default: break; }}", arms.join(" "))
+                    }
+                    _ => unreachable!("[TYP-39] Display functions are requested only for aggregates"),
+                };
+                // By pointer: a fixed array can be large, and a copy per
+                // call (and per nesting level) could overflow the stack.
+                prototypes.push(format!("static void {symbol}({RT}vec* out, const {c_ty}* v);"));
+                self.line(&format!("static void {symbol}({RT}vec* out, const {c_ty}* v) {{"));
+                self.line("    (void)v;");
+                self.line(&format!("    {body}"));
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        let specs: Vec<Ty> = self.fmt_specs.borrow().clone();
+        for ty in specs {
+            let symbol = self.fmt_fn(ty);
+            let c_ty = self.c_type(ty);
+            prototypes.push(format!("static void {symbol}_spec({RT}vec* out, const {c_ty}* v, {RT}fmt_spec spec);"));
+            self.line(&format!("static void {symbol}_spec({RT}vec* out, const {c_ty}* v, {RT}fmt_spec spec) {{"));
+            self.line(&format!("    {RT}vec text = {RT}vec_empty();"));
+            self.line(&format!("    {symbol}(&text, v);"));
+            self.line("    spec.kind = 0;");
+            self.line(&format!("    {RT}fmt_spec_str(out, {RT}vec_as_str(&text), spec);"));
+            self.line(&format!("    {RT}vec_free(&text, 1);"));
+            self.line("}");
+            self.line("");
+        }
+        let prints: Vec<Ty> = self.fmt_prints.borrow().clone();
+        for ty in prints {
+            let symbol = self.fmt_fn(ty);
+            let c_ty = self.c_type(ty);
+            prototypes.push(format!("static void {symbol}_print(const {c_ty}* v, int to_stderr);"));
+            self.line(&format!("static void {symbol}_print(const {c_ty}* v, int to_stderr) {{"));
+            self.line(&format!("    {RT}vec buffer = {RT}vec_empty();"));
+            self.line(&format!("    {symbol}(&buffer, v);"));
+            self.line(&format!("    {RT}str text = {RT}vec_as_str(&buffer);"));
+            self.line(&format!("    if (to_stderr) {RT}eprint_str(text); else {RT}print_str(text);"));
+            self.line(&format!("    {RT}vec_free(&buffer, 1);"));
+            self.line("}");
+            self.line("");
+        }
+        self.out = self.out.replacen(FMT_FN_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
     /// `str` and `String` operands as two `str` values, for `{RT}str_cmp`.
@@ -3810,6 +3994,25 @@ impl Emitter<'_> {
                         // arrives as a pointer (as with `SpanFrom` above).
                         return format!("{RT}vec_as_str({})", rendered[0]);
                     }
+                    Builtin::Format | Builtin::FormatWith(_) if self.is_display_aggregate(*arg_ty) => {
+                        // `[TYP-39]` — an aggregate takes a spec only after
+                        // `!r`/`!s` has made it text, and then the spec pads
+                        // that text, as in Python.
+                        let spec = match which {
+                            Builtin::FormatWith(spec) => Some(*spec),
+                            _ => None,
+                        };
+                        return match spec.filter(|spec| hir_spec_is_more_than_a_conversion(spec)) {
+                            None => format!("{}({}, &({}))", self.fmt_fn(*arg_ty), rendered[0], rendered[1]),
+                            Some(spec) => format!(
+                                "{}({}, &({}), {})",
+                                self.fmt_spec_fn(*arg_ty),
+                                rendered[0],
+                                rendered[1],
+                                fmt_spec_literal(&spec)
+                            ),
+                        };
+                    }
                     Builtin::Format => {
                         return format!(
                             "{RT}fmt_{}({}, {})",
@@ -3820,19 +4023,7 @@ impl Emitter<'_> {
                     }
                     // `[LEX-19]` — the parsed spec travels as a struct literal.
                     Builtin::FormatWith(spec) => {
-                        let letter = |c: Option<char>| c.map_or("0".to_string(), |c| format!("'{c}'"));
-                        let spec_c = format!(
-                            "(({RT}fmt_spec){{ {}u, {}, {}, {}, {}, {}u, {}, {}, {} }})",
-                            spec.fill as u32,
-                            letter(spec.align),
-                            letter(spec.sign),
-                            spec.alternate,
-                            spec.zero,
-                            spec.width,
-                            letter(spec.grouping),
-                            spec.precision.map_or(-1, i64::from),
-                            letter(spec.kind)
-                        );
+                        let spec_c = fmt_spec_literal(spec);
                         return format!(
                             "{RT}fmt_spec_{}({}, {}, {spec_c})",
                             self.format_suffix(*arg_ty),
@@ -3891,6 +4082,23 @@ impl Emitter<'_> {
                     Builtin::SpanLen => {
                         return format!("({}).len", rendered[0]);
                     }
+                    // Part VI's slice row — the bounds were checked in MIR.
+                    // An empty view may have no buffer, so an offset of 0
+                    // keeps the pointer as it is.
+                    Builtin::Slice { text } => {
+                        let (view, lo, hi) = (&rendered[0], &rendered[1], &rendered[2]);
+                        return if *text {
+                            format!("(({RT}str){{ ({lo} == 0 ? ({view}).ptr : ({view}).ptr + {lo}), {hi} - {lo} }})")
+                        } else {
+                            let elem = self.c_type(self.span_element(*arg_ty));
+                            format!(
+                                "(({RT}span){{ ({lo} == 0 ? ({view}).ptr : (const void*)(((const {elem}*)({view}).ptr) + {lo})), {hi} - {lo} }})"
+                            )
+                        };
+                    }
+                    Builtin::StrIsCharBoundary => {
+                        return format!("{RT}str_is_char_boundary({}, {})", rendered[0], rendered[1]);
+                    }
                     // `[SPN-2]` — `unsafe s.get_unchecked(i)`. No check, by
                     // construction: `[UNS-4]` makes the bound the caller's
                     // obligation.
@@ -3941,6 +4149,10 @@ impl Emitter<'_> {
                     Builtin::Panic | Builtin::Assert => {
                         unreachable!("VI.6 — panics and assertions are MIR assertions")
                     }
+                }
+                if self.is_display_aggregate(*arg_ty) {
+                    let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln));
+                    return format!("{}(&({}), {to_stderr})", self.fmt_print_fn(*arg_ty), rendered[0]);
                 }
                 let suffix = self.builtin_suffix(*arg_ty);
                 let name = match which {
@@ -4922,6 +5134,34 @@ fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
         }
     }
     referenced
+}
+
+/// `[LEX-19]` — a parsed format spec as a C struct literal.
+fn fmt_spec_literal(spec: &ember_mir::FormatSpec) -> String {
+    let letter = |c: Option<char>| c.map_or("0".to_string(), |c| format!("'{c}'"));
+    format!(
+        "(({RT}fmt_spec){{ {}u, {}, {}, {}, {}, {}u, {}, {}, {} }})",
+        spec.fill as u32,
+        letter(spec.align),
+        letter(spec.sign),
+        spec.alternate,
+        spec.zero,
+        spec.width,
+        letter(spec.grouping),
+        spec.precision.map_or(-1, i64::from),
+        letter(spec.kind)
+    )
+}
+
+/// Whether a spec does more than name a conversion (`!r` is kind `?`, `!s`
+/// kind `s`): a fill, an alignment, a width or a precision.
+fn hir_spec_is_more_than_a_conversion(spec: &ember_mir::FormatSpec) -> bool {
+    (ember_mir::FormatSpec { kind: None, ..*spec }) != ember_mir::FormatSpec::PLAIN
+}
+
+/// `[TYP-39]` — the `index`th generated `Display` function.
+fn fmt_fn_symbol(index: usize) -> String {
+    ember_branding::mangled(&format!("fmt_{index}"))
 }
 
 /// D-187 — the `index`th generated equality function.

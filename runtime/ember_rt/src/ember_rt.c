@@ -1959,6 +1959,35 @@ void ember_fmt_spec_str(ember_vec* out, ember_str value, ember_fmt_spec spec) {
     fmt_spec_text(out, value.ptr, value.len, spec.kind == '?', spec);
 }
 
+/* `[TYP-36]` — a class handle's `Debug`: its class and address. The class is
+ * the object's own, read from its header, so a handle held as a base class or
+ * an interface still names what it points at. */
+void ember_fmt_handle(ember_vec* out, const void* object) {
+    const ember_obj_header* header = (const ember_obj_header*)object;
+    char address[48];
+    int n = snprintf(address, sizeof address, " at %p>", object);
+    ember_vec_extend(out, "<", 1);
+    ember_vec_extend(out, header->ti->name, strlen(header->ti->name));
+    ember_vec_extend(out, address, n > 0 ? (size_t)n : 0);
+}
+
+/* `[TXT-4]` — a byte offset that starts a character, or is the end. */
+bool ember_str_is_char_boundary(ember_str s, size_t i) {
+    return i == 0 || i == s.len || (i < s.len && (s.ptr[i] & 0xC0) != 0x80);
+}
+
+/* `[TYP-39]` — inside a collection, text shows as its `Debug`: quoted as
+ * Python's `repr` quotes it. A `char` is text of one character. */
+void ember_fmt_repr_str(ember_vec* out, ember_str value) {
+    repr_text(out, value.ptr, value.len);
+}
+
+void ember_fmt_repr_char(ember_vec* out, uint32_t value) {
+    unsigned char buffer[4];
+    size_t n = encode_utf8(value, buffer);
+    repr_text(out, buffer, n);
+}
+
 void ember_fmt_spec_bool(ember_vec* out, bool value, ember_fmt_spec spec) {
     const char* word = value ? "true" : "false";
     fmt_spec_text(out, (const unsigned char*)word, strlen(word), false, spec);

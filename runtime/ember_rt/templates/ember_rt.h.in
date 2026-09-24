@@ -600,6 +600,10 @@ void ember_fmt_f32(ember_vec* out, float value);
 void ember_fmt_bool(ember_vec* out, bool value);
 void ember_fmt_char(ember_vec* out, uint32_t value);
 void ember_fmt_str(ember_vec* out, ember_str value);
+void ember_fmt_repr_str(ember_vec* out, ember_str value);
+bool ember_str_is_char_boundary(ember_str s, size_t i);
+void ember_fmt_handle(ember_vec* out, const void* object);
+void ember_fmt_repr_char(ember_vec* out, uint32_t value);
 
 /* -- panics ---------------------------------------------------------------- */
 

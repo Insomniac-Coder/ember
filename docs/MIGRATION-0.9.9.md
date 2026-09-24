@@ -312,3 +312,36 @@ The next number is ODR-024.
   still open is `E2060` at its first use. D-197: `println` of one value skipped the printer check
   and sent an `Array` to C as a string. Messages now show `Option[i64]` and `Result[i64, str]`
   rather than the per-payload names the compiler builds.
+* **2026-09-24 — `print(xs)` shows a list as Python does (`[TYP-39]`).** The C backend generates
+  one `Display` function per printed or formatted aggregate (an `Array` that is not a `String`, a
+  view, a fixed array, a tuple, `Option`, `Result`), requested and emitted like the equality
+  functions, plus a wrapper for the ones printed that formats into a buffer and writes it to
+  stdout or stderr. Elements show by their `Debug`: numbers and `bool` as they display, text and
+  `char` quoted by the runtime's `repr` (new `fmt_repr_str`/`fmt_repr_char`), so `['a', "it's"]`,
+  `(7,)`, `Some('hi')`, `Err('bad')`. A spec on an aggregate is `E2250` (Python refuses one too);
+  `!r` and `=` give the same text. Printing a class handle is `E2040` (`[TYP-36]`: it has `Debug`,
+  not `Display`). Found on the way: D-198 (`Array[str]` rejected at formation), slicing
+  `xs[a..b]` still not built (already listed), and `xs[a..]` does not parse.
+* **2026-09-24 — slicing (Part VI's slice row, `[TXT-4]`, `[SPN-2]`).** `a..` parses with no upper
+  bound. The checker turns `a[range]` into a `Slice` builtin over a view (an `Array` or fixed array
+  through the existing `Span` coercion, a `String` through `as_str`); MIR evaluates the view and
+  both bounds once, asserts `lo <= hi <= len` with the ordinary bounds panic, asserts that a text
+  slice's bounds start characters (`ember_str_is_char_boundary`), then takes the sub-view. The
+  borrow checker treats the result as borrowing its view argument, as `split_at`'s halves do, so an
+  `Array` cannot grow while a slice of it is used. Open question found on the way (ODR-024
+  candidate): `[LT-1]` lets a returned view borrow from "reference or view" parameters; a borrowed
+  `Array`/`String` parameter is neither by type, so `fn head(xs: Array[int]) -> Span[int]:
+  return xs[..2]` (and `return xs` alone) is `E3060` today.
+* **2026-09-24 — review of printing and slicing (workflow, 9 agents: 3 reviewers, 6 skeptics).**
+  Six findings confirmed, nine more checked by hand. Fixed before commit: a slice read its view
+  twice — the length before the bounds, the pointer after — so a bound that changed the view
+  read past its buffer (now one snapshot, `[EXP-1]`); `{xs!r:>10}` pads the conversion's text as
+  in Python (a bare `{xs:>10}` stays `E2250`); a class handle prints its `Debug`, `<Token at
+  0x…>`, with the object's own class (`[TYP-36]`'s table, `[STD-9]`'s fallback), rather than
+  `E2040`; the generated formatting functions take a pointer, so a large fixed array no longer
+  overflows the stack; a type holding an error no longer adds a second error; `xs[a:b]` gets
+  `[DIA-21]`'s fix-it; a `for` over a slice of a temporary keeps the temporary (`[EXP-4]`).
+  Older defects fixed: D-199, D-200, D-203, D-204. Recorded open: D-201 (`String` is
+  `Array[u8]`), D-202 (views of class fields start no access), `[MNG-1]` (mangling not injective,
+  which also lets `fn fmt_0` collide with a generated helper). One finding was wrong:
+  `println(())` printing `()` is `[TYP-36]`'s `Debug` of `void` through `[STD-9]`'s fallback.

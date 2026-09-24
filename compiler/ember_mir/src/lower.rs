@@ -1990,6 +1990,9 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
+            hir::ExprKind::Builtin { which: hir::Builtin::Slice { text }, args } => {
+                self.lower_slice(place, args, *text, expr.span);
+            }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::SpanSplitAt { elem, pair, mutable },
                 args,
@@ -2443,6 +2446,32 @@ impl<'a> Builder<'a> {
                         if (spill_first && index == 0) || (spill_second && index == 1) {
                             match self.lower_operand(a) {
                                 Operand::Const(_) => self.lower_into_temp(a),
+                                // D-200 — `Box`, `Shared` and a list literal
+                                // own their payload. A `Copy` value that owns
+                                // something (a class handle is `Copy`, retained
+                                // when copied) must reach them as a move, or the
+                                // payload and its source release one reference
+                                // twice: a fresh value moves as it is, and a
+                                // place is first copied (and so retained) into a
+                                // temporary of its own.
+                                Operand::Copy(place) if spill_first && self.types.needs_drop(a.ty) => {
+                                    let is_place = matches!(
+                                        a.kind,
+                                        hir::ExprKind::Local(_)
+                                            | hir::ExprKind::Field { .. }
+                                            | hir::ExprKind::EnumField { .. }
+                                            | hir::ExprKind::Index { .. }
+                                            | hir::ExprKind::Deref(_)
+                                    );
+                                    if is_place {
+                                        match self.lower_into_temp(a) {
+                                            Operand::Copy(temp) => Operand::Move(temp),
+                                            other => other,
+                                        }
+                                    } else {
+                                        Operand::Move(place)
+                                    }
+                                }
                                 other => other,
                             }
                         } else {
@@ -5009,6 +5038,94 @@ impl<'a> Builder<'a> {
 
     /// Lower an expression into a fresh local and read it back, so the result
     /// is always something with an address.
+    /// Part VI's slice row, `[TXT-4]` — evaluate the view and the bounds
+    /// once, check `lo <= hi <= len` (a missing `hi` is the length), check
+    /// that a text slice's bounds fall on character boundaries, then take the
+    /// sub-view.
+    fn lower_slice(&mut self, dest: Place, args: &'a [hir::Expr], text: bool, span: ember_span::Span) {
+        let view_ty = args[0].ty;
+        // `[EXP-1]` — the view is evaluated once, before the bounds, into a
+        // temporary: a bound that changes the viewed place must change
+        // neither what is sliced nor the length it is checked against.
+        let view = self.lower_into_temp(&args[0]);
+        let usize_ty = self.usize_ty;
+        let bind = |this: &mut Self, operand: Operand, at: ember_span::Span| {
+            let local = this.temp(usize_ty, at);
+            this.push(StmtKind::StorageLive(local));
+            this.push(StmtKind::Assign { place: Place::local(local), rvalue: Rvalue::Use(operand) });
+            Operand::Copy(Place::local(local))
+        };
+        let lo = self.lower_operand(&args[1]);
+        let lo = bind(self, lo, args[1].span);
+        let len = self.temp(usize_ty, span);
+        self.push(StmtKind::StorageLive(len));
+        self.at(span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin { which: hir::Builtin::SpanLen, arg_ty: view_ty },
+            args: vec![view.clone()],
+            dest: Place::local(len),
+            next,
+        });
+        self.current = next;
+        let len = Operand::Copy(Place::local(len));
+        let hi = match args.get(2) {
+            Some(hi) => {
+                let operand = self.lower_operand(hi);
+                bind(self, operand, hi.span)
+            }
+            None => len.clone(),
+        };
+        let bool_ty = self.bool_ty;
+        let check = |this: &mut Self, lhs: Operand, rhs: Operand, msg: AssertKind| {
+            let ok = this.temp(bool_ty, span);
+            this.push(StmtKind::Assign {
+                place: Place::local(ok),
+                rvalue: Rvalue::BinaryOp { op: BinOp::Le, lhs, rhs },
+            });
+            this.at(span);
+            let next = this.new_block();
+            this.terminate(Terminator::Assert { cond: Operand::Copy(Place::local(ok)), expected: true, msg, next, span });
+            this.current = next;
+        };
+        check(self, lo.clone(), hi.clone(), AssertKind::Bounds { len: hi.clone(), index: lo.clone() });
+        check(self, hi.clone(), len.clone(), AssertKind::Bounds { len, index: hi.clone() });
+        if text {
+            for bound in [&lo, &hi] {
+                let ok = self.temp(bool_ty, span);
+                self.at(span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: hir::Builtin::StrIsCharBoundary, arg_ty: view_ty },
+                    args: vec![view.clone(), bound.clone()],
+                    dest: Place::local(ok),
+                    next,
+                });
+                self.current = next;
+                let next = self.new_block();
+                self.terminate(Terminator::Assert {
+                    cond: Operand::Copy(Place::local(ok)),
+                    expected: true,
+                    msg: AssertKind::Panic {
+                        message: Operand::Const(Const::Str("a slice bound is not on a character boundary".to_string())),
+                    },
+                    next,
+                    span,
+                });
+                self.current = next;
+            }
+        }
+        self.at(span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin { which: hir::Builtin::Slice { text }, arg_ty: view_ty },
+            args: vec![view, lo, hi],
+            dest,
+            next,
+        });
+        self.current = next;
+    }
+
     fn lower_into_temp(&mut self, expr: &'a hir::Expr) -> Operand {
         let temp = self.temp(expr.ty, expr.span);
         self.push(StmtKind::StorageLive(temp));

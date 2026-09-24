@@ -971,7 +971,7 @@ pub enum CastKind {
     },
 }
 
-pub use ember_hir::{BinOp, Builtin, UnOp};
+pub use ember_hir::{BinOp, Builtin, FormatSpec, UnOp};
 
 /// One statement, with the source location it came from.
 #[derive(Clone, Debug)]

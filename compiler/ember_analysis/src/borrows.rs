@@ -1216,6 +1216,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::ArenaScope { .. }
                 | Builtin::ArraySplitAtMut { .. }
                 | Builtin::SpanSplitAt { .. }
+                | Builtin::Slice { .. }
                 | Builtin::SpanReborrow
                 | Builtin::SpanSharedReborrow
                 | Builtin::SpanChunksNew { .. }
@@ -1713,6 +1714,120 @@ fn check_multi_result_summary(
     }
 }
 
+/// `[TYP-15]` — an `Array`'s elements live on the heap, which has no bounding
+/// region, so a view may enter one only when every region it carries is
+/// `static`: `names = ["ann", "bob"]` is an `Array[str]` of static strings, and
+/// `[xs[2..]]` is `E3063`. Checked where an element enters: a list literal,
+/// `push`, `insert` and `a[i] = v` (D-199). A `mut` parameter or `mem.replace`
+/// aimed at an element is D-198's half, which needs heap-element views to be
+/// `static` in the region model itself.
+fn check_array_storage_regions(body: &Body, types: &TypeTable, regions: &Regions, sink: &mut Sink) {
+    let operand_ty = |operand: &Operand| match operand {
+        Operand::Copy(place) | Operand::Move(place) => Some(place_ty(body, types, place)),
+        Operand::Const(_) => None,
+    };
+    // A view read out of an `Array` whose elements are exactly its type is
+    // itself one of those elements, and every element was checked `static`
+    // where it entered: `[n for n in names]` copies static strings.
+    let element_read = |operand: &Operand, value: Ty, point: Point| {
+        regions.operand_origins_at(operand, point).is_some_and(|origins| {
+            !origins.is_empty()
+                && origins.iter().all(|origin| {
+                    let (Origin::Local(local) | Origin::Param(local)) = origin else { return false };
+                    let mut container = body.local(*local).ty;
+                    if let TyKind::Ref { inner, .. } = *types.kind(container) {
+                        container = inner;
+                    }
+                    matches!(*types.kind(container), TyKind::Vec { elem } if elem == value)
+                })
+        })
+    };
+    let is_static = |operand: &Operand, point: Point| {
+        let Some(ty) = operand_ty(operand) else { return true };
+        let value = match *types.kind(ty) {
+            TyKind::Array { elem, .. } if types.is_view(elem) => elem,
+            _ if types.is_view(ty) => ty,
+            _ => return true,
+        };
+        regions.is_static_operand_at(operand, point) || element_read(operand, value, point)
+    };
+    let mut report = |span: Span, elem: Ty| {
+        let shown = types.display(elem);
+        sink.emit_classified(
+            Diagnostic::error(
+                codes::E3063,
+                span,
+                format!("`{shown}` is a view, so it may not be stored in an `Array` unless it is `static`"),
+            )
+            .primary_label("stored here")
+            .help(concat!(
+                "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — ",
+                "and note that costs one allocation per element; or store a `u32` index ",
+                "or a `Handle[T]` and name the container it indexes"
+            ))
+            .note(concat!(
+                "an `Array`'s elements have no bounding region, so only a view with the ",
+                "`static` region may be stored in them, such as a string literal (TYP-15, LT-3)"
+            )),
+        );
+    };
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            let Some((last, prefix)) = place.projection.split_last() else { continue };
+            if !matches!(last, Projection::Index(_) | Projection::ConstIndex(_)) {
+                continue;
+            }
+            let base = Place { local: place.local, projection: prefix.to_vec() };
+            let TyKind::Vec { elem } = *types.kind(place_ty(body, types, &base)) else { continue };
+            if !types.is_view(elem) {
+                continue;
+            }
+            let point = Point { block: block_index, index };
+            let escapes = match rvalue {
+                Rvalue::Use(operand) => !is_static(operand, point),
+                Rvalue::Aggregate { operands, .. } => operands.iter().any(|operand| !is_static(operand, point)),
+                Rvalue::Ref { .. } => true,
+                _ => false,
+            };
+            if escapes {
+                report(stmt.span, elem);
+            }
+        }
+        // `a[i] = f(…)` writes the call's result straight into the element;
+        // the result can only be as static as the views it was given.
+        if let Terminator::Call { dest, args, .. } = &block.terminator
+            && let Some((Projection::Index(_) | Projection::ConstIndex(_), prefix)) = dest.projection.split_last()
+            && let TyKind::Vec { elem } =
+                *types.kind(place_ty(body, types, &Place { local: dest.local, projection: prefix.to_vec() }))
+            && types.is_view(elem)
+        {
+            let point = Point { block: block_index, index: block.stmts.len() };
+            if args.iter().any(|arg| !is_static(arg, point)) {
+                report(block.terminator_span, elem);
+            }
+        }
+        let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, .. } = &block.terminator else {
+            continue;
+        };
+        let value = match which {
+            Builtin::ArrayFromLiteral => args.first(),
+            Builtin::ArrayPush | Builtin::ArrayInsert => args.get(1),
+            _ => None,
+        };
+        let Some(value) = value else { continue };
+        let Some(ty) = operand_ty(value) else { continue };
+        let elem = match *types.kind(ty) {
+            TyKind::Array { elem, .. } if matches!(which, Builtin::ArrayFromLiteral) => elem,
+            _ => ty,
+        };
+        let point = Point { block: block_index, index: block.stmts.len() };
+        if types.is_view(elem) && !is_static(value, point) {
+            report(block.terminator_span, elem);
+        }
+    }
+}
+
 /// `[TYP-15]`, `[LT-3]` — an unbounded Box or Shared owner has no bounding region, so a view may enter it
 /// only when every carried region is static. This check belongs after region
 /// inference: spelling the same static view through a local or a zero-input
@@ -1930,6 +2045,7 @@ fn check_body(
         capture_paths,
     );
     check_box_storage_regions(body, types, &regions, sink);
+    check_array_storage_regions(body, types, &regions, sink);
     check_owned_closure_argument_regions(
         body,
         types,

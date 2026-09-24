@@ -349,6 +349,18 @@ impl Regions {
         &self.accesses[region]
     }
 
+    /// Every origin a view operand's regions carry at `point`; `None` when the
+    /// point was never reached or the operand carries no region.
+    pub fn operand_origins_at(&self, operand: &Operand, point: Point) -> Option<HashSet<Origin>> {
+        let (Operand::Copy(place) | Operand::Move(place)) = operand else { return None };
+        let regions = self.place_regions(place);
+        let state = self.values_at.get(&point)?;
+        if regions.is_empty() {
+            return None;
+        }
+        Some(regions.iter().flat_map(|region| state[*region].origins.iter().copied()).collect())
+    }
+
     /// `[LT-3]` — whether a view operand is proven to carry only the static
     /// region. Constants borrow no runtime storage. A view local is static
     /// exactly when provenance closure found no parameter or local origin for

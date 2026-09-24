@@ -4970,15 +4970,29 @@ impl<'a> Checker<'a> {
     /// Whether the runtime has a formatter for this type. `Display` replaces
     /// this once interfaces carry generics.
     fn is_formattable(&self, ty: Ty) -> bool {
-        matches!(
-            self.types.kind(ty),
-            TyKind::Bool
-                | TyKind::Char
-                | TyKind::Int(_)
-                | TyKind::Uint(_)
-                | TyKind::Float(_)
-                | TyKind::Str
-        ) || matches!(self.types.kind(ty), TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)))
+        match self.types.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
+            // `[TYP-39]` — collections, tuples, `Option` and `Result` show as
+            // Python's `str()` shows them, each element by its `Debug`. The
+            // built-in types' `Debug` is their `Display` with text quoted, so
+            // one test covers both.
+            TyKind::Vec { elem } => *elem == self.common.u8 || self.is_formattable(*elem),
+            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.is_formattable(*elem),
+            TyKind::Tuple(items) => items.iter().all(|item| self.is_formattable(*item)),
+            // `[TYP-36]` — a class handle has no `Display`, but its `Debug`
+            // (class and address) is what printing falls back to ([STD-9]).
+            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
+            // Already reported: one error per cascade ([DIA-14]).
+            TyKind::Error => true,
+            TyKind::Enum(id) if self.is_option(ty) || self.is_result(ty) => self
+                .types
+                .enum_def(*id)
+                .variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter())
+                .all(|field| self.is_formattable(field.ty)),
+            _ => false,
+        }
     }
 
     /// `[LEX-19]` — how an f-string hole asks for its value: `{x:spec}`,
@@ -5017,6 +5031,16 @@ impl<'a> Checker<'a> {
                     return None;
                 }
                 spec = Some(hir::FormatSpec { kind: Some('?'), ..base });
+            }
+            // `[TYP-39]` — `!s` on an aggregate makes it text, which a
+            // spec may then pad; text and numbers already take one.
+            Some('s') if spec.is_some() && self.is_formattable(ty) && self.is_aggregate_text(ty) => {
+                let base = spec.unwrap_or(hir::FormatSpec::PLAIN);
+                if base.kind.is_some_and(|kind| kind != 's') {
+                    self.error(codes::E2250, span, "`!s` writes text, so the spec may not name a type");
+                    return None;
+                }
+                spec = Some(hir::FormatSpec { kind: Some('s'), ..base });
             }
             Some('s') | None => {}
             Some(other) => {
@@ -5083,25 +5107,33 @@ impl<'a> Checker<'a> {
                 }
                 Ok(())
             }
+            // `[TYP-39]` — as in Python, a collection takes no spec of its
+            // own; after `!r` or `!s` it is text, which a fill, an alignment,
+            // a width and a precision pad or cut.
+            _ if self.is_formattable(ty) => {
+                let plain = (hir::FormatSpec { kind: None, ..*spec }) == hir::FormatSpec::PLAIN;
+                match spec.kind {
+                    None | Some('?') if plain => Ok(()),
+                    Some('?' | 's') => {
+                        if spec.sign.is_some() || spec.alternate || spec.zero || spec.grouping.is_some() {
+                            Err("a sign, `#`, `0` and grouping apply to numbers".to_string())
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    _ => Err("a collection, tuple, `Option`, `Result` or class handle takes no format spec; write `!r` or `!s` first to pad its text".to_string()),
+                }
+            }
             _ => Err("only numbers, text, `bool` and `char` take a format spec so far".to_string()),
         }
     }
 
-    /// `[TYP-36]` — a class handle has `Debug` (its class and address) but
-    /// no `Display`, so printing one as it stands is `E2040`. Returns whether
-    /// it reported.
-    fn no_display(&mut self, ty: Ty, span: Span) -> bool {
-        if !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
-            return false;
-        }
-        let shown = self.types.display(ty);
-        self.sink.emit(
-            Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Display`"))
-                .primary_label("a class handle")
-                .note("a class handle has `Debug` (its class and address) but no `Display` [TYP-36]")
-                .help("print one of its fields"),
-        );
-        true
+    /// `[TYP-39]` — a printable value that is not a number, `bool`, `char` or
+    /// text: an aggregate or a class handle, which becomes text only through
+    /// `!r`/`!s`.
+    fn is_aggregate_text(&self, ty: Ty) -> bool {
+        !self.is_text(ty)
+            && !matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Error)
     }
 
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
@@ -9547,6 +9579,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.in_assignment_target = true;
                 let place = self.synth(target);
                 self.in_assignment_target = previous_target;
+                // Only a place can be assigned; anything else would write a
+                // temporary and drop it, silently (a slice, `xs.as_span()`).
+                if !is_place(&place.kind) && place.ty != self.common.error {
+                    let mut diagnostic = Diagnostic::error(codes::E2140, target.span, "assignment target is not a place")
+                        .primary_label("this is a value, not somewhere to store one");
+                    if matches!(place.kind, ExprKind::Builtin { which: Builtin::Slice { .. }, .. }) {
+                        diagnostic = diagnostic
+                            .help("assign the elements one at a time (`xs[i] = v`)")
+                            .note("a slice is a view of the elements; Ember has no slice assignment");
+                    }
+                    self.sink.emit(diagnostic);
+                    return;
+                }
                 // A written local no longer holds whatever `[RNG-4]` derived
                 // at its initialiser. Dropped rather than joined: the
                 // conservative direction here is a check that gets emitted.
@@ -11182,10 +11227,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some(Stmt::Block(Block { stmts: kept, span }))
     }
 
-    /// D-193 — a container a loop or `sum` views must outlive the view. A
-    /// place already does; a temporary (`for x in [1, 2]`) is bound to a
-    /// local of the enclosing block, so it is dropped after the loop rather
-    /// than at the end of the statement that made the view.
     /// `[TYP-23]` — check a function body. A local declared from `None` or
     /// `[]` is left open, and the first use that says its type fixes it; the
     /// body is then checked again with those types written in, and the first
@@ -11321,10 +11362,118 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.sink.emit(diagnostic.help(format!("annotate the declaration: `{annotated}`")));
     }
 
+    /// Part VI's slice row, `[TXT-4]`, `[SPN-2]` — `a[i..j]`, `a[..j]`,
+    /// `a[i..]` view part of an `Array`, a fixed array or a `Span` as a
+    /// `Span`, and part of a text as a `str` by byte offset. The bounds are
+    /// checked when the slice is taken (`lo <= hi <= len`, and for text that
+    /// both fall on character boundaries); a missing bound is `0` or the
+    /// length. A slice is shared: `MutSpan` slices are not built yet.
+    fn synth_slice(
+        &mut self,
+        base: Expr,
+        lo: Option<&ast::Expr>,
+        hi: Option<&ast::Expr>,
+        inclusive: bool,
+        span: Span,
+    ) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let base = self.read_through(base);
+        let (view, text) = match *self.types.kind(base.ty) {
+            TyKind::Str => (base, true),
+            TyKind::Vec { elem } if elem == self.common.u8 => {
+                let str_ty = self.common.str_;
+                (self.coerce(base, str_ty), true)
+            }
+            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+                let view_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+                (self.coerce(base, view_ty), false)
+            }
+            TyKind::Span { mutable: true, .. } => {
+                self.error(codes::E0900, span, "slicing a `MutSpan` is not implemented yet");
+                return error;
+            }
+            _ => {
+                if base.ty != self.common.error {
+                    let shown = self.types.display(base.ty);
+                    self.error(codes::E2020, span, format!("cannot slice `{shown}`"));
+                }
+                return error;
+            }
+        };
+        let usize_ty = self.common.usize;
+        let lo = match lo {
+            Some(lo) => match self.check_index(lo, None, span) {
+                Some(lo) => lo,
+                None => return error,
+            },
+            None => Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+        };
+        let hi = match hi {
+            Some(hi) => match self.check_index(hi, None, span) {
+                Some(hi) => Some(hi),
+                None => return error,
+            },
+            None => None,
+        };
+        let mut args = vec![view, lo];
+        if let Some(hi) = hi {
+            // `a..=b` ends after `b`.
+            let hi = if inclusive {
+                Expr {
+                    ty: usize_ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(hi),
+                        rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(1), span }),
+                    },
+                    span,
+                }
+            } else {
+                hi
+            };
+            args.push(hi);
+        }
+        let ty = args[0].ty;
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::Slice { text }, args }, span }
+    }
+
+    /// `[EXP-4]` — a view made from a temporary (`make()[1..]`,
+    /// `f"{x}".as_str()`) keeps that temporary alive with it: the container
+    /// under a slice or a view is bound to a local of the enclosing block too,
+    /// so it lives as long as the view does.
+    fn keep_viewed_alive(&mut self, value: Expr, stmts: &mut Vec<Stmt>) -> Expr {
+        let Expr { ty, kind, span } = value;
+        match kind {
+            ExprKind::Builtin { which: which @ Builtin::Slice { .. }, mut args } => {
+                let view = args.remove(0);
+                args.insert(0, self.keep_viewed_alive(view, stmts));
+                Expr { ty, kind: ExprKind::Builtin { which, args }, span }
+            }
+            ExprKind::Builtin { which: which @ (Builtin::SpanFrom { .. } | Builtin::StringAsStr), mut args } => {
+                let Expr { ty: ref_ty, kind: ref_kind, span: ref_span } = args.remove(0);
+                let reference = match ref_kind {
+                    ExprKind::Ref { place, mutable } => {
+                        let place = self.keep_alive(*place, stmts);
+                        ExprKind::Ref { place: Box::new(place), mutable }
+                    }
+                    other => other,
+                };
+                args.insert(0, Expr { ty: ref_ty, kind: reference, span: ref_span });
+                Expr { ty, kind: ExprKind::Builtin { which, args }, span }
+            }
+            kind => Expr { ty, kind, span },
+        }
+    }
+
+    /// D-193 — a container a loop or `sum` views must outlive the view. A
+    /// place already does; a temporary (`for x in [1, 2]`) is bound to a
+    /// local of the enclosing block, so it is dropped after the loop rather
+    /// than at the end of the statement that made the view.
     fn keep_alive(&mut self, value: Expr, stmts: &mut Vec<Stmt>) -> Expr {
         if is_place(&value.kind) {
             return value;
         }
+        let value = self.keep_viewed_alive(value, stmts);
         let (ty, span) = (value.ty, value.span);
         let local = self.declare(None, ty, span);
         stmts.push(Stmt::Let { local, init: Some(value) });
@@ -14573,6 +14722,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
                 }
+                if let [ast::TypeOrExpr::Expr(range)] = args.as_slice()
+                    && let ast::ExprKind::Range { lo, hi, inclusive } = &range.kind
+                {
+                    return self.synth_slice(base, lo.as_deref(), hi.as_deref(), *inclusive, span);
+                }
                 let elem = match self.types.kind(base.ty) {
                     // `[SPN-2]` — "Indexing a `Span` is bounds-checked".
                     TyKind::Array { elem, .. }
@@ -14647,8 +14801,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             } else {
                                 value
                             };
-                            if self.no_display(value.ty, expr.span) {
-                            } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                            if !self.is_formattable(value.ty) && value.ty != self.common.error {
                                 let shown = self.types.display(value.ty);
                                 self.error(
                                     codes::E1010,
@@ -17566,6 +17719,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         "while a shared borrow is live the owner may read and copy ",
                         "but not write [BRW-1]"
                     )),
+                );
+                return true;
+            }
+            // `[SPN-1]` — a `Span` is the shared view (`MutSpan` is the one
+            // that writes): an element reached through one is read-only,
+            // whether the view came from a slice, `as_span()` or a local.
+            if let ExprKind::Index { base, .. } = &current.kind
+                && let TyKind::Span { mutable: false, .. } = *self.types.kind(base.ty)
+            {
+                let shown = self.types.display(base.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E3021, span, "cannot write through a shared `Span`")
+                        .primary_label(format!("this is `{shown}`, which only reads"))
+                        .help("write to the container itself (`xs[i] = v`), or take a `MutSpan` where a view must write")
+                        .note("a `Span` is a shared borrow of the elements it views [SPN-1], [BRW-1]"),
                 );
                 return true;
             }
@@ -23576,8 +23744,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     } else {
                         value
                     };
-                    if self.no_display(value.ty, arg.value.span) {
-                    } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
+                    if !self.is_formattable(value.ty) && value.ty != self.common.error {
                         let shown = self.types.display(value.ty);
                         self.error(
                             codes::E0900,
