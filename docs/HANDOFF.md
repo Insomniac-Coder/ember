@@ -10770,7 +10770,8 @@ the dropped place's own storage, a reference to a view parameter's slot is
 `E3060` (`own_slot_returns` keeps it out of `E3062`), views held in locals are
 exempt like parameters', and an `owned self` view is under rule 3 (D-225).
 Open: D-220 (capturing closure through a callable parameter; the design note in
-the ledger says why excluding the environment is not the fix), D-221, D-222.
+the ledger says why excluding the environment is not the fix), D-235
+(class `init` with a callable parameter).
 Ranges are values (ODR-027, Hardened_8): the prelude's `Range`,
 `RangeInclusive`, `RangeFrom`, `RangeTo` are `@derive(Copy)` structs in
 `std/src/core.em` with public bounds; `synth_range_value` builds them,
@@ -10780,7 +10781,9 @@ moves before the body), and `range_len`/`range_contains` serve `len(r)`,
 `r.len()`, `x in r`, `r.contains(x)`; `range(n)`/`range(a, b)` are values
 (`synth_range_call`). D-232 is fixed: `TypeTable::display` is the user's
 spelling (`Range[u8]`), `symbol_name` the instance name every symbol is built
-from. The directory
+from. D-222 is fixed (`[CLO-11]` callable fields, and any callee value
+through `call_value`), and D-236 (a generic struct constructor checks each
+argument once, by name). The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

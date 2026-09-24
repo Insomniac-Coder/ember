@@ -5980,24 +5980,41 @@ impl<'a> Checker<'a> {
     /// expected instance of the same generic (a hint that never overrides
     /// them), then untyped literals, which default only if still open. So
     /// `holder: Holder[i32] = Holder(42)` is a `Holder[i32]`.
+    /// `[TYP-18]` — infer a generic constructor's type arguments from its
+    /// arguments, each checked once: against its field's type when that type
+    /// is concrete, otherwise on its own and unified with it. An untyped
+    /// literal is unified last, after any hint from the expected type, so
+    /// `w: Wrap[u8] = Wrap(1)` makes it a `u8`. Returns the checked values by
+    /// field.
+    #[allow(clippy::too_many_arguments)]
     fn infer_constructor_arguments(
         &mut self,
         name: Symbol,
         args: &[ast::Arg],
+        slots: &[(usize, usize)],
         fields: &[Ty],
         expected: Option<Ty>,
         solved: &mut Vec<Option<Ty>>,
         fixed: usize,
-    ) {
+    ) -> Vec<Option<Expr>> {
+        let mut values: Vec<Option<Expr>> = (0..fields.len()).map(|_| None).collect();
         let mut literals = Vec::new();
-        for (arg, &field) in args.iter().zip(fields.iter()) {
-            let value = self.synth(&arg.value);
+        for &(arg, field) in slots {
+            let declared = fields[field];
+            let value = if self.types.is_generic(declared) {
+                self.synth(&args[arg].value)
+            } else {
+                self.check_expr(&args[arg].value, declared)
+            };
             if self.types.is_untyped_literal(value.ty) {
-                literals.push((field, value));
+                literals.push(field);
+            } else {
+                let value = self.commit(value);
+                self.types.unify_with_fixed(declared, value.ty, solved, fixed);
+                values[field] = Some(value);
                 continue;
             }
-            let value = self.commit(value);
-            self.types.unify_with_fixed(field, value.ty, solved, fixed);
+            values[field] = Some(value);
         }
         let origin = expected.and_then(|ty| match self.types.kind(ty) {
             TyKind::Struct(id) => self.types.struct_def(*id).origin.clone(),
@@ -6014,10 +6031,12 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        for (field, value) in literals {
-            let value = self.commit(value);
+        for field in literals {
+            let Some(value) = &values[field] else { continue };
+            // The literal's own default, as `commit` would give it.
+            let default = if self.types.is_float(value.ty) { self.common.f64 } else { self.common.i64 };
             let mut trial = solved.clone();
-            if self.types.unify_with_fixed(field, value.ty, &mut trial, fixed) {
+            if self.types.unify_with_fixed(fields[field], default, &mut trial, fixed) {
                 for (slot, found) in solved.iter_mut().zip(trial) {
                     if slot.is_none() {
                         *slot = found;
@@ -6025,6 +6044,47 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        values
+    }
+
+    /// `[STR-1]` — which field each constructor argument fills, as
+    /// `(argument, field)` in source order: positional arguments in order,
+    /// or named ones by name. A positional argument among named ones, an
+    /// unknown name and a surplus argument are reported here, once.
+    fn constructor_slots(
+        &mut self,
+        name: Symbol,
+        fields: &[Symbol],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Vec<(usize, usize)> {
+        let mut slots = Vec::new();
+        if args.iter().any(|a| a.name.is_some()) {
+            for (index, arg) in args.iter().enumerate() {
+                let Some(arg_name) = arg.name else {
+                    self.error(codes::E2020, arg.span, "positional arguments must come before named ones");
+                    continue;
+                };
+                match fields.iter().position(|field| *field == arg_name.name) {
+                    Some(field) => slots.push((index, field)),
+                    None => self.error(
+                        codes::E2020,
+                        arg_name.span,
+                        format!("`{name}` has no field `{}`", arg_name.name),
+                    ),
+                }
+            }
+        } else {
+            if args.len() > fields.len() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}` has {} fields, found {} arguments", fields.len(), args.len()),
+                );
+            }
+            slots.extend((0..args.len().min(fields.len())).map(|index| (index, index)));
+        }
+        slots
     }
 
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
@@ -6059,7 +6119,10 @@ impl<'a> Checker<'a> {
         }
         // Unify each declared field type with the value given for it.
         let fields: Vec<Ty> = decl.fields.iter().map(|field| field.ty).collect();
-        self.infer_constructor_arguments(name, args, &fields, expected, &mut solved, explicit.len());
+        let names: Vec<Symbol> = decl.fields.iter().map(|field| field.name).collect();
+        let slots = self.constructor_slots(name, &names, args, span);
+        let values =
+            self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
 
         let mut substitution = Vec::new();
         for (index, param) in decl.params.iter().enumerate() {
@@ -6079,8 +6142,17 @@ impl<'a> Checker<'a> {
         let TyKind::Struct(id) = *self.types.kind(ty) else {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        // D-236 — the arguments were checked once, above; they now take the
+        // instance's field types.
+        self.check_memberwise_constructor(id, span);
+        let field_tys: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
+        let values = values
+            .into_iter()
+            .zip(field_tys)
+            .map(|(value, field_ty)| value.map(|value| self.coerce(value, field_ty)))
+            .collect();
         let instance = self.types.struct_def(id).name;
-        self.synth_struct_literal(id, instance, args, span)
+        self.finish_struct_literal(id, instance, values, span)
     }
 
     fn synth_generic_class_constructor(
@@ -6108,8 +6180,19 @@ impl<'a> Checker<'a> {
         for (slot, ty) in explicit.iter().enumerate() {
             solved[slot] = Some(*ty);
         }
-        let fields: Vec<Ty> = decl.fields.iter().map(|field| field.ty).collect();
-        self.infer_constructor_arguments(name, args, &fields, expected, &mut solved, explicit.len());
+        // D-237 — `init`'s parameters, when there is one, say what the
+        // arguments are; otherwise the fields do (memberwise construction).
+        let init = decl.methods.iter().find(|method| method.name.is("init") && method.receiver.is_some());
+        let (names, fields): (Vec<Symbol>, Vec<Ty>) = match init {
+            Some(init) => init.params.iter().map(|(name, ty, _, _)| (*name, *ty)).unzip(),
+            None => decl.fields.iter().map(|field| (field.name, field.ty)).unzip(),
+        };
+        // The constructor checks the arguments again, so this pass only
+        // infers, and reports nothing of its own.
+        let quiet = self.sink.mark();
+        let slots = self.constructor_slots(name, &names, args, span);
+        self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
+        self.sink.rollback(quiet);
         let mut substitution = Vec::with_capacity(decl.params.len());
         for (index, param) in decl.params.iter().enumerate() {
             let Some(ty) = solved[index] else {
@@ -15230,73 +15313,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
             ast::ExprKind::Field { base, name } => {
                 let base = self.synth(base);
-                // `[CELL-7]` — a temporary guard (e.g. `c.borrow().x`) reads
-                // through like a local one does via `read_local_expecting`.
-                let mut base = match self.ref_guard_inner(base.ty) {
-                    Some(_) => self.read_guard_through(base),
-                    None => base,
-                };
-                // `[TYP-14]` makes field access a value context for every
-                // `ref T` / `ref mut T` expression, including a temporary
-                // returned by a method such as `shared.get().field`. The
-                // method-receiver path already reads ordinary references
-                // before lookup; fields require the same adjustment before
-                // selecting their owner definition.
-                while matches!(self.types.kind(base.ty), TyKind::Ref { .. }) {
-                    base = self.read_through(base);
-                }
-                // IX.1 — field lookup auto-dereferences Box owners. Repeat
-                // for nested boxes; every generated dereference remains
-                // rooted at the owner place for borrow and move analysis.
-                while self.box_inner(base.ty).is_some() {
-                    base = self.read_box_through(base);
-                }
-                match *self.types.kind(base.ty) {
-                    TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
-                        Some((index, field)) => {
-                            let ty = field.ty;
-                            // Resolve, then check, then build. One check on one
-                            // path — see `check_field_visible`.
-                            self.check_field_visible(id, field.vis, field.name, name.span);
-                            Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
-                        }
-                        None => {
-                            self.sink
-                                .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
-                            Expr { ty: self.common.error, kind: ExprKind::Error, span }
-                        }
-                    },
-                    TyKind::Class(id) => match self.types.class_field_info(id, name.name) {
-                        Some((index, owner, field)) => {
-                            let ty = field.ty;
-                            self.check_class_field_visible(owner, field.vis, field.name, name.span);
-                            let field_expr =
-                                Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span };
-                            if !self.in_assignment_target
-                                && self.class_init_field_index(&field_expr).is_some()
-                            {
-                                self.check_class_init_field_read(index, span);
-                            }
-                            field_expr
-                        }
-                        None => {
-                            self.sink
-                                .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
-                            Expr { ty: self.common.error, kind: ExprKind::Error, span }
-                        }
-                    },
-                    _ => {
-                        if base.ty != self.common.error {
-                            let shown = self.types.display(base.ty);
-                            self.error(
-                                codes::E2020,
-                                span,
-                                format!("`{shown}` has no field `{}`", name.name),
-                            );
-                        }
-                        Expr { ty: self.common.error, kind: ExprKind::Error, span }
-                    }
-                }
+                self.field_of(base, *name, span)
             }
 
             // `(a, b)` — Part IV.3. An expected tuple of the same arity flows
@@ -15434,6 +15451,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // `a[i]`. `[GRM-8]` leaves this ambiguous with a generic
             // instantiation until name resolution; an array base settles it.
             // The bounds check is added when this is lowered to MIR.
+            ast::ExprKind::IndexOrInstantiate { base, args } if self.generic_function_named(base).is_some() => {
+                let (def, name) = self.generic_function_named(base).expect("just checked");
+                self.instantiation_value(def, name, args, span)
+            }
+
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 let base_ast = base;
                 let mut base = self.synth(base);
@@ -15953,28 +15975,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[TYP-18]` — `f[i32](x)` names the instantiation explicitly, which
         // parses as a call on an index.
         let (callee, explicit): (&ast::Expr, Vec<Ty>) = match &callee.kind {
+            // A local shadows every item of its name, so `fs[1](x)` with a
+            // local `fs` indexes it and calls the element.
             ast::ExprKind::IndexOrInstantiate { base, args }
-                if matches!(base.kind, ast::ExprKind::Path { .. }) =>
+                if matches!(&base.kind, ast::ExprKind::Path { segments }
+                    if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())) =>
             {
-                // `[GRM-8b]` — the node resolved to an instantiation, so each
-                // argument parsed as an expression is reinterpreted as a type
-                // or a const-generic argument by the ordinary rules.
-                let tys = args
-                    .iter()
-                    .map(|a| match a {
-                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
-                        ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
-                        ast::TypeOrExpr::Binding { name, .. } => {
-                            let name = name.name;
-                            self.error(
-                                codes::E2173,
-                                a.span(),
-                                format!("`{name} = …` binds an associated type, which this instantiation does not take"),
-                            );
-                            self.common.error
-                        }
-                    })
-                    .collect::<Vec<Ty>>();
+                let tys = self.explicit_type_arguments(args);
                 (base.as_ref(), tys)
             }
             _ => (callee, Vec::new()),
@@ -16051,8 +16058,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         let ast::ExprKind::Path { segments } = &callee.kind else {
-            self.error(codes::E1010, span, "only direct calls are supported in this phase");
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            // `[CLO-3]` — any other callee is a value, called by its type.
+            let value = self.synth_committed(callee);
+            return self.call_value(value, args, span);
         };
         // `[MOD-3]` — `import a.b.c` binds `c` as a namespace, so `c.f(x)` is
         // a call into that module.
@@ -16521,6 +16529,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
             let name_span = segments.last().expect("a path has a final segment").span;
+            // D-234 — a local of that name exists; it is not callable.
+            if segments.len() == 1
+                && let Some(local) = self.lookup(name)
+            {
+                let ty = self.locals[local.0 as usize].ty;
+                if ty != self.common.error {
+                    let shown = self.types.display(ty);
+                    self.error(codes::E2020, name_span, format!("`{name}` has type `{shown}`, which cannot be called"));
+                }
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let mut diagnostic = Diagnostic::error(
                 codes::E1010,
                 name_span,
@@ -19571,6 +19590,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.void, kind: ExprKind::Error, span };
         }
         let Some(entry) = self.lookup_method(receiver.ty, name.name) else {
+            // `[CLO-11]` — with no method of that name, a field of callable
+            // type is called.
+            if explicit.is_empty() && self.has_callable_field(receiver.ty, name.name) {
+                let callee = self.field_of(receiver, name, name.span);
+                return self.call_value(callee, args, span);
+            }
             let shown = self.types.display(receiver.ty);
             let mut diagnostic = Diagnostic::error(
                 codes::E1010,
@@ -19846,6 +19871,128 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     /// The compiler-known methods on `Array[T]` and `String`.
+    /// `base.name` for a checked `base`: a temporary `RefCell` guard, a
+    /// reference and a `Box` are read through first (`[CELL-7]`, `[TYP-14]`,
+    /// IX.1), then the struct or class field is selected.
+    fn field_of(&mut self, base: Expr, name: ast::Ident, span: Span) -> Expr {
+        // `[CELL-7]` — a temporary guard (e.g. `c.borrow().x`) reads
+        // through like a local one does via `read_local_expecting`.
+        let mut base = match self.ref_guard_inner(base.ty) {
+            Some(_) => self.read_guard_through(base),
+            None => base,
+        };
+        // `[TYP-14]` makes field access a value context for every
+        // `ref T` / `ref mut T` expression, including a temporary
+        // returned by a method such as `shared.get().field`. The
+        // method-receiver path already reads ordinary references
+        // before lookup; fields require the same adjustment before
+        // selecting their owner definition.
+        while matches!(self.types.kind(base.ty), TyKind::Ref { .. }) {
+            base = self.read_through(base);
+        }
+        // IX.1 — field lookup auto-dereferences Box owners. Repeat
+        // for nested boxes; every generated dereference remains
+        // rooted at the owner place for borrow and move analysis.
+        while self.box_inner(base.ty).is_some() {
+            base = self.read_box_through(base);
+        }
+        match *self.types.kind(base.ty) {
+            TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
+                Some((index, field)) => {
+                    let ty = field.ty;
+                    // Resolve, then check, then build. One check on one
+                    // path — see `check_field_visible`.
+                    self.check_field_visible(id, field.vis, field.name, name.span);
+                    Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
+                }
+                None => {
+                    self.sink
+                        .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
+                    Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                }
+            },
+            TyKind::Class(id) => match self.types.class_field_info(id, name.name) {
+                Some((index, owner, field)) => {
+                    let ty = field.ty;
+                    self.check_class_field_visible(owner, field.vis, field.name, name.span);
+                    let field_expr =
+                        Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span };
+                    if !self.in_assignment_target
+                        && self.class_init_field_index(&field_expr).is_some()
+                    {
+                        self.check_class_init_field_read(index, span);
+                    }
+                    field_expr
+                }
+                None => {
+                    self.sink
+                        .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
+                    Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                }
+            },
+            _ => {
+                if base.ty != self.common.error {
+                    let shown = self.types.display(base.ty);
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("`{shown}` has no field `{}`", name.name),
+                    );
+                }
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
+            }
+        }
+    }
+
+    /// `[CLO-11]` — whether `ty`, read through references and boxes, has a
+    /// field `name` that can be called.
+    fn has_callable_field(&mut self, mut ty: Ty, name: Symbol) -> bool {
+        loop {
+            if let TyKind::Ref { inner, .. } = *self.types.kind(ty) {
+                ty = inner;
+            } else if let Some(inner) = self.box_inner(ty) {
+                ty = inner;
+            } else {
+                break;
+            }
+        }
+        let field = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).field(name).map(|(_, field)| field.ty),
+            TyKind::Class(id) => self.types.class_field_info(id, name).map(|(_, _, field)| field.ty),
+            _ => None,
+        };
+        field.is_some_and(|field| self.is_callable_value(field))
+    }
+
+    fn is_callable_value(&mut self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Fn { .. })
+            || self.callable_bound_of(ty).is_some()
+            || matches!(*self.types.kind(ty), TyKind::Struct(id) if self.closure_calls.contains_key(&id))
+    }
+
+    /// `[CLO-3]` — call a value that is not a named local: a callable field
+    /// (`[CLO-11]`) or any expression of callable type (`make()(3)`), by its
+    /// type, as a local of that type is called.
+    fn call_value(&mut self, value: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+            return self.synth_indirect_call(value, args, span, false, false);
+        }
+        if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
+            let callee = Expr { ty: fn_ty, ..value };
+            return self.synth_indirect_call(callee, args, span, consumes_callee, false);
+        }
+        if let TyKind::Struct(id) = *self.types.kind(value.ty)
+            && self.closure_calls.contains_key(&id)
+        {
+            return self.synth_closure_call(value, id, args, span, false);
+        }
+        if value.ty != self.common.error {
+            let shown = self.types.display(value.ty);
+            self.error(codes::E2020, value.span, format!("a value of type `{shown}` cannot be called"));
+        }
+        Expr { ty: self.common.error, kind: ExprKind::Error, span }
+    }
+
     /// `[CLO-3]` — a call through a value of function type.
     fn synth_indirect_call(
         &mut self,
@@ -20924,15 +21071,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     format!("`{name}` is generic, so it is not one function"),
                 )
-                // `[TYP-18]` makes `{name}[i32]` a value; that is not built
-                // yet (D-221), so the help names what compiles today.
+                // `[TYP-18]` — `{name}[i32]` names one instantiation.
                 .help(format!(
-                    "wrap one instantiation in a lambda, `fn(x) => {name}(x)`, whose argument type fixes it"
+                    "name one instantiation, `{name}[i32]`, or wrap a call in a lambda, `fn(x) => {name}(x)`"
                 ))
                 .note("a generic is a recipe; each instantiation is its own function [TYP-16]"),
             );
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
+        Some(self.fn_value_of(def, name, span))
+    }
+
+    /// The value of function `def` (`[FN-6]`), unless its `@borrows` lends
+    /// more than a callable type accounts for (`[LT-7]`).
+    fn fn_value_of(&mut self, def: DefId, name: Symbol, span: Span) -> Expr {
+        let signature = &self.signatures[def.0 as usize];
         let params = signature
             .params
             .iter()
@@ -20966,9 +21119,76 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .help(format!("call `{name}` directly, or return a value instead of a view of `{parameter}`"))
                 .note("a callable type's result borrows only what LT-1 gives its own parameters (LT-7)"),
             );
-            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        Some(Expr { ty, kind: ExprKind::FnValue(def), span })
+        Expr { ty, kind: ExprKind::FnValue(def), span }
+    }
+
+    /// `[GRM-8b]` — the arguments of `name[…]` read as types: each one
+    /// parsed as an expression is reinterpreted as a type or a const-generic
+    /// argument by the ordinary rules.
+    fn explicit_type_arguments(&mut self, args: &[ast::TypeOrExpr]) -> Vec<Ty> {
+        args.iter()
+            .map(|a| match a {
+                ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
+                ast::TypeOrExpr::Binding { name, .. } => {
+                    let name = name.name;
+                    self.error(
+                        codes::E2173,
+                        a.span(),
+                        format!("`{name} = …` binds an associated type, which this instantiation does not take"),
+                    );
+                    self.common.error
+                }
+            })
+            .collect()
+    }
+
+    /// `[TYP-18]` — the generic function `base` names, when `base` is a name
+    /// no local shadows.
+    fn generic_function_named(&self, base: &ast::Expr) -> Option<(DefId, Symbol)> {
+        let ast::ExprKind::Path { segments } = &base.kind else { return None };
+        let qualified = match segments.as_slice() {
+            [single] if self.lookup(single.name).is_some() => return None,
+            [single] => self.resolve_name(single.name),
+            _ => self.resolve_qualified(segments)?,
+        };
+        let def = *self.fn_ids.get(&qualified)?;
+        let name = segments.last()?.name;
+        (!self.signatures[def.0 as usize].generics.is_empty()).then_some((def, name))
+    }
+
+    /// `[TYP-18]` (D-221) — `id[i32]` is the function value of that
+    /// instantiation. Every type parameter must be given, the implicit one a
+    /// callable parameter carries (`[CLO-3]`) included, or there is still no
+    /// one function.
+    fn instantiation_value(&mut self, def: DefId, name: Symbol, args: &[ast::TypeOrExpr], span: Span) -> Expr {
+        let tys = self.explicit_type_arguments(args);
+        let generics = &self.signatures[def.0 as usize].generics;
+        let wanted = generics.len();
+        let has_callable = generics.iter().any(|generic| generic.callable.is_some());
+        if tys.len() != wanted {
+            let mut diagnostic = Diagnostic::error(
+                codes::E2060,
+                span,
+                format!(
+                    "`{name}` has {wanted} type parameter(s) and `{name}[…]` gives {}, so it is not one function",
+                    tys.len()
+                ),
+            )
+            .help(format!("wrap a call in a lambda, `fn(x) => {name}(x)`, whose argument type fixes it"));
+            if has_callable {
+                diagnostic = diagnostic.note("a callable parameter is a type parameter of its own [CLO-3]");
+            }
+            self.sink.emit(diagnostic);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if tys.contains(&self.common.error) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let instance = self.instantiate(def, &tys, vec![None; wanted], name, span);
+        self.fn_value_of(instance, name, span)
     }
 
     /// **The only way a view is built.** `[SPN-1]`'s coercion and `[STD-*]`'s
@@ -24128,53 +24348,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .iter()
             .map(|f| (f.name, f.ty, f.has_default))
             .collect();
-        let ty = self.types.intern(TyKind::Struct(id));
 
         // `[STR-1]` — positional or named; fields with defaults may be omitted.
-        let named = args.iter().any(|a| a.name.is_some());
+        let names: Vec<Symbol> = field_info.iter().map(|(field, _, _)| *field).collect();
+        let slots = self.constructor_slots(name, &names, args, span);
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
-
-        if named {
-            for arg in args {
-                let Some(arg_name) = arg.name else {
-                    self.error(
-                        codes::E2020,
-                        arg.span,
-                        "positional arguments must come before named ones",
-                    );
-                    continue;
-                };
-                match field_info.iter().position(|(n, _, _)| *n == arg_name.name) {
-                    Some(index) => {
-                        let expected = field_info[index].1;
-                        values[index] = Some(self.check_expr(&arg.value, expected));
-                    }
-                    None => {
-                        self.error(
-                            codes::E2020,
-                            arg_name.span,
-                            format!("`{name}` has no field `{}`", arg_name.name),
-                        );
-                    }
-                }
-            }
-        } else {
-            if args.len() > field_info.len() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{name}` has {} fields, found {} arguments", field_info.len(), args.len()),
-                );
-            }
-            for (index, arg) in args.iter().enumerate() {
-                if index >= field_info.len() {
-                    break;
-                }
-                let expected = field_info[index].1;
-                values[index] = Some(self.check_expr(&arg.value, expected));
-            }
+        for (arg, field) in slots {
+            values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
         }
+        self.finish_struct_literal(id, name, values, span)
+    }
 
+    /// The literal of struct `id` from the value for each field; a field
+    /// given none takes its default (`[STR-2]`) or is reported.
+    fn finish_struct_literal(&mut self, id: StructId, name: Symbol, mut values: Vec<Option<Expr>>, span: Span) -> Expr {
+        let field_info: Vec<(Symbol, Ty, bool)> = self
+            .types
+            .struct_def(id)
+            .fields
+            .iter()
+            .map(|f| (f.name, f.ty, f.has_default))
+            .collect();
+        let ty = self.types.intern(TyKind::Struct(id));
         let mut fields = Vec::with_capacity(field_info.len());
         for (index, (field_name, field_ty, has_default)) in field_info.iter().enumerate() {
             match values[index].take() {

@@ -11,3 +11,4 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32:
 
 fn main():
     println(apply(identity, 1))     #$ error[E2060]: `identity` is generic, so it is not one function
+    #$ help: name one instantiation, `identity[i32]`

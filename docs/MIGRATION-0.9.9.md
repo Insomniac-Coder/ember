@@ -449,3 +449,15 @@ The next number is ODR-027.
   names. D-233: a help with 18 stray spaces. `annotations.py` now also flags a conformance
   directory with no `accept_*` case (`[TST-4a]`): the cargo harness stops at the first one, so
   every directory after it goes unchecked.
+* **2026-09-24 — callable fields (`[CLO-11]`, D-222); D-234, D-236.** `h.f(x)` calls a field of
+  callable type when there is no method `f` (a method takes precedence); any other callee that is a
+  value is called by its type: `(h.f)(x)`, `pick(b)(x)`, `fs[1](x)`, a lambda written in place.
+  Calling a local that is not callable says so (D-234). A generic struct's constructor maps
+  arguments to fields by name and checks each once (D-236: named arguments in another order were
+  rejected, errors were reported twice, and an inline lambda became two closures), and a generic
+  class infers from `init`'s parameters (D-237). Recorded open: D-235 (a class `init` with a
+  callable parameter cannot be constructed).
+* **2026-09-24 — an instantiation is a value (`[TYP-18]`, D-221).** `id[int]` is the function
+  value of that instantiation, passed, stored and called like any function (`[FN-6]`), with D-219's
+  `@borrows` guard. It must give every type parameter, a callable parameter's implicit one
+  included (`E2060` otherwise, with the count).
