@@ -10770,8 +10770,8 @@ the dropped place's own storage, a reference to a view parameter's slot is
 `E3060` (`own_slot_returns` keeps it out of `E3062`), views held in locals are
 exempt like parameters', and an `owned self` view is under rule 3 (D-225).
 Open: D-220 (capturing closure through a callable parameter; the design note in
-the ledger says why excluding the environment is not the fix), D-235
-(class `init` with a callable parameter).
+the ledger says why excluding the environment is not the fix). The owned
+callable value of `[CLO-3]` (a stored capturing callable) is not built (AUDIT).
 Ranges are values (ODR-027, Hardened_8): the prelude's `Range`,
 `RangeInclusive`, `RangeFrom`, `RangeTo` are `@derive(Copy)` structs in
 `std/src/core.em` with public bounds; `synth_range_value` builds them,

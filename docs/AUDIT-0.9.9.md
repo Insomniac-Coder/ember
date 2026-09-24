@@ -89,7 +89,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[CTL-1]` | VI | `for pattern in e:` iterates: * a place `e` whose type is `Iterable`: … | **gap** | `for x in xs` over `Array` works; over a `str` (chars) and a `Span` is `E2040`; `Map` iteration not built |
 | `[CTL-3b]` | VI | Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` … | **gap** | `(0..10).step_by(3)` is `E1010 not supported yet` |
 | `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … | not yet probed | |
-| `[CLO-3]` | VI | What `fn(A) -> R` means depends on where it is written. * As a … | not yet probed | |
+| `[CLO-3]` | VI | What `fn(A) -> R` means depends on where it is written. * As a … | **gap** | The parameter form (implicit generic, monomorphised) is built, constructors included (D-235). The owned callable value of any other position holds only a function or a capture-free lambda: a capturing or `owned fn` lambda, or a callable parameter, cannot be stored in an `fn(...)` field, local or collection (`expected fn(...), found Callable0`). |
 | `[CLO-4]` | VI | A non-`owned` lambda cannot outlive what it borrows: storing it, … | not yet probed | |
 | `[CLO-6]` | VI | A lambda that moves one of its captures out of itself (into an … | not yet probed | |
 | `[CLO-6a]` | VI | An owned `once fn` value, including one inside a `Box` or a … | not yet probed | |

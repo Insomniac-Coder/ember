@@ -461,3 +461,7 @@ The next number is ODR-027.
   value of that instantiation, passed, stored and called like any function (`[FN-6]`), with D-219's
   `@borrows` guard. It must give every type parameter, a callable parameter's implicit one
   included (`E2060` otherwise, with the count).
+* **2026-09-24 — a constructor takes a callable (D-235).** An `init` whose parameter is `fn(...)`
+  is generic (`[CLO-3]`), and constructing the class now instantiates it for the argument, as a
+  generic method call does. Storing a callable parameter in a field needs `[CLO-3]`'s owned
+  callable value, which is not built (AUDIT).

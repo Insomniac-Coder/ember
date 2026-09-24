@@ -24449,17 +24449,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let params = &signature_params[1..];
-            if args.len() != params.len() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{name}()` takes {} arguments, found {}", params.len(), args.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let slots = self.call_argument_slots(name, args, params);
-            let values = self.check_bound_call_arguments(args, params, &slots);
+            let (init, values, arg_eval_order) = if self.signatures[init.0 as usize].generics.is_empty() {
+                let params = &signature_params[1..];
+                if args.len() != params.len() {
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("`{name}()` takes {} arguments, found {}", params.len(), args.len()),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                let slots = self.call_argument_slots(name, args, params);
+                let values = self.check_bound_call_arguments(args, params, &slots);
+                (init, values, Self::call_eval_order(&slots))
+            } else {
+                // D-235 — an `init` with a callable parameter is generic
+                // (`[CLO-3]`): construction instantiates it for the
+                // arguments, as a generic method call does.
+                let call = self.synth_generic_method_call(init, name, None, true, args, Vec::new(), span, true);
+                let ExprKind::Call { callee, args: values, arg_eval_order, .. } = call.kind else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                (callee, values, arg_eval_order)
+            };
             let defaults = self.class_default_exprs_for_layout(id);
             let field_count = self.types.class_field_count(id);
             let layout_fields: Vec<(Ty, Span, Symbol, bool)> = (0..field_count)
@@ -24499,7 +24511,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 kind: ExprKind::ClassNew {
                     class_id: id,
                     init,
-                    arg_eval_order: Self::call_eval_order(&slots),
+                    arg_eval_order,
                     default_fields,
                     args: values,
                 },
