@@ -1630,6 +1630,36 @@ EMBER_PRINTERS(f64, double)
 EMBER_PRINTERS(bool, bool)
 EMBER_PRINTERS(char, uint32_t)
 
+/* `[STD-10]` — `input(prompt)`: the prompt, flushed, then one line of
+ * standard input without its `\n` (or `\r\n`). The prelude's console
+ * functions treat a console failure as fatal: end of input panics, and the
+ * message names the `Result` form in `std.io`. */
+ember_vec ember_input(ember_str prompt, ember_loc loc) {
+    print_str_to(stdout, prompt);
+    fflush(stdout);
+    ember_vec line = ember_vec_empty();
+    int read_any = 0;
+    int c;
+    while ((c = getchar()) != EOF) {
+        read_any = 1;
+        if (c == '\n') {
+            break;
+        }
+        uint8_t byte = (uint8_t)c;
+        ember_vec_push(&line, 1, &byte);
+    }
+    if (!read_any) {
+        static const char message[] =
+            "input: end of input; `std.io.stdin().read_line()` returns it as a `Result` instead";
+        ember_vec_free(&line, 1);
+        ember_panic(message, sizeof message - 1, loc);
+    }
+    if (line.len > 0 && ((uint8_t*)line.ptr)[line.len - 1] == '\r') {
+        line.len -= 1;
+    }
+    return line;
+}
+
 /* -- formatting -------------------------------------------------------------- */
 
 void ember_fmt_i64(ember_vec* out, int64_t value) {

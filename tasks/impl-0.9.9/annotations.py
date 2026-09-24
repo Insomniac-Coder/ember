@@ -4,7 +4,8 @@ conformance run. Matching follows the harness in `ember_driver/tests/milestones.
 with that code whose text (message, labels, notes or helps) contains `text`; one that trails a
 line of code also needs the diagnostic's primary span on that line. A missing diagnostic and an
 unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
-`#$` continuation lines) and `#$ panics:`. A test uses its first listed profile.
+`#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty) and
+`#$ panics:`. A test uses its first listed profile.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
@@ -16,6 +17,12 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
+
+
+def expected_stdin(text):
+    """`#$ stdin:` lines, each one line of standard input, or None."""
+    lines = [line[len('#$ stdin:'):].strip() for line in text.splitlines() if line.startswith('#$ stdin:')]
+    return ''.join(line + '\n' for line in lines) if lines else None
 
 
 def expected_stdout(text):
@@ -37,8 +44,9 @@ def expected_stdout(text):
     return out
 
 
-def run(args, path):
+def run(args, path, stdin=None):
     result = subprocess.run([EMBER, *args, path], cwd=ROOT, capture_output=True, text=True,
+                            input=stdin if stdin is not None else '',
                             encoding='utf-8', errors='replace')
     return result.returncode, result.stdout.replace('\r\n', '\n'), result.stderr
 
@@ -116,7 +124,7 @@ def check(path):
     if kind == 'compile-fail' and exit_code == 0:
         problems.append('expected compilation to fail')
     if kind in ('run-pass', 'run-fail'):
-        code, out, err = run(['run', '--profile', profile], path)
+        code, out, err = run(['run', '--profile', profile], path, expected_stdin(text))
         stdout = expected_stdout(text)
         if stdout is not None and out.rstrip('\n').split('\n') != stdout:
             problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')

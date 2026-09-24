@@ -629,6 +629,9 @@ void ember_backtrace_print(void);
  * [STD-2] println of a literal or a str does not allocate. */
 void ember_print_str(ember_str s);
 void ember_println_str(ember_str s);
+/* `[STD-10]` — print the prompt, flush, read one line without its ending;
+ * end of input panics at `loc`. */
+ember_vec ember_input(ember_str prompt, ember_loc loc);
 void ember_print_i64(int64_t v);
 void ember_println_i64(int64_t v);
 void ember_print_u64(uint64_t v);

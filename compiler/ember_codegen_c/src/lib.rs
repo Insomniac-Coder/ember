@@ -3439,7 +3439,13 @@ impl Emitter<'_> {
                 for line in retains {
                     self.line(&format!("    {line}"));
                 }
-                let call = self.call_expression(func, args, body);
+                // `[STD-10]` — `input` panics at end of input, at its own call.
+                let call = if matches!(func, FuncRef::Builtin { which: Builtin::Input, .. }) {
+                    let location = self.location(body.blocks[index].terminator_span);
+                    format!("{RT}input({}, {location})", self.operand(&args[0], body))
+                } else {
+                    self.call_expression(func, args, body)
+                };
                 let dest_ty = self.place_ty(dest, body);
                 if self.is_void(dest_ty) {
                     self.line(&format!("    {call};"));
@@ -3935,6 +3941,9 @@ impl Emitter<'_> {
                             rendered[0],
                             rendered[0]
                         );
+                    }
+                    Builtin::Input => {
+                        unreachable!("[STD-10] `input` is emitted with its location by the call terminator")
                     }
                     Builtin::ArrayClone { elem } => {
                         return format!(

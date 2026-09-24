@@ -9,6 +9,9 @@
 //! #$ assert-c: !contains("ember_alloc")
 //! ```
 //!
+//! A run test may feed its program standard input, one `#$ stdin: text` line
+//! per input line (`[STD-10]`'s `input`); without one, standard input is closed.
+//!
 //! `#$` is an ordinary comment to the compiler — `$` has no other meaning
 //! anywhere in Ember — so an annotation can never be mistaken for source and
 //! can never affect compilation.
@@ -39,6 +42,8 @@ fn workspace_root() -> PathBuf {
 struct Expectations {
     kind: Option<String>,
     stdout: Option<String>,
+    /// `#$ stdin:` — one line of standard input per annotation.
+    stdin: Option<String>,
     exit: Option<i32>,
     /// Profiles in which this program must have the same specified result.
     /// Empty means the ordinary `debug` run. A rule with an explicit
@@ -96,6 +101,7 @@ fn code_and_message(value: &str) -> Option<(String, String)> {
 fn parse_expectations(source: &str) -> Expectations {
     let mut expectations = Expectations::default();
     let mut collecting_stdout = false;
+    let mut stdin_lines: Vec<String> = Vec::new();
     let mut stdout_lines: Vec<String> = Vec::new();
 
     for (index, line) in source.lines().enumerate() {
@@ -209,6 +215,9 @@ fn parse_expectations(source: &str) -> Expectations {
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("stdin:") {
+            stdin_lines.push(value.trim().to_string());
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("stdout:") {
             collecting_stdout = true;
             let value = value.trim();
@@ -223,13 +232,16 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, rules, note"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stdin, rules, note"
             );
         }
     }
 
     if !stdout_lines.is_empty() {
         expectations.stdout = Some(stdout_lines.join("\n"));
+    }
+    if !stdin_lines.is_empty() {
+        expectations.stdin = Some(stdin_lines.iter().map(|line| format!("{line}\n")).collect());
     }
     expectations
 }
@@ -361,6 +373,26 @@ fn assert_exact_diagnostics(
         rendered.join("\n")
     );
     (checked.exit, rendered.join("\n"))
+}
+
+/// `ember` with `input` piped to its standard input (`#$ stdin:`).
+fn ember_with_input(args: &[&str], root: &Path, input: &str) -> Run {
+    use std::io::Write;
+    let mut child = Command::new(EMBER)
+        .args(args)
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the ember binary runs");
+    child.stdin.take().expect("piped stdin").write_all(input.as_bytes()).expect("stdin is written");
+    let output = child.wait_with_output().expect("the ember binary finishes");
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
 }
 
 fn ember(args: &[&str], root: &Path) -> Run {
@@ -1605,17 +1637,11 @@ fn check_file(path: &Path, root: &Path) {
     for profile in &profiles {
         let profile_out_dir = out_dir.join(profile);
         let out_dir_arg = profile_out_dir.to_string_lossy().into_owned();
-        let run = ember(
-            &[
-                "run",
-                &relative,
-                "--out-dir",
-                &out_dir_arg,
-                "--profile",
-                profile,
-            ],
-            root,
-        );
+        let arguments = ["run", relative.as_str(), "--out-dir", &out_dir_arg, "--profile", profile];
+        let run = match &expectations.stdin {
+            Some(input) => ember_with_input(&arguments, root, input),
+            None => ember(&arguments, root),
+        };
 
         // A `run-fail` test compiles and runs, then panics with a given message.
         if let Some(message) = &expectations.panics {

@@ -422,3 +422,9 @@ The next number is ODR-027.
   enum displays as its `Debug`, a unit-only enum as its variant name (`{m!r}` for the `Debug`). A
   generic struct shows its name alone; recursive types print to any depth. The compiler-known
   wrappers (`Box`, `Cell`, …) still have no format, and `@no_derive(Debug)` stays `E0900`.
+* **2026-09-24 — `input` (`[STD-10]`).** `input(prompt="")` prints the prompt, flushes, and returns
+  one line of standard input without its `
+` or `
+`; end of input panics at the call, naming
+  `std.io.stdin().read_line()`. The harnesses gained `#$ stdin:` (one input line each); a run test
+  without it gets a closed standard input, as before.

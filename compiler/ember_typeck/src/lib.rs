@@ -12889,12 +12889,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[STD-26]`, `[MOD-5]` (0.9.9) — the prelude's `len`, `min`, `max`,
     /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
     /// other name.
+    /// `[STD-10]` — `input(prompt="") -> String`: the prompt, then a line of
+    /// standard input without its ending.
+    fn synth_input(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let str_ty = self.common.str_;
+        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let prompt = match args {
+            [] => Expr { ty: str_ty, kind: ExprKind::Str(String::new()), span },
+            [arg] if arg.name.is_none_or(|name| name.name.is("prompt")) => self.check_expr(&arg.value, str_ty),
+            _ => {
+                self.error(codes::E2020, span, format!("`input` takes 0 or 1 argument(s), found {}", args.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+        };
+        Expr { ty: string_ty, kind: ExprKind::Builtin { which: Builtin::Input, args: vec![prompt] }, span }
+    }
+
     fn synth_python_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
-        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted") {
+        if !matches!(name, "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted" | "input") {
             return None;
         }
         if name == "sorted" {
             return Some(self.synth_sorted(args, span));
+        }
+        if name == "input" {
+            return Some(self.synth_input(args, span));
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let positional: Vec<&ast::Expr> =
