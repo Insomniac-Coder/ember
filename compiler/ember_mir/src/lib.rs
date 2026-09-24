@@ -73,6 +73,8 @@ pub struct Body {
     /// `[LT-1]` (ODR-024) — the source parameters' positions, fixed by the
     /// declared signature: rules 2 and 3 count these.
     pub sources: Vec<usize>,
+    /// Whether this is a lambda's body, which cannot carry `@borrows`.
+    pub is_lambda: bool,
     /// `[FN-1]` — the parameters this body borrows rather than owns, as MIR
     /// locals. A borrowed parameter arrives as a bitwise copy of the caller's
     /// value with no loan behind it, so no borrow analysis can see that the
@@ -1218,7 +1220,9 @@ pub enum FuncRef {
     /// `[CLO-3]`, `[FN-6b]` — a call through a value of function type. The
     /// operand holds the callee; `latebound` is the expected callable-boundary
     /// fact and is erased before code generation.
-    Indirect { operand: Operand, latebound: bool },
+    /// `sources` (`[LT-7]`): the callable type's source parameters, which the
+    /// result may borrow; `None` when the callee's type is not a `fn` type.
+    Indirect { operand: Operand, latebound: bool, sources: Option<Vec<usize>> },
     /// A call the compiler provides itself, lowered to an `ember_rt` entry.
     Builtin {
         which: ember_hir::Builtin,
@@ -1505,7 +1509,7 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                     let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
                     ("", format!("Box[dyn {bounds}]"))
                 }
-                FuncRef::Indirect { operand, latebound } => (
+                FuncRef::Indirect { operand, latebound, .. } => (
                     if *latebound { "@latebound " } else { "" },
                     dump_operand(operand, types),
                 ),

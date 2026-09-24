@@ -10732,13 +10732,29 @@ harness (D-205–D-208); ODR-021, ODR-022, ODR-023 and ODR-024. The next ODR is 
 is not `Copy` (or holds a `Cell`) is a `ref T` local passed as `T*`; views pass
 as themselves. The source set for `[LT-1]` rules 2–3 is computed once from the
 declared signature (`sources` on the HIR function and MIR body; type
-parameters count as `Copy`). Fixed D-209–D-215. Open from it: D-216 (`[TYP-5]`
-rule 7 auto-borrow), D-217 (a reference to a view parameter's own slot escapes:
-narrowing `check_escapes` breaks `SPN-5`'s `span.iter_mut()`, so it needs a
-reborrow through a reference to a view to carry the view's own region), D-218
-(class getters returning a view of a field, needs `[EXC-18]`). A call through a
-callable value still takes `Elision::Everything`, and `L3014` for rule 3 is not
-built (`docs/AUDIT-0.9.9.md`). The directory
+parameters count as `Copy`). Fixed D-209–D-217. Open from it: D-218 (class
+getters returning a view of a field, needs `[EXC-18]`). D-216: `[TYP-5]` rule 7
+(a place auto-borrows for a shared `ref T`) is one step in `coerce`, with
+generic inference reading `ref T` through the borrow in
+`unify_generic_argument`. D-217, found on the way, is fixed: `return ref x` for a view
+parameter `x` escaped its own slot. The escape check now exempts only loans
+through a view parameter, and a loan taken only to feed `SpanReborrow` (how a
+`mut self` of `MutSpan` is passed) carries no slot-storage obligation, since
+the reborrowed view points where the original does. A call through a
+callable value borrows the callable type's source parameters
+(`FuncRef::Indirect.sources`, D-219), and `L3014` counts source parameters.
+A review workflow of that batch (6 agents) found two older soundness holes, both
+fixed: two-phase activation (D-223, `check_call_activation`: arguments are read
+with the activated loans still reserved, then each activated loan meets the
+shared loans taken during its reservation) and references into a view
+parameter's own `Array`/`Box` (D-224: `through_indirection` counts only a `ref`
+dereference or a `Span`/`str` element). A drop now conflicts only with loans on
+the dropped place's own storage, a reference to a view parameter's slot is
+`E3060` (`own_slot_returns` keeps it out of `E3062`), views held in locals are
+exempt like parameters', and an `owned self` view is under rule 3 (D-225).
+Open: D-220 (capturing closure through a callable parameter; the design note in
+the ledger says why excluding the environment is not the fix), D-221, D-222,
+D-227. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

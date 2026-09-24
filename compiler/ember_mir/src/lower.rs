@@ -335,6 +335,7 @@ impl<'a> Builder<'a> {
             span: self.function.span,
             borrows: self.function.borrows.clone(),
             sources: self.function.sources.clone(),
+            is_lambda: self.function.is_lambda,
             borrowed_params,
             for_iterators,
             callable_regions: None,
@@ -1243,7 +1244,7 @@ impl<'a> Builder<'a> {
         let result = self.temp_unowned(ret, cell.span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect { operand: callee, latebound: false },
+            func: FuncRef::Indirect { operand: callee, latebound: false, sources: self.types.callable_sources(f.ty) },
             args: vec![old],
             dest: Place::local(result),
             next,
@@ -1338,7 +1339,7 @@ impl<'a> Builder<'a> {
         let argument = self.pass_by_address(Operand::Copy(Place::local(old)), inner, span);
         let after_callback = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect { operand: callee, latebound: false },
+            func: FuncRef::Indirect { operand: callee, latebound: false, sources: self.types.callable_sources(f.ty) },
             // `fn(T) -> T` uses `[FN-2]`'s default borrowed mode. The old
             // value stays owned by this lowering temporary until statement
             // end; the callback may inspect it but cannot consume it.
@@ -1917,7 +1918,11 @@ impl<'a> Builder<'a> {
                 }
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
-                    func: FuncRef::Indirect { operand: callee_op, latebound: *latebound },
+                    func: FuncRef::Indirect {
+                        operand: callee_op,
+                        latebound: *latebound,
+                        sources: self.types.callable_sources(callee.ty),
+                    },
                     args,
                     dest: place,
                     next,

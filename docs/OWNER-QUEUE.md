@@ -262,8 +262,8 @@ The sources are fixed by the declared signature (types, modes, `@derive(Copy)`, 
 - **Class-handle receivers are left out.** A class handle is `Copy`, so it is
   not a source, and the receiver rule waits for `[EXC-18]`. The class getter
   above is still `E3060` (D-218, open).
-- **`[TYP-5]` rule 7 is not built** (D-216, open). The helps that would rely on
-  it say "take `x` as a `ref` parameter" and stop there.
+- **`[TYP-5]` rule 7 was not built** (D-216). It is now, so the help "take `x`
+  as a `ref` parameter" can add that callers keep writing the same call.
 - **Diagnostics.** A view into an `owned` parameter is `E3060`, with the help
   "borrow `s` instead of taking it `owned`". A view into a parameter that is
   not a source is `E3062`. That help offers `@borrows` only when `@borrows` may
@@ -274,11 +274,14 @@ The sources are fixed by the declared signature (types, modes, `@derive(Copy)`, 
   `sources` on the MIR body, so every instantiation agrees (D-213). A method of
   a generic type is instantiated with its owner, so its non-receiver
   parameters are still read from the owner's instantiation.
+- **A reference to a view parameter's own slot** (`return ref x`, `x: str`)
+  used to escape (D-217, pre-existing). It is now `E3060`, as `[BRW-8]` says of
+  a parameter passed as a copy.
 - **The interface schema is version 8.** The compiler identity includes the
   executable's size and modification time, so no cache written under the old
   ABI is loaded (D-215).
 
-Tests: `LT-1/` (nine cases), `LT-1a/accept_borrows_names_a_mut_copy_parameter.em`,
+Tests: `LT-1/` (thirteen cases), `LT-1a/accept_borrows_names_a_mut_copy_parameter.em`,
 `LT-1a/reject_borrows_names_a_copy_struct_holding_a_cell.em`,
 `LT-44/accept_one_arena_parameter_needs_no_borrows.em`,
 `FN-1/accept_cell_and_refcell_through_borrowed_parameters.em`,

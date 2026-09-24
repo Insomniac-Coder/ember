@@ -1181,6 +1181,28 @@ impl TypeTable {
         self.copy_with(ty, true)
     }
 
+    /// `[LT-1]` (ODR-024) — whether a parameter of this type, borrowed or
+    /// `mut` (`by_reference`) or `owned`, is a source parameter: a reference or
+    /// view in any mode, or a borrowed or `mut` parameter whose type is not
+    /// `Copy` with each type parameter taken to be `Copy`.
+    pub fn is_source_parameter(&self, ty: Ty, by_reference: bool) -> bool {
+        self.is_view(ty) || (by_reference && !self.is_copy_for_elision(ty))
+    }
+
+    /// `[LT-7]` — the source parameters of a callable type, which a call
+    /// through a value of that type borrows (`None` for anything else).
+    pub fn callable_sources(&self, callee: Ty) -> Option<Vec<usize>> {
+        let TyKind::Fn { params, .. } = self.kind(callee) else { return None };
+        Some(
+            params
+                .iter()
+                .enumerate()
+                .filter(|(_, param)| self.is_source_parameter(param.ty, param.mode != FnParamMode::Owned))
+                .map(|(index, _)| index)
+                .collect(),
+        )
+    }
+
     fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
             TyKind::Bool

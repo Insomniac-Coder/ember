@@ -116,6 +116,8 @@ pub struct Function {
     /// `[LT-1]` (ODR-024) — the source parameters' positions, from the
     /// declared signature (for an instantiation, the generic one).
     pub sources: Vec<usize>,
+    /// Whether this is a lambda's body, which cannot carry `@borrows`.
+    pub is_lambda: bool,
     /// Compiler-internal identity for a capturing closure's environment
     /// struct. It is absent for ordinary functions and capture-free closures.
     ///

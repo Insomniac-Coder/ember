@@ -1047,6 +1047,28 @@ impl<'a> Checker<'a> {
     /// with the parameters that would have been valid listed — the attribute
     /// is a contract (`[VER-2]` makes widening it a breaking change), so a
     /// typo in it is worth catching loudly.
+    /// `[LT-1b]` — the opt-in `L3014`: rule 3 ties the result to more than one
+    /// source parameter, which `@borrows` can narrow.
+    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<usize>>, span: Span) {
+        if !self.lint_return_intersection || borrows.is_some() || !self.types.is_view(ret) {
+            return;
+        }
+        let names: Vec<String> = self.sources_of(params).into_iter().map(|index| params[index].0.to_string()).collect();
+        if names.len() >= 2 {
+            self.sink.emit(
+                Diagnostic::lint(
+                    codes::L3014,
+                    span,
+                    format!("return region is the intersection of {} parameters", names.len()),
+                )
+                .help(format!(
+                    "the result borrows every one of {} (LT-1 rule 3); write `@borrows(…)` naming only those it points into",
+                    names.join(", ")
+                )),
+            );
+        }
+    }
+
     fn check_borrows_attribute(
         &mut self,
         attrs: &[ast::Attribute],
@@ -3118,23 +3140,7 @@ impl<'a> Checker<'a> {
                         })
                         .unwrap_or(self.common.void);
                     let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
-                    if self.lint_return_intersection && borrows.is_none() && self.types.is_view(ret) {
-                        let names: Vec<_> = params
-                            .iter()
-                            .filter(|(_, ty, _, _)| self.types.is_view(*ty))
-                            .map(|(name, _, _, _)| name.to_string())
-                            .collect();
-                        if names.len() >= 2 {
-                            self.sink.emit(
-                                Diagnostic::lint(
-                                    codes::L3014,
-                                    item.span,
-                                    format!("return region is the intersection of {} parameters", names.len()),
-                                )
-                                .help(format!("write `@borrows({})` to state the intended provenance", names.join(", "))),
-                            );
-                        }
-                    }
+                    self.lint_rule_3(&params, ret, &borrows, item.span);
                     self.type_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
@@ -3609,8 +3615,12 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let outer_self = self.self_ty.replace(*ty);
+                    // The declaration already had its `L3014` (`[LT-1b]`); a
+                    // copy for each implementing type repeats no lint.
+                    let lint = std::mem::replace(&mut self.lint_return_intersection, false);
                     let signature =
                         self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
+                    self.lint_return_intersection = lint;
                     self.self_ty = outer_self;
                     let Some((receiver, signature)) = signature else {
                         continue;
@@ -4265,7 +4275,7 @@ impl<'a> Checker<'a> {
         decl: &ast::FnDecl,
         self_ty: Option<Ty>,
         attrs: &[ast::Attribute],
-        _span: Span,
+        span: Span,
         generic_index_base: usize,
     ) -> Option<(Option<Mode>, Signature)> {
         let saved_type_params = self.type_params.clone();
@@ -4312,6 +4322,10 @@ impl<'a> Checker<'a> {
         // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
         // is resolved against the same parameter list the body will see.
         let borrows = self.check_borrows_attribute(attrs, &params, ret);
+        // `[LT-1]` rule 1 takes a borrowed receiver; rule 3 is for the rest.
+        if !matches!(receiver, Some(Mode::Borrow | Mode::Mut)) {
+            self.lint_rule_3(&params, ret, &borrows, span);
+        }
         self.type_params = saved_type_params;
         Some((receiver, Signature { params, ret, generics, borrows }))
     }
@@ -7698,6 +7712,7 @@ impl<'a> Checker<'a> {
                 overflow,
                 borrows: self.signatures[def.0 as usize].borrows.clone(),
                 sources: self.declared_sources(def),
+                is_lambda: false,
                 closure_environment: None,
                 closure_captures_by_move: false,
                 class_owner: None,
@@ -7872,6 +7887,7 @@ impl<'a> Checker<'a> {
                     overflow: OverflowPolicy::Panic,
                     borrows: signature.borrows,
                     sources: self.declared_sources(job.def),
+                    is_lambda: false,
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner: Some(class_owner),
@@ -8140,6 +8156,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             sources: self.declared_sources(def),
+            is_lambda: false,
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: None,
@@ -8416,6 +8433,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     overflow: OverflowPolicy::default(),
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
+                    is_lambda: false,
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner,
@@ -8685,6 +8703,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             sources: self.declared_sources(def),
+            is_lambda: false,
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: match self.types.kind(owner) {
@@ -13902,6 +13921,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span };
             }
         }
+        // `[TYP-5]` rule 7 — a place of type `T` where a `ref T` is wanted is
+        // borrowed (auto-borrow), exactly as `ref place` would be. A value
+        // that is not a place has nothing to borrow and stays `E2020`.
+        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(expected)
+            && inner == expr.ty
+            && is_place(&expr.kind)
+        {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Ref { place: Box::new(expr), mutable: false }, span };
+        }
+        // The same for a `mut` parameter or `mut self`, a `ref mut T` local: a
+        // shared reborrow of its target, as `ref p` spells it.
+        if let (&TyKind::Ref { mutable: false, inner: wanted }, &TyKind::Ref { mutable: true, inner: held }) =
+            (self.types.kind(expected), self.types.kind(expr.ty))
+            && wanted == held
+            && is_place(&expr.kind)
+        {
+            let span = expr.span;
+            let target = Expr { ty: held, kind: ExprKind::Deref(Box::new(expr)), span };
+            return Expr { ty: expected, kind: ExprKind::Ref { place: Box::new(target), mutable: false }, span };
+        }
         // `[CELL-7]` — a guard used where its contents are wanted reads
         // through (e.g. `x: i32 = g` where `g: Ref[i32]`). The unwrapped place
         // keeps the guard alive.
@@ -14046,6 +14086,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let numeric = |ty| self.types.is_numeric(ty) || self.types.is_untyped_literal(ty);
         if numeric(expr.ty) && numeric(expected) {
             diagnostic = diagnostic.note("Ember does not convert between numeric types implicitly [TYP-4]");
+        }
+        // `[TYP-5]` rule 7 borrows a place, and only a shared `ref`.
+        if let TyKind::Ref { mutable, inner } = *self.types.kind(expected)
+            && inner == expr.ty
+        {
+            diagnostic = if mutable && is_place(&expr.kind) {
+                diagnostic.help("borrow it explicitly: `ref mut` before the place (TYP-5 rule 7 borrows only as `ref`)")
+            } else {
+                diagnostic.help("bind the value to a local first; only a place is borrowed for a `ref` (TYP-5 rule 7)")
+            };
         }
         let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
         self.sink.emit(diagnostic);
@@ -16738,6 +16788,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         solved: &mut Vec<Option<Ty>>,
         fixed: usize,
     ) -> bool {
+        // `[TYP-5]` rule 7 — a `T` argument is auto-borrowed for a `ref T`
+        // parameter, so inference reads through the borrow. (The unifier
+        // accepts a shape mismatch without solving anything, so this is
+        // decided first.)
+        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(declared)
+            && !matches!(self.types.kind(actual), TyKind::Ref { .. })
+        {
+            return self.types.unify_with_fixed(inner, actual, solved, fixed);
+        }
         if !self.types.unify_with_fixed(declared, actual, solved, fixed) {
             return false;
         }
@@ -17749,8 +17808,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn is_source_parameter(&self, ty: Ty, mode: Mode) -> bool {
-        self.types.is_view(ty)
-            || (matches!(mode, Mode::Borrow | Mode::Mut) && !self.types.is_copy_for_elision(ty))
+        self.types.is_source_parameter(ty, matches!(mode, Mode::Borrow | Mode::Mut))
     }
 
     /// `sources_of` the declared signature: an instantiation's generic one.
@@ -19629,6 +19687,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .enumerate()
             .map(|(index, (_, _, mode, _))| Param { local: LocalId(index as u32), mode: *mode })
             .collect();
+        // `[LT-42]` — a lambda called as itself may hand back the views it
+        // captured, so its environment stays a source. (Through a callable
+        // parameter `[LT-7]` limits the result to the callable type's sources;
+        // that half is D-220, open.)
         let sources = self.sources_of(&signature_params);
         self.signatures.push(Signature {
             params: signature_params,
@@ -19653,6 +19715,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             overflow: self.default_overflow,
             borrows: None,
             sources,
+            is_lambda: true,
             closure_environment,
             closure_captures_by_move,
             class_owner: None,
@@ -20148,8 +20211,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     format!("`{name}` is generic, so it is not one function"),
                 )
+                // `[TYP-18]` makes `{name}[i32]` a value; that is not built
+                // yet (D-221), so the help names what compiles today.
                 .help(format!(
-                    "name the instantiation: `{name}[i32]` picks one, and that is a value"
+                    "wrap one instantiation in a lambda, `fn(x) => {name}(x)`, whose argument type fixes it"
                 ))
                 .note("a generic is a recipe; each instantiation is its own function [TYP-16]"),
             );
@@ -20164,7 +20229,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect();
         let ret = signature.ret;
+        // `[LT-7]` — a call through a callable type borrows only its source
+        // parameters, and the type carries no `@borrows`. A function whose
+        // `@borrows` names another parameter (a `mut` `Copy` one) would lend
+        // its caller a result the call does not account for.
+        let beyond: Vec<Symbol> = match &signature.borrows {
+            Some(named) if self.types.is_view(ret) => {
+                let sources = self.sources_of(&signature.params);
+                named.iter().filter(|index| !sources.contains(index)).map(|index| signature.params[*index].0).collect()
+            }
+            _ => Vec::new(),
+        };
         let ty = self.types.intern(TyKind::Fn { latebound: false, params, ret });
+        if let Some(parameter) = beyond.first() {
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}` is not a value of type `{shown}`: its result borrows `{parameter}` (`@borrows`)"),
+                )
+                .primary_label(format!("`{name}` used as a value here"))
+                .help(format!("call `{name}` directly, or return a value instead of a view of `{parameter}`"))
+                .note("a callable type's result borrows only what LT-1 gives its own parameters (LT-7)"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
         Some(Expr { ty, kind: ExprKind::FnValue(def), span })
     }
 

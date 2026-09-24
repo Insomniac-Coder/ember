@@ -43,7 +43,7 @@ use ember_span::Span;
 use ember_types::{StructId, Ty, TyKind, TypeTable};
 
 use crate::facts::{
-    AccessPermission, BorrowCapability, ProvenanceRoot, ReferenceKind, StorageIdentity,
+    AccessPermission, BorrowCapability, EscapeConstraint, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
 use crate::regions::{CallRegionContract, CallResultContract, Elision, Origin, Point, RegionVid, Regions};
 
@@ -1242,11 +1242,13 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // implementation summary. Treat it as fully opaque for provenance and
         // borrow checking until interface-object summaries are available.
         FuncRef::Interface { .. } => Elision::Everything,
-        // `[CLO-3]` — a call through a function value. `[EFF-2]`'s
-        // reasoning applies to regions too: nothing is known about the
-        // callee, so the permissive reading of `[LT-1]` rule 3 is taken
-        // and the result is treated as borrowing every view argument.
-        FuncRef::Indirect { .. } => Elision::Everything,
+        // `[LT-7]` — a call through a function value borrows what `[LT-1]`
+        // gives a function declared with the callable type's own parameters:
+        // its source parameters (rule 3; a callable type has no receiver and
+        // no `@borrows`, and a function reaching further is not such a
+        // value). A callee of no `fn` type is still opaque.
+        FuncRef::Indirect { sources: Some(sources), .. } => Elision::Named(sources.clone()),
+        FuncRef::Indirect { sources: None, .. } => Elision::Everything,
     }
 }
 
@@ -1550,10 +1552,12 @@ fn is_method_body(body: &Body) -> bool {
     body.arg_count > 0 && body.local(LocalId(1)).name.as_deref() == Some("self")
 }
 
-/// `[LT-1]` rule 1 — a `self`/`mut self` receiver that is itself a borrow.
+/// `[LT-1]` rule 1 — a borrowed receiver (`self` or `mut self`) that is
+/// itself a borrow. An `owned self` is not one: rule 3 takes it with the rest.
 fn receiver_is_a_view(body: &Body, types: &TypeTable) -> bool {
     body.arg_count > 0
         && body.local(LocalId(1)).name.as_deref() == Some("self")
+        && body.param_modes.first() != Some(&ParameterMode::Owned)
         && types.is_view(body.local(LocalId(1)).ty)
 }
 
@@ -1569,6 +1573,41 @@ fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
     source_parameters(body, types).into_iter().map(|index| LocalId(index as u32 + 1)).collect()
 }
 
+/// `E3062`'s offenders: the view parameters a returned view points into
+/// that the result may not borrow.
+fn return_region_offenders(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    own_slot: &HashSet<LocalId>,
+) -> Vec<LocalId> {
+    if !types.is_view(body.return_ty()) {
+        return Vec::new();
+    }
+    let allowed = allowed_origins(body, types);
+    let mut offenders: Vec<LocalId> = regions
+        .local_regions(ember_mir::RETURN_LOCAL)
+        .iter()
+        .flat_map(|slot| regions.origins(slot.region))
+        .filter_map(|origin| match origin {
+            // A borrow of a by-value parameter is not an elision question at
+            // all: nothing in the caller outlives it. `check_escapes` reports
+            // that as `E3060`, the same as a local.
+            Origin::Param(local)
+                if !allowed.contains(local)
+                    && types.is_view(body.local(*local).ty)
+                    && !own_slot.contains(local) =>
+            {
+                Some(*local)
+            }
+            _ => None,
+        })
+        .collect();
+    offenders.sort();
+    offenders.dedup();
+    offenders
+}
+
 /// `E3062` — the returned view points into a parameter elision did not tie it
 /// to (shape B6).
 ///
@@ -1577,7 +1616,13 @@ fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
 /// view-typed, that the return is a view — and the body was free to contradict
 /// it. `@borrows(a)` on a function that returns `b` compiled, and the caller
 /// then went on using `b` while holding a reference into it.
-fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink: &mut Sink) {
+fn check_return_regions(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    own_slot: &HashSet<LocalId>,
+    sink: &mut Sink,
+) {
     if !types.is_view(body.return_ty()) {
         return;
     }
@@ -1612,23 +1657,7 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
         return;
     };
 
-    let mut offenders: Vec<LocalId> = return_regions
-        .iter()
-        .flat_map(|slot| regions.origins(slot.region))
-        .filter_map(|origin| match origin {
-            // A borrow of a by-value parameter is not an elision question at
-            // all: nothing in the caller outlives it. `check_escapes` reports
-            // that as `E3060`, the same as a local.
-            Origin::Param(local)
-                if !allowed.contains(local) && types.is_view(body.local(*local).ty) =>
-            {
-                Some(*local)
-            }
-            _ => None,
-        })
-        .collect();
-    offenders.sort();
-    offenders.dedup();
+    let offenders = return_region_offenders(body, types, regions, own_slot);
 
     for local in offenders {
         let decl = body.local(local);
@@ -1669,12 +1698,32 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
         // holding a `Cell`) gets a help that compiles when applied.
         let index = (local.0 as usize).wrapping_sub(1);
         let nameable = body.param_modes.get(index) == Some(&ParameterMode::Mut) || body.sources.contains(&index);
-        let help = if nameable {
+        let help = if body.is_lambda {
+            // A lambda carries no `@borrows` (C4).
+            "return a value, or a view of one of the lambda's parameters or captures: a lambda \
+             cannot carry `@borrows`"
+                .to_string()
+        } else if nameable {
             help
+        } else if match types.kind(decl.ty) {
+            TyKind::Fn { .. } => true,
+            // A callable parameter instantiated with a lambda has the lambda's
+            // environment type, named `closure{n}_env` by typeck's
+            // `push_closure`. ponytail: matched by that name, since StructDef
+            // has no closure flag; add one if another pass needs to know.
+            TyKind::Struct(id) => {
+                let name = types.struct_def(*id).name;
+                name.as_str().starts_with("closure") && name.as_str().ends_with("_env")
+            }
+            _ => false,
+        } {
+            // `[CLO-3]` — a callable parameter is never a source.
+            "return an owned value: a callable parameter is not one a result can borrow (LT-1)".to_string()
         } else {
             format!(
-                "return the value instead of a view of it, or take `{name}` as a `ref` parameter; \
-                 a borrowed `Copy` parameter is not one a result can borrow (LT-1)"
+                "return the value instead of a view of it, or take `{name}` as a `ref` parameter \
+                 (a caller passing a place keeps the same call, TYP-5 rule 7); a borrowed `Copy` \
+                 parameter is not one a result can borrow (LT-1)"
             )
         };
         sink.emit_classified(
@@ -2080,9 +2129,13 @@ fn check_body(
         sink,
     );
     check_owned_closure_capture_regions(body, types, &regions, owned_closure_environments, sink);
-    // Before the loans: a function that hands back a parameter has no loan of
-    // its own, and `[LT-1a]` is about exactly that function.
-    check_return_regions(body, types, &regions, sink);
+    // A function that hands back a parameter has no loan of its own, and
+    // `[LT-1a]` is about exactly that function. A reference to a view
+    // parameter's own slot is not a question of which parameter the result
+    // borrows: it is `E3060` (`[BRW-8]`), and `check_escapes` reports it.
+    let loans = collect_loans(body, types, &regions, call_contract);
+    let own_slot = own_slot_returns(body, types, &loans, &regions);
+    check_return_regions(body, types, &regions, &own_slot, sink);
     check_multi_result_summary(
         body,
         types,
@@ -2091,7 +2144,6 @@ fn check_body(
         invalid_result_bodies,
         sink,
     );
-    let loans = collect_loans(body, types, &regions, call_contract);
     if loans.is_empty() {
         return;
     }
@@ -2165,7 +2217,28 @@ fn check_body(
                                         .is_some_and(|source| source.local == place.local)
                             }));
                     if !escapes_at_return {
-                        accesses.push((place.clone(), Access::Write));
+                        // A drop ends the place's own storage, so it conflicts
+                        // only with loans that depend on that storage; a view
+                        // handed out by a span built-in points at the span's
+                        // target (D-217), which the drop does not touch.
+                        let depending: Vec<Loan> = loans
+                            .iter()
+                            .filter(|loan| loan.capability.must_not_outlive_storage())
+                            .cloned()
+                            .collect();
+                        check_point(
+                            body,
+                            types,
+                            &depending,
+                            &regions,
+                            &reads,
+                            point,
+                            &[(place.clone(), Access::Write)],
+                            stmt.span,
+                            is_method,
+                            sink,
+                            &mut reported,
+                        );
                     }
                 }
                 // Dynamic class access intervals are checked by the runtime;
@@ -2202,9 +2275,19 @@ fn check_body(
         match &block.terminator {
             Terminator::SwitchInt { discr, .. } => operand_read(discr, &mut accesses),
             Terminator::Call { args, dest, .. } => {
-                for arg in args {
-                    operand_read(arg, &mut accesses);
-                }
+                check_call_activation(
+                    body,
+                    types,
+                    &loans,
+                    &regions,
+                    &reads,
+                    point,
+                    args,
+                    block.terminator_span,
+                    is_method,
+                    sink,
+                    &mut reported,
+                );
                 accesses.push((dest.clone(), Access::Write));
             }
             Terminator::Assert { cond, msg, .. } => {
@@ -2310,11 +2393,15 @@ fn check_escapes(
             .storage_identity
             .arena_owner()
             .or_else(|| is_arena_ty(types, root.ty).then_some(place.local));
-        if is_parameter
-            && (types.is_view(root.ty)
-                || arena_owner.is_some_and(|owner| {
-                    is_named_arena_origin(body, owner, types)
-                }))
+        // D-217 — a loan that reaches its memory through a view, a
+        // parameter's or a local's, points where the view does: the view's own loans keep what
+        // it points to alive, and report it if that is this frame's (a local
+        // array's span). A view parameter's own slot is this frame's
+        // (`return ref x` for `x: str`), and so is an `Array` or `Box` it owns.
+        let through_a_view = types.is_view(root.ty) && through_indirection(body, types, place);
+        if through_a_view
+            || (is_parameter
+                && arena_owner.is_some_and(|owner| is_named_arena_origin(body, owner, types)))
         {
             continue;
         }
@@ -2325,14 +2412,26 @@ fn check_escapes(
         // `owned` (the callee's own) or a `Copy` value passed as a copy.
         let owned_parameter = is_parameter
             && body.param_modes.get((place.local.0 as usize).wrapping_sub(1)) == Some(&ParameterMode::Owned);
-        let storage = if owned_parameter {
+        let own_view_slot = is_parameter && types.is_view(root.ty);
+        let storage = if own_view_slot {
+            format!("`{owner}` is a view passed as a copy; a reference to the view itself points into this frame")
+        } else if owned_parameter {
             format!("`{owner}` is `owned`, so it is the callee's own and its storage ends with the frame")
         } else if is_parameter {
             format!("`{owner}` is passed as a copy, so the copy's storage ends with the frame")
         } else {
             format!("`{owner}` is a local, so its storage ends with the frame")
         };
-        let repair = if owned_parameter {
+        let returns_a_ref_to_the_view = matches!(
+            types.kind(body.return_ty()),
+            TyKind::Ref { inner, .. } if *inner == root.ty
+        );
+        let repair = if own_view_slot && returns_a_ref_to_the_view {
+            let view = types.display(root.ty);
+            format!("return `{view}` instead of `ref {view}`: `{owner}` already borrows the caller's data")
+        } else if own_view_slot {
+            format!("return a view of what `{owner}` points to, or an owned value")
+        } else if owned_parameter {
             format!("borrow `{owner}` instead of taking it `owned`, or return an owned value")
         } else if is_parameter {
             format!("take `{owner}` as a view (`Span[T]`, `str` or `ref T`), or return an owned value")
@@ -2573,9 +2672,14 @@ fn collect_loans(
             } else {
                 paths.iter().map(|path| project_place(borrowed, path)).collect()
             };
+            // D-217 — a loan of a span taken only to hand it to a built-in
+            // (`&mut span` fed to `reborrow` or `split_at`) gives out what the
+            // span points to, not its slot, so the slot's storage obligation
+            // does not apply. The loan still conflicts with every other use.
             for borrowed in borrowed_places {
+                let feeds_reborrow = borrower_feeds_span_builtin(body, types, place.local, &borrowed);
                 let storage_root = borrowed.local;
-                let capability = BorrowCapability::statically_checked_reference(
+                let mut capability = BorrowCapability::statically_checked_reference(
                     place_ty(body, types, &borrowed),
                     provenance_root(body, storage_root),
                     borrowed,
@@ -2584,6 +2688,9 @@ fn collect_loans(
                     permission,
                     reference_kind,
                 );
+                if feeds_reborrow {
+                    capability.escape_constraints.remove(&EscapeConstraint::MustNotOutliveStorage);
+                }
                 loans.push(Loan {
                     capability,
                     borrower: place.local,
@@ -2649,6 +2756,24 @@ fn provenance_root(body: &Body, local: LocalId) -> ProvenanceRoot {
         LocalKind::Arg => ProvenanceRoot::Param(local),
         _ => ProvenanceRoot::Local(local),
     }
+}
+
+/// Whether a compiler temporary holds a borrow of a `Span` or `str` only to
+/// hand it, as the receiver, to a compiler built-in (`reborrow`, `split_at`,
+/// `iter_mut`'s reborrow, `chunks_mut`, …). A built-in never returns a
+/// reference to a view's own slot: whatever it hands back points where the
+/// view does (D-217).
+fn borrower_feeds_span_builtin(body: &Body, types: &TypeTable, borrower: LocalId, borrowed: &Place) -> bool {
+    body.local(borrower).kind == LocalKind::Temp
+        && matches!(types.kind(place_ty(body, types, borrowed)), TyKind::Span { .. } | TyKind::Str)
+        && body.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Call { func: FuncRef::Builtin { .. }, args, .. }
+                    if matches!(args.first(), Some(Operand::Copy(place) | Operand::Move(place))
+                        if place.local == borrower && place.projection.is_empty())
+            )
+        })
 }
 
 fn borrower_feeds_arena_scope(body: &Body, borrower: LocalId) -> bool {
@@ -2882,6 +3007,78 @@ fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a L
         .collect()
 }
 
+/// `[BRW-3]` — a call's arguments are evaluated before the call starts, and a
+/// `mut` argument's loan is activated when it starts. So the arguments are
+/// read with the loans this call activates still reserved (`f(v, v[0])` with
+/// `x: int` copies `v[0]` first), and then each activated loan is a new
+/// mutable borrow against the shared loans taken while it was reserved: the
+/// call's other arguments (`f(v, v[0])` with `x: ref int` is `E3021`, as the
+/// other order is). Loans older than the reservation were checked when it
+/// began, and a second `mut` argument is `E3022` there, so neither is
+/// reported twice.
+#[allow(clippy::too_many_arguments)]
+fn check_call_activation(
+    body: &Body,
+    types: &TypeTable,
+    loans: &[Loan],
+    regions: &Regions,
+    reads: &HashMap<LocalId, Vec<Span>>,
+    point: Point,
+    args: &[Operand],
+    span: Span,
+    is_method: &dyn Fn(&FuncRef) -> bool,
+    sink: &mut Sink,
+    reported: &mut HashSet<(usize, usize)>,
+) {
+    let passes = |local: LocalId| {
+        args.iter().any(|arg| matches!(arg, Operand::Copy(p) | Operand::Move(p) if p.local == local))
+    };
+    let activated: Vec<usize> = loans
+        .iter()
+        .enumerate()
+        .filter(|(_, loan)| loan.capability.is_mut() && !loan.reserved_at.is_empty() && passes(loan.borrower))
+        .map(|(index, _)| index)
+        .collect();
+
+    let mut argument_reads = Vec::new();
+    for arg in args {
+        operand_read(arg, &mut argument_reads);
+    }
+    let mut before_activation = loans.to_vec();
+    for &index in &activated {
+        before_activation[index].reserved_at.insert(point);
+    }
+    check_point(
+        body, types, &before_activation, regions, reads, point, &argument_reads, span, is_method, sink, reported,
+    );
+
+    for &index in &activated {
+        let loan = &loans[index];
+        let during: Vec<Loan> = loans
+            .iter()
+            .filter(|other| !other.capability.is_mut() && loan.reserved_at.contains(&other.created_at))
+            .cloned()
+            .collect();
+        if during.is_empty() {
+            continue;
+        }
+        let place = loan.capability.source_place().expect("a loan has source storage").clone();
+        check_point(
+            body,
+            types,
+            &during,
+            regions,
+            reads,
+            point,
+            &[(place, Access::Borrow { mutable: true })],
+            span,
+            is_method,
+            sink,
+            reported,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_point(
     body: &Body,
@@ -2970,9 +3167,12 @@ fn check_point(
                 continue;
             }
 
+            // `[DIA-14]` — one report per loan and source expression: an
+            // assignment to a field that owns storage is a drop and a write
+            // at one span (`h.arr = …`), one mistake.
             let key = (
                 loan.created_at.block * 4096 + loan.created_at.index,
-                point.block * 4096 + point.index,
+                ((span.start as usize) << 32) | span.end as usize,
             );
             if !reported.insert(key) {
                 continue;
@@ -3423,6 +3623,48 @@ fn pointee_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
     }
 }
 
+/// The view parameters whose own slot a loan still live at a `return` points
+/// into: a reference to the parameter's copy, not to what it views (`E3060`).
+fn own_slot_returns(body: &Body, types: &TypeTable, loans: &[Loan], regions: &Regions) -> HashSet<LocalId> {
+    let mut found = HashSet::new();
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        if !matches!(block.terminator, Terminator::Return) {
+            continue;
+        }
+        let point = Point { block: block_index, index: block.stmts.len() };
+        for loan in in_scope(loans, regions, point) {
+            let Some(place) = loan.capability.source_place() else { continue };
+            if loan.capability.must_not_outlive_storage()
+                && body.local(place.local).kind == LocalKind::Arg
+                && types.is_view(body.local(place.local).ty)
+                && !through_indirection(body, types, place)
+            {
+                found.insert(place.local);
+            }
+        }
+    }
+    found
+}
+
+/// Whether a place reaches its memory through a borrowed view (a `Deref` of a
+/// `ref`, or an element of a `Span` or `str`): memory the view's regions
+/// cover. An owned `Array` or `Box` met before any such view (a `Box` is a
+/// struct over a raw pointer, and a raw pointer is not a view) is the root's
+/// own storage, which a by-copy or `owned` parameter frees or shares without a
+/// loan (`[BRW-8]`).
+fn through_indirection(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    (0..place.projection.len()).any(|k| {
+        let base = place_ty(body, types, &Place { local: place.local, projection: place.projection[..k].to_vec() });
+        match place.projection[k] {
+            Projection::Deref => matches!(types.kind(base), TyKind::Ref { .. }),
+            Projection::Index(_) | Projection::ConstIndex(_) => {
+                matches!(types.kind(base), TyKind::Span { .. } | TyKind::Str)
+            }
+            _ => false,
+        }
+    })
+}
+
 /// The type of a place, following its projections. A projection that does not
 /// apply leaves the type alone (the type checker has already rejected such a
 /// program; the borrow checker only has to stay on its feet).
@@ -3550,6 +3792,7 @@ mod callable_region_metadata_tests {
             span,
             borrows: None,
             sources: Vec::new(),
+            is_lambda: false,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,

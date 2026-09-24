@@ -504,6 +504,7 @@ mod tests {
             span,
             borrows: None,
             sources: Vec::new(),
+            is_lambda: false,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,

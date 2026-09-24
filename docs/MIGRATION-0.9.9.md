@@ -366,3 +366,34 @@ The next number is ODR-025.
   D-217 (a reference to a view parameter's own slot escapes) and D-218 (class getters need
   `[EXC-18]`). `0.9.9_Hardened_5` carries the amended `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`,
   `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]` and `[CORO-6]`, and is the development target.
+* **2026-09-24 — D-217 fixed.** A reference to a view parameter's own slot (`return ref x` for
+  `x: str`) escaped: the escape check exempted every loan rooted at a view parameter. It now
+  exempts only loans through the view, and a loan taken only to feed a view reborrow (a `mut
+  self` of `MutSpan`) no longer carries the slot's storage obligation, so `span.iter_mut()`'s
+  items still outlive the slot. `E3060` stands aside where `E3062` already names the parameter.
+* **2026-09-24 — `[TYP-5]` rule 7 built (D-216).** A place of type `T` auto-borrows where a
+  shared `ref T` is expected: arguments, initialisers, returns, view-struct fields, and generic
+  `ref T` parameters, whose `T` is now inferred through the borrow (before this, even `same(r)`
+  with `r: ref int` could not infer `T`). A temporary or a `ref mut` site stays `E2020`, with a
+  help.
+* **2026-09-24 — `L3014` counts source parameters (`[LT-1b]`).** The opt-in lint counted
+  view-typed parameters, so a function over two `Array`s never got it after ODR-024; it now
+  counts the source set, and covers methods whose receiver is not borrowed.
+* **2026-09-24 — `[LT-7]` calls through a callable value (D-219).** The result of `g(a, b)`
+  borrows the callable type's source parameters, not every argument, so a `mut int` passed
+  through a function value is free again once the call returns. A function whose `@borrows`
+  names a non-source parameter is refused as a value (`E2020`), since the callable type cannot
+  say so.
+* **2026-09-24 — review of the D-216/D-217/D-219/`L3014` batch (workflow, 6 agents, 2 at a time:
+  3 reviewers, then 3 skeptics).** All 17 findings confirmed, plus six new items. Fixed before
+  commit: two soundness holes older than the batch, a reference into a view parameter's own
+  `Array`/`Box` (D-224) and two-phase activation (D-223, which also makes `[BRW-3]`'s accepted
+  `f(v, v[0])` compile); D-217's first version regressed `split_at` and the drop of an `owned`
+  view struct (now any span built-in hands out the target, and a drop conflicts only with loans
+  on its storage), gave a slot reference `E3062` with a help that led to `E3060` (the slot is
+  now `E3060`, with a help that follows the result type), and still charged views held in
+  locals to the local (fixed); auto-borrow now works for `mut` parameters and `mut self`; helps
+  that over-promised were narrowed; `L3014` is reported once for an interface default; an
+  `owned self` view is under rule 3 (D-225); two duplicate diagnostics (D-226). Recorded open:
+  D-220 (a capturing closure through a callable parameter, over-strict), D-221 (`f[int]` as a
+  value), D-222 (callable-field calls), D-227 (printing `Option[ref T]`).

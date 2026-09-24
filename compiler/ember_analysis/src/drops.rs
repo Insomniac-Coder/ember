@@ -1568,6 +1568,11 @@ impl Reporter<'_> {
         if decl.kind == LocalKind::Temp || decl.name.is_none() {
             return;
         }
+        // As for a use: a local no move reaches was never given a value, and
+        // definite initialisation reports that borrow (`E3050`) ([DIA-14]).
+        if !state.is_partial() && moves_reaching(body, local, self.point).is_empty() {
+            return;
+        }
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
