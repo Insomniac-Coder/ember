@@ -2081,10 +2081,14 @@ impl<'a> Checker<'a> {
                                 continue;
                             };
                             if vis == ast::VisKind::Private {
-                                self.error(
-                                    codes::E1020,
-                                    item.name.span,
-                                    format!("`{}` is private to `{key}`", item.name.name),
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        codes::E1052,
+                                        item.name.span,
+                                        format!("`{}` is private to `{key}`", item.name.name),
+                                    )
+                                    .help(format!("declare it `pub` in `{key}` to import it"))
+                                    .note("an item is private to its module unless it says otherwise [MOD-2]"),
                                 );
                                 continue;
                             }
@@ -2306,16 +2310,52 @@ impl<'a> Checker<'a> {
                 };
                 for member in &decl.members {
                     let ast::MemberKind::Fn(method) = &member.kind else { continue };
-                    if method.dispatch != ast::Dispatch::Override {
+                    let inherited = self.inherited_class_method_dispatch(modules, id, method.name.name);
+                    // D-239 — an `override` is virtual in turn: a class
+                    // further down may override it again.
+                    let virtual_base =
+                        matches!(inherited, Some(ast::Dispatch::Virtual | ast::Dispatch::Override));
+                    if method.dispatch == ast::Dispatch::Override {
+                        if !virtual_base {
+                            self.error(
+                                codes::E2110,
+                                method.name.span,
+                                "override of a method that is not virtual",
+                            );
+                        }
                         continue;
                     }
-                    if self.inherited_class_method_dispatch(modules, id, method.name.name)
-                        != Some(ast::Dispatch::Virtual)
-                    {
-                        self.error(
-                            codes::E2110,
-                            method.name.span,
-                            "override of a method that is not virtual",
+                    // `[CLS-4]` (ODR-028) — a method named like an inherited
+                    // one would replace it, which only an `override` of a
+                    // `virtual` method may do. Constructors, destructors and
+                    // associated functions are each class's own.
+                    let has_receiver = method
+                        .params
+                        .first()
+                        .is_some_and(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                    let name = method.name.name;
+                    if inherited.is_none() || !has_receiver || name.is("init") || name.is("drop") {
+                        continue;
+                    }
+                    if virtual_base {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2111,
+                                method.name.span,
+                                format!("`{name}` replaces an inherited virtual method, so it must say `override`"),
+                            )
+                            .help(format!("write `override fn {name}`, or give this method another name"))
+                            .note("replacing a virtual method is written, never implied [CLS-4]"),
+                        );
+                    } else {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2110,
+                                method.name.span,
+                                format!("`{name}` would replace an inherited method that is not virtual"),
+                            )
+                            .help(format!("declare the base's `{name}` `virtual` and this one `override`, or give this method another name"))
+                            .note("a method is non-virtual unless declared `virtual` [CLS-4]"),
                         );
                     }
                 }
@@ -2340,9 +2380,10 @@ impl<'a> Checker<'a> {
                     if method.dispatch != ast::Dispatch::Override {
                         continue;
                     }
-                    if self.inherited_class_method_dispatch(modules, id, method.name.name)
-                        != Some(ast::Dispatch::Virtual)
-                    {
+                    if !matches!(
+                        self.inherited_class_method_dispatch(modules, id, method.name.name),
+                        Some(ast::Dispatch::Virtual | ast::Dispatch::Override)
+                    ) {
                         self.error(
                             codes::E2110,
                             method.name.span,
@@ -9559,7 +9600,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[DIA-12]` N1 — rank nearby lexical bindings and visible module items.
     /// Shadowed bindings follow `lookup`'s inner-to-outer order; candidate
     /// ranking handles same-file proximity and cross-file canonical identity.
-    fn name_suggestions(&self, written: Symbol, use_span: Span) -> Vec<String> {
+    /// Names like `written` that are in scope; for a value (`values`), not
+    /// an interface, which is never one.
+    fn name_suggestions(&self, written: Symbol, use_span: Span, values: bool) -> Vec<String> {
         let mut seen = HashSet::new();
         let local_candidates = self
             .scopes
@@ -9581,6 +9624,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.visible[self.current_module]
                 .iter()
                 .filter_map(|(name, qualified)| {
+                    if values && self.interfaces.contains_key(qualified) {
+                        return None;
+                    }
                     let declaration = self.item_spans.get(qualified)?;
                     Some(name_suggestions::Candidate {
                         name: name.as_str().to_owned(),
@@ -9595,6 +9641,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         )
     }
 
+    /// `[MOD-2]` — whether the item `qualified`, declared in `module`, may be
+    /// used here: a private item only in its own module, a `pub(package)` one
+    /// within its package, a `pub` one anywhere.
+    fn item_accessible(&self, module: usize, qualified: Symbol) -> bool {
+        match self.item_visibility.get(&qualified) {
+            Some(ast::VisKind::Private) => module == self.current_module,
+            Some(ast::VisKind::Package) => self.same_package(module, self.current_module),
+            _ => true,
+        }
+    }
+
+    /// `[MOD-2]` — `E1052` for an item reached through its module that is
+    /// not visible here, naming where it is declared and its visibility.
+    fn report_item_not_visible(&mut self, module: usize, qualified: Symbol, span: Span) {
+        let text = qualified.as_str();
+        let (declared_in, item) = text.rsplit_once('.').unwrap_or(("", text));
+        let (visibility, help) = match self.item_visibility.get(&qualified) {
+            Some(ast::VisKind::Package) => ("`pub(package)` in", "declare it `pub` to use it from another package"),
+            _ => ("private to", "declare it `pub` in its module to use it from another"),
+        };
+        let _ = module;
+        self.sink.emit(
+            Diagnostic::error(codes::E1052, span, format!("`{item}` is {visibility} `{declared_in}`"))
+                .help(help)
+                .note("an item is private to its module unless it says otherwise [MOD-2]"),
+        );
+    }
+
     /// `[DIA-12]` N1 — use the names visible through an already-resolved
     /// namespace, applying the same declaration visibility facts as imports.
     fn qualified_name_suggestions(
@@ -9607,13 +9681,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if self.qualified_in_module(namespace, *name) != *qualified {
                 return None;
             }
-            let visibility = self.item_visibility.get(qualified)?;
-            let accessible = match visibility {
-                ast::VisKind::Private => namespace == self.current_module,
-                ast::VisKind::Package => self.same_package(namespace, self.current_module),
-                ast::VisKind::Public => true,
-            };
-            if !accessible {
+            self.item_visibility.get(qualified)?;
+            if !self.item_accessible(namespace, *qualified) {
                 return None;
             }
             let declaration = self.item_spans.get(qualified)?;
@@ -9660,7 +9729,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         written: Symbol,
         use_span: Span,
     ) -> Diagnostic {
-        for candidate in self.name_suggestions(written, use_span) {
+        for candidate in self.name_suggestions(written, use_span, false) {
             diagnostic =
                 diagnostic.suggest(format!("did you mean `{candidate}`?"), use_span, candidate);
         }
@@ -9862,6 +9931,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .unwrap_or(self.common.error);
                 if declared.is_none() && init.is_none() {
                     self.error(codes::E2060, stmt.span, format!("cannot infer the type of `{name}`"));
+                }
+                // `[GRM-4]` — `x: T = e` always declares, and a second
+                // declaration of one name in one block is `E1020` (D-240: it
+                // silently shadowed the first).
+                if let Some(&earlier) = self.scopes.last().and_then(|scope| scope.get(&name)) {
+                    let first = self.locals[earlier.0 as usize].span;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1020, pattern.span, format!("`{name}` is already declared in this block"))
+                            .secondary(first, "first declared here")
+                            .help(format!("assign with `{name} = …`, or declare it in a nested block to shadow it"))
+                            .note("a name is declared once per block [GRM-4]"),
+                    );
                 }
                 let local = self.declare(Some(name), ty, stmt.span);
                 if let Some(range) = init.as_ref().and_then(|e| self.range_of(e)) {
@@ -15446,7 +15527,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     format!("cannot find `{name}` in this scope"),
                 );
-                for candidate in self.name_suggestions(name, segments[0].span) {
+                for candidate in self.name_suggestions(name, segments[0].span, true) {
                     diagnostic = diagnostic.suggest(
                         format!("did you mean `{candidate}`?"),
                         segments[0].span,
@@ -15758,6 +15839,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         &written,
                         name.span,
                     ));
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                // `[MOD-2]` — a private item is its module's own.
+                if !self.item_accessible(module, qualified) {
+                    self.report_item_not_visible(module, qualified, name.span);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let explicit = self.resolve_method_type_args(generic_args);
@@ -16236,7 +16322,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let name = match segments.len() {
             1 => segments[0].name,
-            2 => self.resolve_qualified(segments).expect("the namespace prefix resolved"),
+            2 => {
+                let name = self.resolve_qualified(segments).expect("the namespace prefix resolved");
+                let module = namespace.expect("a qualified call has a namespace prefix");
+                if !self.item_accessible(module, name) {
+                    self.report_item_not_visible(module, name, segments[1].span);
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                name
+            }
             _ => {
                 let namespace = namespace.expect("a qualified call has a namespace prefix");
                 let name = self
@@ -16700,7 +16794,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("cannot find `{name}` in this scope"),
             );
             if segments.len() == 1 {
-                for candidate in self.name_suggestions(name, name_span) {
+                for candidate in self.name_suggestions(name, name_span, true) {
                     diagnostic = diagnostic.suggest(
                         format!("did you mean `{candidate}`?"),
                         name_span,
@@ -18514,7 +18608,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let owner = self.types.display(owner);
         self.sink.emit(
             Diagnostic::error(
-                codes::E1020,
+                codes::E1052,
                 span,
                 format!("`{field}` is private to `{owner}`'s module"),
             )
@@ -18543,7 +18637,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let owner = self.types.display(owner);
         self.sink.emit(
             Diagnostic::error(
-                codes::E1020,
+                codes::E1052,
                 span,
                 format!("`{field}` is private to `{owner}`'s module"),
             )
@@ -18563,7 +18657,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if def.declaring_module == self.current_module {
             return;
         }
-        let owner = def.name.to_string();
+        let owner = self.types.intern(TyKind::Struct(id));
+        let owner = self.types.display(owner);
+        let def = self.types.struct_def(id);
         let blocking = def
             .fields
             .iter()
@@ -18579,7 +18675,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         self.sink.emit(
             Diagnostic::error(
-                codes::E1020,
+                codes::E1052,
                 span,
                 format!("`{owner}`'s memberwise constructor is private to its module"),
             )
@@ -24617,7 +24713,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, span, format!("cannot instantiate abstract class `{name}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if !has_init && args.len() > fields.len() {
+        if !has_init && !has_base && args.len() > fields.len() {
             self.error(
                 codes::E2020,
                 span,
@@ -24720,16 +24816,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[CLS-4]` — memberwise construction does not know how to invoke a
         // base constructor. Derived classes therefore need an explicit init
         // with `super.init(...)`; never publish a partially initialized base.
-        if has_base {
-            self.error(
-                codes::E1010,
-                span,
-                format!("class `{name}` with a base class requires an explicit `init`"),
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
-
-        let defaults = self.class_default_exprs.get(&id).cloned();
+        // `[CLS-10]` — no class in the chain has an `init`, so the base's
+        // memberwise constructor builds the object: the arguments fill the
+        // inherited fields, and this class's own fields take their defaults
+        // (a field without one is `E2101`, at the declaration).
+        let (fields, defaults) = if has_base {
+            if fields.iter().any(|field| !field.has_default) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let layout: Vec<FieldDef> = (0..self.types.class_field_count(id))
+                .filter_map(|index| self.types.class_field_at(id, index).cloned())
+                .collect();
+            let inherited = layout.len() - fields.len();
+            let positional = args.iter().filter(|arg| arg.name.is_none()).count();
+            if positional > inherited {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}()` takes its base's {inherited} field(s), found {positional} arguments"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            (layout, Some(self.class_default_exprs_for_layout(id)))
+        } else {
+            (fields, self.class_default_exprs.get(&id).cloned())
+        };
         // `[CLS-3]` — a memberwise class constructor follows the same
         // positional/named field binding as a struct constructor. Keep the
         // user-defined `init` path separate: its parameter names and defaults
@@ -25590,13 +25701,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if lhs.ty != rhs.ty && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
-            let diagnostic = Diagnostic::error(
+            let mut diagnostic = Diagnostic::error(
                 codes::E2020,
                 span,
                 format!("`{}` cannot be applied to `{left}` and `{right}`", op.as_str()),
-            )
-            .note("Ember does not convert between numeric types implicitly [TYP-4]")
-            .help(format!("cast one side, for example `x as {right}`"));
+            );
+            // `[TYP-4]` — for two numbers, name the cast: the narrower
+            // operand converted to the wider one's type (an integer to a
+            // float; else the one with fewer bits; the right one on a tie).
+            if self.types.is_numeric(lhs.ty) && self.types.is_numeric(rhs.ty) {
+                let rank = |this: &Self, ty: Ty| {
+                    (this.types.is_float(ty), ember_types::bit_width(&this.types, ty).unwrap_or(match this.types.kind(ty) {
+                        TyKind::Float(ember_types::FloatTy::F16) => 16,
+                        TyKind::Float(ember_types::FloatTy::F32) => 32,
+                        _ => 64,
+                    }))
+                };
+                let (narrow, wide) = if rank(self, lhs.ty) < rank(self, rhs.ty) {
+                    (lhs_ast, rhs.ty)
+                } else {
+                    (rhs_ast, lhs.ty)
+                };
+                let wide = self.types.display(wide);
+                let cast = match operand_text(narrow) {
+                    Some(text) => format!("`{text} as {wide}`"),
+                    None => format!("`(…) as {wide}` on the narrower side"),
+                };
+                diagnostic = diagnostic.note(format!(
+                    "Ember does not convert between numeric types implicitly; {cast} makes them agree [TYP-4]"
+                ));
+            }
             // ODR-022 — a side declared from a literal is the likelier fix.
             let diagnostic = self.literal_local_help(diagnostic, &lhs, rhs.ty);
             let diagnostic = self.literal_local_help(diagnostic, &rhs, lhs.ty);
@@ -25943,6 +26077,21 @@ fn root_local(kind: &ExprKind) -> Option<LocalId> {
         ExprKind::Field { base, .. }
         | ExprKind::Index { base, .. }
         | ExprKind::Deref(base) => root_local(&base.kind),
+        _ => None,
+    }
+}
+
+/// A short operand written as its source reads — a name, a field path or an
+/// integer literal — for a diagnostic that names a fix on it.
+fn operand_text(expr: &ast::Expr) -> Option<String> {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => {
+            Some(segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("."))
+        }
+        ast::ExprKind::Field { base, name } => Some(format!("{}.{}", operand_text(base)?, name.name)),
+        ast::ExprKind::SelfExpr => Some("self".to_string()),
+        ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => Some(value.to_string()),
+        ast::ExprKind::Paren(inner) => operand_text(inner),
         _ => None,
     }
 }

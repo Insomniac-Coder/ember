@@ -5,4 +5,4 @@ from std.mem import UnsafeCell
 
 fn main():
     cell = UnsafeCell(1)
-    println(cell.value) #$ error[E1020]: private
+    println(cell.value) #$ error[E1052]: private

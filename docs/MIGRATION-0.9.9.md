@@ -482,3 +482,22 @@ The next number is ODR-027.
   that omits it, in field order, with its names resolved in the declaring module; a mistake in one
   is reported once. The fixture of a UI test (`N1/inherited_class_field_typo`) also gave its
   derived field a default, as `[CLS-10]` requires.
+* **2026-09-24 — visibility (`E1052`), overrides (ODR-028, Hardened_9), base memberwise
+  constructors.** Probing `[MOD-2]`: a module's private function could be called through the module
+  (`tools.helper()`); it is now `E1052` (new, with a page), naming where the item is declared, and
+  every privacy error (a private import, field or memberwise constructor) uses `E1052`, which 0.9.9
+  gives them (`E1020` is only a name declared twice); six tests were moved to the new code.
+  Probing `[CLS-4]`: a method named like an inherited one was checked only when it said `override`.
+  ODR-028 rules it: `E2111` (new) for a missing `override` over a virtual method, `E2110` over a
+  non-virtual one; an `override` is virtual in turn (D-239: a grandchild's `override` was refused).
+  `[CLS-10]`: with no `init` in the chain, a derived class gets its base's memberwise constructor
+  (inherited fields by position or name, its own fields by default).
+* **2026-09-24 — three diagnostics from the audit probes.** `[GRM-19]`: `if x = 5:` offers
+  `did you mean `x == 5`?` first, as a fix-it, with the declaration as a note. `[TYP-4]`: the
+  numeric-mismatch note appears only for two numbers and names the narrower operand's cast
+  (`a as i64`; an integer becomes a float). A value is no longer offered an interface's name as a
+  suggestion (`did you mean `Eq`?` for `y`); the `[DIA-12]` prelude-candidate test now uses `Range`.
+  Recorded gaps from the same probes: `[CTL-10]` hoisting, a jump as a conditional branch
+  (`[GRM-16]`), `I.m(recv)` (`[TYP-24]`), qualified type paths (`m.T`).
+  D-240: a name declared twice in one block (`z: int = …` twice) compiled; it is `E1020` now, which
+  also gives `E1020` the conformance test the registry check asks for.

@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_8.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_9.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_8`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_9`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
@@ -10786,7 +10786,10 @@ through `call_value`), and D-236 (a generic struct constructor checks each
 argument once, by name). Also built: `**` (`power`), inherited constructors
 (`inherited_init`, `E2101`), `for c in s` (`check_for_text`), `Box` operands, one
 error per run of invalid characters. D-238 is fixed: struct field defaults were never
-evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). The directory
+evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). `E1052`
+(`item_accessible`, `report_item_not_visible`) replaces `E1020` for privacy; ODR-028
+(Hardened_9) adds `E2111`, and D-239 lets an `override` be overridden; D-240
+(a name declared twice in one block) is `E1020`. The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

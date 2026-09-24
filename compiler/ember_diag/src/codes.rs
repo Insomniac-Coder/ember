@@ -164,6 +164,7 @@ codes! {
     E1041 = (Error, 1041, Resolve, "[MOD-4]", "import cycle between packages");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
+    E1052 = (Error, 1052, Resolve, "[MOD-2]", "item, field or constructor not visible here");
 
     E1021 = (Error, 1021, Resolve, "[BLD-11]", "name is not linked in this build");
 
@@ -188,6 +189,7 @@ codes! {
     E2100 = (Error, 2100, Types, "[CLS-2]", "field read before it is initialised");
     E2101 = (Error, 2101, Types, "[CLS-10]", "a derived class with a field that has no default needs an `init`");
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
+    E2111 = (Error, 2111, Types, "[CLS-4]", "a method that replaces an inherited virtual one without `override`");
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
     E2131 = (Error, 2131, Types, "[IV.3]", "array length must be a constant");

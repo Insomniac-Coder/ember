@@ -6,5 +6,5 @@
 from support.health import Health
 
 fn main():
-    h = Health(1, 2)      #$ error[E1020]: `support.health.Health`'s memberwise constructor is private to its module
+    h = Health(1, 2)      #$ error[E1052]: `support.health.Health`'s memberwise constructor is private to its module
     println(h.value)

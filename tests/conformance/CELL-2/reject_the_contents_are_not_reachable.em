@@ -18,7 +18,7 @@
 
 fn main():
     c: Cell[i32] = Cell(1)
-    println(c.value)          #$ error[E1020]: `value` is private to `Cell[i32]`'s module
-    c.value = 9               #$ error[E1020]: `value` is private to `Cell[i32]`'s module
-    r = ref c.value           #$ error[E1020]: `value` is private to `Cell[i32]`'s module
+    println(c.value)          #$ error[E1052]: `value` is private to `Cell[i32]`'s module
+    c.value = 9               #$ error[E1052]: `value` is private to `Cell[i32]`'s module
+    r = ref c.value           #$ error[E1052]: `value` is private to `Cell[i32]`'s module
     println(r)

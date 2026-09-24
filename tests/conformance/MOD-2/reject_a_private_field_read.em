@@ -6,4 +6,4 @@ from support.shapes import make
 
 fn main():
     b = make(3, 4)
-    println(b.height)     #$ error[E1020]: `height` is private to `support.shapes.Box2`'s module
+    println(b.height)     #$ error[E1052]: `height` is private to `support.shapes.Box2`'s module

@@ -373,17 +373,26 @@ impl Parser<'_> {
         if self.at_punct(Punct::Eq) {
             self.bump();
             let pattern = self.expr_to_pattern(expr);
+            let value = self.parse_expr_no_block();
             // `[GRM-19]` — the pattern in a condition MUST be refutable. A
             // binding or `_` matches everything, so the branch is not a
-            // branch at all and the writer meant a plain declaration.
+            // branch at all. A bare name is most likely a comparison typed
+            // with one `=`, which the first help offers; otherwise the writer
+            // meant a plain declaration.
             if pattern_is_irrefutable(&pattern) {
                 let span = start.to(self.prev_span());
-                self.report(
-                    Diagnostic::error(codes::E2036, span, "this pattern always matches")
-                        .help("write `x = e` on the preceding line"),
-                );
+                let value_text = self.src.get(value.span.start as usize..value.span.end as usize).unwrap_or("e");
+                let mut diagnostic = Diagnostic::error(codes::E2036, span, "this pattern always matches");
+                if let PatternKind::Bind { name, sub: None, .. } = &pattern.kind {
+                    let comparison = format!("{} == {value_text}", name.name);
+                    diagnostic = diagnostic
+                        .suggest(format!("did you mean `{comparison}`?"), span, comparison)
+                        .note(format!("to declare `{}`, write `{} = {value_text}` on the line before", name.name, name.name));
+                } else {
+                    diagnostic = diagnostic.help("write `x = e` on the preceding line");
+                }
+                self.report(diagnostic);
             }
-            let value = self.parse_expr_no_block();
             return Condition::Pattern { pattern, value };
         }
         Condition::Expr(expr)

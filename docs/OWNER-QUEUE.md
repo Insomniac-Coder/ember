@@ -47,6 +47,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-025 | **CLOSED** — `[ERR-4]`'s function-taking methods are eager, move the payload in, take `once fn`; a lambda infers `owned` | Standard library / closures | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_6 |
 | ODR-026 | **CLOSED** — a type with its own `drop` is `Clone` only when it says so | Language / ownership | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_7 |
 | ODR-027 | **CLOSED** — a range is a `Copy` value with public bounds; a `for` counts over a copy of them | Language / standard library | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_8 |
+| ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -181,6 +182,52 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-028 — what is a method that shares an inherited method's name? — **CLOSED**
+
+    ID:        ODR-028
+    Status:    CLOSED — ruled 2026-09-24 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_9
+    Category:  LANGUAGE / CLASSES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_8.md [CLS-4], §XVII.6 (the code registry)
+
+    Question:  `[CLS-4]` says methods are non-virtual unless `virtual`, that
+               "replacing one requires `override`", and that overriding a
+               non-virtual method is `E2110`. It gives no code for a method that
+               replaces an inherited virtual method without saying `override`,
+               does not say whether a same-named method *without* `override`
+               over a non-virtual method is that `E2110`, and does not say
+               whether an `override` may itself be overridden further down.
+
+    Blocks implementation:            YES — the check cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**What the compiler did.** Only methods marked `override` were checked. A derived
+`fn speak(self)` over an inherited `virtual fn speak` compiled and silently
+hid it for calls through the derived type while the base's slot stayed in place,
+and a grandchild's `override` of a parent's `override` was `E2110` (D-239).
+
+**Options.**
+- **(A) One code for every `[CLS-4]` violation (`E2110`).** Rejected: `E2110`
+  says "override of a method that is not virtual", which is the wrong
+  description of a missing `override`, and the fix differs (add a word, not
+  change the base).
+- **(B) A new code for the missing `override`,** `E2111`, as Kotlin and Swift
+  treat it; `E2110` keeps its meaning and covers any method over a non-virtual
+  one.
+
+**Ruling: (B).** A method with a receiver named like an inherited one replaces
+it: over a virtual method without `override` it is `E2111` (the fix-it adds
+`override`), and over a non-virtual one it is `E2110`, `override` or not.
+`init`, `drop` and associated functions are each class's own. An `override` is
+itself virtual, so a further subclass may override it again.
+
+**Implementation (2026-09-24).** `validate_class_methods` applies it to every
+method in a class body; `extend` blocks keep their `override` check, with an
+inherited `override` counting as virtual. Tests: `CLS-4/`.
 
 ---
 
