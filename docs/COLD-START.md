@@ -1,5 +1,10 @@
 # Cold start — read this first
 
+**Active work (2026-09-25): Ember 0.9.9 on `main`.** Read `docs/HANDOFF.md` §0.355,
+subsection "Start here after a context reset", first. It has the state, the owner's standing
+instructions, the next task (test speedups A/B/C, approved), the backlog, and the recipes. The
+development target is `docs/spec-source/Ember_v0.9.9_Hardened_11.md`. The state below is older.
+
 State as of 2026-09-15. Read `docs/MIGRATION-0.9.7.md` for historical H1
 context, then read the current H3 target and `docs/HANDOFF.md` §0 for the active
 migration, process, and verified implementation state. `docs/MIGRATION-0.9.5.md`

@@ -10699,6 +10699,354 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
+#### Start here after a context reset — state at 2026-09-25 05:15 IST
+
+Everything below is committed and pushed on `main`. The working tree was clean
+when this was written. **Read this subsection first**; the rest of §0.355 is
+the running narrative behind it.
+
+**Where things stand**
+
+* **Last commit:** `f3a8d6c` (D-248/D-250). CI was still running when this
+  was written; check it first (recipe below). CI was green on every earlier
+  push that day: `c2f0bd4`, `d0df020`, `6df0fc4`, `37efa47`.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_11.md`,
+  pinned in `docs/spec-source/development-target.json`. The spec's working
+  sources are `tasks/spec-0.9.9/parts/`; `parts-h11/` is frozen.
+* **Next numbers:** ODR-031, D-251.
+* **Last phase table given to the owner (2026-09-25):**
+
+  | Phase | % |
+  |---|---:|
+  | P1 | 85 |
+  | P2 | 85 |
+  | P3 | 47 |
+  | P4 | 9 |
+  | P5 | 8 |
+  | P6 | 2 |
+  | P7 | 0 |
+  | 7a | 4 |
+  | P8 | 13 |
+  | Overall | 48 |
+
+  Format rules for the table are in the memory file
+  `feedback_phase_completion_table`. The overall is weighted over P1–P6 and
+  7a by rule count: 233, 72, 68, 35, 86, 49 and 94. P7 is excluded.
+  "Phase estimates against 0.9.9" further down gives the method; its table is
+  current.
+
+**The owner's standing instructions (all still in force)**
+
+* Implement Ember 0.9.9 in the compiler until done, or until the owner says
+  stop.
+* Audit the existing implementation against 0.9.9 (`docs/AUDIT-0.9.9.md`).
+* Record an ODR (`docs/OWNER-QUEUE.md`) for each ambiguity. The owner has
+  delegated the rulings: rule it yourself, and cut the next `Hardened_N`.
+* Never edit the spec to fit the compiler, and never edit
+  `docs/spec-source/as-received/`.
+* Commit and push about every 5 features. Before each push: the full suite,
+  then the gates, then watch CI.
+* End commits with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+* Update this handoff and the memory periodically.
+* Ask before spawning agents or workflows, giving the worst-case count. While
+  the owner slept they said "no workflows, you go solo".
+* Stop on any classifier or permission denial, and report it.
+* Never edit repo files while the full suite runs: it reads the runtime C and
+  the test directories during the run.
+* Never touch RageV unasked.
+* A reserved word that blocks a standard-library method name becomes a
+  contextual keyword. Never rename the method; never require `r#`
+  (ODR-030 did this for `extend`).
+* Answer plainly.
+* Phase-status requests get the table first.
+
+**Immediate next task: test speedups A, B and C.** The owner approved this on
+2026-09-25: "yes go ahead with A, B and C". Nothing of it had been written when
+this handoff was made. The design and measurements follow.
+
+*Measured on 2026-09-25 (24 cores):*
+
+* The full suite (`cargo test --workspace --no-fail-fast`) takes **about 11
+  minutes** wall-clock.
+  * About 10.8 of those minutes are `compiler/ember_driver/tests/milestones.rs`
+    (35 test functions, 650 s).
+  * Everything else takes 1–3 s in total. Doc-tests are negligible.
+* **Test programs:** 1,256 in all — 993 in `tests/conformance`, 181 in
+  `run-pass`, 62 in `compile-fail`, 13 in `compile-pass`, 5 in `run-fail`
+  and 2 in `milestones`.
+* **Also run:** 48 UI fixtures (`tests/ui`, 1 s) and about 240 Rust unit
+  tests.
+* `the_conformance_suite_runs` (milestones.rs, about line 2470) runs all 993
+  conformance files **one after another** in one test function.
+  `check_directory` (about line 1695) does the same for the other
+  directories.
+* **Cost of one program with the debug-built compiler:**
+  * `ember check`: about 460 ms.
+  * clang compiling the whole runtime again: about 145 ms per build
+    (`runtime/ember_rt/src/ember_rt.c`, 5,438 lines).
+  * clang compiling the program's own C: about 100 ms.
+* A single case can run `ember` up to seven times:
+  * a diagnostics `check`;
+  * `--emit c` per profile, when it has `assert-c`;
+  * a build and run per profile.
+* The quick check (`tasks/impl-0.9.9/annotations.py`) is sequential too, and
+  takes several minutes.
+
+*A — run the harness's cases in parallel (milestones.rs):*
+
+1. **Unique output folders.** `check_file` (about line 1467) builds into
+   `temp_dir()/ember-tests/<file stem>`. Two rule directories can hold files
+   of one name, so key the folder by the path relative to the root, with its
+   separators replaced.
+2. **A shared runner** `check_files(files, root) -> Vec<String>`:
+   * `std::thread::scope` workers, as many as `available_parallelism()`;
+   * an `AtomicUsize` work index;
+   * each case run through `check_file_collecting`, which already catches
+     panics;
+   * failures sorted back into the files' order.
+3. **A global permit** (a `static Mutex<usize>` and a `Condvar`) caps the
+   cases running at once across *all* test functions at the core count.
+   Cargo runs the 35 functions side by side as well.
+4. **Wire it in.** `the_conformance_suite_runs` keeps its per-directory
+   assertions first ([TST-4a] `accept_` case, `#$ rules:` present), then
+   flattens every file into one list for the runner. `check_directory` uses
+   the runner too.
+5. The interface cache under `target/<profile>/cache` is shared but safe
+   (D-189: write aside, then rename; `compiler/ember_build/src/interface.rs`,
+   about line 273).
+6. **Expected:** about 11 minutes down to 1–2.
+
+*B — run the quick check in parallel (annotations.py):*
+
+1. `run()` calls `ember` with `cwd=ROOT`, and `ember run` without
+   `--out-dir` writes `target/<profile>/{c,bin}/<stem>`. Give each run
+   `--out-dir <temp>/ember-annotations/<relative path, separators
+   replaced>/<profile>`.
+2. Map `check(path)` over every file with
+   `concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())`.
+3. Print the results in order, and keep the [TST-4a] directory message.
+
+*C — compile the runtime once and reuse it (`compiler/ember_build/src/lib.rs`,
+and `compiler/ember_driver/src/main.rs` around lines 2120–2155):*
+
+1. **Today:** `compile_and_link` (ember_build, about line 244) runs one
+   compiler command with the program's C and the runtime's C.
+   * MSVC flags: `/nologo /std:c11 /W3`, plus `/Od /Zi /MDd`, `/O2 /MD` or
+     `/O2 /GL /MD` by profile.
+   * clang/gcc flags: `-std=c11 -Wall -Wextra`, plus `-O0 -g`, `-O2` or
+     `-O3` by profile, and `-lm` off Windows.
+2. **Add `runtime_object(toolchain, source, include_dirs, profile) ->
+   Result<Option<PathBuf>, BuildError>`.** For clang/gcc it compiles with
+   `-c` and the same flags into `<cache_root>/runtime/<key>.o`.
+   * The key is an FNV-1a 64 hash of: the runtime source's bytes; every
+     header under the include directories (sorted); the toolchain's name; the
+     compiler's path; and the profile's flags.
+   * Compile to `<key>.o.tmp<pid>`, then rename into place. On Windows the
+     rename fails when another build won the race; then delete the temporary
+     and use the existing object. A rename is atomic, so a reader only ever
+     sees a complete object.
+3. **MSVC returns `None`** and keeps compiling the runtime source with each
+   program. MSVC is not installed on this machine, so that path cannot be
+   verified here, and `/GL` (shipping) objects need `/LTCG` at link. Say so
+   in the commit.
+4. **`cache_root()`**, in this order of preference:
+   1. the variable named by a new branding helper,
+      `ember_branding::cache_dir_var()` = `<PREFIX>_CACHE`, following
+      `std_path_var()`;
+   2. on Windows `%LOCALAPPDATA%\<CLI_NAME>\cache`, on macOS
+      `~/Library/Caches/<CLI_NAME>`, elsewhere `$XDG_CACHE_HOME/<CLI_NAME>`
+      or `~/.cache/<CLI_NAME>`;
+   3. otherwise `temp_dir()/<CLI_NAME>-cache`.
+
+   Use `ember_branding::CLI_NAME`: `tools/check_branding.py` rejects new
+   hard-coded names. This is the global build cache Zig and Go use for the
+   same job.
+5. **`LinkRequest` gains `objects: &[PathBuf]`**, appended to the command.
+   Update every place that builds one: the driver, and ember_build's own
+   tests.
+6. **CI** builds with clang and gcc on ubuntu, and with msvc and clang-cl on
+   windows (`EMBER_CC`). Watch all four after the push.
+7. **Afterwards:** time the suite and the quick check again, and record the
+   numbers here and in memory.
+
+**What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
+and `docs/MIGRATION-0.9.9.md`):
+
+1. `c2f0bd4` — `str.partition`, `split_once`, `as_bytes`, `is_char_boundary`.
+2. `d0df020`:
+   * ODR-030 and Hardened_11: `extend` is contextual (`at_extend_decl` in
+     `ember_parser/src/decls.rs`).
+   * D-242: `extend[T]` on every generic type, built-ins included.
+   * D-244: an interface method arriving behind an inherent one of its name
+     is kept for its interface.
+3. `6df0fc4`:
+   * D-246: `implements` answers the compiler-provided `Ord`, `Clone` and
+     `Eq`. Also `cmp`, `Ordering` in the prelude, `x.clone()` of a `Copy`
+     value, and `min`/`max`/`clamp` over `str`.
+   * [STD-15] `Array` methods:
+     * builtins: `capacity`, `reserve`, `truncate`, `swap_remove`, `swap`,
+       `extend`;
+     * through a view: `get_mut`, `split_at`, `iter`, `iter_mut`, `chunks`,
+       `chunks_mut`;
+     * Ember in `std/src/core.em`: `retain`, `dedup`, `binary_search`.
+   * D-247: a generic extension's public members are declarations in the
+     interface cache.
+4. `37efa47`:
+   * D-243: `E2120`, with the error page `docs/errors/E2120.md`.
+   * D-245: `bound_calls`.
+   * [MOD-3] `m.T` and `m.Point(…)` through modules.
+   * `join`.
+   * D-249: bounds on the undeclared `Display`/`Debug`/`Copy` are answered
+     from [TYP-36]'s table.
+   * `deferred_methods`.
+5. `f3a8d6c` — D-248 and D-250: generic types' methods are checked once with
+   their parameters opaque, and an opaque instance has no run-time existence.
+
+**Where the new mechanisms live** (all in `compiler/ember_typeck/src/lib.rs`
+unless named otherwise):
+
+* **Generic extensions.**
+  * `GenericExtension` (with `interfaces`), `generic_extensions`, and
+    `collect_generic_extensions`.
+  * `generic_extension_target` (built-in names are in `BUILTIN_GENERICS`)
+    and `is_generic_extension`.
+  * `matching_generic_extensions`, `apply_generic_extensions`,
+    `applied_extensions`, `register_recipe_method`, and
+    `extend_early_instances`.
+* **Built-in instances.** `builtin_generic_origin`, `extend_builtin_instance`
+  (called at the top of `synth_method_call` and in `dyn_concrete_adapter`),
+  and `builtin_extension_implements` (inside `implements`).
+* **Method calls.** `synth_registered_method` is the tail of
+  `synth_method_call`, split out. `synth_vec_method` and `synth_span_method`
+  fall back to it for names the compiler does not know ([TYP-24]: the
+  compiler's own methods come first). `I.m(recv)` and bound calls route
+  through `named_interface_call`.
+* **Unused bodies** (`[COST-1]`). `emit_if_used_methods` and
+  `deferred_methods`: a built-in instance's inherent extension bodies are
+  checked on first call and emitted only if called.
+* **Opaque checking (D-248).** `check_generic_type_methods` runs after
+  `check_implementations`, before any body, with `check_opaque_methods`,
+  `opaque_arguments` and `generic_target_instance`. `generically_checked`
+  sets which concrete instances report only what that check did not.
+* **Opaque instances.** `is_opaque_instance`. `ember_types::runtime_classes`
+  is used by every class walk in `ember_codegen_c`.
+* **Bounds.**
+  * `bound_calls` (recorded in `synth_bound_method`).
+  * In `implements`: the D-246 block, then the [TYP-36] block (`has_display`,
+    `is_formattable`, `types.is_copy`).
+  * `param_bound_named` makes a parameter bounded by `Display`/`Debug`
+    formattable.
+* **Packages.** `declared_in_this_package`, `generic_target_in_this_package`,
+  `report_foreign_extension` (`E2120`), `is_std_module`, `same_package`.
+* **Qualified names.** `resolve_qualified_type`, and constructors in
+  `synth_qualified_call`.
+* **Diagnostics.** `note_unmet_extension_bound` ("`dedup` needs `T` to
+  implement `Eq`").
+* **Ordering.** `synth_total_cmp` (`cmp`); `TotalLess` codegen compares
+  `str`.
+* **Interface cache (D-247).** The `ast::ItemKind::Extend` arm in
+  `callable_declarations` declares a generic extension's members as
+  `generic:<target>@<span start>`.
+
+**Backlog after A/B/C, in order:**
+
+1. **The rest of [STD-15].**
+   * `sort_by` and `sort_by_key`: the runtime's `ember_vec_sort` takes a
+     plain `bool (*less)(const void*, const void*)`. A closure comparator
+     needs a context pointer: an `ember_vec_sort_ctx`, plus a generated
+     trampoline that calls the Ember closure (check how codegen calls
+     closures).
+   * `windows(n)`: a new span iterator kind, like `SpanChunks` in
+     `std/src/collections.em`. It needs a builtin, `next` in
+     `synth_span_iterator_method`, lowering and codegen.
+   * `drain(range)`.
+2. **Ask the owner for the pick** in `docs/DESIGN-MAP-SET-ITERATION.md`
+   (`Map`/`Set`, generators, iterator adapters; the document recommends shape
+   A for both).
+3. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.
+4. **Owned callables:** DEVIATIONS D6 (`once fn` parameter types) and
+   [CLO-3] owned callable values.
+5. **Generic methods of a generic type** that have type parameters of their
+   own are still validated per concrete owner only. `check_opaque_methods`
+   skips them, because the owner's and the method's parameter indices would
+   collide.
+6. **The table stands in for three declarations.** `Display`, `Debug` and
+   `Copy` are answered from the table while std does not declare them.
+   Declaring them needs `Formatter` and `FmtError`, and user-written
+   `Display` for structs.
+7. **The remaining "not yet probed" rows** in `docs/AUDIT-0.9.9.md`.
+
+**Traps learned on 2026-09-25**
+
+* **Background output.** With `cmd > log; echo "exit $?"`, the `exit` line
+  goes to the background task's own output, not to the log. Wait for the
+  task's notification, or read the task's output file.
+* **Opaque instances.** An instance over generic parameters must never queue
+  bodies (methods or interface defaults), run derive or abstract checks, or
+  reach C. Test with `is_opaque_instance`, which reads the origin's
+  arguments: a type's fields may not mention its parameters.
+* **Built-in types in tests.** Since `E2120`, a user test may extend a
+  built-in type only through its own interface ([IFC-2]). Since D-248, a
+  generic type's method must hold for every `T`.
+* **A HIR `let` is a statement boundary.** Temporaries die there. Pass a view
+  of a temporary straight as a call argument (the `Array.extend` fix).
+* **Printing.**
+  * `print` writes no newline; `println` does.
+  * A user enum prints as `Shape.Line(5)`.
+  * `str + String` is `E2040`; use an f-string.
+* **Views.** `split_at` of a temporary is `E2140`, and returning one of two
+  view parameters needs `@borrows`. Probes hit these; they are not defects.
+* **Old builds.** To check behaviour at an older commit, use a scratch
+  worktree (`git worktree add --detach <dir> <sha>`) and build it there. Do
+  not stash while a suite runs.
+
+**Recipes**
+
+* **Fast check** (directories only; about 4 minutes until B lands):
+
+  ```
+  python tasks/impl-0.9.9/annotations.py tests/conformance/*/ tests/compile-fail tests/compile-pass tests/run-pass tests/run-fail tests/milestones tests/std tests/ffi
+  ```
+
+* **Gates**, with `PYTHONIOENCODING=utf-8`, each `python tools/...`:
+  * `error_pages.py`
+  * `spec_check.py`
+  * `check_branding.py`
+  * `rule_index.py`
+  * `generate_runtime.py --check` (after editing
+    `runtime/ember_rt/templates/*.in`, run it without `--check` first)
+  * `test_runtime_generation.py`
+  * `hardening_check.py`
+  * `unicode_case.py --check`
+  * `split_spec.py --check docs/spec-source/ember-spec.md docs/spec`
+* **UI tests:** `cargo test -q -p ember_driver --test ui`.
+* **CI:** poll every 120 s, one watcher at a time. The unauthenticated API
+  allows 60 requests an hour:
+
+  ```
+  curl -s "https://api.github.com/repos/Insomniac-Coder/ember/actions/runs?head_sha=<full sha>"
+  ```
+
+* **A new hardening** (an ODR): in `tasks/spec-0.9.9`, with
+  `PYTHONIOENCODING=utf-8`:
+  1. Edit the `parts/`, and add the ODR row to `ODRS` and to `H5_HEAD` in
+     `tools/appx_h.py`.
+  2. Run `tools/code_registry.py --write`, `tools/check_findings.py --write`,
+     `tools/appx_h.py` and `tools/appx_i.py`.
+  3. `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.9_Hardened_N.md`
+  4. Run `check_ids`, `check_citations`, `split_inline` (EFF-17 and CXX-1
+     are the known flags) and `check_examples <ember.exe> <doc>` (9 are known
+     to fail).
+  5. `cp -r parts parts-hN`
+  6. Re-pin `development-target.json`: the SHA-256 of the file's LF bytes,
+     in upper-case hex.
+  7. Update `tasks/spec-0.9.9/HANDOFF.md` ("HN is the latest") and the ODR's
+     record in `docs/OWNER-QUEUE.md` (a row, and a section).
+* **Edit scripts.** Bash heredocs eat backslashes, so write Python edit
+  scripts with the Write tool. Each asserts `count(old) == 1` before it
+  replaces anything.
+
+
 The owner directed the compiler be moved to the 0.9.9 language written in
 `docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_11.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
