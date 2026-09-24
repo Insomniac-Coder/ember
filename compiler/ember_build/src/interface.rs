@@ -27,7 +27,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 7 records the `[FN-6b]` late-bound callable-boundary fact. A schema 6
 // record cannot safely be reused for a callback whose invocation-local region
 // behavior is part of its canonical type identity.
-const SCHEMA_VERSION: u32 = 7;
+// Schema 8 follows ODR-024: a borrowed parameter whose type is not `Copy` is
+// passed by address, which changes the ABI and the region summary of every
+// function that has one, so a schema 7 record describes a different call.
+const SCHEMA_VERSION: u32 = 8;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -223,7 +226,24 @@ pub struct ModuleInterfaceArtifact {
 /// source development, so the schema version is deliberately part of the
 /// compiler-version input required by `[BLD-2]`.
 pub fn compiler_identity() -> String {
-    format!("{}+emif{SCHEMA_VERSION}", env!("CARGO_PKG_VERSION"))
+    // Two builds of one version and schema can summarise the same source
+    // differently (every development build does), and a cached summary that
+    // disagrees is then reported as corrupt. Naming the executable itself —
+    // its size and modification time, which are metadata and cheap — makes a
+    // different build a different cache key, so its artifacts are rebuilt.
+    let build = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .map(|meta| {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |since| since.as_nanos());
+            format!("+{}-{modified}", meta.len())
+        })
+        .unwrap_or_default();
+    format!("{}+emif{SCHEMA_VERSION}{build}", env!("CARGO_PKG_VERSION"))
 }
 
 /// Whether a prior artifact was reused or its dependency identity changed.

@@ -43,6 +43,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-021 | **CLOSED** — float `//`/`%` are Python's (exact floor modulo, rounded once) | Language / floating point | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_3 |
 | ODR-022 | **CLOSED** — `x = 0` is `int` at the declaration; later uses never change it | Language / type inference | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_3 |
 | ODR-023 | **CLOSED** — a value function reaching its end is `E2182` | Diagnostics / functions | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_4 |
+| ODR-024 | **CLOSED** — a borrowed or `mut` parameter that is not `Copy` is a source, passed by address | Language / regions / functions | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_5 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -177,6 +178,112 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-024 — may a returned view borrow a borrowed parameter that is not itself a view? — **CLOSED**
+
+    ID:        ODR-024
+    Status:    CLOSED — ruled 2026-09-24 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_5
+    Category:  LANGUAGE / REGIONS / FUNCTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_4.md [LT-1], [LT-1a], [LT-1b], [LT-7], [LT-44],
+               [FN-1], [FN-3], [FN-6], [BRW-8], [CORO-6], §VIII access table,
+               §XVII.6 B7, §XVII.9 E2031
+
+    Question:  `[LT-1]` rules 2 and 3 count only reference and view parameters as
+               sources of a returned view. `[FN-1]`/`[FN-2]` make the default mode a
+               borrow of the caller's value ("There is no by-copy mode"), and rule 1
+               already makes any borrowed receiver a source. Can a borrowed `Array[T]`,
+               `String` or `[T; N]`, or a struct or tuple holding one, be the source
+               of a returned view?
+
+    Blocks implementation:            YES — also decides how every borrowed parameter is passed
+    Blocks conformance:                YES — decides SPN-1, B7, CELL-7, LT-1a and HEAP-5 corpus programs
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**The two halves.** `[LT-1]` rule 2 says: "if exactly one parameter is a reference or view, the result borrows from it". That reads as a test on the parameter's type. `[FN-1]` says: "The callee reads `a` … A `Copy` value no larger than two pointers is passed in registers; the meaning is the same". `[FN-2]` says: "There is no by-copy mode". Rule 1 says "a borrowed receiver (`self` or `mut self`)", with no restriction on its type. Milestone M2, which the spec required to "exist verbatim" from v0.6 through 0.9.8_Hardened_3, was `fn first(xs: Array[i32]) -> ref i32: return xs[0]  # ok: tied to xs`. The 0.9.9 audit closed F-160 as IMPL, which treats M2 as a valid program. So the default mode already stands for the caller's place, and the "view-typed parameters" wording of rule 2 (inherited from 0.6) was never reconciled with M2.
+
+**Reproducer** (target/debug/ember.exe, 2026-09-24):
+
+```ember
+fn head(xs: Array[int]) -> Span[int]:
+    return xs[..2]            # E3060 "`xs` is passed by value, so the copy's storage ends with the frame"
+
+class Person:
+    name: String
+    fn name_ref(self) -> str:
+        return self.name      # E3060 as well, although rule 1 makes `self` the source
+```
+
+The probes also exposed three live defects of the same by-copy convention:
+- The spec's own IX.7 `Sprite`/`Scene` example prints `0` and `0`; it should print `2` and `100`.
+- The `Scene` example with a four-element array and twenty `add` calls exits 0xC0000374 (STATUS_HEAP_CORRUPTION). The callee's `push` reallocates a buffer that the caller's header still points to.
+- A `@derive(Copy)` struct holding a `Cell[int]` prints `0` after two `advance` calls. `[BRW-8]`'s "cannot be observed" is false for it.
+
+A fourth defect goes the other way. The compiler counts every `mut` parameter as a source, so `fn next_token(mut pos: int, src: str) -> str` followed by `println(pos)` while the token lives is rejected with E3021. Under `[LT-1]` as written, that program is valid.
+
+**Options.**
+- **(A) Keep today's reading and improve the help.** Rejected. It contradicts rule 1, M2 and `[LT-44]`'s precedent, and it leaves the by-copy defects in place.
+- **(B) Every borrowed parameter is a source.** Rejected. Ints and literal temporaries would join rule 3 (`take(xs, i + 1)` would fail at the caller), and every scalar would lose register passing.
+- **(C) A parameter is a source only for views reached through its heap indirection.** Rejected. Whether a program is accepted would depend on layout (`Array[String]` yes, `[String; 4]` no, `ref p.name` no). It would be unsound under a future small-buffer optimisation. It is undefined for a generic `T`. And it does not fix the defects.
+- **(D) A parameter is a source only as the receiver or when named in `@borrows`.** Sound, and no existing signature changes meaning. Rejected for four reasons:
+  - it makes the most common Python shape need an annotation;
+  - it contradicts M2;
+  - it turns `@borrows` from a narrowing tool into a widening one, against `[LT-1a]`'s "needed only where rule 1 or 3 borrows more than the caller can afford";
+  - it repeats the mistake F-070 undid for arenas.
+- **(E) A borrowed or `mut` parameter whose type is not `Copy` is a source, and is passed by address.**
+
+**Ruling: option E, refined.** A **source parameter** is either of these:
+- a parameter whose type is a reference or view (as today);
+- a borrowed or `mut` parameter whose type is not `Copy`, taking each type parameter to be `Copy`.
+
+Rules 2 and 3 count source parameters. Rule 1 stays as written: a borrowed receiver of any type, including a `Copy` one, is the source. The spec's `Index.index(self, i) -> ref Output` therefore works for a `Copy` matrix over `[f64; 16]`. A source that is not a view is the caller's place, passed by address. The result may point into its own storage or into storage it owns, and the call's loan is on the argument, the same machinery `[SPN-1]` already uses.
+
+Not sources:
+- a borrowed or `mut` parameter of a `Copy` type. Such a value can be returned instead of viewed, and this keeps ints out of rule 3 and in registers;
+- a plain `x: T`, and a callable parameter (`[CLO-3]`);
+- an `owned` parameter that is not a view.
+
+`@borrows` may name any source parameter, and also a `mut` parameter of a `Copy` type, which is already passed by address. Naming a borrowed `Copy` parameter, or an `owned` parameter that is not a view, is `E2031`.
+
+`[BRW-8]` is restated around one idea: a borrowed parameter is passed by address. The only exceptions are `ref mut`/`MutSpan`, which are passed as themselves, and a `Copy` value that contains no `Cell` or `UnsafeCell` and is not the receiver of a view-returning method, which may be passed as a copy. So `[FN-1]`'s "the meaning is the same" becomes true. `restrict` is not emitted (`[LT-27]`).
+
+The consequence is that `head(xs: Array[int])`, `name_of(s: String) -> str`, `name_of(p: Person) -> str` on a plain struct, `ref xs` and a `[String; 3]` element view all compile. The class getter compiles through rule 1, with its access carried to the caller by `[EXC-18]`. `fn first2(a: [int; 4]) -> Span[int]` stays `E3060`, with the help `a: Span[int]`.
+
+The sources are fixed by the declared signature (types, modes, `@derive(Copy)`, `@borrows`) and never by the body. Callers, callable types (`[LT-7]`), `dyn` adapters and other packages therefore all agree. Hardened_5 carries the amended text. The four defects above are D-209 to D-212 in `docs/DEFECTS.md`, fixed by this change.
+
+**Implementation (2026-09-24).** Built as ruled, with these differences:
+
+- **Views pass as themselves.** A `@view` struct is passed as itself, not by
+  address, so each field keeps its own region (`[LT-35]`). A view holds no
+  `Cell`, so the copy cannot be observed. Hardened_5's `[BRW-8]` says so.
+- **Class-handle receivers are left out.** A class handle is `Copy`, so it is
+  not a source, and the receiver rule waits for `[EXC-18]`. The class getter
+  above is still `E3060` (D-218, open).
+- **`[TYP-5]` rule 7 is not built** (D-216, open). The helps that would rely on
+  it say "take `x` as a `ref` parameter" and stop there.
+- **Diagnostics.** A view into an `owned` parameter is `E3060`, with the help
+  "borrow `s` instead of taking it `owned`". A view into a parameter that is
+  not a source is `E3062`. That help offers `@borrows` only when `@borrows` may
+  name the parameter; otherwise it says to return the value. A view outliving a
+  temporary argument is `E3060`, naming the temporary (D-214).
+- **The source set** is computed once by the type checker from the declared
+  signature (for an instantiation, the generic one). It is carried as
+  `sources` on the MIR body, so every instantiation agrees (D-213). A method of
+  a generic type is instantiated with its owner, so its non-receiver
+  parameters are still read from the owner's instantiation.
+- **The interface schema is version 8.** The compiler identity includes the
+  executable's size and modification time, so no cache written under the old
+  ABI is loaded (D-215).
+
+Tests: `LT-1/` (nine cases), `LT-1a/accept_borrows_names_a_mut_copy_parameter.em`,
+`LT-1a/reject_borrows_names_a_copy_struct_holding_a_cell.em`,
+`LT-44/accept_one_arena_parameter_needs_no_borrows.em`,
+`FN-1/accept_cell_and_refcell_through_borrowed_parameters.em`,
+`BRW-8/accept_a_copy_struct_holding_a_cell_is_passed_by_address.em`, and the
+`CELL-7`, `SPN-1`, `HEAP-5` and B7 cases this ruling changed.
 
 ---
 

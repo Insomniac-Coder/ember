@@ -23,9 +23,10 @@ struct Counter:
     fn pick(mut self, other: ref i32) -> ref i32:
         return other
 
-    ## A by-value receiver is a copy that dies with the frame, so a reference
-    ## into it dangles — the same as a borrow of a local, and the same code.
-    fn peek(self) -> ref i32:
+    ## An `owned` receiver is the callee's own and dies with the frame, so a
+    ## reference into it dangles — the same as a borrow of a local, and the
+    ## same code. (A borrowed receiver is the caller's: ODR-024.)
+    fn peek(owned self) -> ref i32:
         return ref self.n
 
 fn main():

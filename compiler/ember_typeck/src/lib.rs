@@ -728,6 +728,9 @@ struct Checker<'a> {
     assoc_values: HashMap<(Ty, Symbol), Ty>,
     /// Instantiations reached so far, so each is emitted once (`[MONO-1]`).
     instances: HashMap<Instance, DefId>,
+    /// `[LT-1]` (ODR-024) — each instantiation's generic declaration, whose
+    /// signature fixes the source parameters.
+    generic_of: HashMap<DefId, DefId>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
     /// Enums declared with type parameters, by qualified name.
@@ -944,6 +947,7 @@ impl<'a> Checker<'a> {
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
             instances: HashMap::new(),
+            generic_of: HashMap::new(),
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -1034,11 +1038,11 @@ impl<'a> Checker<'a> {
     /// elision would give a view-typed return, so that the caller may keep
     /// using the parameters it does *not* name.
     ///
-    /// "Naming a parameter that is not view-typed, or writing `@borrows` on a
-    /// function whose return is not view-typed, is `E2031`." `[LT-4a]` adds
-    /// one narrow exception: a growing `Arena` may be named as the provenance
-    /// source of storage backing the returned view. It does not make Arena a
-    /// view type. A name that
+    /// Each named parameter is a source parameter (`[LT-1]`) or a `mut` one;
+    /// naming a borrowed `Copy` parameter, or an `owned` parameter that is not
+    /// a view, is `E2031` (ODR-024), as is `@borrows` on a function whose
+    /// return is not a view. A borrowed or `mut` arena is a source because it
+    /// is not `Copy` (`[LT-44]`); naming it grants no region by itself. A name that
     /// matches no parameter is the same mistake and is reported the same way,
     /// with the parameters that would have been valid listed — the attribute
     /// is a contract (`[VER-2]` makes widening it a breaking change), so a
@@ -1063,7 +1067,7 @@ impl<'a> Checker<'a> {
                     attr.span,
                     "`@borrows` must name at least one parameter",
                 )
-                .primary_label("name one or more view-typed or Arena parameters")
+                .primary_label("name one or more parameters the result borrows")
                 .help("name the parameter(s) that the returned view derives from"),
             );
             // Match the existing invalid-attribute paths above: report the
@@ -1089,7 +1093,7 @@ impl<'a> Checker<'a> {
 
         let provenance_sources: Vec<String> = params
             .iter()
-            .filter(|(_, ty, _, _)| self.types.is_view(*ty) || self.is_arena(*ty))
+            .filter(|(_, ty, mode, _)| *mode == Mode::Mut || self.is_source_parameter(*ty, *mode))
             .map(|(name, _, _, _)| name.to_string())
             .collect();
 
@@ -1108,7 +1112,7 @@ impl<'a> Checker<'a> {
                                 "each `@borrows` argument must be a parameter name",
                             )
                             .primary_label("expected one parameter name")
-                            .help("write `@borrows(parameter)` using a view-typed or Arena parameter"),
+                            .help("write `@borrows(parameter)` naming a parameter the result borrows (LT-1)"),
                         );
                         continue;
                     }
@@ -1121,7 +1125,7 @@ impl<'a> Checker<'a> {
                             "each `@borrows` argument must be a parameter name",
                         )
                         .primary_label("named arguments are not valid here")
-                        .help("write `@borrows(parameter)` using a view-typed or Arena parameter"),
+                        .help("write `@borrows(parameter)` naming a parameter the result borrows (LT-1)"),
                     );
                     continue;
                 }
@@ -1132,10 +1136,10 @@ impl<'a> Checker<'a> {
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
                     let known = if provenance_sources.is_empty() {
-                        "this function has no view-typed or Arena provenance parameter".to_string()
+                        "this function has no parameter a result may borrow (LT-1)".to_string()
                     } else {
                         format!(
-                            "the view-typed or Arena provenance parameters are {}",
+                            "the parameters a result may borrow are {}",
                             provenance_sources.join(", ")
                         )
                     };
@@ -1148,20 +1152,28 @@ impl<'a> Checker<'a> {
                         .help(known),
                     );
                 }
-                Some((_, ty, _, _)) if self.is_arena(*ty) => {
+                Some((_, ty, mode, _)) if self.is_arena(*ty) && *mode != Mode::Owned => {
                     // `[LT-4a]` — body checking still has to prove that the
                     // returned view actually derives from this arena. Merely
                     // naming it grants no region and no storage authority.
                 }
-                Some((_, ty, _, span)) if !self.types.is_view(*ty) => {
+                // `[LT-1a]` (ODR-024) — a source parameter (`[LT-1]`) or a
+                // `mut` parameter, which is the caller's place either way.
+                Some((_, ty, mode, _)) if *mode == Mode::Mut || self.is_source_parameter(*ty, *mode) => {}
+                Some((_, ty, mode, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
+                    let why = if *mode == Mode::Owned {
+                        format!("`{named}` is `owned`, so it dies with the call")
+                    } else {
+                        format!("`{named}` is a borrowed `{shown}`, which is `Copy` and may be passed as a copy (BRW-8)")
+                    };
                     self.sink.emit(
                         Diagnostic::error(
                             codes::E2031,
                             arg_span,
-                            format!("`@borrows` names `{named}`, which is not view-typed"),
+                            format!("`@borrows` names `{named}`, which a result cannot borrow"),
                         )
-                        .secondary(*span, format!("`{named}` is `{shown}`, which borrows nothing"))
+                        .secondary(*span, why)
                         .help(concat!(
                             "name a parameter the return can point into, or drop the ",
                             "attribute and let elision tie the region (LT-1)"
@@ -4108,6 +4120,9 @@ impl<'a> Checker<'a> {
                             && !matches!(self.types.kind(*ty), TyKind::Span { mutable: true, .. })
                         {
                             self.types.intern(TyKind::Ref { mutable: true, inner: *ty })
+                        } else if *mode == Mode::Borrow && self.types.passed_by_address(*ty) {
+                            // `[BRW-8]` (ODR-024) — as the method declares it.
+                            self.types.intern(TyKind::Ref { mutable: false, inner: *ty })
                         } else {
                             *ty
                         }
@@ -7563,6 +7578,7 @@ impl<'a> Checker<'a> {
                     {
                         let local_ty = match mode {
                             Mode::Mut => self.mut_param_ty(ty),
+                            Mode::Borrow => self.borrow_param_ty(ty),
                             _ => ty,
                         };
                         let local = self.declare(Some(name), local_ty, param_span);
@@ -7619,6 +7635,7 @@ impl<'a> Checker<'a> {
                 // never sees it.
                 let local_ty = match mode {
                     Mode::Mut => self.mut_param_ty(ty),
+                    Mode::Borrow => self.borrow_param_ty(ty),
                     _ => ty,
                 };
                 let local = self.declare(Some(name), local_ty, span);
@@ -7680,6 +7697,7 @@ impl<'a> Checker<'a> {
                 span: item.span,
                 overflow,
                 borrows: self.signatures[def.0 as usize].borrows.clone(),
+                sources: self.declared_sources(def),
                 closure_environment: None,
                 closure_captures_by_move: false,
                 class_owner: None,
@@ -7853,6 +7871,7 @@ impl<'a> Checker<'a> {
                     span: job.span,
                     overflow: OverflowPolicy::Panic,
                     borrows: signature.borrows,
+                    sources: self.declared_sources(job.def),
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner: Some(class_owner),
@@ -8070,6 +8089,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
+                Mode::Borrow => self.borrow_param_ty(ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -8119,6 +8139,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
+            sources: self.declared_sources(def),
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: None,
@@ -8210,11 +8231,38 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         out
     }
 
+    /// A field handed to its `clone` method: borrowed where the receiver
+    /// is passed by address (`[BRW-8]`).
+    fn clone_argument(&mut self, field: Expr) -> Expr {
+        if self.types.passed_by_address(field.ty) {
+            let ty = field.ty;
+            self.borrow_argument(field, ty)
+        } else {
+            field
+        }
+    }
+
     fn take_derived_clone_bodies(&mut self) -> Vec<Function> {
         std::mem::take(&mut self.derived_clone_methods)
             .into_iter()
             .filter_map(|(def, ty, span)| {
                 let self_local = LocalId(1);
+                // `[BRW-8]` (ODR-024) — the receiver is borrowed, so a type
+                // passed by address arrives as `ref T` and is read through.
+                let by_address = self.types.passed_by_address(ty);
+                let self_ty = if by_address {
+                    self.types.intern(TyKind::Ref { mutable: false, inner: ty })
+                } else {
+                    ty
+                };
+                let self_value = move || {
+                    let local = Expr { ty: self_ty, kind: ExprKind::Local(self_local), span };
+                    if by_address {
+                        Expr { ty, kind: ExprKind::Deref(Box::new(local)), span }
+                    } else {
+                        local
+                    }
+                };
                 let locals = vec![
                     LocalDecl {
                         name: None,
@@ -8225,15 +8273,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     },
                     LocalDecl {
                         name: Some(Symbol::intern("self")),
-                        ty,
+                        ty: self_ty,
                         span,
                         for_iterator: false,
                         loop_borrowed_handle: false,
                     },
                 ];
-                let (value, class_owner) = match self.types.kind(ty) {
+                let (value, class_owner) = match self.types.kind(ty).clone() {
                     TyKind::Struct(id) => {
-                        let fields = self.types.struct_def(*id).fields.clone();
+                        let fields = self.types.struct_def(id).fields.clone();
                         let fields = fields
                             .iter()
                             .enumerate()
@@ -8241,11 +8289,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 let field_expr = Expr {
                                     ty: field.ty,
                                     kind: ExprKind::Field {
-                                        base: Box::new(Expr {
-                                            ty,
-                                            kind: ExprKind::Local(self_local),
-                                            span,
-                                        }),
+                                        base: Box::new(self_value()),
                                         index,
                                     },
                                     span,
@@ -8260,7 +8304,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                         kind: ExprKind::Call {
                                             callee: clone,
                                             arg_eval_order: None,
-                                            args: vec![field_expr],
+                                            args: vec![self.clone_argument(field_expr)],
                                             latebound: false,
                                         },
                                         span,
@@ -8268,19 +8312,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 }
                             })
                             .collect();
-                        (Expr { ty, kind: ExprKind::StructLit { struct_id: *id, fields }, span }, None)
+                        (Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }, None)
                     }
                     TyKind::Class(id) => (
                         Expr { ty, kind: ExprKind::Local(self_local), span },
-                        Some(*id),
+                        Some(id),
                     ),
                     TyKind::Enum(id) => {
-                        let variants = self.types.enum_def(*id).variants.clone();
-                        let receiver = || Expr {
-                            ty,
-                            kind: ExprKind::Local(self_local),
-                            span,
-                        };
+                        let variants = self.types.enum_def(id).variants.clone();
+                        let receiver = self_value;
                         let arms = variants
                             .iter()
                             .enumerate()
@@ -8314,7 +8354,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                                 kind: ExprKind::Call {
                                                     callee: clone,
                                                     arg_eval_order: None,
-                                                    args: vec![field_expr],
+                                                    args: vec![self.clone_argument(field_expr)],
                                                     latebound: false,
                                                 },
                                                 span,
@@ -8326,7 +8366,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     pattern: Pattern {
                                         ty,
                                         kind: PatternKind::Variant {
-                                            enum_id: *id,
+                                            enum_id: id,
                                             variant,
                                             fields: Vec::new(),
                                         },
@@ -8336,7 +8376,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     body: MatchArmBody::Expr(Expr {
                                         ty,
                                         kind: ExprKind::EnumLit {
-                                            enum_id: *id,
+                                            enum_id: id,
                                             variant,
                                             fields,
                                         },
@@ -8375,6 +8415,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                     overflow: OverflowPolicy::default(),
                     borrows: None,
+                    sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner,
@@ -8487,6 +8528,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
+                // `[BRW-8]` — the receiver of a view-returning method too.
+                Mode::Borrow if index == 0 && name.is("self") && self.receiver_by_address(ty, def) => {
+                    self.types.intern(TyKind::Ref { mutable: false, inner: ty })
+                }
+                Mode::Borrow => self.borrow_param_ty(ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -8638,6 +8684,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             overflow,
             borrows: self.signatures[def.0 as usize].borrows.clone(),
+            sources: self.declared_sources(def),
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: match self.types.kind(owner) {
@@ -13260,7 +13307,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     kind: ExprKind::Call {
                         callee: def,
                         arg_eval_order: None,
-                        args: vec![self.pass_receiver(receiver, receiver_mode, iter.span)],
+                        args: vec![self.pass_receiver_to(receiver, receiver_mode, def, iter.span)],
                         latebound: false,
                     },
                     span: iter.span,
@@ -16323,7 +16370,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // parameter type; a closure has nothing to adopt.
             let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
-                Some(value) => checked.push(value),
+                Some(value) => {
+                    let value = self.pass_argument(value, param_ty, mode);
+                    checked.push(value)
+                }
                 None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
             }
         }
@@ -16528,7 +16578,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
         let mut checked = Vec::new();
         if let Some((receiver, receiver_mode, receiver_span)) = receiver {
-            checked.push(self.pass_receiver(receiver, receiver_mode, receiver_span));
+            checked.push(self.pass_receiver_to(receiver, receiver_mode, def, receiver_span));
         }
         let mut arg_for_param = vec![None; concrete.len()];
         for (arg_index, slot) in slots.iter().copied().enumerate() {
@@ -16541,7 +16591,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let arg = &args[arg_index];
             let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
-                Some(value) => checked.push(value),
+                Some(value) => {
+                    let value = self.pass_argument(value, param_ty, mode);
+                    checked.push(value)
+                }
                 None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
             }
         }
@@ -16940,6 +16993,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows,
         });
         self.instances.insert(key.clone(), instance);
+        self.generic_of.insert(instance, def);
         self.pending.push((key, instance));
         let _ = (name, span);
         instance
@@ -16984,6 +17038,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows,
         });
         self.instances.insert(key.clone(), instance);
+        self.generic_of.insert(instance, def);
         self.pending_generic_methods.push((key, instance));
         let _ = (name, span);
         instance
@@ -17678,6 +17733,40 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// requirement applies to the storage from which the view was derived.
     /// ERR-041 and ADR-017 preserve the earlier ambiguity and its resolution;
     /// D5 is closed and `tests/conformance/FN-1a/` pins the ruling.
+    /// `[BRW-8]` (ODR-024) — a borrowed parameter passed by address is a
+    /// `ref T` local: every mention reads through it to the caller's place,
+    /// as a `mut` parameter's does, and nothing can write through it.
+    /// `[LT-1]` (ODR-024) — the source parameters' positions: a reference or
+    /// view in any mode, or a borrowed or `mut` parameter whose type is not
+    /// `Copy` even with each type parameter taken to be `Copy`.
+    fn sources_of(&self, params: &[(Symbol, Ty, Mode, Span)]) -> Vec<usize> {
+        params
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, ty, mode, _))| self.is_source_parameter(*ty, *mode))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn is_source_parameter(&self, ty: Ty, mode: Mode) -> bool {
+        self.types.is_view(ty)
+            || (matches!(mode, Mode::Borrow | Mode::Mut) && !self.types.is_copy_for_elision(ty))
+    }
+
+    /// `sources_of` the declared signature: an instantiation's generic one.
+    fn declared_sources(&self, def: DefId) -> Vec<usize> {
+        let declared = self.generic_of.get(&def).copied().unwrap_or(def);
+        self.sources_of(&self.signatures[declared.0 as usize].params)
+    }
+
+    fn borrow_param_ty(&mut self, ty: Ty) -> Ty {
+        if self.types.passed_by_address(ty) {
+            self.types.intern(TyKind::Ref { mutable: false, inner: ty })
+        } else {
+            ty
+        }
+    }
+
     fn mut_param_ty(&mut self, ty: Ty) -> Ty {
         if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
             return ty;
@@ -17737,6 +17826,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
         let mut current = place;
         loop {
+            // A borrowed parameter passed by address is a `ref T` local, but
+            // a write to it is `[FN-1]`'s `E3023`, reported by
+            // `reject_borrowed_parameter_write` with its own repairs.
+            if let ExprKind::Local(local) = current.kind
+                && self.borrowed_params.contains(&local)
+            {
+                return false;
+            }
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
                 let shown = self.types.display(current.ty);
                 self.sink.emit(
@@ -17809,7 +17906,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let name = decl.name.unwrap_or_else(|| Symbol::intern("parameter"));
         let name = name.to_string();
         let declaration = decl.span;
-        let ty = decl.ty;
+        // The declared type, not the `ref T` it is passed as (`[BRW-8]`).
+        let ty = match *self.types.kind(decl.ty) {
+            TyKind::Ref { mutable: false, inner } => inner,
+            _ => decl.ty,
+        };
         let shown = self.types.display(ty);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
@@ -18419,7 +18520,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if receiver_mode == Mode::Mut {
                 if dyn_box {
-                    let borrowed = self.pass_receiver(receiver, receiver_mode, recv.span);
+                    let borrowed = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
                     let TyKind::Ref { mutable: true, inner } = self.types.kind(borrowed.ty) else {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     };
@@ -18434,7 +18535,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     // validation.  Preserve that borrow in HIR so lowering
                     // can protect a containing class field; the one-word ABI
                     // is recovered at the dynamic-call boundary.
-                    receiver = self.pass_receiver(receiver, receiver_mode, recv.span);
+                    receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
                 } else if !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. }) {
                     self.error(
                         codes::E2140,
@@ -18808,7 +18909,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
         let ret = self.resolve_assoc(ret, receiver.ty);
-        let checked_receiver = self.pass_receiver(receiver, receiver_mode, recv.span);
+        let checked_receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
         let checked_receiver = if inherited && receiver_mode == Mode::Mut {
             // `[CLS-4]` — an inherited mutable method operates on the same
             // object through the base receiver type.  The receiver is already
@@ -18964,7 +19065,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 format!("`{}` takes {} arguments, found {}", name.name, signature.len(), args.len()),
             );
         }
-        let mut checked = vec![self.pass_receiver(receiver, receiver_mode, span)];
+        let mut checked = vec![self.pass_receiver_to(receiver, receiver_mode, def, span)];
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
             .into_iter()
@@ -19452,7 +19553,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (name, ty, mode, param_span) in params {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(*ty),
-                Mode::Borrow | Mode::Owned => *ty,
+                Mode::Borrow => self.borrow_param_ty(*ty),
+                Mode::Owned => *ty,
             };
             let local = self.declare(Some(*name), local_ty, *param_span);
             if *mode == Mode::Borrow {
@@ -19527,6 +19629,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .enumerate()
             .map(|(index, (_, _, mode, _))| Param { local: LocalId(index as u32), mode: *mode })
             .collect();
+        let sources = self.sources_of(&signature_params);
         self.signatures.push(Signature {
             params: signature_params,
             ret,
@@ -19549,6 +19652,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             span,
             overflow: self.default_overflow,
             borrows: None,
+            sources,
             closure_environment,
             closure_captures_by_move,
             class_owner: None,
@@ -22769,7 +22873,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Part IV.11 step 3 — adjust the receiver to the method's declared mode.
     /// `mut self` takes the address, so the method writes through.
+    /// `[BRW-8]` (ODR-024) — whether a borrowed receiver of `callee` is passed
+    /// by address: a type passed by address anyway, or any receiver that is
+    /// not itself a view of a method whose result is a reference or view, so
+    /// `[LT-1]` rule 1 can tie the result to the caller's place (`Index` on a
+    /// `Copy` matrix). A class handle is left as it is: a view of its object is
+    /// `[EXC-18]`'s, not built here.
+    fn receiver_by_address(&self, ty: Ty, callee: DefId) -> bool {
+        if self.types.passed_by_address(ty) {
+            return true;
+        }
+        let ret = self.signatures[callee.0 as usize].ret;
+        self.types.is_view(ret)
+            && !self.types.is_view(ty)
+            && !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error)
+    }
+
+    /// `pass_receiver` for a call whose callee is known.
+    fn pass_receiver_to(&mut self, receiver: Expr, mode: Mode, callee: DefId, span: Span) -> Expr {
+        if mode == Mode::Borrow && self.receiver_by_address(receiver.ty, callee) {
+            let ty = receiver.ty;
+            return self.borrow_argument(receiver, ty);
+        }
+        self.pass_receiver(receiver, mode, span)
+    }
+
     fn pass_receiver(&mut self, receiver: Expr, mode: Mode, span: Span) -> Expr {
+        if mode == Mode::Borrow && self.types.passed_by_address(receiver.ty) {
+            let ty = receiver.ty;
+            return self.borrow_argument(receiver, ty);
+        }
         if mode != Mode::Mut {
             return receiver;
         }
@@ -22794,6 +22927,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let ty = self.types.intern(TyKind::Ref { mutable: true, inner: receiver.ty });
         Expr { ty, kind: ExprKind::Ref { place: Box::new(receiver), mutable: true }, span }
+    }
+
+    /// An already-checked argument, passed in its parameter's mode: borrowed
+    /// where the parameter is passed by address (`[BRW-8]`).
+    fn pass_argument(&mut self, value: Expr, param_ty: Ty, mode: Mode) -> Expr {
+        if mode == Mode::Borrow && self.types.passed_by_address(param_ty) {
+            self.borrow_argument(value, param_ty)
+        } else {
+            value
+        }
+    }
+
+    /// `[BRW-8]` (ODR-024) — a borrowed parameter passed by address takes a
+    /// shared borrow of the argument's place. A value that is not a place is
+    /// a temporary of the statement (`[EXP-4]`), borrowed where it is made.
+    fn borrow_argument(&mut self, value: Expr, param_ty: Ty) -> Expr {
+        if value.ty == self.common.error || matches!(value.kind, ExprKind::Error) {
+            return value;
+        }
+        let span = value.span;
+        let ty = self.types.intern(TyKind::Ref { mutable: false, inner: param_ty });
+        Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: false }, span }
     }
 
     /// `[FN-2a]`, diagnostic shape B10 — a callee's `mut` mode forms a
@@ -22969,7 +23124,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut checked = Vec::with_capacity(params.len());
         let mut order = slots.to_vec();
         let defaults = self.param_defaults.get(&def).cloned();
-        for (index, &(name, ty, _, _)) in params.iter().enumerate() {
+        for (index, &(name, ty, mode, _)) in params.iter().enumerate() {
             if given[index] {
                 checked.push(written.next().expect("one checked argument per given parameter"));
                 continue;
@@ -22997,7 +23152,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let value = self.check_expr(&default, ty);
                 self.current_module = caller_module;
                 self.scopes = scopes;
-                if self.sink.rollback(mark) { Expr { ty, kind: ExprKind::Error, span } } else { value }
+                if self.sink.rollback(mark) {
+                    Expr { ty, kind: ExprKind::Error, span }
+                } else if mode == Mode::Borrow && self.types.passed_by_address(ty) {
+                    // Passed as any argument would be (`[BRW-8]`).
+                    self.borrow_argument(value, ty)
+                } else {
+                    value
+                }
             };
             checked.push(value);
             order.push(Some(index));
@@ -23041,6 +23203,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// address of a place, so the callee writes through to the caller's
     /// variable; everything else is passed by value.
     fn check_argument(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode) -> Expr {
+        if mode == Mode::Borrow && self.types.passed_by_address(param_ty) {
+            let value = self.check_expr(arg, param_ty);
+            return self.borrow_argument(value, param_ty);
+        }
         if mode != Mode::Mut {
             return self.check_expr(arg, param_ty);
         }
@@ -23471,7 +23637,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let rhs = self.coerce(rhs, signature[1].0);
-        let receiver = self.pass_receiver(lhs, receiver_mode, span);
+        let rhs = self.pass_argument(rhs, signature[1].0, signature[1].1);
+        let receiver = self.pass_receiver_to(lhs, receiver_mode, def, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {

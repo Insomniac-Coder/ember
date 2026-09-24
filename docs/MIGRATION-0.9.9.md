@@ -108,8 +108,9 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 | ODR-021 | float `//`/`%`: `[TYP-29]`'s formula in IEEE arithmetic, or Python's result? | Python's: exact floor modulo rounded once, consistent quotient | H3 |
 | ODR-022 | does a later use change the type of `x = 0` (`[LEX-16]` vs `[TYP-23]`)? | no: the declaration fixes `int`; `E2020` help names the annotation | H3 |
 | ODR-023 | which diagnostic reports a value function that can reach its end (`[FN-10]`)? | `E2182`, with the path's last statement labelled | H4 |
+| ODR-024 | may a returned view borrow a borrowed parameter that is not itself a view (`[LT-1]` vs `[FN-1]`, M2)? | yes: a borrowed or `mut` non-`Copy` parameter is a source, passed by address | H5 |
 
-The next number is ODR-024.
+The next number is ODR-025.
 
 ## 5. Progress log
 
@@ -356,3 +357,12 @@ The next number is ODR-024.
   rule 1 keeps any borrowed receiver. It also fixes by-copy defects the panel reproduced: `Cell`
   writes lost through a borrowed parameter, and `RefCell` through one corrupting the heap. To be
   implemented next, with Hardened_5.
+* **2026-09-24 — ODR-024 built; Hardened_5 cut.** A borrowed parameter whose type is not `Copy`
+  (or holds a `Cell`) is passed by address as the caller's place, in every kind of call; views
+  pass as themselves. The source set for `[LT-1]` rules 2–3 is fixed by the declared signature,
+  with type parameters counted as `Copy`; `@borrows` may name a source or `mut` parameter, and
+  `E2031` covers a borrowed `Copy` or an `owned` non-view one. `E3060` for a view of a temporary
+  argument names the temporary. Fixed D-209–D-215; recorded open D-216 (`[TYP-5]` rule 7),
+  D-217 (a reference to a view parameter's own slot escapes) and D-218 (class getters need
+  `[EXC-18]`). `0.9.9_Hardened_5` carries the amended `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`,
+  `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]` and `[CORO-6]`, and is the development target.

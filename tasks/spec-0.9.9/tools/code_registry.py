@@ -33,6 +33,9 @@ OVERRIDE = {
     'E3026': ('a closure outlives what it captures (shape B9)', ['CLO-4']),
     'E3027': ('a `mut` argument is not a mutable place (shape B10)', ['FN-2a']),
     'E3062': ('returned view does not derive from a parameter (shape B6)', ['LT-1']),
+    'E2031': ('`@borrows` names a parameter the result cannot borrow from (a borrowed `Copy` '
+              'parameter, or an `owned` one that is not a reference or view)', ['LT-1a']),
+    'E3060': ('borrowed value does not live long enough', ['LT-3', 'BRW-8']),
     'E3065': ('multi-region result provenance cannot be inferred', ['LT-35']),
     'E3095': ('disjointness is not establishable for these operands', ['DSJ-1']),
     'E3105': ('`UnsafeCell` in `@static_safe` code', ['UNS-10']),

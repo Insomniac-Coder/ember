@@ -206,6 +206,11 @@ ODRS = [
                 'the later uses', '`[TYP-23]`'),
     ('ODR-023', 'a function returning a value that can reach the end of its body is `E2182` '
                 '(Hardened_4)', '`[FN-10]`, §XVII.9'),
+    ('ODR-024', 'a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a '
+                'returned view may borrow, and a borrowed parameter is passed by address except a '
+                'view or a `Copy` value holding no `Cell` (Hardened_5)',
+     '`[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, '
+     '`[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F'),
 ]
 
 H5_HEAD = """
@@ -213,7 +218,7 @@ H5_HEAD = """
 
 Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
-Hardened_4 adds ODR-023.
+Hardened_4 adds ODR-023; Hardened_5 adds ODR-024.
 
 | ODR | Ruling | Rules |
 |---|---|---|

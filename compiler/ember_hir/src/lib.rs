@@ -113,6 +113,9 @@ pub struct Function {
     /// a parameter is a local and the borrow checker has to answer "which
     /// parameter did this reference come from".
     pub borrows: Option<Vec<usize>>,
+    /// `[LT-1]` (ODR-024) — the source parameters' positions, from the
+    /// declared signature (for an instantiation, the generic one).
+    pub sources: Vec<usize>,
     /// Compiler-internal identity for a capturing closure's environment
     /// struct. It is absent for ordinary functions and capture-free closures.
     ///

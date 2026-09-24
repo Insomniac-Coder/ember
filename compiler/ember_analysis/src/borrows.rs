@@ -1532,7 +1532,15 @@ fn elision_of(body: &Body, types: &TypeTable) -> Elision {
     if receiver_is_a_view(body, types) {
         return Elision::Named(vec![0]);
     }
-    Elision::Everything
+    Elision::Named(source_parameters(body, types))
+}
+
+/// `[LT-1]` (ODR-024) — the parameters a returned view may borrow without
+/// `@borrows`: the source parameters, fixed by the declared signature (a
+/// reference or view, or a borrowed or `mut` parameter whose type is not
+/// `Copy`). `fn next_token(mut pos: int, src: str) -> str` borrows only `src`.
+fn source_parameters(body: &Body, _types: &TypeTable) -> Vec<usize> {
+    body.sources.clone()
 }
 
 /// `[BRW-4]` — whether this body is a method: its first parameter is the
@@ -1558,10 +1566,7 @@ fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
     if receiver_is_a_view(body, types) {
         return vec![LocalId(1)];
     }
-    body.args()
-        .filter(|(_, decl)| types.is_view(decl.ty))
-        .map(|(local, _)| local)
-        .collect()
+    source_parameters(body, types).into_iter().map(|index| LocalId(index as u32 + 1)).collect()
 }
 
 /// `E3062` — the returned view points into a parameter elision did not tie it
@@ -1646,10 +1651,30 @@ fn check_return_regions(body: &Body, types: &TypeTable, regions: &Regions, sink:
                     ),
                 },
             )
-        } else {
+        } else if receiver_is_a_view(body, types) {
             (
                 format!("the returned view points into `{name}` rather than into `self`"),
                 format!("write `@borrows({name})` above the declaration, which overrides rule 1"),
+            )
+        } else {
+            // `[LT-1]` (ODR-024) — a `mut` parameter of a `Copy` type is not
+            // a source: its value can be returned instead.
+            (
+                format!("the returned view points into `{name}`, which the result does not borrow"),
+                format!("write `@borrows({name})` above the declaration, or return the value instead of a view of it"),
+            )
+        };
+        // `[LT-1a]` — `@borrows` may name only a source parameter or a `mut`
+        // one; a borrowed `Copy` parameter (a generic `x: T`, a `Copy` struct
+        // holding a `Cell`) gets a help that compiles when applied.
+        let index = (local.0 as usize).wrapping_sub(1);
+        let nameable = body.param_modes.get(index) == Some(&ParameterMode::Mut) || body.sources.contains(&index);
+        let help = if nameable {
+            help
+        } else {
+            format!(
+                "return the value instead of a view of it, or take `{name}` as a `ref` parameter; \
+                 a borrowed `Copy` parameter is not one a result can borrow (LT-1)"
             )
         };
         sink.emit_classified(
@@ -2296,10 +2321,24 @@ fn check_escapes(
         let name = place_name(body, types, place);
         // The label is about the *owner*, which for `self.n` is `self`.
         let owner = place_name(body, types, &Place::local(place.local));
-        let storage = if is_parameter {
-            format!("`{owner}` is passed by value, so the copy's storage ends with the frame")
+        // `[BRW-8]` (ODR-024) — a parameter a result cannot borrow is either
+        // `owned` (the callee's own) or a `Copy` value passed as a copy.
+        let owned_parameter = is_parameter
+            && body.param_modes.get((place.local.0 as usize).wrapping_sub(1)) == Some(&ParameterMode::Owned);
+        let storage = if owned_parameter {
+            format!("`{owner}` is `owned`, so it is the callee's own and its storage ends with the frame")
+        } else if is_parameter {
+            format!("`{owner}` is passed as a copy, so the copy's storage ends with the frame")
         } else {
             format!("`{owner}` is a local, so its storage ends with the frame")
+        };
+        let repair = if owned_parameter {
+            format!("borrow `{owner}` instead of taking it `owned`, or return an owned value")
+        } else if is_parameter {
+            format!("take `{owner}` as a view (`Span[T]`, `str` or `ref T`), or return an owned value")
+        } else {
+            "return an owned value, take the destination as a `mut` parameter, or borrow something the caller owns"
+                .to_string()
         };
         let is_arena = arena_owner.is_some();
         if is_arena {
@@ -2348,10 +2387,7 @@ fn check_escapes(
                 .primary_label("the borrow is still live when the function returns")
                 .secondary(loan.span, format!("`{name}` is borrowed here"))
                 .secondary(root.span, storage)
-                .help(
-                    "return an owned value, take the destination as a `mut` parameter, or borrow \
-                     something the caller owns",
-                )
+                .help(repair)
                 .note("a returned reference must derive from a parameter (LT-1)"),
             );
         }
@@ -2980,6 +3016,32 @@ fn check_point(
             // borrow lives in one, the advice is about the expression, not
             // about a local they cannot see.
             let (borrower, later) = keeper(body, regions, reads, loan, span);
+            // `[EXP-4]`, `[DIA-2]` — the conflicting access is the drop that
+            // ends a temporary with its statement, while a view of it lives on
+            // (`t = head(make())`). That is a value not living long enough,
+            // and the user sees the expression, never the temporary.
+            let dropped_temporary = body.local(loan_place.local).name.is_none()
+                && matches!(
+                    body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind),
+                    Some(StmtKind::Drop { .. })
+                );
+            if dropped_temporary {
+                let mut diagnostic = Diagnostic::error(
+                    codes::E3060,
+                    body.local(loan_place.local).span,
+                    "this temporary is dropped at the end of its statement while it is still borrowed",
+                )
+                .primary_label("a temporary value, dropped at the end of this statement");
+                if let Some(later) = later {
+                    diagnostic = diagnostic.secondary(later, "borrow later used here");
+                }
+                sink.emit_classified(
+                    diagnostic
+                        .help("bind the value to a variable first, so it lives as long as the borrow")
+                        .note("a temporary lives to the end of the statement that makes it [EXP-4]"),
+                );
+                continue;
+            }
             // `[CTL-2]` survives `for` desugaring as an explicit semantic
             // fact on the synthesized iterator local. A mutable access to the
             // iterable while that local holds this loan is E3020/B2. A
@@ -3487,6 +3549,7 @@ mod callable_region_metadata_tests {
             param_modes: Vec::new(),
             span,
             borrows: None,
+            sources: Vec::new(),
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,

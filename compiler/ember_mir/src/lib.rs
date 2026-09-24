@@ -70,6 +70,9 @@ pub struct Body {
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names. `None` means
     /// `[LT-1]`'s elision decides which parameters the return may point into.
     pub borrows: Option<Vec<usize>>,
+    /// `[LT-1]` (ODR-024) — the source parameters' positions, fixed by the
+    /// declared signature: rules 2 and 3 count these.
+    pub sources: Vec<usize>,
     /// `[FN-1]` — the parameters this body borrows rather than owns, as MIR
     /// locals. A borrowed parameter arrives as a bitwise copy of the caller's
     /// value with no loan behind it, so no borrow analysis can see that the

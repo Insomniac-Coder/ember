@@ -334,6 +334,7 @@ impl<'a> Builder<'a> {
             param_modes: self.function.params.iter().map(|param| param.mode).collect(),
             span: self.function.span,
             borrows: self.function.borrows.clone(),
+            sources: self.function.sources.clone(),
             borrowed_params,
             for_iterators,
             callable_regions: None,
@@ -1238,6 +1239,7 @@ impl<'a> Builder<'a> {
         let callee = self.lower_operand(f);
         self.at(cell.span);
         let old = self.read(field.clone(), ret);
+        let old = self.pass_by_address(old, ret, cell.span);
         let result = self.temp_unowned(ret, cell.span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
@@ -1333,13 +1335,14 @@ impl<'a> Builder<'a> {
 
         let result = self.temp(inner, span);
         self.push(StmtKind::StorageLive(result));
+        let argument = self.pass_by_address(Operand::Copy(Place::local(old)), inner, span);
         let after_callback = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Indirect { operand: callee, latebound: false },
             // `fn(T) -> T` uses `[FN-2]`'s default borrowed mode. The old
             // value stays owned by this lowering temporary until statement
             // end; the callback may inspect it but cannot consume it.
-            args: vec![Operand::Copy(Place::local(old))],
+            args: vec![argument],
             dest: Place::local(result),
             next: after_callback,
         });
@@ -2716,8 +2719,13 @@ impl<'a> Builder<'a> {
     ) {
         self.at(span);
         // The scrutinee is read once, into a place the patterns project from.
+        // A place is matched where it is: a `*r` through a reference (a
+        // borrowed parameter passed by address, `[BRW-8]`) is read in place,
+        // not moved out into a temporary.
         let scrutinee_place = match &scrutinee.kind {
-            hir::ExprKind::Local(_) | hir::ExprKind::Field { .. } => self.lower_place(scrutinee),
+            hir::ExprKind::Local(_) | hir::ExprKind::Field { .. } | hir::ExprKind::Deref(_) => {
+                self.lower_place(scrutinee)
+            }
             _ => {
                 let temp = self.temp(scrutinee.ty, scrutinee.span);
                 self.push(StmtKind::StorageLive(temp));
@@ -3581,10 +3589,12 @@ impl<'a> Builder<'a> {
         let existing = Self::arena_map_slot(base, cursor).field(1).field(0);
         if let Some(equals) = equals {
             let symbol = self.program.function(equals).symbol.clone();
+            let existing = self.pass_by_address(Operand::Copy(existing), key, span);
+            let wanted = self.pass_by_address(wanted, key, span);
             let after_call = self.new_block();
             self.terminate(Terminator::Call {
                 func: FuncRef::Direct { symbol, latebound: false },
-                args: vec![Operand::Copy(existing), wanted],
+                args: vec![existing, wanted],
                 dest: Place::local(equal),
                 next: after_call,
             });
@@ -5126,6 +5136,35 @@ impl<'a> Builder<'a> {
         self.current = next;
     }
 
+    /// `[BRW-8]` (ODR-024) — an argument this lowering itself passes to a
+    /// borrowed parameter of `ty` (a callback, a user `eq`): its address when
+    /// such a parameter is passed by address, as a checked call's would be.
+    /// The callee declared the parameter, so its `ref T` type exists.
+    fn pass_by_address(&mut self, operand: Operand, ty: Ty, span: ember_span::Span) -> Operand {
+        if !self.types.passed_by_address(ty) {
+            return operand;
+        }
+        let Some(reference) = self.types.find(&TyKind::Ref { mutable: false, inner: ty }) else {
+            return operand;
+        };
+        let place = match operand {
+            Operand::Copy(place) | Operand::Move(place) => place,
+            constant @ Operand::Const(_) => {
+                let temp = self.temp_unowned(ty, span);
+                self.push(StmtKind::StorageLive(temp));
+                self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(constant) });
+                Place::local(temp)
+            }
+        };
+        let pointer = self.temp_unowned(reference, span);
+        self.push(StmtKind::StorageLive(pointer));
+        self.push(StmtKind::Assign {
+            place: Place::local(pointer),
+            rvalue: Rvalue::Ref { place, mutable: false },
+        });
+        Operand::Copy(Place::local(pointer))
+    }
+
     fn lower_into_temp(&mut self, expr: &'a hir::Expr) -> Operand {
         let temp = self.temp(expr.ty, expr.span);
         self.push(StmtKind::StorageLive(temp));
@@ -5482,10 +5521,15 @@ impl<'a> Builder<'a> {
                 place
             }
             _ => {
-                // Not a place expression. The type checker rejects this with
-                // `E2140`; MIR gets a temporary so lowering can continue.
+                // Not a place: a temporary, borrowed where it is made — a
+                // by-address argument (`[BRW-8]`) — and dropped at the end of
+                // the statement (`[EXP-4]`, `[DRP-3]`).
                 let temp = self.temp(expr.ty, expr.span);
+                self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), expr);
+                if self.types.needs_drop(expr.ty) {
+                    self.statement_temps.push(temp);
+                }
                 Place::local(temp)
             }
         }

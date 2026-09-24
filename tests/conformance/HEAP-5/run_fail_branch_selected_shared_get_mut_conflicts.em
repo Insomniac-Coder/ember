@@ -6,6 +6,7 @@
 struct Counter:
     value: i32
 
+@borrows(first, second)
 fn choose_mut(mut first: Shared[Counter], mut second: Shared[Counter], choose_first: bool) -> ref mut Counter:
     if choose_first:
         return first.get_mut()

@@ -1384,3 +1384,34 @@ reach the end of its body" — shown at the function's name, with the help to
 return on every path or end with `panic(…)`. It is not a type mismatch the
 programmer wrote. `0.9.9_Hardened_4` adds the sentence to `[FN-10]` and the row
 to §XVII.9.
+
+## ADR-042 — A borrowed parameter is the caller's place
+
+**Ruling on ODR-024 under the owner's delegation for 0.9.9, 2026-09-24**
+(a panel of four agents, synthesised by a judge). `[LT-1]` let a returned view
+borrow only reference and view parameters, while `[FN-1]`/`[FN-2]` make the
+default mode a borrow of the caller's value and milestone M2 returned
+`ref xs[0]` from a borrowed `Array`. The compiler passed a borrowed parameter
+as a shallow copy, which lost `Cell` writes and corrupted the heap through
+`RefCell` (D-209, D-210).
+
+**Decision.** A **source parameter** is a reference or view, or a borrowed or
+`mut` parameter whose type is not `Copy`, each type parameter counting as
+`Copy`. Rules 2 and 3 count source parameters; rule 1 takes any borrowed
+receiver. A borrowed parameter is passed by address, except a view (passed as
+itself, keeping its fields' regions) and a `Copy` value holding no `Cell`
+(which may be copied) unless it is the receiver of a view-returning method.
+`0.9.9_Hardened_5` carries the text; `docs/OWNER-QUEUE.md` has the options
+rejected and why.
+
+**Implementation decisions the text does not force.**
+- The type checker computes the source set once, from the declared signature
+  (for an instantiation, the generic one), and carries it on the MIR body as
+  `sources`. The borrow checker never re-derives it from concrete types, so
+  every instantiation, caller and `dyn` adapter agrees (D-213).
+- A by-address parameter is a `ref T` local, so the existing `mut` and `ref`
+  paths do the work. A shared `ref` is emitted as `T*` without `const`,
+  because a `Cell` write through one is legal.
+- The interface cache's compiler identity includes the executable's size and
+  modification time, so a rebuilt compiler never loads records written under
+  another ABI (D-215).

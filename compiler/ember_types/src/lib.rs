@@ -528,6 +528,11 @@ impl TypeTable {
         (table, common)
     }
 
+    /// The type of this shape if some earlier stage interned it.
+    pub fn find(&self, kind: &TyKind) -> Option<Ty> {
+        self.lookup.get(kind).copied()
+    }
+
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.lookup.get(&kind) {
             return ty;
@@ -1127,7 +1132,56 @@ impl TypeTable {
     /// views, raw pointers and function pointers are always `Copy`; a struct
     /// is `Copy` only if it was declared `@derive(Copy)`, so that adding a
     /// field later cannot silently change semantics.
+    /// `[BRW-8]` (ODR-024) — whether a borrowed parameter of this type is
+    /// passed by address, so the callee reads the caller's place: a type
+    /// that is not `Copy`, or a `Copy` one holding a `Cell` or `UnsafeCell`
+    /// (a write through it must reach the caller). A view or reference is
+    /// passed as itself. The choice depends only on the type.
+    pub fn passed_by_address(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Span { .. } | TyKind::Str | TyKind::Error => false,
+            TyKind::Dyn { .. } => false,
+            // A view (a `@view` struct, a tuple holding one) is already a
+            // borrow and passes as itself, keeping each field's own region.
+            _ if self.is_view(ty) => false,
+            _ => !self.is_copy(ty) || self.holds_a_cell(ty),
+        }
+    }
+
+    /// Whether a value of this type holds a `Cell` or `UnsafeCell` in its
+    /// own storage.
+    fn holds_a_cell(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                let name = def.name.as_str();
+                name.starts_with("Cell_")
+                    || name.starts_with("UnsafeCell_")
+                    || def.fields.iter().any(|f| self.holds_a_cell(f.ty))
+            }
+            TyKind::Tuple(items) => items.iter().any(|&t| self.holds_a_cell(t)),
+            TyKind::Array { elem, .. } => self.holds_a_cell(*elem),
+            TyKind::Enum(id) => self
+                .enum_def(*id)
+                .variants
+                .iter()
+                .any(|v| v.fields.iter().any(|f| self.holds_a_cell(f.ty))),
+            _ => false,
+        }
+    }
+
     pub fn is_copy(&self, ty: Ty) -> bool {
+        self.copy_with(ty, false)
+    }
+
+    /// `[LT-1]` (ODR-024) — `is_copy` with every type parameter taken to be
+    /// `Copy`, so whether a parameter is a source is fixed by the declared
+    /// signature and is the same for every instantiation.
+    pub fn is_copy_for_elision(&self, ty: Ty) -> bool {
+        self.copy_with(ty, true)
+    }
+
+    fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
             TyKind::Bool
             | TyKind::Char
@@ -1148,11 +1202,11 @@ impl TypeTable {
             TyKind::Span { mutable, .. } => !mutable,
             // `ref T` is Copy; `ref mut T` is move-only and reborrowable.
             TyKind::Ref { mutable, .. } => !mutable,
-            TyKind::Array { elem, .. } => self.is_copy(*elem),
-            TyKind::Tuple(items) => items.iter().all(|&t| self.is_copy(t)),
+            TyKind::Array { elem, .. } => self.copy_with(*elem, params),
+            TyKind::Tuple(items) => items.iter().all(|&t| self.copy_with(t, params)),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.is_copy(f.ty))
+                def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.copy_with(f.ty, params))
             }
             // `[OWN-7]` explicitly makes class handles Copy, with retain and
             // release emitted by the ownership/codegen stages rather than a
@@ -1169,7 +1223,7 @@ impl TypeTable {
                         && def
                             .variants
                             .iter()
-                            .all(|v| v.fields.iter().all(|f| self.is_copy(f.ty))))
+                            .all(|v| v.fields.iter().all(|f| self.copy_with(f.ty, params))))
             }
             // `[RNG-1]`/`[RNG-10]`(e) — a range type is its representation
             // with a narrower set of valid values, and every representation is
@@ -1181,7 +1235,8 @@ impl TypeTable {
             TyKind::Vec { .. } => false,
             // `[TYP-17]` — whether a parameter is `Copy` is what its bounds
             // say, which the checker consults rather than the type table.
-            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_) => false,
+            TyKind::Param { .. } | TyKind::Assoc { .. } => params,
+            TyKind::Infer(_) => false,
             TyKind::Dyn { .. } => false,
         }
     }

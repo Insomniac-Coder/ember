@@ -889,9 +889,15 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             .iter()
             .any(|p| matches!(p, Projection::Deref))
             && deref_through_ref(place, body, types);
+        // A borrowed parameter passed by address (`[BRW-8]`) is a `ref T`
+        // local, but moving out of it is moving out of the parameter.
+        let by_address = matches!(
+            types.kind(body.local(place.local).ty),
+            TyKind::Ref { mutable: false, inner } if types.passed_by_address(*inner)
+        );
         let borrowed = body.borrowed_params.contains(&place.local)
-            && !types.is_view(body.local(place.local).ty);
-        if through_ref {
+            && (by_address || !types.is_view(body.local(place.local).ty));
+        if through_ref && !borrowed {
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move out of a reference")
                     .primary_label("moved out here")

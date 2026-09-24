@@ -1,10 +1,10 @@
 #$ test: run-pass
-#$ rules: OWN-8
+#$ rules: OWN-8, BRW-8
 #$ profiles: debug, release, shipping
 #$ stdout: 42
 #$ stdout: 42
 #$ assert-c: contains(em_Leaf_clone)
-#$ assert-c: contains(em_Leaf_clone(_1.payload.Value._0))
+#$ assert-c: contains(= &(*_1).payload.Value._0;)
 #$ assert-c: contains(em_Entry_clone)
 
 struct Leaf:

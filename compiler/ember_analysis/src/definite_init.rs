@@ -503,6 +503,7 @@ mod tests {
             param_modes: vec![ember_mir::ParameterMode::Borrow],
             span,
             borrows: None,
+            sources: Vec::new(),
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,

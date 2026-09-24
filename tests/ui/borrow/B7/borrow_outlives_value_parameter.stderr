@@ -1,13 +1,13 @@
 error[E3060]: `text` does not live long enough
  --> tests/ui/borrow/B7/borrow_outlives_value_parameter.em:2:12
   |
-1 | fn borrow_text(text: String) -> str:
-  |                ------------ `text` is passed by value, so the copy's storage ends with the frame
+1 | fn borrow_text(owned text: String) -> str:
+  |                ------------------ `text` is `owned`, so it is the callee's own and its storage ends with the frame
 2 |     return text
   |            ^^^^ the borrow is still live when the function returns
   |            ---- `text` is borrowed here
   |
-  = help: return an owned value, take the destination as a `mut` parameter, or borrow something the caller owns
+  = help: borrow `text` instead of taking it `owned`, or return an owned value
   = note: a returned reference must derive from a parameter (LT-1)
 
 error: could not compile due to 1 error(s)

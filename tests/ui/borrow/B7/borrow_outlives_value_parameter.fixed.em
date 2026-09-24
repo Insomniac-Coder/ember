@@ -1,6 +1,5 @@
-fn keep_text(owned text: String) -> String:
+fn borrow_text(text: String) -> str:
     return text
 
 fn main():
     println(0)
-

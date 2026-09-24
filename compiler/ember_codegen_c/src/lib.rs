@@ -1495,6 +1495,14 @@ impl Emitter<'_> {
                     ParameterMode::Borrow if class_handle => {
                         args.push(format!("({receiver_ty})_0"));
                     }
+                    // `[BRW-8]` (ODR-024) — a receiver passed by address gets
+                    // the payload pointer itself.
+                    ParameterMode::Borrow
+                        if self.types.passed_by_address(adapter.concrete)
+                            || (self.types.is_view(signature.ret) && !self.types.is_view(adapter.concrete)) =>
+                    {
+                        args.push(format!("({receiver_ty}*)_0"));
+                    }
                     ParameterMode::Borrow => {
                         args.push(format!("*({receiver_ty}*)_0"));
                     }
@@ -2664,6 +2672,10 @@ impl Emitter<'_> {
     /// established call boundary.
     fn callable_param_c_type(&self, param: FnParam) -> String {
         match param.mode {
+            // `[BRW-8]` (ODR-024) — as the function it points at declares it.
+            FnParamMode::Borrow if self.types.passed_by_address(param.ty) => {
+                format!("{}*", self.c_type(param.ty))
+            }
             FnParamMode::Borrow | FnParamMode::Owned => self.c_type(param.ty),
             FnParamMode::Mut if matches!(self.types.kind(param.ty), TyKind::Span { mutable: true, .. }) => {
                 self.c_type(param.ty)
@@ -4655,7 +4667,11 @@ impl Emitter<'_> {
             {
                 format!("{RT}dyn")
             }
-            TyKind::Ref { mutable, inner } | TyKind::Ptr { mutable, inner } => {
+            // A shared `ref T` is not `const` in C: a `Cell` or `RefCell`
+            // inside it is written through a shared borrow by design (IX.7),
+            // and the checker, not C, enforces what a shared borrow may do.
+            TyKind::Ref { inner, .. } => format!("{}*", self.c_type(*inner)),
+            TyKind::Ptr { mutable, inner } => {
                 let inner = self.c_type(*inner);
                 if *mutable { format!("{inner}*") } else { format!("const {inner}*") }
             }

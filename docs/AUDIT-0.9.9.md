@@ -70,6 +70,8 @@ are migrated or retired with the construct, each named in the progress log.
 | `[MOD-2]` | V | Items are private to their module unless marked. `pub(package)` makes … | not yet probed | |
 | `[MOD-3]` | V | `import a.b.c` binds the name `c` to module `a.b.c`, and `import … | not yet probed | |
 | `[MOD-5]` | V | The prelude. Every module implicitly imports these names from `std`, … | **gap** | `mem` is not a prelude name; the 0.9.9 prelude functions (`len`, `range`, …) are not built |
+| `[FN-1]` | V | Parameter modes. `a: A` — borrowed (the default). The callee reads the caller's … | fixed | ODR-024: a borrowed parameter is the caller's place, passed by address (`T*`) unless `[BRW-8]` lets it be copied; `Cell`/`RefCell` writes reach the caller (D-209, D-210). `FN-1/accept_cell_and_refcell_through_borrowed_parameters.em` |
+| `[FN-3]` | V | A function returns by move. Returning a reference or view requires its … | compliant | through `[LT-1]`/`[LT-1a]` as amended |
 | `[FN-5]` | V | Default argument expressions are evaluated at each call, after the … | partial | defaults of plain functions and of methods, at direct calls: checked once where declared (in the declaring module, no caller locals), evaluated at each call after the written arguments, and skippable by named arguments. Not built (`E0900`): a default that reads an earlier parameter, and a default on a generic function or a generic type's method |
 | `[FN-6]` | V | Callable types. A function is a value. A callable type is written … | not yet probed | |
 | `[FN-8]` | V | `main` is `fn main()`, `fn main() -> Result[void, E]` for any `E: … | fixed | scripts; `Result` main unchanged |
@@ -96,11 +98,16 @@ are migrated or retired with the construct, each named in the progress log.
 | `[CORO-3]` | VI | `Generator[Y, R]` in a signature names the function's own frame type … | not yet probed | |
 | `[CORO-6]` | VI | A reference or view to a local of the generator's own frame may not … | not yet probed | |
 | `[OWN-6]` | VII | `mem.take(mut place: T) -> T` (leaves `Default`), `mem.replace(mut … | not yet probed | |
+| `[LT-1]` | VII | Signature elision. A source parameter (ODR-024) is: a parameter whose … | fixed | sources fixed by the declared signature, type parameters counted as `Copy` (D-213); a `mut` `Copy` parameter is not one (D-212); rule 1 for any borrowed receiver except a class handle (D-218, open, needs `[EXC-18]`); `E3060`/`E3062` split as ruled. `LT-1/` (nine cases). Open: a reference to a view parameter's own slot escapes (D-217) |
+| `[LT-1a]` | VII | `@borrows(p, …)`, on its own line before the function, replaces the … | fixed | names a source or `mut` parameter; `E2031` for a borrowed `Copy` or an `owned` non-view parameter, including an `owned` arena. `LT-1a/` |
+| `[LT-1b]` | VII | The opt-in lint `L3014` reports rule 3 applying to more than one … | gap | `L3014` fires only for a `@view` struct with two or more borrowing fields, never for a function where rule 3 takes more than one source parameter |
+| `[LT-44]` | VII | A borrowed or `mut` arena parameter is a source parameter because it is … | fixed | `LT-44/accept_one_arena_parameter_needs_no_borrows.em` |
+| `[BRW-8]` | VII | A borrowed parameter is passed by address: the callee reads the caller's … | fixed | views pass as themselves; a `Copy` value holding a `Cell` by address (D-211); the receiver of a view-returning method by address; direct, generic, `dyn`, callable-value, default, operator and derived-`clone` calls. `BRW-8/accept_a_copy_struct_holding_a_cell_is_passed_by_address.em` |
 | `[BRW-3]` | VII | Two-phase borrows. For a method call whose receiver is a place, or an … | not yet probed | |
 | `[BRW-4]` | VII | Disjoint fields. `ref mut a.x` and `ref mut a.y` may be live together … | not yet probed | |
 | `[LT-4]` | VII | Arena allocations borrow the arena (`[ARN-1]`). | not yet probed | |
 | `[LT-6]` | VII | Named lifetimes are not part of Ember and will not be added. Where a … | not yet probed | |
-| `[LT-7]` | VII | Callable types. Each call through a value or parameter of callable … | not yet probed | |
+| `[LT-7]` | VII | Callable types. Each call through a value or parameter of callable … | partial | a by-address parameter of a callable type is passed as a pointer; a call through a callable value still takes its result as borrowing every argument (`Elision::Everything`), not the callable type's source parameters |
 | `[DRP-4]` | VII | A panic inside `drop` aborts the process (`[PAN-1]`). A `drop` SHOULD … | not yet probed | |
 | `[SPN-5]` | VII | `split_at(i)` on a `Span` returns two `Span`s; on a `MutSpan` it … | not yet probed | |
 | `[OBJ-1]` | VIII | The header is 24 bytes on 64-bit targets and is part of the runtime … | not yet probed | |

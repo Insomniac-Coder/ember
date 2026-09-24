@@ -190,7 +190,7 @@ codes! {
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
     E2131 = (Error, 2131, Types, "[IV.3]", "array length must be a constant");
-    E2031 = (Error, 2031, Types, "[LT-1a]", "`@borrows` names a parameter that is not view-typed");
+    E2031 = (Error, 2031, Types, "[LT-1a]", "`@borrows` names a parameter the result cannot borrow from");
     E2172 = (Error, 2172, Types, "[GRM-8b]", "cannot index with a type");
     E2173 = (Error, 2173, Types, "[GRM-8b]", "not a type or const-generic argument");
     E2140 = (Error, 2140, Types, "[EXP-5]", "cannot assign to a value expression");

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: LT-1a, LT-1
-#$ error[E2031]: `@borrows` names `n`, which is not view-typed
+#$ error[E2031]: `@borrows` names `n`, which a result cannot borrow
 #$ error[E2031]: `@borrows` names `missing`, which is not a parameter
 #$ error[E2031]: `@borrows` is only meaningful on a function that returns a view
 

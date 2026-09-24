@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_4.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_5.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_4`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_5`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
@@ -10725,7 +10725,20 @@ expressions, float text, f-string specs, comprehensions, `Array` methods and
 ones taking a function); `[TYP-5]` rule 11 (`T` to `Option[T]`); parameter
 defaults (`[FN-5]`, not those reading an earlier parameter); open `x = None`
 and `xs = []` fixed by a later use (`[TYP-23]`); D-182–D-197, all fixed;
-ODR-021, ODR-022 and ODR-023. The next ODR is ODR-024. The directory
+`[TYP-39]` printing of collections and slicing; `[TST-1]`'s exact-diagnostics
+harness (D-205–D-208); ODR-021, ODR-022, ODR-023 and ODR-024. The next ODR is ODR-025.
+
+**ODR-024 (2026-09-24, Hardened_5, ADR-042).** A borrowed parameter whose type
+is not `Copy` (or holds a `Cell`) is a `ref T` local passed as `T*`; views pass
+as themselves. The source set for `[LT-1]` rules 2–3 is computed once from the
+declared signature (`sources` on the HIR function and MIR body; type
+parameters count as `Copy`). Fixed D-209–D-215. Open from it: D-216 (`[TYP-5]`
+rule 7 auto-borrow), D-217 (a reference to a view parameter's own slot escapes:
+narrowing `check_escapes` breaks `SPN-5`'s `span.iter_mut()`, so it needs a
+reborrow through a reference to a view to carry the view's own region), D-218
+(class getters returning a view of a field, needs `[EXC-18]`). A call through a
+callable value still takes `Elision::Everything`, and `L3014` for rule 3 is not
+built (`docs/AUDIT-0.9.9.md`). The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.
@@ -10741,8 +10754,8 @@ Parts II–VI) no longer holds.
 
 | Phase | 0.9.8 record | 0.9.9 estimate | Rules touched by 0.9.9 |
 |---|---:|---:|---|
-| 1 Core language (Parts II–VI) | 100% | ~71% | 109 of 233; ~50 re-done (M1 is about three quarters done) |
-| 2 Ownership | 86% | ~75% | 12 of 72; D-190, D-196 |
+| 1 Core language (Parts II–VI) | 100% | ~72% | 109 of 233; ~53 re-done (M1 is about three quarters done) |
+| 2 Ownership | 86% | ~80% | 12 of 72 plus ODR-024's; D-190, D-196; ODR-024 re-did `[LT-1]`, `[LT-1a]`, `[LT-44]`, `[BRW-8]` |
 | 3 Objects | 70% | ~45% | 24 of 68 (CLS/EXC changes; M2) |
 | 4 Effects, comptime, derives | 15% | ~9% | 13 of 35 |
 | 5 C FFI | 10% | ~8% | 15 of 86 |
