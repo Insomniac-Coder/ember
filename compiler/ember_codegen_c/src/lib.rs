@@ -4330,6 +4330,9 @@ impl Emitter<'_> {
                             )
                         };
                     }
+                    Builtin::StrAsBytes => {
+                        return format!("(({RT}span){{ ({}).ptr, ({}).len }})", rendered[0], rendered[0]);
+                    }
                     Builtin::StrIsCharBoundary => {
                         return format!("{RT}str_is_char_boundary({}, {})", rendered[0], rendered[1]);
                     }

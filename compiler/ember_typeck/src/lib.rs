@@ -10890,6 +10890,110 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[TXT-10]` — `s.partition(sep) -> (str, str, str)`, Python's: the text
+    /// before the first `sep`, `sep`, and the rest, or `(s, "", "")` when there
+    /// is none (an empty `sep` is the caller's bug and panics, as Python
+    /// raises); and `s.split_once(sep) -> Option[(str, str)]`, the two sides.
+    /// Every part is a view of `s`.
+    fn text_split_at(&mut self, text: Expr, separator: Expr, partition: bool, span: Span) -> Expr {
+        let (str_ty, int_ty, usize_ty, bool_ty) = (self.common.str_, self.common.i64, self.common.usize, self.common.bool_);
+        let view = self.declare(None, str_ty, span);
+        let sep = self.declare(None, str_ty, span);
+        let at = self.declare(None, int_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let len_of = |id| Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(id, str_ty)] }, span };
+        let at_usize = || Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(at, int_ty)), to: usize_ty }, span };
+        let slice = |lo: Expr, hi: Expr| Expr {
+            ty: str_ty,
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![local(view, str_ty), lo, hi] },
+            span,
+        };
+        let after_sep = || Expr {
+            ty: usize_ty,
+            kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(at_usize()), rhs: Box::new(len_of(sep)) },
+            span,
+        };
+        let before = slice(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, at_usize());
+        let rest = slice(after_sep(), len_of(view));
+        let mut stmts = vec![
+            Stmt::Let { local: view, init: Some(text) },
+            Stmt::Let { local: sep, init: Some(separator) },
+        ];
+        if partition {
+            let nonempty = Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::Ne,
+                    lhs: Box::new(len_of(sep)),
+                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
+                },
+                span,
+            };
+            stmts.push(Stmt::Expr(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin {
+                    which: Builtin::Assert,
+                    args: vec![nonempty, Expr { ty: str_ty, kind: ExprKind::Str("partition: empty separator".to_string()), span }],
+                },
+                span,
+            }));
+        }
+        stmts.push(Stmt::Let {
+            local: at,
+            init: Some(Expr {
+                ty: int_ty,
+                kind: ExprKind::Builtin { which: Builtin::StrFind { reverse: false }, args: vec![local(view, str_ty), local(sep, str_ty)] },
+                span,
+            }),
+        });
+        let missing = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Lt,
+                lhs: Box::new(local(at, int_ty)),
+                rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Int(0), span }),
+            },
+            span,
+        };
+        let (ty, found, absent) = if partition {
+            let triple = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty, str_ty]));
+            let middle = slice(at_usize(), after_sep());
+            let empty = || Expr { ty: str_ty, kind: ExprKind::Str(String::new()), span };
+            (
+                triple,
+                Expr { ty: triple, kind: ExprKind::TupleLit(vec![before, middle, rest]), span },
+                Expr { ty: triple, kind: ExprKind::TupleLit(vec![local(view, str_ty), empty(), empty()]), span },
+            )
+        } else {
+            let pair = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty]));
+            let option_ty = self.option_of(pair);
+            let TyKind::Enum(option_id) = *self.types.kind(option_ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let both = Expr { ty: pair, kind: ExprKind::TupleLit(vec![before, rest]), span };
+            (
+                option_ty,
+                Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![both] }, span },
+                Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span },
+            )
+        };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let chosen = Expr {
+            ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(missing),
+                arms: vec![arm(hir::PatternKind::Int(1), absent), arm(hir::PatternKind::Wild, found)],
+            },
+            span,
+        };
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(chosen) }, span }
+    }
+
     /// `[TXT-10]` (ODR-029) — `s.parse[T]() -> Result[T, ParseError]` for an
     /// integer, a float, `bool` or `char`: the runtime says whether the text is
     /// a whole literal of `T` that fits, and only then reads it.
@@ -11140,7 +11244,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
         let method = name.name.as_str();
         let wanted = match method {
-            "to_string" | "trim" | "trim_start" | "trim_end" | "to_upper" | "to_lower" => 0,
+            "to_string" | "trim" | "trim_start" | "trim_end" | "to_upper" | "to_lower" | "as_bytes" => 0,
             "replace" => 2,
             _ => 1,
         };
@@ -11154,6 +11258,42 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         match method {
             "to_string" => self.to_string_of(text, span),
             "to_upper" => builtin(Builtin::StrToUpper, vec![text], string_ty),
+            "as_bytes" => {
+                let bytes = self.types.intern(TyKind::Span { elem: self.common.u8, mutable: false });
+                builtin(Builtin::StrAsBytes, vec![text], bytes)
+            }
+            // `[TXT-10]` — whether byte `i` starts a character (or is the end).
+            // An `i` outside the text is not a boundary.
+            "is_char_boundary" => {
+                let index = self.check_expr(&args[0].value, int_ty);
+                let view = self.declare(None, str_ty, span);
+                let at = self.declare(None, int_ty, span);
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let within = Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Builtin {
+                        which: Builtin::StrSliceOk,
+                        args: vec![
+                            local(view, str_ty),
+                            local(at, int_ty),
+                            local(at, int_ty),
+                            Expr { ty: bool_ty, kind: ExprKind::Bool(false), span },
+                        ],
+                    },
+                    span,
+                };
+                Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Block {
+                        block: Block {
+                            stmts: vec![Stmt::Let { local: view, init: Some(text) }, Stmt::Let { local: at, init: Some(index) }],
+                            span,
+                        },
+                        value: Box::new(within),
+                    },
+                    span,
+                }
+            }
             "to_lower" => builtin(Builtin::StrToLower, vec![text], string_ty),
             "starts_with" | "ends_with" => {
                 let needle = self.check_expr(&args[0].value, str_ty);
@@ -11166,6 +11306,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             // `s.get(range)` — `Some` of the slice when it is one, else `None`.
             "get" => self.text_get(text, &args[0].value, span),
+            "partition" | "split_once" => {
+                let separator = self.check_expr(&args[0].value, str_ty);
+                self.text_split_at(text, separator, method == "partition", span)
+            }
             "replace" => {
                 let from = self.check_expr(&args[0].value, str_ty);
                 let to = self.check_expr(&args[1].value, str_ty);
@@ -20239,7 +20383,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && matches!(
                 name.name.as_str(),
                 "to_string" | "starts_with" | "ends_with" | "find" | "rfind" | "count" | "replace" | "repeat"
-                    | "trim" | "trim_start" | "trim_end" | "get" | "to_upper" | "to_lower"
+                    | "trim" | "trim_start" | "trim_end" | "get" | "to_upper" | "to_lower" | "partition"
+                    | "split_once" | "as_bytes" | "is_char_boundary"
             )
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {

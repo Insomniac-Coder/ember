@@ -545,3 +545,9 @@ The next number is ODR-027.
   `bool`, `char`. `ParseError` (`Empty`, `Invalid`, `Overflow`) is in the new `std/src/string.em`,
   loaded with the prelude modules. The runtime validates (`ember_parse_*_status`) and reads the value
   only once the text is known good. Not built: 128-bit integers.
+* **2026-09-25 — `partition`, `split_once`, `as_bytes`, `is_char_boundary` (`[TXT-10]`).**
+  `partition(sep)` is Python's (`(s, "", "")` when absent; an empty separator panics);
+  `split_once(sep) -> Option[(str, str)]`; both give views of the text through `Slice`.
+  `as_bytes()` reads the text as its `Span[u8]` (a new `StrAsBytes`, listed with `Slice` among the
+  builtins whose result borrows their argument, so the bytes of a temporary cannot outlive it);
+  `is_char_boundary(i)`. The splitting methods that return iterators wait for the iteration design.

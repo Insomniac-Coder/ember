@@ -676,6 +676,9 @@ pub enum Builtin {
     /// `[TXT-4]` — whether a byte offset of a `str` starts a character (or
     /// is its end).
     StrIsCharBoundary,
+    /// `[TXT-10]` — a `str` read as its `Span[u8]`: the same bytes, borrowed as
+    /// the text is.
+    StrAsBytes,
     /// `a.len()`.
     ArrayLen,
     /// `String()` — an empty string.
@@ -998,6 +1001,7 @@ impl Builtin {
             Builtin::ArraySplitAtMut { .. } => "split_at_mut",
             Builtin::Slice { .. } => "slice",
             Builtin::StrIsCharBoundary => "is_char_boundary",
+            Builtin::StrAsBytes => "as_bytes",
             Builtin::SpanSplitAt { .. } => "split_at",
             Builtin::SpanReborrow => "reborrow",
             Builtin::SpanSharedReborrow => "reborrow",
