@@ -807,7 +807,13 @@ impl Parser<'_> {
             self.bump();
             let cond = self.parse_expr_bp(BP_TERNARY + 1, allow_block_lambda);
             self.expect_kw(Kw::Else);
-            let else_expr = self.parse_expr_bp(BP_TERNARY, allow_block_lambda);
+            // `[GRM-16]` — a jump may be the whole of a branch:
+            // `v = x if ok else return 7`.
+            let else_expr = if self.at_jump() {
+                self.parse_jump(allow_block_lambda)
+            } else {
+                self.parse_expr_bp(BP_TERNARY, allow_block_lambda)
+            };
             let id = self.next_id();
             return Expr {
                 id,

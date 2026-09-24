@@ -501,3 +501,24 @@ The next number is ODR-027.
   (`[GRM-16]`), `I.m(recv)` (`[TYP-24]`), qualified type paths (`m.T`).
   D-240: a name declared twice in one block (`z: int = …` twice) compiled; it is `E1020` now, which
   also gives `E1020` the conformance test the registry check asks for.
+* **2026-09-25 — names assigned in every branch (`[CTL-10]`).** In an `if` with an `else`
+  (through any `elif` chain) and an exhaustive statement `match`, a name that is not in scope
+  before and that every arm completing normally declares by `x = e`, at one type, is declared
+  after the statement: the checker declares it beside the statement uninitialised and sets it at
+  the end of each such arm (`hoist_branch_names`; a nested branch hoists into its arm first, and
+  the compiler's own hidden names never hoist). Different types are `E2230` (new, with a page),
+  and the name is declared anyway so later uses add nothing. `str.to_string()`, which `[TXT-9]`
+  names, is not built (found while probing).
+* **2026-09-25 — `to_string`, `String.from` and the first `str` methods (`[TXT-9]`, `[TXT-10]`).**
+  `x.to_string()` on any value with text is `f"{x}"` (one f-string part, so `Display` else
+  `Debug`); `String.from(s)` copies a `str`. On `str` (and `String` through it): `starts_with`,
+  `ends_with`, `find`/`rfind` (a byte offset in an `Option[int]`), `count` and `replace` (Python's
+  meaning, an empty needle matching between characters), `repeat` (empty below one), and `trim`,
+  `trim_start`, `trim_end` (Unicode white space; a view of the text, through the `Slice` builtin, so
+  the borrow is the ordinary one). Runtime `str_starts_with` … `str_trim_end`. Not built yet:
+  `to_upper`/`to_lower` (Unicode case tables), `split`, `lines`, `chars` and the other methods that
+  return iterators, `parse`, `get(range)`.
+* **2026-09-25 — a jump as a conditional branch (`[GRM-16]`).** `v = x if ok else return 7` (and
+  `continue`, `break`): the parser reads a jump as a whole `else` branch, and the checker makes it
+  that arm of the `match` the ternary lowers to, as a `match` arm's jump is. `annotations.py` now
+  trims `#$` continuation lines as the harness does.

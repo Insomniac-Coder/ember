@@ -1358,6 +1358,120 @@ bool ember_str_contains(ember_str text, ember_str needle) {
     return false;
 }
 
+bool ember_str_starts_with(ember_str s, ember_str prefix) {
+    return prefix.len <= s.len && memcmp(s.ptr, prefix.ptr, prefix.len) == 0;
+}
+
+bool ember_str_ends_with(ember_str s, ember_str suffix) {
+    return suffix.len <= s.len && memcmp(s.ptr + (s.len - suffix.len), suffix.ptr, suffix.len) == 0;
+}
+
+int64_t ember_str_find(ember_str s, ember_str needle) {
+    for (size_t at = 0; at + needle.len <= s.len; ++at) {
+        if (memcmp(s.ptr + at, needle.ptr, needle.len) == 0) {
+            return (int64_t)at;
+        }
+    }
+    return -1;
+}
+
+int64_t ember_str_rfind(ember_str s, ember_str needle) {
+    if (needle.len > s.len) {
+        return -1;
+    }
+    for (size_t at = s.len - needle.len + 1; at-- > 0;) {
+        if (memcmp(s.ptr + at, needle.ptr, needle.len) == 0) {
+            return (int64_t)at;
+        }
+    }
+    return -1;
+}
+
+int64_t ember_str_count(ember_str s, ember_str needle) {
+    if (needle.len == 0) {
+        return (int64_t)ember_str_char_count(s) + 1;
+    }
+    int64_t count = 0;
+    for (size_t at = 0; at + needle.len <= s.len;) {
+        if (memcmp(s.ptr + at, needle.ptr, needle.len) == 0) {
+            count += 1;
+            at += needle.len;
+        } else {
+            at += 1;
+        }
+    }
+    return count;
+}
+
+ember_vec ember_str_replace(ember_str s, ember_str from, ember_str to) {
+    ember_vec out = ember_vec_empty();
+    if (from.len == 0) {
+        /* Python's: the replacement goes before every character and at the end. */
+        size_t at = 0;
+        ember_vec_extend(&out, to.ptr, to.len);
+        while (at < s.len) {
+            size_t width = ember_char_utf8_len(ember_str_char_at(s, at));
+            ember_vec_extend(&out, s.ptr + at, width);
+            ember_vec_extend(&out, to.ptr, to.len);
+            at += width;
+        }
+        return out;
+    }
+    size_t at = 0;
+    while (at < s.len) {
+        if (at + from.len <= s.len && memcmp(s.ptr + at, from.ptr, from.len) == 0) {
+            ember_vec_extend(&out, to.ptr, to.len);
+            at += from.len;
+        } else {
+            ember_vec_extend(&out, s.ptr + at, 1);
+            at += 1;
+        }
+    }
+    return out;
+}
+
+ember_vec ember_str_repeat(ember_str s, int64_t n) {
+    ember_vec out = ember_vec_empty();
+    for (int64_t i = 0; i < n; ++i) {
+        ember_vec_extend(&out, s.ptr, s.len);
+    }
+    return out;
+}
+
+/* Unicode White_Space. */
+static bool is_white_space(uint32_t c) {
+    return (c >= 0x09 && c <= 0x0D) || c == 0x20 || c == 0x85 || c == 0xA0 || c == 0x1680
+        || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F
+        || c == 0x3000;
+}
+
+size_t ember_str_trim_start(ember_str s) {
+    size_t at = 0;
+    while (at < s.len) {
+        uint32_t c = ember_str_char_at(s, at);
+        if (!is_white_space(c)) {
+            break;
+        }
+        at += ember_char_utf8_len(c);
+    }
+    return at;
+}
+
+size_t ember_str_trim_end(ember_str s) {
+    size_t end = s.len;
+    while (end > 0) {
+        size_t start = end - 1;
+        while (start > 0 && (s.ptr[start] & 0xC0) == 0x80) {
+            start -= 1;
+        }
+        if (!is_white_space(ember_str_char_at(s, start))) {
+            break;
+        }
+        end = start;
+    }
+    return end;
+}
+
 static size_t encode_utf8(uint32_t c, unsigned char* out);
 
 bool ember_str_contains_char(ember_str text, uint32_t needle) {

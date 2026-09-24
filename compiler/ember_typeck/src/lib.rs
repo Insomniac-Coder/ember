@@ -826,6 +826,9 @@ struct Checker<'a> {
     class_default_exprs: HashMap<ClassId, Vec<Option<ast::Expr>>>,
     /// `[STR-2]` — each struct's field default expressions, by field.
     struct_default_exprs: HashMap<StructId, Vec<Option<ast::Expr>>>,
+    /// `[CTL-10]` — locals declared by a plain `x = e`, the only ones a
+    /// branch hoists.
+    plain_declared: HashSet<LocalId>,
     /// A field expression is a place, not a read, while the assignment target
     /// is being synthesized. This prevents constructor writes from tripping
     /// the read-before-initialization check on their own left-hand side.
@@ -1000,6 +1003,7 @@ impl<'a> Checker<'a> {
             class_method_receiver: None,
             class_default_exprs: HashMap::new(),
             struct_default_exprs: HashMap::new(),
+            plain_declared: HashSet::new(),
             in_assignment_target: false,
             ref_guards: HashMap::new(),
             arenas: HashSet::new(),
@@ -9877,15 +9881,92 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Block {
-        // `[Part 0 #13]` — block scoping: names declared here leave scope at
-        // the end of the block.
+        self.check_block_scoped(block).0
+    }
+
+    /// `[Part 0 #13]` — block scoping: names declared here leave scope at the
+    /// end of the block. Also returns them, for `[CTL-10]`.
+    fn check_block_scoped(&mut self, block: &ast::Block) -> (Block, HashMap<Symbol, LocalId>) {
         self.scopes.push(HashMap::new());
         let mut stmts = Vec::new();
         for stmt in &block.stmts {
             self.check_stmt(stmt, &mut stmts);
         }
-        self.scopes.pop();
-        Block { stmts, span: block.span }
+        let scope = self.scopes.pop().unwrap_or_default();
+        (Block { stmts, span: block.span }, scope)
+    }
+
+    /// `[CTL-10]` — a name that is not in scope before a branching statement
+    /// and is declared by `x = e` in every arm that completes normally, at one
+    /// type, is declared beside the statement (`out`) and set at the end of
+    /// each such arm. Different types are `E2230`, naming each arm's.
+    fn hoist_branch_names(&mut self, arms: Vec<(&mut Block, HashMap<Symbol, LocalId>)>, out: &mut Vec<Stmt>) {
+        let never = self.common.never;
+        let completing: Vec<usize> =
+            (0..arms.len()).filter(|&index| !block_diverges(arms[index].0, never)).collect();
+        let Some(&first) = completing.first() else { return };
+        let mut names: Vec<Symbol> = arms[first]
+            .1
+            .iter()
+            .filter(|(_, local)| self.plain_declared.contains(local))
+            .map(|(name, _)| *name)
+            .collect();
+        names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        let mut arms = arms;
+        for name in names {
+            if self.lookup(name).is_some() {
+                continue;
+            }
+            let found: Vec<(usize, LocalId)> = completing
+                .iter()
+                .filter_map(|&index| {
+                    arms[index].1.get(&name).filter(|local| self.plain_declared.contains(local)).map(|&local| (index, local))
+                })
+                .collect();
+            if found.len() != completing.len() {
+                continue;
+            }
+            let tys: Vec<Ty> = found.iter().map(|&(_, local)| self.locals[local.0 as usize].ty).collect();
+            if tys.contains(&self.common.error) {
+                continue;
+            }
+            if tys.iter().any(|&ty| ty != tys[0]) {
+                let first_shown = self.types.display(tys[0]);
+                let mut diagnostic = Diagnostic::error(
+                    codes::E2230,
+                    self.locals[found[0].1 .0 as usize].span,
+                    format!("`{name}` is assigned in every branch, but at different types"),
+                )
+                .primary_label(format!("`{first_shown}` here"));
+                for &(_, local) in &found[1..] {
+                    let decl = &self.locals[local.0 as usize];
+                    let shown = self.types.display(decl.ty);
+                    diagnostic = diagnostic.secondary(decl.span, format!("`{shown}` here"));
+                }
+                self.sink.emit(
+                    diagnostic
+                        .help(format!("give `{name}` one type in every branch, or declare it before the branch with its type"))
+                        .note("a name assigned in every branch is declared after it at the one type they share [CTL-10]"),
+                );
+                // Declared all the same, so its later uses add nothing.
+                let error = self.common.error;
+                let span = self.locals[found[0].1 .0 as usize].span;
+                self.declare(Some(name), error, span);
+                continue;
+            }
+            let span = self.locals[found[0].1 .0 as usize].span;
+            let hoisted = self.declare(Some(name), tys[0], span);
+            // An enclosing branch may hoist it again.
+            self.plain_declared.insert(hoisted);
+            out.push(Stmt::Let { local: hoisted, init: None });
+            for (index, local) in found {
+                let ty = tys[0];
+                arms[index].0.stmts.push(Stmt::Assign {
+                    place: Expr { ty, kind: ExprKind::Local(hoisted), span },
+                    value: Expr { ty, kind: ExprKind::Local(local), span },
+                });
+            }
+        }
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
@@ -9990,6 +10071,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         let init = self.commit(synthesized);
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
+                        self.plain_declared.insert(local);
                         if from_literal {
                             self.literal_locals.insert(local, stmt.span);
                         }
@@ -10152,10 +10234,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 out.push(Stmt::Assign { place, value });
             }
-            ast::StmtKind::If(if_stmt) => {
-                let stmt = self.check_if(if_stmt);
-                out.push(stmt);
-            }
+            ast::StmtKind::If(if_stmt) => self.check_if(if_stmt, out),
             ast::StmtKind::While { label, cond, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
                 match cond {
@@ -10255,7 +10334,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // against `void` and it rides in `Stmt::Expr`.
             ast::StmtKind::Match { scrutinee, arms } => {
                 let void = self.common.void;
-                let matched = self.check_match(scrutinee, arms, Some(void), stmt.span);
+                let (mut matched, scopes, exhaustive) =
+                    self.check_match_scoped(scrutinee, arms, Some(void), stmt.span);
+                // `[CTL-10]` — an exhaustive statement `match` hoists the
+                // names every arm declares, as an `if` with an `else` does. An
+                // expression arm declares nothing, so unless it diverges no
+                // name is declared in every arm.
+                if exhaustive && let ExprKind::Match { arms: checked, .. } = &mut matched.kind {
+                    let never = self.common.never;
+                    let mut hoisting = Vec::new();
+                    let mut declares_nothing = false;
+                    for (arm, scope) in checked.iter_mut().zip(scopes) {
+                        match &mut arm.body {
+                            hir::MatchArmBody::Block(block) => hoisting.push((block, scope.unwrap_or_default())),
+                            hir::MatchArmBody::Expr(value) => declares_nothing |= value.ty != never,
+                        }
+                    }
+                    if !declares_nothing {
+                        self.hoist_branch_names(hoisting, out);
+                    }
+                }
                 out.push(Stmt::Expr(matched));
             }
             _ => {
@@ -10533,6 +10631,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        self.check_match_scoped(scrutinee, arms, expected, span).0
+    }
+
+    /// `check_match`, also returning each block arm's top-level names and
+    /// whether the arms are exhaustive, for `[CTL-10]`.
+    fn check_match_scoped(
+        &mut self,
+        scrutinee: &ast::Expr,
+        arms: &[ast::MatchArm],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> (Expr, Vec<Option<HashMap<Symbol, LocalId>>>, bool) {
+        let mut arm_scopes = Vec::new();
         self.check_class_init_whole_self_use(scrutinee);
         let scrutinee = self.synth_committed(scrutinee);
         let scrutinee_ty = scrutinee.ty;
@@ -10560,7 +10671,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             });
             let body = match &arm.body {
                 ast::MatchArmBody::Block(block) => {
-                    hir::MatchArmBody::Block(self.check_block(block))
+                    let (block, scope) = self.check_block_scoped(block);
+                    arm_scopes.push(Some(scope));
+                    hir::MatchArmBody::Block(block)
                 }
                 // `[GRM-16]` — `Circle(r) => return PI * r * r`. A jump has
                 // type `!` and produces no value, so the arm lowers to a block
@@ -10569,9 +10682,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let ast::ExprKind::Jump(jump) = &expr.kind else { unreachable!() };
                     let mut stmts = Vec::new();
                     self.lower_jump(jump, expr.span, &mut stmts);
+                    arm_scopes.push(None);
                     hir::MatchArmBody::Block(Block { stmts, span: expr.span })
                 }
                 ast::MatchArmBody::Expr(expr) => {
+                    arm_scopes.push(None);
                     // The first arm settles the type; the rest are checked
                     // against it, so a mismatch points at the arm that differs.
                     let value = match result_ty {
@@ -10591,7 +10706,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             checked.push(hir::MatchArm { pattern, guard, body, span: arm.span });
         }
 
-        self.report_match_coverage(&checked, scrutinee_ty, span);
+        let exhaustive = self.report_match_coverage(&checked, scrutinee_ty, span);
 
         if let Some(incoming) = incoming_class_init {
             let mut paths = if has_guard { vec![incoming] } else { Vec::new() };
@@ -10600,11 +10715,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
 
         let ty = result_ty.unwrap_or(self.common.void);
-        Expr {
+        let matched = Expr {
             ty,
             kind: ExprKind::Match { scrutinee: Box::new(scrutinee), arms: checked },
             span,
-        }
+        };
+        (matched, arm_scopes, exhaustive)
     }
 
     /// `[TYP-31]` (0.9.9) — an index of any integer type. A signed index is
@@ -10670,6 +10786,142 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let int_ty = self.common.i64;
         let span = size.span;
         Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(size), to: int_ty }, span }
+    }
+
+    /// `[TXT-9]` — the `String` `f"{value}"` makes: its `Display` text, or its
+    /// `Debug` text when it has no `Display`, as `print` writes it.
+    fn to_string_of(&mut self, value: Expr, span: Span) -> Expr {
+        let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8) {
+            let str_ty = self.common.str_;
+            self.coerce(value, str_ty)
+        } else {
+            value
+        };
+        if !self.is_formattable(value.ty) {
+            if value.ty != self.common.error {
+                let shown = self.types.display(value.ty);
+                self.error(codes::E2040, span, format!("`{shown}` has no text: it implements neither `Display` nor `Debug`"));
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        Expr {
+            ty: string_ty,
+            kind: ExprKind::FString { parts: vec![hir::FStringPart::Value(value, None)], buffer_ref },
+            span,
+        }
+    }
+
+    /// `[TXT-10]` — `to_string`, `starts_with`, `ends_with`, `find`, `rfind`,
+    /// `count`, `replace`, `repeat`, `trim`, `trim_start` and `trim_end`. A
+    /// search is by bytes over valid UTF-8, so it matches whole characters;
+    /// `find` gives a byte offset. `trim*` return a view of the text.
+    fn synth_text_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (str_ty, int_ty, bool_ty, usize_ty) = (self.common.str_, self.common.i64, self.common.bool_, self.common.usize);
+        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let method = name.name.as_str();
+        let wanted = match method {
+            "to_string" | "trim" | "trim_start" | "trim_end" => 0,
+            "replace" => 2,
+            _ => 1,
+        };
+        if args.len() != wanted || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {wanted} argument(s), found {}", args.len()));
+            return error;
+        }
+        let receiver = self.read_through(receiver);
+        let text = if receiver.ty == str_ty { receiver } else { self.coerce(receiver, str_ty) };
+        let builtin = |which, args: Vec<Expr>, ty| Expr { ty, kind: ExprKind::Builtin { which, args }, span };
+        match method {
+            "to_string" => self.to_string_of(text, span),
+            "starts_with" | "ends_with" => {
+                let needle = self.check_expr(&args[0].value, str_ty);
+                let which = if method == "starts_with" { Builtin::StrStartsWith } else { Builtin::StrEndsWith };
+                builtin(which, vec![text, needle], bool_ty)
+            }
+            "count" => {
+                let needle = self.check_expr(&args[0].value, str_ty);
+                builtin(Builtin::StrCount, vec![text, needle], int_ty)
+            }
+            "replace" => {
+                let from = self.check_expr(&args[0].value, str_ty);
+                let to = self.check_expr(&args[1].value, str_ty);
+                builtin(Builtin::StrReplace, vec![text, from, to], string_ty)
+            }
+            "repeat" => {
+                let times = self.check_expr(&args[0].value, int_ty);
+                builtin(Builtin::StrRepeat, vec![text, times], string_ty)
+            }
+            "find" | "rfind" => {
+                // `Some(offset)`, or `None` where the runtime says -1.
+                let needle = self.check_expr(&args[0].value, str_ty);
+                let found = builtin(Builtin::StrFind { reverse: method == "rfind" }, vec![text, needle], int_ty);
+                let option_ty = self.option_of(int_ty);
+                let TyKind::Enum(option_id) = *self.types.kind(option_ty) else { return error };
+                let at = self.declare(None, int_ty, span);
+                let local = || Expr { ty: int_ty, kind: ExprKind::Local(at), span };
+                let missing = Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Lt,
+                        lhs: Box::new(local()),
+                        rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Int(0), span }),
+                    },
+                    span,
+                };
+                let arm = |kind, body: Expr| hir::MatchArm {
+                    pattern: hir::Pattern { ty: bool_ty, kind, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Expr(body),
+                    span,
+                };
+                let none = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
+                let some = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![local()] }, span };
+                let chosen = Expr {
+                    ty: option_ty,
+                    kind: ExprKind::Match {
+                        scrutinee: Box::new(missing),
+                        arms: vec![arm(hir::PatternKind::Int(1), none), arm(hir::PatternKind::Wild, some)],
+                    },
+                    span,
+                };
+                Expr {
+                    ty: option_ty,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local: at, init: Some(found) }], span },
+                        value: Box::new(chosen),
+                    },
+                    span,
+                }
+            }
+            _ => {
+                // `trim`, `trim_start`, `trim_end` — a view of the text between
+                // the offsets the runtime finds.
+                let view = self.declare(None, str_ty, span);
+                let local = || Expr { ty: str_ty, kind: ExprKind::Local(view), span };
+                let start = if method == "trim_end" {
+                    Expr { ty: usize_ty, kind: ExprKind::Int(0), span }
+                } else {
+                    builtin(Builtin::StrTrimStart, vec![local()], usize_ty)
+                };
+                let end = if method == "trim_start" {
+                    builtin(Builtin::SpanLen, vec![local()], usize_ty)
+                } else {
+                    builtin(Builtin::StrTrimEnd, vec![local()], usize_ty)
+                };
+                let sliced = builtin(Builtin::Slice { text: true }, vec![local(), start, end], str_ty);
+                Expr {
+                    ty: str_ty,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local: view, init: Some(text) }], span },
+                        value: Box::new(sliced),
+                    },
+                    span,
+                }
+            }
+        }
     }
 
     /// `[TXT-10]` — `s.len()` (bytes), `s.char_count()` (characters, Python's
@@ -11084,6 +11336,44 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     ) -> Expr {
         let bool_ty = self.common.bool_;
         let never = self.common.never;
+        // `[GRM-16]` — a jump may be the whole of a branch
+        // (`v = x if ok else return 7`): that arm is the jump, as a `match`
+        // arm's is, and the other gives the value.
+        let is_jump = |expr: &ast::Expr| matches!(expr.kind, ast::ExprKind::Jump(_));
+        if is_jump(then_expr) || is_jump(else_expr) {
+            let cond = self.check_expr(cond, bool_ty);
+            let branch = |this: &mut Self, expr: &ast::Expr| -> hir::MatchArmBody {
+                if let ast::ExprKind::Jump(jump) = &expr.kind {
+                    let mut stmts = Vec::new();
+                    this.lower_jump(jump, expr.span, &mut stmts);
+                    return hir::MatchArmBody::Block(Block { stmts, span: expr.span });
+                }
+                hir::MatchArmBody::Expr(match expected {
+                    Some(ty) => this.check_expr(expr, ty),
+                    None => this.synth_committed(expr),
+                })
+            };
+            let then_body = branch(self, then_expr);
+            let else_body = branch(self, else_expr);
+            let ty = [&then_body, &else_body]
+                .iter()
+                .find_map(|body| match body {
+                    hir::MatchArmBody::Expr(value) => Some(value.ty),
+                    hir::MatchArmBody::Block(_) => None,
+                })
+                .unwrap_or(never);
+            let arm = |kind, body: hir::MatchArmBody, span| hir::MatchArm {
+                pattern: hir::Pattern { ty: bool_ty, kind, span },
+                guard: None,
+                body,
+                span,
+            };
+            let arms = vec![
+                arm(hir::PatternKind::Int(1), then_body, then_expr.span),
+                arm(hir::PatternKind::Wild, else_body, else_expr.span),
+            ];
+            return Expr { ty, kind: ExprKind::Match { scrutinee: Box::new(cond), arms }, span };
+        }
         let cond = self.check_expr(cond, bool_ty);
         // `[TYP-23]` — with nothing expected, a branch that cannot type itself
         // (`None`, `[]`) takes the other branch's type: `Some(v) if c else None`.
@@ -11144,7 +11434,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[ENM-2]` — every value the scrutinee can take must be covered, and an
     /// arm that can never run is `W2091`. A guarded arm covers nothing, since
     /// the guard may fail at run time.
-    fn report_match_coverage(&mut self, arms: &[hir::MatchArm], ty: Ty, span: Span) {
+    /// Reports unreachable arms and missing values; `true` when the arms
+    /// cover every value.
+    fn report_match_coverage(&mut self, arms: &[hir::MatchArm], ty: Ty, span: Span) -> bool {
         let mut seen: Vec<&hir::Pattern> = Vec::new();
         for arm in arms {
             if !usefulness::is_useful(self.types, &seen, &arm.pattern, ty) {
@@ -11170,7 +11462,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .primary_label(format!("`{list}` not covered"))
                 .note("add the missing arms, or `_` as a catch-all [ENM-2]"),
             );
+            return false;
         }
+        true
     }
 
     fn check_pattern(&mut self, pattern: &ast::Pattern, expected: Ty) -> hir::Pattern {
@@ -12223,6 +12517,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             self.sink.rollback(mark);
             self.locals.truncate(snapshot.locals);
+            self.plain_declared.retain(|local| (local.0 as usize) < snapshot.locals);
             self.scopes = snapshot.scopes.clone();
             self.local_ranges = snapshot.local_ranges.clone();
             self.literal_locals = snapshot.literal_locals.clone();
@@ -14384,7 +14679,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }))
     }
 
-    fn check_if(&mut self, if_stmt: &ast::IfStmt) -> Stmt {
+    fn check_if(&mut self, if_stmt: &ast::IfStmt, out: &mut Vec<Stmt>) {
         match &if_stmt.cond {
             ast::Condition::Expr(expr) => self.check_class_init_whole_self_use(expr),
             ast::Condition::Pattern { value, .. } => self.check_class_init_whole_self_use(value),
@@ -14399,17 +14694,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let incoming_ranges = self.local_ranges.clone();
         let incoming_class_init = self.class_init.clone();
         self.refine_ranges_from_condition(&cond, true);
-        let then_block = self.check_block(&if_stmt.then_block);
+        let (mut then_block, then_scope) = self.check_block_scoped(&if_stmt.then_block);
         let then_class_init = self.class_init.clone();
         let then_ranges = self.local_ranges.clone();
         self.local_ranges = incoming_ranges.clone();
         self.class_init = incoming_class_init.clone();
         self.refine_ranges_from_condition(&cond, false);
-        let else_block = match if_stmt.else_block.as_deref() {
-            Some(ast::ElseBranch::Block(b)) => Some(self.check_block(b)),
+        let else_part = match if_stmt.else_block.as_deref() {
+            Some(ast::ElseBranch::Block(b)) => Some(self.check_block_scoped(b)),
+            // The nested chain is the `else` arm: what it hoists belongs to
+            // the arm, and this statement may hoist it further.
             Some(ast::ElseBranch::If(nested)) => {
-                let stmt = self.check_if(nested);
-                Some(Block { stmts: vec![stmt], span: if_stmt.then_block.span })
+                self.scopes.push(HashMap::new());
+                let mut stmts = Vec::new();
+                self.check_if(nested, &mut stmts);
+                let scope = self.scopes.pop().unwrap_or_default();
+                Some((Block { stmts, span: if_stmt.then_block.span }, scope))
             }
             None => None,
         };
@@ -14417,7 +14717,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let else_ranges = self.local_ranges.clone();
         self.local_ranges = Self::merge_local_ranges(then_ranges, else_ranges);
         self.class_init = Self::merge_class_init_paths(then_class_init, else_class_init);
-        Stmt::If { cond, then_block, else_block }
+        let else_block = match else_part {
+            Some((mut else_block, else_scope)) => {
+                self.hoist_branch_names(vec![(&mut then_block, then_scope), (&mut else_block, else_scope)], out);
+                Some(else_block)
+            }
+            None => None,
+        };
+        out.push(Stmt::If { cond, then_block, else_block });
     }
 
     /// Refine the range facts visible in one `if` arm.  The v1 surface keeps
@@ -15862,6 +16169,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // constructor. The parser cannot know that the name on the left
             // is a type, so it arrives in the same method-call shape as enum
             // and range constructors.
+            // `[TXT-9]` — `String.from(s)` copies a `str` into a new `String`.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if is_single_path(recv, "String")
+                    && name.name.is("from")
+                    && self.lookup(Symbol::intern("String")).is_none() =>
+            {
+                self.reject_method_type_args(name.name, generic_args, span);
+                if args.len() != 1 || args[0].name.is_some() {
+                    self.error(codes::E2020, span, format!("`String.from` takes 1 argument(s), found {}", args.len()));
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                let str_ty = self.common.str_;
+                let text = self.check_expr(&args[0].value, str_ty);
+                self.to_string_of(text, span)
+            }
+
             ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if is_single_path(recv, "Arena") && self.lookup(Symbol::intern("Arena")).is_none() =>
             {
@@ -19576,6 +19899,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // Phase 2's generics let the standard library declare them.
         // `[TXT-10]`, `[TXT-11]` (0.9.9) — `len()` counts bytes, `char_count()`
         // characters, and `is_empty()`; a `String` has them through its `str`.
+        // `[TXT-10]` — the `str` methods built so far, on a `str` or, through
+        // it, a `String`.
+        if self.is_text(receiver.ty)
+            && explicit.is_empty()
+            && matches!(
+                name.name.as_str(),
+                "to_string" | "starts_with" | "ends_with" | "find" | "rfind" | "count" | "replace" | "repeat"
+                    | "trim" | "trim_start" | "trim_end"
+            )
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_text_method(receiver, name, args, span);
+        }
+        // `[TXT-9]` — `x.to_string()` is `f"{x}"`: the text `print` writes.
+        if name.name.is("to_string")
+            && explicit.is_empty()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            if !args.is_empty() {
+                self.error(codes::E2020, span, format!("`to_string` takes 0 argument(s), found {}", args.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let receiver = self.read_through(receiver);
+            return self.to_string_of(receiver, span);
+        }
         if self.is_text(receiver.ty)
             && explicit.is_empty()
             && args.is_empty()
@@ -26078,6 +26426,21 @@ fn root_local(kind: &ExprKind) -> Option<LocalId> {
         | ExprKind::Index { base, .. }
         | ExprKind::Deref(base) => root_local(&base.kind),
         _ => None,
+    }
+}
+
+/// `[CTL-10]` — whether a checked block never completes normally: it ends in
+/// `return`, `break`, `continue`, an expression of type `!` (a panic), or a
+/// branch every arm of which diverges.
+fn block_diverges(block: &Block, never: Ty) -> bool {
+    match block.stmts.last() {
+        Some(Stmt::Return(_) | Stmt::Break { .. } | Stmt::Continue { .. }) => true,
+        Some(Stmt::Expr(expr)) => expr.ty == never,
+        Some(Stmt::If { then_block, else_block: Some(else_block), .. }) => {
+            block_diverges(then_block, never) && block_diverges(else_block, never)
+        }
+        Some(Stmt::Block(inner)) => block_diverges(inner, never),
+        _ => false,
     }
 }
 

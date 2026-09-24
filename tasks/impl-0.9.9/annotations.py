@@ -38,7 +38,8 @@ def expected_stdout(text):
                 if more == '#$':
                     out.append('')
                 elif more.startswith('#$ ') and not re.match(r'#\$ [a-z-]+:', more):
-                    out.append(more[3:])
+                    # The harness trims every annotation line.
+                    out.append(more[3:].strip())
                 else:
                     break
     return out

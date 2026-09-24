@@ -2536,6 +2536,14 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StringLen
             | Builtin::StringAsStr
             | Builtin::StrCharCount
+            | Builtin::StrStartsWith
+            | Builtin::StrEndsWith
+            | Builtin::StrFind { .. }
+            | Builtin::StrCount
+            | Builtin::StrReplace
+            | Builtin::StrRepeat
+            | Builtin::StrTrimStart
+            | Builtin::StrTrimEnd
             | Builtin::StrCharAt
             | Builtin::CharUtf8Len
             | Builtin::StrContains

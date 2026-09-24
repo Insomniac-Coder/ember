@@ -183,6 +183,7 @@ codes! {
     E2062 = (Error, 2062, Types, "[TYP-23]", "ambiguous type");
     E2070 = (Error, 2070, Types, "[TYP-24]", "ambiguous interface method");
     E2073 = (Error, 2073, Types, "[STD-26]", "`len` of a string");
+    E2230 = (Error, 2230, Types, "[CTL-10]", "a name assigned in every branch at different types");
     E2228 = (Error, 2228, Types, "[CLO-3]", "callable parameter mode mismatch");
     E2080 = (Error, 2080, Types, "[STR-3]", "`@derive(Copy)` on a type with a field that is not Copy");
     E2090 = (Error, 2090, Types, "[ENM-2]", "non-exhaustive match");

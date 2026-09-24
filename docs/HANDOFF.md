@@ -10789,7 +10789,10 @@ error per run of invalid characters. D-238 is fixed: struct field defaults were 
 evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). `E1052`
 (`item_accessible`, `report_item_not_visible`) replaces `E1020` for privacy; ODR-028
 (Hardened_9) adds `E2111`, and D-239 lets an `override` be overridden; D-240
-(a name declared twice in one block) is `E1020`. The directory
+(a name declared twice in one block) is `E1020`. `[CTL-10]` branch hoisting is built
+(`hoist_branch_names`, `check_block_scoped`, `check_match_scoped`). `to_string`,
+`String.from` and the first `str` methods are built (`to_string_of`, `synth_text_method`).
+The directory
 tests now report every failing case in one run (`check_file_collecting`);
 `tasks/impl-0.9.9/survey.py` checks the whole corpus in seconds and
 `tasks/impl-0.9.9/cache_stress.py` is D-189's regression check.

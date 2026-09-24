@@ -3900,6 +3900,31 @@ impl Emitter<'_> {
                             rendered[2]
                         );
                     }
+                    Builtin::StrStartsWith => {
+                        return format!("{RT}str_starts_with({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::StrEndsWith => {
+                        return format!("{RT}str_ends_with({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::StrFind { reverse } => {
+                        let function = if *reverse { "rfind" } else { "find" };
+                        return format!("{RT}str_{function}({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::StrCount => {
+                        return format!("{RT}str_count({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::StrReplace => {
+                        return format!("{RT}str_replace({}, {}, {})", rendered[0], rendered[1], rendered[2]);
+                    }
+                    Builtin::StrRepeat => {
+                        return format!("{RT}str_repeat({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::StrTrimStart => {
+                        return format!("{RT}str_trim_start({})", rendered[0]);
+                    }
+                    Builtin::StrTrimEnd => {
+                        return format!("{RT}str_trim_end({})", rendered[0]);
+                    }
                     Builtin::StrCharAt => {
                         return format!("{RT}str_char_at({}, {})", rendered[0], rendered[1]);
                     }

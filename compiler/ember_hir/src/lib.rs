@@ -565,6 +565,15 @@ pub enum Builtin {
     RangeNth,
     /// `[TXT-10]` — `s.char_count()`: the number of Unicode scalar values.
     StrCharCount,
+    /// `[TXT-10]` — the `str` searches and builders of the runtime.
+    StrStartsWith,
+    StrEndsWith,
+    StrFind { reverse: bool },
+    StrCount,
+    StrReplace,
+    StrRepeat,
+    StrTrimStart,
+    StrTrimEnd,
     /// `[CTL-1]` — the `char` that starts at a byte index of a `str`.
     StrCharAt,
     /// How many bytes UTF-8 gives a `char`.
@@ -906,6 +915,14 @@ impl Builtin {
             Builtin::FloatPow => "pow",
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
+            Builtin::StrStartsWith => "starts_with",
+            Builtin::StrEndsWith => "ends_with",
+            Builtin::StrFind { reverse } => if reverse { "rfind" } else { "find" },
+            Builtin::StrCount => "count",
+            Builtin::StrReplace => "replace",
+            Builtin::StrRepeat => "repeat",
+            Builtin::StrTrimStart => "trim_start",
+            Builtin::StrTrimEnd => "trim_end",
             Builtin::StrCharAt => "char_at",
             Builtin::CharUtf8Len => "len_utf8",
             Builtin::FormatWith(_) => "format",

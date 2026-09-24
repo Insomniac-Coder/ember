@@ -577,6 +577,21 @@ size_t ember_char_utf8_len(uint32_t c);
  * encoding. */
 bool ember_str_contains(ember_str text, ember_str needle);
 bool ember_str_contains_char(ember_str text, uint32_t needle);
+/* `[TXT-10]` — searches by bytes over valid UTF-8, so a needle matches only
+ * whole characters. `find`/`rfind` give a byte offset, or -1; `count` counts
+ * non-overlapping matches (an empty needle matches between characters, as
+ * Python's does); `replace` replaces every match; `repeat` of a count below
+ * one is empty; `trim_start`/`trim_end` give the offsets that drop Unicode
+ * white space from each end. */
+bool ember_str_starts_with(ember_str s, ember_str prefix);
+bool ember_str_ends_with(ember_str s, ember_str suffix);
+int64_t ember_str_find(ember_str s, ember_str needle);
+int64_t ember_str_rfind(ember_str s, ember_str needle);
+int64_t ember_str_count(ember_str s, ember_str needle);
+ember_vec ember_str_replace(ember_str s, ember_str from, ember_str to);
+ember_vec ember_str_repeat(ember_str s, int64_t n);
+size_t ember_str_trim_start(ember_str s);
+size_t ember_str_trim_end(ember_str s);
 
 /* `[TYP-37]`: `a < b` by IEEE totalOrder, the order `min`, `max` and `clamp`
  * use for floats: -NaN < -inf < ... < -0.0 < +0.0 < ... < +inf < +NaN. */
