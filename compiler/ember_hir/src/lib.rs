@@ -612,6 +612,20 @@ pub enum Builtin {
     ArrayPop { option: Ty },
     ArrayRemove,
     ArrayInsert,
+    /// `[STD-15]` — `xs.capacity()`: the slots allocated.
+    ArrayCapacity,
+    /// `[STD-15]` — `xs.reserve(n)`: room for `n` more without reallocating.
+    ArrayReserve,
+    /// `[STD-15]` — `xs.truncate(n)`: the elements from `n` on dropped.
+    ArrayTruncate,
+    /// `[STD-15]` — `xs.swap_remove(i)`: the element at `i`, the last one
+    /// moved into its place.
+    ArraySwapRemove,
+    /// `[STD-15]`, `[BRW-5]` — `xs.swap(i, j)`.
+    ArraySwap,
+    /// `[STD-15]` — `xs.extend(items)`: a clone of each element of a span
+    /// appended.
+    ArrayExtend,
     ArraySorted { elem: Ty },
     /// `[OWN-8]` — `xs.clone()` on an `Array[T]` (or a `String`): a new
     /// buffer holding a clone of each element.
@@ -958,6 +972,12 @@ impl Builtin {
             Builtin::ArrayPop { .. } => "pop",
             Builtin::ArrayRemove => "remove",
             Builtin::ArrayInsert => "insert",
+            Builtin::ArrayCapacity => "capacity",
+            Builtin::ArrayReserve => "reserve",
+            Builtin::ArrayTruncate => "truncate",
+            Builtin::ArraySwapRemove => "swap_remove",
+            Builtin::ArraySwap => "swap",
+            Builtin::ArrayExtend => "extend",
             Builtin::ArraySorted { .. } => "sorted",
             Builtin::ArrayClone { .. } => "clone",
             Builtin::Input => "input",

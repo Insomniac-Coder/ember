@@ -150,3 +150,43 @@ fn result_unwrap_or_else[T, E](owned r: Result[T, E], f: fn(owned E) -> T) -> T:
             return v
         Err(e):
             return f(e)
+
+## `[STD-15]` — the `Array` methods written in Ember (`[GRM-34]`). A method
+## the compiler knows by a name comes first (`[TYP-24]`); these are found
+## after it, and one a program never calls is not emitted (`[COST-1]`).
+extend[T] Array[T]:
+    ## Keeps the elements `keep` is true of, in their order.
+    pub fn retain(mut self, keep: fn(T) -> bool):
+        kept = 0
+        for i in range(self.len()):
+            if keep(self[i]):
+                self.swap(kept, i)
+                kept += 1
+        self.truncate(kept)
+
+extend[T: Eq] Array[T]:
+    ## Drops each element equal to the one kept before it, so a sorted array
+    ## keeps one of each value.
+    pub fn dedup(mut self):
+        if self.len() < 2:
+            return
+        kept = 1
+        for i in range(1, self.len()):
+            if self[i] != self[kept - 1]:
+                self.swap(kept, i)
+                kept += 1
+        self.truncate(kept)
+
+extend[T: Ord] Array[T]:
+    ## In a sorted array: `Ok` of an index holding `x`, or `Err` of the index
+    ## where `x` would go to keep the array sorted.
+    pub fn binary_search(self, x: T) -> Result[int, int]:
+        lo = 0
+        hi = self.len()
+        while lo < hi:
+            mid = (lo + hi) // 2
+            match self[mid].cmp(x):
+                Ordering.Less: lo = mid + 1
+                Ordering.Equal: return Ok(mid)
+                Ordering.Greater: hi = mid
+        return Err(lo)

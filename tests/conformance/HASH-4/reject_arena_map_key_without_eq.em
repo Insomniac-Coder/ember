@@ -3,6 +3,8 @@
 
 from std.collections import ArenaMap, Hasher
 
+# `[STR-5]` would give it `Eq` field-wise; the key here must lack it.
+@no_derive(Eq)
 struct HashOnly:
     value: i32
 

@@ -1219,6 +1219,21 @@ void ember_vec_reverse(ember_vec* v, size_t elem_size) {
     }
 }
 
+/* `[STD-15]`, `[BRW-5]` — exchange two elements; the caller checked both
+ * indices. */
+void ember_vec_swap(ember_vec* v, size_t elem_size, size_t i, size_t j) {
+    if (i == j) {
+        return;
+    }
+    unsigned char* x = (unsigned char*)v->ptr + i * elem_size;
+    unsigned char* y = (unsigned char*)v->ptr + j * elem_size;
+    for (size_t b = 0; b < elem_size; ++b) {
+        unsigned char t = x[b];
+        x[b] = y[b];
+        y[b] = t;
+    }
+}
+
 void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value) {
     ember_vec_reserve(v, elem_size, v->len + 1);
     unsigned char* a = (unsigned char*)v->ptr;

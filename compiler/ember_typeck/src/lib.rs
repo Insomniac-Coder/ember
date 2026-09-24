@@ -788,6 +788,9 @@ struct Checker<'a> {
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
+    /// `[COST-1]` — the inherent extension methods a built-in instance took
+    /// when a method was first looked up on it: emitted only if called.
+    emit_if_used_methods: HashSet<DefId>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
@@ -1009,6 +1012,7 @@ impl<'a> Checker<'a> {
             generic_classes: HashMap::new(),
             generic_extensions: HashMap::new(),
             applied_extensions: HashSet::new(),
+            emit_if_used_methods: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -1790,6 +1794,27 @@ impl<'a> Checker<'a> {
                             &decl.members,
                         );
                     }
+                    // `[GRM-34]` — a generic extension's members are the same:
+                    // declarations over its own parameters, never one of the
+                    // specializations each instance takes (which differ from
+                    // program to program). Two extensions of one type may
+                    // share a method name, so the owner names the extension's
+                    // place in its file.
+                    ast::ItemKind::Extend(decl) if !decl.generics.is_empty() => {
+                        let Some((target, extension)) = self.generic_extensions.iter().find_map(|(target, extensions)| {
+                            extensions.iter().find(|extension| extension.span == item.span).map(|extension| (*target, extension))
+                        }) else {
+                            continue;
+                        };
+                        self.extend_generic_member_declarations(
+                            &mut declarations,
+                            Symbol::intern(&format!("{target}@{}", item.span.start)),
+                            &extension.params,
+                            extension.params.len(),
+                            &extension.methods,
+                            &decl.members,
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -2002,7 +2027,10 @@ impl<'a> Checker<'a> {
         const EXPORTS: &[(&str, &[&str])] = &[
             (
                 "std.core",
-                &["Eq", "Ord", "Default", "Clone", "Iterator", "Range", "RangeInclusive", "RangeFrom", "RangeTo"],
+                &[
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Iterator", "Range", "RangeInclusive", "RangeFrom",
+                    "RangeTo",
+                ],
             ),
             ("std.collections", &["Hash"]),
         ];
@@ -2897,6 +2925,37 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[GRM-34]` — "no method named `m`", with a note when an extension has
+    /// `m` under a bound this type's arguments do not meet.
+    fn note_unmet_extension_bound(&self, diagnostic: Diagnostic, ty: Ty, method: Symbol) -> Diagnostic {
+        let Some((argument, bound)) = self.unmet_extension_bound(ty, method) else { return diagnostic };
+        let argument = self.types.display(argument);
+        let bound = bound.as_str().rsplit('.').next().unwrap_or(bound.as_str());
+        diagnostic.note(format!("`{method}` needs `{argument}` to implement `{bound}`"))
+    }
+
+    /// `[GRM-34]` — for "no method named `m`": an extension of the
+    /// receiver's generic type that has `m` under a bound its arguments do
+    /// not meet, as the argument and the bound.
+    fn unmet_extension_bound(&self, ty: Ty, method: Symbol) -> Option<(Ty, Symbol)> {
+        let origin = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
+            _ => None,
+        };
+        let (name, args) = origin.or_else(|| self.builtin_generic_origin(ty))?;
+        self.generic_extensions.get(&name)?.iter().find_map(|extension| {
+            if !extension.methods.iter().any(|m| m.name == method) {
+                return None;
+            }
+            let bound = self.generic_extension_bindings(extension, &args)?;
+            extension.params.iter().zip(bound).find_map(|(param, argument)| {
+                param.bounds.iter().find(|&&b| !self.implements(argument, b)).map(|&b| (argument, b))
+            })
+        })
+    }
+
     /// `[GRM-34]` — whether an extension of a built-in generic type gives
     /// `ty` the interface: `implements` is asked before any method of an
     /// instance may have been looked up.
@@ -2955,6 +3014,10 @@ impl<'a> Checker<'a> {
             Some(base) => self.class_virtual_layout(base, &mut HashMap::new()),
             None => HashMap::new(),
         };
+        // `[COST-1]` — a built-in instance takes every matching extension at
+        // its first method call; an inherent one's methods (never in a
+        // vtable) are emitted only if called.
+        let builtin = self.builtin_generic_origin(ty).is_some();
         for (index, extension, bindings) in matching {
             self.applied_extensions.insert((ty, index));
             let mut declared = Vec::new();
@@ -2971,6 +3034,9 @@ impl<'a> Checker<'a> {
                 else {
                     continue;
                 };
+                if builtin && extension.interface.is_none() {
+                    self.emit_if_used_methods.insert(def);
+                }
                 if method.receiver.is_some() && method.dispatch != ast::Dispatch::Static {
                     declared.push((method.name, def, method.dispatch));
                 }
@@ -8206,7 +8272,8 @@ impl<'a> Checker<'a> {
                     self.emit_concrete_instantiation_diagnostics(concrete);
                 }
                 self.type_params.clear();
-                if let Some(function) = function {
+                if let Some(mut function) = function {
+                    function.emit_if_used |= self.emit_if_used_methods.contains(&job.def);
                     out.push(function);
                 }
             }
@@ -10922,6 +10989,71 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Expr {
             ty: string_ty,
             kind: ExprKind::FString { parts: vec![hir::FStringPart::Value(value, None)], buffer_ref },
+            span,
+        }
+    }
+
+    /// `[TYP-37]` — `a.cmp(b) -> Ordering` for the numbers and text, in the
+    /// order `sort` and `min` use: `Less` when `a < b`, `Greater` when
+    /// `b < a`, else `Equal`. A `String` is compared as its `str`, so it is
+    /// borrowed, not moved.
+    fn synth_total_cmp(&mut self, receiver: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.len() != 1 || args[0].name.is_some() {
+            self.error(codes::E2020, span, format!("`cmp` takes 1 argument, found {}", args.len()));
+            return error;
+        }
+        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
+            return error;
+        };
+        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        let receiver = if self.is_text(receiver.ty) {
+            let str_ty = self.common.str_;
+            self.coerce(receiver, str_ty)
+        } else {
+            receiver
+        };
+        let ty = receiver.ty;
+        let other = self.check_expr(&args[0].value, ty);
+        let (a, b) = (self.declare(None, ty, span), self.declare(None, ty, span));
+        let bool_ty = self.common.bool_;
+        let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
+        let less = |x, y| Expr {
+            ty: bool_ty,
+            kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(x), local(y)] },
+            span,
+        };
+        let variant = |variant| Expr {
+            ty: ordering,
+            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
+            span,
+        };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let pick = |test: Expr, yes: Expr, no: Expr| Expr {
+            ty: ordering,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(test),
+                arms: vec![arm(hir::PatternKind::Int(1), yes), arm(hir::PatternKind::Wild, no)],
+            },
+            span,
+        };
+        // `Ordering`'s variants in order: `Less`, `Equal`, `Greater`.
+        let chosen = pick(less(a, b), variant(0), pick(less(b, a), variant(2), variant(1)));
+        Expr {
+            ty: ordering,
+            kind: ExprKind::Block {
+                block: Block {
+                    stmts: vec![Stmt::Let { local: a, init: Some(receiver) }, Stmt::Let { local: b, init: Some(other) }],
+                    span,
+                },
+                value: Box::new(chosen),
+            },
             span,
         }
     }
@@ -14095,6 +14227,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return error;
         }
         match name.name.as_str() {
+            // `[STD-15]` — the slots allocated, used or not.
+            "capacity" => {
+                let slots = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::ArrayCapacity, args: vec![receiver] }, span };
+                self.size_as_int(slots)
+            }
             "is_empty" => {
                 let length = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::ArrayLen, args: vec![receiver] }, span };
                 Expr {
@@ -14181,8 +14318,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let bool_ty = self.common.bool_;
         let method = name.name.as_str();
         let wanted = match method {
-            "remove" => 1,
-            "insert" => 2,
+            "remove" | "swap_remove" | "truncate" | "reserve" | "extend" => 1,
+            "insert" | "swap" => 2,
             _ => 0,
         };
         if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
@@ -14211,10 +14348,72 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2140, span, format!("`{method}` changes the array, so it needs an Array variable"));
             return error;
         }
+        if method == "extend" && !self.is_cloneable(elem) {
+            let shown = self.types.display(elem);
+            self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `extend` needs"));
+            return error;
+        }
         let array_ty = receiver.ty;
         let receiver = self.pass_receiver(receiver, Mode::Mut, span);
         let call = |which, args, ty| Expr { ty, kind: ExprKind::Builtin { which, args }, span };
+        // The arguments are evaluated first, which may read the array, then
+        // the array is borrowed: `xs.truncate(len(xs) - 1)`.
+        let after_arguments = |stmts: Vec<Stmt>, action: Expr| {
+            let ty = action.ty;
+            Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(action) }, span }
+        };
         match method {
+            // `[STD-15]` — `truncate(n)` drops the elements from `n` on (none
+            // when `n` is at least the length); `reserve(n)` makes room for
+            // `n` more.
+            "truncate" | "reserve" => {
+                let Some(count) = self.check_index(&args[0].value, None, span) else { return error };
+                let borrow_ty = receiver.ty;
+                let (kept, borrow) = (self.declare(None, usize_ty, span), self.declare(None, borrow_ty, span));
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let which = if method == "truncate" { Builtin::ArrayTruncate } else { Builtin::ArrayReserve };
+                let stmts = vec![Stmt::Let { local: kept, init: Some(count) }, Stmt::Let { local: borrow, init: Some(receiver) }];
+                after_arguments(stmts, call(which, vec![local(borrow, borrow_ty), local(kept, usize_ty)], void))
+            }
+            // `[STD-15]` — `extend(items)` appends a clone of each element of
+            // a span (an `Array` argument is viewed, `[SPN-1]`). The view stays
+            // an argument rather than a local: a temporary array it views
+            // lives to the end of the statement, and a `let` would end first.
+            "extend" => {
+                let items_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+                let items = self.check_expr(&args[0].value, items_ty);
+                call(Builtin::ArrayExtend, vec![receiver, items], void)
+            }
+            // `[STD-15]`, `[BRW-5]` — `swap(i, j)`; both must be indices.
+            "swap" => {
+                let Some(first) = self.check_index(&args[0].value, None, span) else { return error };
+                let Some(second) = self.check_index(&args[1].value, None, span) else { return error };
+                let borrow_ty = receiver.ty;
+                let (i, j, borrow) = (
+                    self.declare(None, usize_ty, span),
+                    self.declare(None, usize_ty, span),
+                    self.declare(None, borrow_ty, span),
+                );
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let mut stmts = vec![
+                    Stmt::Let { local: i, init: Some(first) },
+                    Stmt::Let { local: j, init: Some(second) },
+                    Stmt::Let { local: borrow, init: Some(receiver) },
+                ];
+                for index in [i, j] {
+                    let through = Expr { ty: array_ty, kind: ExprKind::Deref(Box::new(local(borrow, borrow_ty))), span };
+                    let length = call(Builtin::ArrayLen, vec![through], usize_ty);
+                    let in_range = Expr {
+                        ty: bool_ty,
+                        kind: ExprKind::Binary { op: BinOp::Lt, lhs: Box::new(local(index, usize_ty)), rhs: Box::new(length) },
+                        span,
+                    };
+                    let message = Expr { ty: self.common.str_, kind: ExprKind::Str("swap index out of range".to_string()), span };
+                    stmts.push(Stmt::Expr(call(Builtin::Assert, vec![in_range, message], void)));
+                }
+                let action = call(Builtin::ArraySwap, vec![local(borrow, borrow_ty), local(i, usize_ty), local(j, usize_ty)], void);
+                after_arguments(stmts, action)
+            }
             "sort" => call(Builtin::ArraySort, vec![receiver], void),
             "reverse" => call(Builtin::ArrayReverse, vec![receiver], void),
             "clear" => call(Builtin::ArrayClear, vec![receiver], void),
@@ -14234,10 +14433,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
                 let through = Expr { ty: array_ty, kind: ExprKind::Deref(Box::new(local(borrow, borrow_ty))), span };
                 let length = call(Builtin::ArrayLen, vec![through], usize_ty);
-                let (op, message) = if method == "insert" {
-                    (BinOp::Le, "insert index out of range; the index may be at most the length")
-                } else {
-                    (BinOp::Lt, "remove index out of range")
+                let (op, message) = match method {
+                    "insert" => (BinOp::Le, "insert index out of range; the index may be at most the length"),
+                    "swap_remove" => (BinOp::Lt, "swap_remove index out of range"),
+                    _ => (BinOp::Lt, "remove index out of range"),
                 };
                 let in_range = Expr {
                     ty: bool_ty,
@@ -14258,6 +14457,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 stmts.push(check);
                 let action = match value {
                     Some(value) => call(Builtin::ArrayInsert, vec![local(borrow, borrow_ty), value, local(at, usize_ty)], void),
+                    // `[STD-15]` — `swap_remove(i)` moves the last element
+                    // into the gap instead of shifting the rest.
+                    None if method == "swap_remove" => {
+                        call(Builtin::ArraySwapRemove, vec![local(borrow, borrow_ty), local(at, usize_ty)], elem)
+                    }
                     None => call(Builtin::ArrayRemove, vec![local(borrow, borrow_ty), local(at, usize_ty)], elem),
                 };
                 let ty = action.ty;
@@ -14527,7 +14731,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let a = self.synth(positional[0]);
                 let b = self.synth(positional[1]);
                 let Some((a, b)) = self.unify_pair(name, a, b, span) else { return Some(error) };
-                if !self.totally_ordered(a.ty) {
+                // `[TYP-37]` — the numbers and `str` (text is `Ord`; a `str`
+                // is a copied view, so picking one moves nothing).
+                if !self.totally_ordered(a.ty) && a.ty != self.common.str_ {
                     let shown = self.types.display(a.ty);
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `{name}` needs"));
                     return Some(error);
@@ -14541,7 +14747,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let Some((value, lo)) = self.unify_pair(name, value, lo, span) else { return Some(error) };
                 let Some((lo, hi)) = self.unify_pair(name, lo, hi, span) else { return Some(error) };
                 let ty = value.ty;
-                if lo.ty != ty || !self.totally_ordered(ty) {
+                if lo.ty != ty || !(self.totally_ordered(ty) || ty == self.common.str_) {
                     let shown = self.types.display(ty);
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `clamp` needs"));
                     return Some(error);
@@ -18690,6 +18896,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return true;
         }
+        // `[TYP-37]`, `[STR-5]` — what the compiler provides meets a bound as
+        // a written implementation does: `Ord` on the numbers (floats by
+        // totalOrder) and text, and `Clone` and `Eq` on every type it can
+        // clone or compare, a struct's implicit ones included. D-246.
+        let provided = match interface.as_str() {
+            "std.core.Ord" => self.sortable(ty),
+            "std.core.Clone" => self.is_cloneable(ty),
+            "std.core.Eq" => self.has_implicit_eq(ty),
+            _ => false,
+        };
+        if provided {
+            return true;
+        }
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
         }
@@ -20441,6 +20660,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.is_text(receiver.ty) && name.name.is("parse") && !self.methods.contains_key(&(receiver.ty, name.name)) {
             return self.synth_text_parse(receiver, explicit, args, span);
         }
+        // `[STR-5]` — a `Copy` value is `Clone`, and its clone is itself.
+        if name.name.is("clone")
+            && explicit.is_empty()
+            && args.is_empty()
+            && self.types.is_copy(receiver.ty)
+            && self.lookup_method(receiver.ty, name.name).is_none()
+        {
+            return self.clone_value(receiver);
+        }
+        // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
+        // which generic code bounded by `Ord` uses.
+        if name.name.is("cmp")
+            && explicit.is_empty()
+            && self.sortable(receiver.ty)
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_total_cmp(receiver, args, span);
+        }
         // `[TXT-9]` — `x.to_string()` is `f"{x}"`: the text `print` writes.
         if name.name.is("to_string")
             && explicit.is_empty()
@@ -20464,7 +20701,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
             && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
-            && matches!(name.name.as_str(), "is_empty" | "contains" | "index_of" | "get" | "first" | "last")
+            && matches!(name.name.as_str(), "is_empty" | "contains" | "index_of" | "get" | "first" | "last" | "capacity")
             && explicit.is_empty()
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
@@ -20472,7 +20709,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
             && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
-            && matches!(name.name.as_str(), "sort" | "reverse" | "clear" | "pop" | "remove" | "insert" | "sorted")
+            && matches!(
+                name.name.as_str(),
+                "sort" | "reverse" | "clear" | "pop" | "remove" | "insert" | "sorted" | "swap_remove" | "swap"
+                    | "truncate" | "reserve" | "extend"
+            )
             && explicit.is_empty()
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
@@ -20768,6 +21009,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 name.span,
                 format!("`{shown}` has no method named `{}`", name.name),
             );
+            diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
             // `[STR-5]`, ODR-026 — say why a struct or enum is not `Clone`.
             if name.name.is("clone") && matches!(self.types.kind(receiver.ty), TyKind::Struct(_) | TyKind::Enum(_)) {
                 diagnostic = if self.has_own_drop(receiver.ty) {
@@ -24976,6 +25218,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
 
+        // `[STD-15]` — the methods a view of the array has (`[SPN-1]`): the
+        // array is viewed, and the view's method runs. `get_mut(i)` is a
+        // mutable view's `get`.
+        let through_view = match name.name.as_str() {
+            "iter" | "chunks" | "split_at" => Some((false, name)),
+            "iter_mut" | "chunks_mut" => Some((true, name)),
+            "get_mut" => Some((true, ast::Ident { name: Symbol::intern("get"), span: name.span })),
+            _ => None,
+        };
+        if let Some((mutable, method)) = through_view
+            && !is_string
+        {
+            if !is_place(&receiver.kind) {
+                self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let view_ty = self.types.intern(TyKind::Span { elem, mutable });
+            let view = self.view_of(receiver, view_ty, mutable, Builtin::SpanFrom { mutable });
+            return self.synth_span_method(view, recv_span, elem, mutable, method, args, span);
+        }
+
         // `[STD-*]`'s Array table names `as_span` and `as_mut_span`, and Part
         // VII §7 writes `buf.as_mut_span()` in its own worked example. They are
         // the explicit spelling of `[SPN-1]`'s coercion and go through the one
@@ -25055,11 +25318,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
             }
             let shown = self.types.display(receiver.ty);
-            self.error(
-                codes::E1010,
-                name.span,
-                format!("`{shown}` has no method named `{}`", name.name),
-            );
+            let diagnostic =
+                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
+            let diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 

@@ -564,3 +564,13 @@ The next number is ODR-027.
   interface method arriving after an inherent one of its name is kept for its interface (D-244).
   Open: D-243 (`E2120` is never reported) and D-245 (in a generic body, a bound's method can reach
   an inherent method of the same name once the body is instantiated).
+* **2026-09-25 — bounds met by the compiler (D-246), and `Array` methods (`[STD-15]`).** `T: Ord`,
+  `T: Clone` and `T: Eq` accept what the compiler provides (numbers and text, `Copy` and cloneable
+  types, implicit `Eq`); `x.clone()` of a `Copy` value, `a.cmp(b)` on numbers and text, and
+  `Ordering` in the prelude; `min`/`max`/`clamp` take `str`. `Array` gains `capacity`, `reserve`,
+  `truncate`, `swap_remove`, `swap`, `extend` (a span's elements, cloned), and `get_mut`,
+  `split_at`, `iter`, `iter_mut`, `chunks`, `chunks_mut` through a view of the array. `retain`,
+  `dedup` and `binary_search` are Ember, `extend[T] Array[T]:` blocks in `std/src/core.em`, the first
+  standard-library methods written that way; one a program does not call is not emitted. D-247 (the
+  interface cache recorded a generic extension's specializations) fixed on the way. Not built:
+  `sort_by`, `sort_by_key` (a comparator inside the runtime's sort), `windows`, `drain`, `join`.

@@ -10797,7 +10797,12 @@ evaluated (a zero stood in; `struct_default_exprs`, `check_field_default`). `E10
 D-242 is fixed: `extend[T]` of any generic type, the built-in ones included
 (`apply_generic_extensions`, `extend_builtin_instance`, `synth_registered_method`), and
 D-244 (an interface method behind an inherent one of its name). Open: D-243 (`E2120`
-never reported) and D-245 (a bound's method in a generic body can reach an inherent one). `docs/DESIGN-MAP-SET-ITERATION.md`
+never reported) and D-245 (a bound's method in a generic body can reach an inherent one).
+Then D-246 (a bound met by what the compiler provides: `implements` asks `sortable`,
+`is_cloneable`, `has_implicit_eq`; `cmp`, `Ordering` exported), D-247 (a generic extension's
+public members are declarations, not per-instance records), and `[STD-15]`'s next `Array`
+methods: builtins, delegation through a view, and `retain`/`dedup`/`binary_search` written in
+Ember in `std/src/core.em`, emitted only when called (`emit_if_used_methods`). `docs/DESIGN-MAP-SET-ITERATION.md`
 prices the two shapes for `Map`/`Set` and for generators/adapters; it waits for the owner's
 pick. The directory
 tests now report every failing case in one run (`check_file_collecting`);

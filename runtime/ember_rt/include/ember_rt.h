@@ -530,6 +530,7 @@ void ember_vec_free(ember_vec* v, size_t elem_size);
  * moved the value out, so it now belongs to the array). */
 void ember_vec_sort(ember_vec* v, size_t elem_size, bool (*less)(const void*, const void*));
 void ember_vec_reverse(ember_vec* v, size_t elem_size);
+void ember_vec_swap(ember_vec* v, size_t elem_size, size_t i, size_t j);
 void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value);
 /* Append `count` bytes. Used for `String`, whose element size is one. */
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);

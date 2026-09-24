@@ -313,6 +313,12 @@ enum ArrayHelper {
     Less,
     Pop,
     Remove,
+    /// `[STD-15]` — `swap_remove`: the last element fills the gap.
+    SwapRemove,
+    /// `[STD-15]` — `truncate`: drop the elements from `n` on.
+    Truncate,
+    /// `[STD-15]` — `extend`: append a clone of each element of a span.
+    Extend,
     Clear,
     Sorted,
     /// `[OWN-8]` — a new buffer holding a clone of each element.
@@ -543,6 +549,55 @@ impl Emitter<'_> {
                                 "return r;".to_string(),
                             ],
                         )
+                    }
+                    ArrayHelper::SwapRemove => {
+                        let c = self.c_type(ty);
+                        (
+                            format!("static {c} {symbol}({RT}vec* v, size_t i)"),
+                            vec![
+                                format!("{c} r;"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + i * sizeof({c});"),
+                                format!("memcpy(&r, at, sizeof({c}));"),
+                                "v->len -= 1;".to_string(),
+                                format!("memmove(at, (unsigned char*)v->ptr + v->len * sizeof({c}), sizeof({c}));"),
+                                "return r;".to_string(),
+                            ],
+                        )
+                    }
+                    ArrayHelper::Truncate => {
+                        let c = self.c_type(ty);
+                        let mut drops = Vec::new();
+                        self.drop_lines(&format!("(({c}*)v->ptr)[_ci]"), ty, &mut drops);
+                        let mut body = vec!["if (n >= v->len) { return; }".to_string()];
+                        if !drops.is_empty() {
+                            body.push(format!("for (size_t _ci = n; _ci < v->len; ++_ci) {{ {} }}", drops.join(" ")));
+                        }
+                        body.push("v->len = n;".to_string());
+                        (format!("static void {symbol}({RT}vec* v, size_t n)"), body)
+                    }
+                    ArrayHelper::Extend => {
+                        let c = self.c_type(ty);
+                        let mut body = vec![
+                            format!("{RT}vec_reserve(v, sizeof({c}), v->len + count);"),
+                            format!("{c}* to = ({c}*)v->ptr + v->len;"),
+                            format!("memcpy(to, elems, count * sizeof({c}));"),
+                        ];
+                        let copy = "to[_ci]".to_string();
+                        let source = format!("(({c}*)elems)[_ci]");
+                        let per_element = if self.types.is_copy(ty) {
+                            // A class handle (or a value holding one) is `Copy`
+                            // but its copy is a retain.
+                            let mut retains = Vec::new();
+                            self.retain_lines_for_value(&copy, ty, &mut retains);
+                            retains.join(" ")
+                        } else {
+                            format!("{copy} = {};", self.clone_element(&source, ty))
+                        };
+                        if !per_element.is_empty() {
+                            body.push(format!("for (size_t _ci = 0; _ci < count; ++_ci) {{ {per_element} }}"));
+                        }
+                        body.push("v->len += count;".to_string());
+                        (format!("static void {symbol}({RT}vec* v, const void* elems, size_t count)"), body)
                     }
                     ArrayHelper::Clear => {
                         let c = self.c_type(ty);
@@ -3874,6 +3929,7 @@ impl Emitter<'_> {
                         return match self.types.kind(*arg_ty) {
                             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64({a}, {b})"),
                             TyKind::Float(_) => format!("{RT}total_lt_f32({a}, {b})"),
+                            TyKind::Str => format!("({RT}str_cmp({a}, {b}) < 0)"),
                             _ => format!("(({a}) < ({b}))"),
                         };
                     }
@@ -3992,6 +4048,47 @@ impl Emitter<'_> {
                     Builtin::ArrayRemove => {
                         let elem = self.element_of(*arg_ty);
                         return format!("{}({}, {})", self.array_helper(ArrayHelper::Remove, elem), rendered[0], rendered[1]);
+                    }
+                    Builtin::ArraySwapRemove => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!("{}({}, {})", self.array_helper(ArrayHelper::SwapRemove, elem), rendered[0], rendered[1]);
+                    }
+                    Builtin::ArrayTruncate => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!("{}({}, {})", self.array_helper(ArrayHelper::Truncate, elem), rendered[0], rendered[1]);
+                    }
+                    Builtin::ArrayExtend => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!(
+                            "{}({}, ({}).ptr, ({}).len)",
+                            self.array_helper(ArrayHelper::Extend, elem),
+                            rendered[0],
+                            rendered[1],
+                            rendered[1]
+                        );
+                    }
+                    Builtin::ArrayCapacity => {
+                        return format!("({}).cap", rendered[0]);
+                    }
+                    Builtin::ArrayReserve => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!(
+                            "{RT}vec_reserve({}, sizeof({}), ({})->len + ({}))",
+                            rendered[0],
+                            self.c_type(elem),
+                            rendered[0],
+                            rendered[1]
+                        );
+                    }
+                    Builtin::ArraySwap => {
+                        let elem = self.element_of(*arg_ty);
+                        return format!(
+                            "{RT}vec_swap({}, sizeof({}), {}, {})",
+                            rendered[0],
+                            self.c_type(elem),
+                            rendered[1],
+                            rendered[2]
+                        );
                     }
                     Builtin::ArrayInsert => {
                         let elem = self.element_of(*arg_ty);
