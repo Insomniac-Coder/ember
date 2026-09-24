@@ -10736,7 +10736,10 @@ local and calls the helper through `synth_generic_call`, with
 until `once fn` parameter types exist (DEVIATIONS D6). An unannotated lambda
 parameter takes `owned` (never `mut`) from the expected callable type. Fixed on
 the way: inference through `Option`/`Result` (D-229) and a ternary's open
-branch (D-230). Next: `Clone` for `Array`/`String` (D-228).
+branch (D-230). `Clone` for `Array`/`String` followed (D-228): typeck's
+`is_cloneable`/`clone_value`, the `ArrayClone` builtin and codegen's
+`ArrayHelper::Clone` (element clones found in `clone_fns`, built from the MIR
+bodies); testing it exposed nested drop loops sharing one index (D-231).
 
 **ODR-024 (2026-09-24, Hardened_5, ADR-042).** A borrowed parameter whose type
 is not `Copy` (or holds a `Cell`) is a `ref T` local passed as `T*`; views pass

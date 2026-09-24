@@ -405,3 +405,8 @@ The next number is ODR-026.
   way: generic inference through `Option`/`Result` (D-229), an enum-nested generic result on a
   lambda, and a ternary's `None` branch (D-230). Recorded: DEVIATIONS D6 (`fn` where the ruling says
   `once fn`, until `once fn` is built), D-228 (`Clone` for `Array`/`String`, next).
+* **2026-09-24 — `Clone` for `Array` and `String` (D-228).** `xs.clone()` copies the buffer and
+  clones each element (nested arrays, strings, structs through their `clone`, class handles by
+  retaining); derived `Clone` accepts such fields. The `E3040`/`E3030` helps that say to clone now
+  work for lists and text. Testing it found the nested drop-glue loops sharing one index (D-231),
+  which crashed any `Array` of structs owning an `Array` of strings at scope end; fixed.

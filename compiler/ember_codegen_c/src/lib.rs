@@ -140,6 +140,22 @@ pub fn emit(
         fmt_prints: std::cell::RefCell::new(Vec::new()),
         fmt_specs: std::cell::RefCell::new(Vec::new()),
         array_helpers: std::cell::RefCell::new(Vec::new()),
+        clone_fns: bodies
+            .iter()
+            .filter(|body| {
+                body.arg_count == 1
+                    && body.symbol.ends_with("_clone")
+                    && body.locals.get(1).is_some_and(|local| local.name.as_deref() == Some("self"))
+            })
+            .filter_map(|body| {
+                let receiver = body.locals[1].ty;
+                let (owner, by_address) = match types.kind(receiver) {
+                    TyKind::Ref { inner, .. } => (*inner, true),
+                    _ => (receiver, false),
+                };
+                (body.return_ty() == owner).then(|| (owner, (body.symbol.clone(), by_address)))
+            })
+            .collect(),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     Output {
@@ -265,6 +281,9 @@ struct Emitter<'a> {
     /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
     /// like `eq_fns`.
     array_helpers: std::cell::RefCell<Vec<(ArrayHelper, Ty)>>,
+    /// `[OWN-8]` — each type's `clone` function (derived or written), found
+    /// among the bodies, and whether it takes its receiver by address.
+    clone_fns: BTreeMap<Ty, (String, bool)>,
     /// `[TYP-39]` — the aggregates printed or formatted, one generated
     /// `Display` function each; and those printed, which also get a wrapper
     /// that formats into a buffer and writes it.
@@ -296,6 +315,8 @@ enum ArrayHelper {
     Remove,
     Clear,
     Sorted,
+    /// `[OWN-8]` — a new buffer holding a clone of each element.
+    Clone,
 }
 
 #[derive(Clone)]
@@ -427,6 +448,21 @@ impl Emitter<'_> {
     }
 
     /// The symbol of a `[STD-15]` Array helper, requesting it.
+    /// `[OWN-8]` — a C expression cloning the element at `source`, a
+    /// non-`Copy` value the type checker proved cloneable: a nested array
+    /// through its own helper, anything else through its `clone` function.
+    fn clone_element(&self, source: &str, ty: Ty) -> String {
+        if let TyKind::Vec { elem } = self.types.kind(ty) {
+            let helper = self.array_helper(ArrayHelper::Clone, *elem);
+            return format!("{helper}(({source}).ptr, ({source}).len)");
+        }
+        let (symbol, by_address) = self
+            .clone_fns
+            .get(&ty)
+            .expect("the type checker proved the element cloneable");
+        if *by_address { format!("{symbol}(&{source})") } else { format!("{symbol}({source})") }
+    }
+
     fn array_helper(&self, helper: ArrayHelper, ty: Ty) -> String {
         let mut helpers = self.array_helpers.borrow_mut();
         let index = helpers.iter().position(|&known| known == (helper, ty)).unwrap_or_else(|| {
@@ -518,6 +554,26 @@ impl Emitter<'_> {
                         }
                         body.push("v->len = 0;".to_string());
                         (format!("static void {symbol}({RT}vec* v)"), body)
+                    }
+                    ArrayHelper::Clone => {
+                        let c = self.c_type(ty);
+                        let mut body = vec![format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), elems, count);")];
+                        let copy = format!("(({c}*)r.ptr)[_ci]");
+                        let source = format!("(({c}*)elems)[_ci]");
+                        let per_element = if self.types.is_copy(ty) {
+                            // A class handle (or a value holding one) is `Copy`
+                            // but its copy is a retain.
+                            let mut retains = Vec::new();
+                            self.retain_lines_for_value(&copy, ty, &mut retains);
+                            retains.join(" ")
+                        } else {
+                            format!("{copy} = {};", self.clone_element(&source, ty))
+                        };
+                        if !per_element.is_empty() {
+                            body.push(format!("for (size_t _ci = 0; _ci < count; ++_ci) {{ {per_element} }}"));
+                        }
+                        body.push("return r;".to_string());
+                        (format!("static {RT}vec {symbol}(const void* elems, size_t count)"), body)
                     }
                     ArrayHelper::Sorted => {
                         let c = self.c_type(ty);
@@ -2365,15 +2421,20 @@ impl Emitter<'_> {
             TyKind::Vec { elem } => {
                 // An `Array[T]` owns its elements as well as its buffer.
                 if self.types.needs_drop(*elem) {
+                    // D-231 — one index per nesting level: an element that
+                    // itself owns an `Array` (`Array[Bag]`, `Bag` holding an
+                    // `Array[String]`) loops inside this loop, and a shared
+                    // name would shadow the outer index.
+                    let index = format!("_di{}", access.matches("[_di").count());
                     let mut inner = Vec::new();
-                    let element = format!("(({}*){access}.ptr)[_di]", self.c_type(*elem));
+                    let element = format!("(({}*){access}.ptr)[{index}]", self.c_type(*elem));
                     match self.drop_glue_call(&element, *elem) {
                         Some(call) => inner.push(call),
                         None => self.drop_lines(&element, *elem, &mut inner),
                     }
                     if !inner.is_empty() {
                         out.push(format!(
-                            "for (size_t _di = 0; _di < {access}.len; ++_di) {{ {} }}",
+                            "for (size_t {index} = 0; {index} < {access}.len; ++{index}) {{ {} }}",
                             inner.join(" ")
                         ));
                     }
@@ -3814,6 +3875,14 @@ impl Emitter<'_> {
                         return format!(
                             "{}(({}).ptr, ({}).len)",
                             self.array_helper(ArrayHelper::Sorted, *elem),
+                            rendered[0],
+                            rendered[0]
+                        );
+                    }
+                    Builtin::ArrayClone { elem } => {
+                        return format!(
+                            "{}(({}).ptr, ({}).len)",
+                            self.array_helper(ArrayHelper::Clone, *elem),
                             rendered[0],
                             rendered[0]
                         );

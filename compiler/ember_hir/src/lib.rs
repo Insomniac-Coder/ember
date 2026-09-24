@@ -577,6 +577,9 @@ pub enum Builtin {
     ArrayRemove,
     ArrayInsert,
     ArraySorted { elem: Ty },
+    /// `[OWN-8]` — `xs.clone()` on an `Array[T]` (or a `String`): a new
+    /// buffer holding a clone of each element.
+    ArrayClone { elem: Ty },
     /// `print(x)` — the same without the newline.
     Print,
     /// `Array[T]()` — an empty growable array. Part XX.1 makes `Array` a
@@ -900,6 +903,7 @@ impl Builtin {
             Builtin::ArrayRemove => "remove",
             Builtin::ArrayInsert => "insert",
             Builtin::ArraySorted { .. } => "sorted",
+            Builtin::ArrayClone { .. } => "clone",
             Builtin::ArrayNew => "Array",
             Builtin::ArrayFromLiteral => "Array",
             Builtin::ValueCompare { .. } => "compare",

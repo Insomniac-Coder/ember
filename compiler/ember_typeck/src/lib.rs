@@ -4541,13 +4541,11 @@ impl<'a> Checker<'a> {
         let mut pending = std::mem::take(&mut self.pending_derived_clones);
         while let Some(index) = pending.iter().position(|(ty, _)| {
             match self.types.kind(*ty) {
-                TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().all(|field| {
-                    self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
-                }),
+                TyKind::Struct(id) => {
+                    self.types.struct_def(*id).fields.iter().all(|field| self.is_cloneable(field.ty))
+                }
                 TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().all(|variant| {
-                    variant.fields.iter().all(|field| {
-                        self.types.is_copy(field.ty) || self.clone_method(field.ty).is_some()
-                    })
+                    variant.fields.iter().all(|field| self.is_cloneable(field.ty))
                 }),
                 // `[OWN-8]` — class handles clone like ordinary handle copies.
                 // Their fields stay in the same object, so a shallow clone has
@@ -4585,12 +4583,12 @@ impl<'a> Checker<'a> {
         for (ty, _) in pending {
             let field = match *self.types.kind(ty) {
                 TyKind::Struct(id) => self.types.struct_def(id).fields.iter().find(|field| {
-                    !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
+                    !self.is_cloneable(field.ty)
                 }).map(|field| ("field", field.name, field.ty, field.span)),
                 TyKind::Enum(id) => self.types.enum_def(id).variants.iter().flat_map(|variant| {
                     variant.fields.iter()
                 }).find(|field| {
-                    !self.types.is_copy(field.ty) && self.clone_method(field.ty).is_none()
+                    !self.is_cloneable(field.ty)
                 }).map(|field| ("payload", field.name, field.ty, field.span)),
                 _ => None,
             };
@@ -8254,6 +8252,40 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// A field handed to its `clone` method: borrowed where the receiver
     /// is passed by address (`[BRW-8]`).
+    /// `[OWN-8]` — whether a value of this type can be cloned: a `Copy`
+    /// value (a class handle retains), a type with a `clone` method, or an
+    /// `Array`/`String` whose elements can be.
+    fn is_cloneable(&self, ty: Ty) -> bool {
+        self.types.is_copy(ty)
+            || self.clone_method(ty).is_some()
+            || matches!(*self.types.kind(ty), TyKind::Vec { elem } if self.is_cloneable(elem))
+    }
+
+    /// A clone of `value`, whose type `is_cloneable`.
+    fn clone_value(&mut self, value: Expr) -> Expr {
+        let ty = value.ty;
+        let span = value.span;
+        if self.types.is_copy(ty) {
+            return value;
+        }
+        if let Some(clone) = self.clone_method(ty) {
+            return Expr {
+                ty,
+                kind: ExprKind::Call {
+                    callee: clone,
+                    arg_eval_order: None,
+                    args: vec![self.clone_argument(value)],
+                    latebound: false,
+                },
+                span,
+            };
+        }
+        let TyKind::Vec { elem } = *self.types.kind(ty) else {
+            unreachable!("clone_value of a type is_cloneable refused")
+        };
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArrayClone { elem }, args: vec![value] }, span }
+    }
+
     fn clone_argument(&mut self, field: Expr) -> Expr {
         if self.types.passed_by_address(field.ty) {
             let ty = field.ty;
@@ -8315,22 +8347,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     },
                                     span,
                                 };
-                                if self.types.is_copy(field.ty) {
-                                    field_expr
-                                } else {
-                                    let clone =
-                                        self.clone_method(field.ty).expect("checked derived Clone field");
-                                    Expr {
-                                        ty: field.ty,
-                                        kind: ExprKind::Call {
-                                            callee: clone,
-                                            arg_eval_order: None,
-                                            args: vec![self.clone_argument(field_expr)],
-                                            latebound: false,
-                                        },
-                                        span,
-                                    }
-                                }
+                                self.clone_value(field_expr)
                             })
                             .collect();
                         (Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }, None)
@@ -8364,23 +8381,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                             },
                                             span,
                                         };
-                                        if self.types.is_copy(field.ty) {
-                                            field_expr
-                                        } else {
-                                            let clone = self
-                                                .clone_method(field.ty)
-                                                .expect("checked derived Clone payload");
-                                            Expr {
-                                                ty: field.ty,
-                                                kind: ExprKind::Call {
-                                                    callee: clone,
-                                                    arg_eval_order: None,
-                                                    args: vec![self.clone_argument(field_expr)],
-                                                    latebound: false,
-                                                },
-                                                span,
-                                            }
-                                        }
+                                        self.clone_value(field_expr)
                                     })
                                     .collect();
                                 MatchArm {
@@ -22931,6 +22932,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let is_string = matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8));
         let usize_ty = self.common.usize;
         let str_ty = self.common.str_;
+
+        // `[OWN-8]` — `xs.clone()`: a new buffer holding a clone of each
+        // element; a `String` copies its bytes.
+        if name.name.is("clone") {
+            if !args.is_empty() {
+                self.error(codes::E2020, span, format!("`clone` takes no arguments, found {}", args.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !self.is_cloneable(elem) {
+                let shown = self.types.display(elem);
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`{shown}` does not implement `Clone`, which cloning its array needs"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.clone_value(receiver);
+        }
 
         // `[BRW-5]`'s primary structural repair for two mutable indexed
         // borrows. The receiver is borrowed once; the result carries that
