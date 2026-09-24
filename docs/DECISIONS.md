@@ -1415,3 +1415,24 @@ rejected and why.
 - The interface cache's compiler identity includes the executable's size and
   modification time, so a rebuilt compiler never loads records written under
   another ABI (D-215).
+
+## ADR-043 — `[ERR-4]`'s function-taking methods are routed `std.core` generics
+
+**Ruling on ODR-025 under the owner's delegation for 0.9.9, 2026-09-24.** The
+methods are eager, move the payload in (`filter` borrows it) and take
+`once fn`; a lambda's unannotated parameter takes `owned`, never `mut`, from
+the expected callable type. `0.9.9_Hardened_6` carries the signatures.
+
+**Implementation decisions the text does not force.**
+- The methods are written in Ember, as private generic functions in
+  `std/src/core.em` (`option_map`, `result_map_err`, …), rather than desugared
+  in the type checker as `unwrap_or` is. A callback then goes through the one
+  path every generic callable argument takes: its parameter types and mode come
+  from the helper's bound, its result is inferred, closures are called directly,
+  and the borrow checker sees an ordinary call. A desugar would have needed its
+  own lambda typing and closure-call construction.
+- `x.map(f)` binds the already-checked receiver to a local named `$receiver`,
+  which no program can spell, and calls the helper with that local as its first
+  argument; diagnostics name the method (`routed_method`), not the helper.
+- The helpers take `f: fn(…)` until `once fn` parameter types are built
+  (`docs/DEVIATIONS.md` D6).

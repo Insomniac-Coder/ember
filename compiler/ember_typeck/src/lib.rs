@@ -708,6 +708,9 @@ struct Checker<'a> {
     /// hop and taken there before anything else is synthesised, so a nested
     /// call never sees it.
     method_expectation: Option<Ty>,
+    /// `[ERR-4]` — the `Option`/`Result` method whose `std.core` helper is
+    /// being called, so a diagnostic names the method, not the helper.
+    routed_method: Option<Symbol>,
     /// `[CLO-1]` — the function that runs each capturing closure, keyed by the
     /// anonymous struct that is its environment. A value of that struct type is
     /// callable, and this is what it calls.
@@ -938,6 +941,7 @@ impl<'a> Checker<'a> {
             local_ranges: HashMap::new(),
             literal_locals: HashMap::new(),
             method_expectation: None,
+            routed_method: None,
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             derived_clone_methods: Vec::new(),
@@ -10418,6 +10422,63 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         })
     }
 
+    /// `[ERR-4]` (ODR-025) — `x.map(f)` is a call of `std.core`'s
+    /// `option_map(x, f)` (`result_map` for a `Result`). The receiver, already
+    /// checked, is bound to a local no program can name, and the call goes
+    /// through the ordinary generic path: the callback's parameter types and
+    /// `owned` mode come from the helper's `fn(…)` bound, its result type is
+    /// inferred, and the borrow checker sees an ordinary call.
+    fn synth_wrapper_callback(
+        &mut self,
+        receiver: Expr,
+        prefix: &str,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let method = name.name;
+        let Some(def) = [format!("std.core.{prefix}_{method}"), format!("core.{prefix}_{method}")]
+            .iter()
+            .find_map(|qualified| self.fn_ids.get(&Symbol::intern(qualified)).copied())
+        else {
+            self.error(codes::E1010, name.span, format!("`{method}` is not available: the prelude is missing"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let takes = self.signatures[def.0 as usize].params.len() - 1;
+        if args.len() != takes || args.iter().any(|a| a.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {takes} argument(s), found {}", args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let receiver_span = receiver.span;
+        let receiver_ty = receiver.ty;
+        self.scopes.push(HashMap::new());
+        let hidden = Symbol::intern("$receiver");
+        let local = self.declare(Some(hidden), receiver_ty, receiver_span);
+        let mut call_args = vec![ast::Arg {
+            name: None,
+            value: ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span: receiver_span }] },
+                span: receiver_span,
+            },
+            span: receiver_span,
+        }];
+        call_args.extend(args.iter().cloned());
+        let outer = self.routed_method.replace(method);
+        let call = self.synth_generic_call(def, method, &call_args, Vec::new(), expected, span);
+        self.routed_method = outer;
+        self.scopes.pop();
+        Expr {
+            ty: call.ty,
+            kind: ExprKind::Block {
+                block: Block { stmts: vec![Stmt::Let { local, init: Some(receiver) }], span },
+                value: Box::new(call),
+            },
+            span,
+        }
+    }
+
     /// `unwrap()`, `unwrap_or(default)` and `expect(msg)` on an `Option`, as
     /// a `match`: `Some(x)` is `x`, and `None` panics or is the default. An
     /// argument is evaluated before the value is looked at, as any argument
@@ -10673,8 +10734,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let bool_ty = self.common.bool_;
         let never = self.common.never;
         let cond = self.check_expr(cond, bool_ty);
+        // `[TYP-23]` — with nothing expected, a branch that cannot type itself
+        // (`None`, `[]`) takes the other branch's type: `Some(v) if c else None`.
+        let open = |expr: &ast::Expr| match &expr.kind {
+            ast::ExprKind::Path { segments } => segments.len() == 1 && segments[0].name.is("None"),
+            ast::ExprKind::ArrayLit(items) => items.is_empty(),
+            _ => false,
+        };
         let (then_v, else_v) = match expected {
             Some(ty) => (self.check_expr(then_expr, ty), self.check_expr(else_expr, ty)),
+            None if open(else_expr) && !open(then_expr) => {
+                let then_v = self.synth_committed(then_expr);
+                let else_v = self.check_expr(else_expr, then_v.ty);
+                (then_v, else_v)
+            }
+            None if open(then_expr) && !open(else_expr) => {
+                let else_v = self.synth_committed(else_expr);
+                let then_v = self.check_expr(then_expr, else_v.ty);
+                (then_v, else_v)
+            }
             None => {
                 let mut then_v = self.synth(then_expr);
                 let mut else_v = self.synth(else_expr);
@@ -16692,6 +16770,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                 continue;
             }
+            // `[ERR-4]` — a routed method's parameter is not the user's to
+            // change (DEVIATIONS: `once fn` is not built yet).
+            let help = match self.routed_method {
+                Some(method) => format!(
+                    "move a clone of the capture into the closure, or use `mem.take` when it implements `Default`: \
+                     `{method}` takes a `fn(…)`, which a closure that gives away its captures does not satisfy"
+                ),
+                None => "declare the parameter `owned f: fn(...) -> ...` so it accepts `CallableOnce`, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
+            };
             self.sink.emit_classified(
                 Diagnostic::error(
                     codes::E3030,
@@ -16699,9 +16786,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     "closure would move a captured value out",
                 )
                 .primary_label("this closure is callable only once")
-                .help(
-                    "declare the parameter `owned f: fn(...) -> ...` so it accepts `CallableOnce`, or use `mem.take` when the capture implements `Default`; clone only as a last resort",
-                )
+                .help(help)
                 .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
             );
         }
@@ -18686,6 +18771,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return self.synth_span_method(receiver, elem, mutable, name, args, span);
         }
+        // `[ERR-4]` (ODR-025) — the methods that take a function are
+        // `std.core`'s `option_*`/`result_*` generics.
+        let helper = if self.is_option(receiver.ty)
+            && matches!(
+                name.name.as_str(),
+                "map" | "and_then" | "filter" | "or_else" | "unwrap_or_else" | "ok_or_else"
+            ) {
+            Some("option")
+        } else if self.is_result(receiver.ty)
+            && matches!(name.name.as_str(), "map" | "map_err" | "and_then" | "or_else" | "unwrap_or_else")
+        {
+            Some("result")
+        } else {
+            None
+        };
+        if let Some(prefix) = helper
+            && explicit.is_empty()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_wrapper_callback(receiver, prefix, name, args, expected, span);
+        }
         if (self.is_option(receiver.ty) && matches!(name.name.as_str(), "is_some" | "is_none" | "unwrap_or_default" | "ok_or")
             || self.is_result(receiver.ty)
                 && matches!(name.name.as_str(), "is_ok" | "is_err" | "unwrap" | "expect" | "unwrap_or" | "ok" | "err"))
@@ -19292,7 +19398,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.common.error
                 }
             };
-            params.push((name.name, resolved, hir_mode(fn_param_mode(param.mode)), param.span));
+            // ODR-025 — `owned` flows from the expected callable type as the
+            // type does (`[TYP-23]`): a parameter written with no mode (there
+            // is no keyword for "borrowed") receives the value, so
+            // `opt.map(fn(s) => s)` can hand `s` on. `mut` is never inferred:
+            // a write to the caller's place is written where it happens, and
+            // an unwritten `mut` stays `E2228` (shape B15).
+            let mode = match (param.mode, expected) {
+                (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
+                    FnParamMode::Owned
+                }
+                (written, _) => fn_param_mode(written),
+            };
+            params.push((name.name, resolved, hir_mode(mode), param.span));
         }
 
         let declared_ret = lambda.ret.as_ref().map(|t| self.resolve_type(t));

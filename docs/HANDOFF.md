@@ -10700,12 +10700,12 @@ formal 1/9 count or Phase 2's estimate.
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
 The owner directed the compiler be moved to the 0.9.9 language written in
-`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_5.md`, with implementation
+`docs/spec-source/Ember_v0.9.9_Hardened_1.md`–`_6.md`, with implementation
 ambiguities recorded as ODRs (from ODR-021) that the owner has delegated the
 agent to rule, each ruling cutting the next 0.9.9 hardening. The work is on
 `main` (the owner retired the separate branch and declared the earlier
 uncommitted `ember_analysis` changes void).
-`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_5`.
+`docs/spec-source/development-target.json` now pins `0.9.9_Hardened_6`.
 
 **Read `docs/MIGRATION-0.9.9.md` first**: it is the plan, the probe table, the
 ODR list and the progress log. The spec's sources, passes and tools are in
@@ -10726,7 +10726,17 @@ ones taking a function); `[TYP-5]` rule 11 (`T` to `Option[T]`); parameter
 defaults (`[FN-5]`, not those reading an earlier parameter); open `x = None`
 and `xs = []` fixed by a later use (`[TYP-23]`); D-182–D-197, all fixed;
 `[TYP-39]` printing of collections and slicing; `[TST-1]`'s exact-diagnostics
-harness (D-205–D-208); ODR-021, ODR-022, ODR-023 and ODR-024. The next ODR is ODR-025.
+harness (D-205–D-208); ODR-021 to ODR-025. The next ODR is ODR-026.
+
+**ODR-025 (Hardened_6).** `[ERR-4]`'s function-taking methods are private
+generics in `std/src/core.em` (`option_map`, `result_map_err`, …); typeck's
+`synth_wrapper_callback` binds the checked receiver to a hidden `$receiver`
+local and calls the helper through `synth_generic_call`, with
+`routed_method` naming the method in diagnostics. The helpers take `f: fn(…)`
+until `once fn` parameter types exist (DEVIATIONS D6). An unannotated lambda
+parameter takes `owned` (never `mut`) from the expected callable type. Fixed on
+the way: inference through `Option`/`Result` (D-229) and a ternary's open
+branch (D-230). Next: `Clone` for `Array`/`String` (D-228).
 
 **ODR-024 (2026-09-24, Hardened_5, ADR-042).** A borrowed parameter whose type
 is not `Copy` (or holds a `Cell`) is a `ref T` local passed as `T*`; views pass

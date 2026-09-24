@@ -109,8 +109,9 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 | ODR-022 | does a later use change the type of `x = 0` (`[LEX-16]` vs `[TYP-23]`)? | no: the declaration fixes `int`; `E2020` help names the annotation | H3 |
 | ODR-023 | which diagnostic reports a value function that can reach its end (`[FN-10]`)? | `E2182`, with the path's last statement labelled | H4 |
 | ODR-024 | may a returned view borrow a borrowed parameter that is not itself a view (`[LT-1]` vs `[FN-1]`, M2)? | yes: a borrowed or `mut` non-`Copy` parameter is a source, passed by address | H5 |
+| ODR-025 | what do `[ERR-4]`'s function-taking methods accept (`[CLO-7]` named `Option.map` as a stored callback)? | eager; payload moved in (`filter` borrows); `once fn`; a lambda infers `owned`, never `mut` | H6 |
 
-The next number is ODR-025.
+The next number is ODR-026.
 
 ## 5. Progress log
 
@@ -397,3 +398,10 @@ The next number is ODR-025.
   `owned self` view is under rule 3 (D-225); two duplicate diagnostics (D-226). Recorded open:
   D-220 (a capturing closure through a callable parameter, over-strict), D-221 (`f[int]` as a
   value), D-222 (callable-field calls), D-227 (printing `Option[ref T]`).
+* **2026-09-24 — ODR-025 and `[ERR-4]`'s methods that take a function; Hardened_6 cut.** `map`,
+  `map_err`, `and_then`, `or_else`, `unwrap_or_else`, `ok_or_else` and `filter` are `std.core`
+  generics the type checker routes to, so a lambda argument is inferred and borrow-checked as any
+  argument is. A lambda's unannotated parameter takes `owned` from the expected type. Fixed on the
+  way: generic inference through `Option`/`Result` (D-229), an enum-nested generic result on a
+  lambda, and a ternary's `None` branch (D-230). Recorded: DEVIATIONS D6 (`fn` where the ruling says
+  `once fn`, until `once fn` is built), D-228 (`Clone` for `Array`/`String`, next).

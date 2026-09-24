@@ -600,6 +600,15 @@ impl TypeTable {
                         .iter()
                         .any(|field| self.is_generic_in(field.ty, seen))
             }
+            // `Option[U]`, `Result[T, F]`: a payload may hold a parameter.
+            TyKind::Enum(id) => {
+                seen.insert(ty)
+                    && self
+                        .enum_def(*id)
+                        .variants
+                        .iter()
+                        .any(|variant| variant.fields.iter().any(|field| self.is_generic_in(field.ty, seen)))
+            }
             _ => false,
         }
     }
@@ -807,6 +816,37 @@ impl TypeTable {
                             .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
                     }
                     _ => true,
+                }
+            }
+            // Two instantiations of the same generic enum (`Option[T]` against
+            // `Option[String]`) unify argument by argument, as structs do.
+            (TyKind::Enum(a), TyKind::Enum(b)) => {
+                let (da, db) = (self.enum_def(a), self.enum_def(b));
+                match (&da.origin, &db.origin) {
+                    (Some((na, aa)), Some((nb, ab))) if na == nb && aa.len() == ab.len() => {
+                        aa.iter()
+                            .zip(ab.iter())
+                            .all(|(&x, &y)| self.unify_with_fixed(x, y, args, fixed))
+                    }
+                    // `Option` and `Result` are compiler-known and named by
+                    // their payloads (`Option_T`, `Result_T_E`), with no origin.
+                    _ => {
+                        let compiler_known = |prefix: &str| {
+                            da.name.as_str().starts_with(prefix) && db.name.as_str().starts_with(prefix)
+                        };
+                        if !(compiler_known("Option_") || compiler_known("Result_"))
+                            || da.variants.len() != db.variants.len()
+                        {
+                            return true;
+                        }
+                        let (va, vb) = (da.variants.clone(), db.variants.clone());
+                        va.iter().zip(&vb).all(|(x, y)| {
+                            x.fields.len() != y.fields.len()
+                                || x.fields.iter().zip(&y.fields).all(|(fx, fy)| {
+                                    self.unify_with_fixed(fx.ty, fy.ty, args, fixed)
+                                })
+                        })
+                    }
                 }
             }
             // A class handle is nominal just like a struct. Generic class

@@ -211,6 +211,10 @@ ODRS = [
                 'view or a `Copy` value holding no `Cell` (Hardened_5)',
      '`[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, '
      '`[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F'),
+    ('ODR-025', '`[ERR-4]`\'s methods that take a function are eager, move the payload in (`filter` '
+                'borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the '
+                'expected callable type, never `mut` (Hardened_6)',
+     '`[ERR-4]`, `[CLO-7]`, `[TYP-23]`'),
 ]
 
 H5_HEAD = """
@@ -218,7 +222,7 @@ H5_HEAD = """
 
 Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
-Hardened_4 adds ODR-023; Hardened_5 adds ODR-024.
+Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025.
 
 | ODR | Ruling | Rules |
 |---|---|---|

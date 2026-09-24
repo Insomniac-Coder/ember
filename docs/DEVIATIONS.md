@@ -96,6 +96,20 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | ERR-039 |
 | **Target** | — |
 
+## D6 — `[ERR-4]`'s callbacks are `fn(…)`, not `once fn`
+
+| | |
+|---|---|
+| **Rule** | `[ERR-4]` (ODR-025): `map`, `map_err`, `and_then`, `or_else`, `unwrap_or_else`, `ok_or_else` and `filter` take `f: once fn(…)` |
+| **Normative behaviour** | a `once fn` accepts a closure that gives away a capture (it is called at most once), and a lambda written at the call site keeps the captures it infers |
+| **Current behaviour** | the `std.core` helpers take `f: fn(…)`, `[CLO-3]`'s bound: captures are as inferred, but a closure that moves a capture out is `E3030` (with a help that names the method) |
+| **Soundness impact** | none: the compiler refuses more, never less |
+| **Observable today** | **yes** — `name.map(owned fn(s) => join(s, tail))` is `E3030` |
+| **Reason** | `once fn` in a parameter type is not built. Treating it as `owned f: fn(…)` (the only at-most-once bound built) is wrong both ways: that bound refuses a closure that borrows (`E3063`), which `[CLO-6]` says `once fn` accepts |
+| **Fix plan** | build `once fn` parameter types: a bound that consumes the callee value on call without `owned`'s storage rule, carried to MIR so `check_owned_closure_argument_regions` does not apply; then change the helpers' `fn(` to `once fn(` |
+| **Owner** | ODR-025 |
+| **Target** | M1 |
+
 ## D5 — a `mut` parameter whose type is itself a borrow — **CLOSED 2026-09-10**
 
 > **Closed: the compiler was right and nothing moved.** The owner ruled on

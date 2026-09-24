@@ -44,6 +44,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-022 | **CLOSED** — `x = 0` is `int` at the declaration; later uses never change it | Language / type inference | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_3 |
 | ODR-023 | **CLOSED** — a value function reaching its end is `E2182` | Diagnostics / functions | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_4 |
 | ODR-024 | **CLOSED** — a borrowed or `mut` parameter that is not `Copy` is a source, passed by address | Language / regions / functions | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_5 |
+| ODR-025 | **CLOSED** — `[ERR-4]`'s function-taking methods are eager, move the payload in, take `once fn`; a lambda infers `owned` | Standard library / closures | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_6 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -178,6 +179,83 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-025 — what do `[ERR-4]`'s methods that take a function accept? — **CLOSED**
+
+    ID:        ODR-025
+    Status:    CLOSED — ruled 2026-09-24 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_6
+    Category:  STANDARD LIBRARY / CLOSURES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_5.md [ERR-4], [CLO-7], [TYP-23], [CLO-3]
+
+    Question:  `[ERR-4]` lists `map`, `map_err`, `and_then`, `or_else`,
+               `unwrap_or_else`, `ok_or_else` and `filter` without signatures.
+               Is the payload moved into the function or borrowed? Is the
+               function a consumed parameter (`owned f: fn(…)`, whose call-site
+               lambda captures by move, `[CLO-15]`), a `once fn`, or a plain
+               `fn(…)` bound? And does a lambda written with no parameter mode
+               take one from the expected callable type?
+
+    Blocks implementation:            YES — the methods cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**The two halves.** `[CLO-7]` names "`Option.map` returning a value computed
+later" among APIs that store or send a callback, taking it `owned` or as
+`once fn`, so a lambda at the call site captures by move (`[CLO-15]`). But
+`[ERR-4]` lists `map` with `unwrap_or` and `expect`, which are eager, and no
+Ember `Option.map` computes anything later. `[TYP-23]` says expected types flow
+into lambdas; `[FN-6]` compares callable types by their parameter modes too;
+`[FN-2]` makes an omitted mode borrowed. The corpus (`FN-6`, shape B15) rejects
+`fn(x) => x` where `fn(mut i32) -> i32` is expected.
+
+**Reproducer.** `name.map(fn(s) => s + suffix)`: under the consumed reading
+`suffix` is moved into the closure and gone afterwards, for a call that
+finishes before the next line. `opt.map(fn(s) => s)` needs `s` owned to hand
+it on; with a borrowed payload it is `E3013`.
+
+**Options.**
+- **(A) Consumed parameter (`owned f: fn(owned T) -> U`), as `[CLO-7]` reads.**
+  Rejected: an eager call gains nothing from moving captures, and loses the
+  caller's variables.
+- **(B) `f: once fn(owned T) -> U`.** The right shape: called at most once, so
+  it accepts a closure that gives away a capture, and captures stay as the
+  lambda infers them.
+- **(C) `f: fn(owned T) -> U`, `[CLO-3]`'s bound.** Captures as inferred and
+  zero cost; a closure that moves a capture out is refused (`E3030`).
+
+**Ruling: (B) in the specification, with a borrowed payload for `filter`.**
+- Each method consumes its receiver and calls its function at most once,
+  before it returns. The payload is moved in (`owned T`, `owned E`), except
+  `filter`'s, which it must give back: `filter(owned self, f: once fn(T) ->
+  bool)`.
+- `[CLO-7]`'s parenthesis loses "`Option.map` returning a value computed
+  later": nothing in `[ERR-4]` stores its function.
+- `[TYP-23]`: an omitted lambda parameter mode takes `owned` from the expected
+  callable type, as the type does. `mut` is never inferred: a write to the
+  caller's place is written where it happens, and an unwritten `mut` stays
+  `E2228` (shape B15). Otherwise an omitted mode is borrowed (`[FN-2]`).
+- `[ERR-4]` gains the signature table.
+
+**Implementation (2026-09-24).** The methods are ordinary generic functions in
+`std.core` (`option_map`, `result_map_err`, …), private to it; the type checker
+routes `x.map(f)` to them, binding the receiver to a local no program can name,
+so the callback is inferred, called and borrow-checked like any other
+argument. `once fn` is not built yet (`[CLO-6]`'s parameter form), so the
+helpers take `f: fn(…)`, option (C): a closure that moves a capture out is
+`E3030` with a help naming the method. That difference is recorded in
+`docs/DEVIATIONS.md`. Building the methods also needed three inference fixes,
+each in the defect ledger: generic calls now read `Option[T]` and `Result[T, E]`
+against their instances (D-229), a generic result nested in an enum no longer
+blocks a lambda's body (`Option[U]`), and a ternary branch `None` or `[]` takes
+the other branch's type (D-230).
+
+Tests: `ERR-4/accept_methods_taking_a_function.em`,
+`ERR-4/reject_map_consumes_its_receiver.em`,
+`TYP-23/accept_owned_and_types_flow_into_a_lambda.em`, and `FN-6`'s B15 case,
+unchanged.
 
 ---
 
