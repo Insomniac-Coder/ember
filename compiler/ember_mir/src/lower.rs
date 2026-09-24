@@ -336,6 +336,7 @@ impl<'a> Builder<'a> {
             borrows: self.function.borrows.clone(),
             sources: self.function.sources.clone(),
             is_lambda: self.function.is_lambda,
+            emit_if_used: self.function.emit_if_used,
             borrowed_params,
             for_iterators,
             callable_regions: None,

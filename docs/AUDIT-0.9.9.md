@@ -76,7 +76,7 @@ are migrated or retired with the construct, each named in the progress log.
 | `[FN-6]` | V | Callable types. A function is a value. A callable type is written … | not yet probed | |
 | `[FN-8]` | V | `main` is `fn main()`, `fn main() -> Result[void, E]` for any `E: … | fixed | scripts; `Result` main unchanged |
 | `[STR-2]` | V | A field default is any expression; it is evaluated at each … | not yet probed | |
-| `[STR-5]` | V | Implicit derives. A struct or enum implements `Eq`, `Debug` and … | partial (D-187 fixed) | `==`/`!=` field-wise works; a component with a hand-written `eq` fails closed (`E2040`); `@no_derive` not parsed; implicit `Debug` and `Clone` are not built |
+| `[STR-5]` | V | Implicit derives. A struct or enum implements `Eq`, `Debug` and … | partial (D-187 fixed) | `==`/`!=` field-wise works; a component with a hand-written `eq` fails closed (`E2040`); implicit `Clone` is built, generic instances included and emitted only where called (`[COST-1]`), except for a type with its own `drop` (ODR-026), and `@no_derive(Clone)` opts out; `@no_derive(Eq)`/`(Debug)` are `E0900`; implicit `Debug` is not built |
 | `[CLS-2]` | V | `fn init(self, …)` is the constructor. Before any `init` body runs, … | **gap** | field defaults are not evaluated before a base `init` runs (`[CLS-11]` two-phase) |
 | `[CLS-4]` | V | A class is final unless declared `open` or `abstract`. Methods are … | not yet probed | |
 | `[CLS-7]` | V | Inside a class method, `self` is a handle. Any method may read and … | **gap** | a plain `self` method writing `self.n += 1` is `E3023`; 0.9.9 lets any method write fields, each access checked |

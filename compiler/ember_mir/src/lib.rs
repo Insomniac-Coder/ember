@@ -75,6 +75,9 @@ pub struct Body {
     pub sources: Vec<usize>,
     /// Whether this is a lambda's body, which cannot carry `@borrows`.
     pub is_lambda: bool,
+    /// An implicit derive, removed by `prune_unused_implicit` when nothing
+    /// kept reaches it.
+    pub emit_if_used: bool,
     /// `[FN-1]` — the parameters this body borrows rather than owns, as MIR
     /// locals. A borrowed parameter arrives as a bitwise copy of the caller's
     /// value with no loan behind it, so no borrow analysis can see that the
@@ -1231,6 +1234,51 @@ pub enum FuncRef {
 }
 
 /// `--emit=mir`: a stable textual form, for snapshot tests.
+/// `[COST-1]` — drop the implicit derives (`emit_if_used`) nothing kept
+/// reaches: a direct call, or an `ArrayClone` whose element (or nested
+/// element) is the derive's type, which the backend's clone helper calls.
+pub fn prune_unused_implicit(bodies: &mut Vec<Body>, types: &ember_types::TypeTable) {
+    use std::collections::HashMap;
+    let by_symbol: HashMap<String, usize> =
+        bodies.iter().enumerate().map(|(i, body)| (body.symbol.clone(), i)).collect();
+    let clone_of: HashMap<Ty, usize> = bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, body)| body.emit_if_used)
+        .map(|(i, body)| (body.return_ty(), i))
+        .collect();
+    let mut live: Vec<bool> = bodies.iter().map(|body| !body.emit_if_used).collect();
+    let mut work: Vec<usize> = (0..bodies.len()).filter(|&i| live[i]).collect();
+    while let Some(i) = work.pop() {
+        let mut reached = Vec::new();
+        for block in &bodies[i].blocks {
+            let Terminator::Call { func, .. } = &block.terminator else { continue };
+            match func {
+                FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
+                FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
+                    let mut elem = *elem;
+                    while let ember_types::TyKind::Vec { elem: inner } = types.kind(elem) {
+                        elem = *inner;
+                    }
+                    reached.extend(clone_of.get(&elem).copied());
+                }
+                _ => {}
+            }
+        }
+        for j in reached {
+            if !live[j] {
+                live[j] = true;
+                work.push(j);
+            }
+        }
+    }
+    let mut index = 0;
+    bodies.retain(|_| {
+        index += 1;
+        live[index - 1]
+    });
+}
+
 pub fn dump(bodies: &[Body], types: &ember_types::TypeTable) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();

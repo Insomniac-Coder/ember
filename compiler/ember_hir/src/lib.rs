@@ -118,6 +118,9 @@ pub struct Function {
     pub sources: Vec<usize>,
     /// Whether this is a lambda's body, which cannot carry `@borrows`.
     pub is_lambda: bool,
+    /// An implicit derive (`[STR-5]`'s `clone`): emitted only when something
+    /// the program keeps calls it (`[COST-1]`).
+    pub emit_if_used: bool,
     /// Compiler-internal identity for a capturing closure's environment
     /// struct. It is absent for ordinary functions and capture-free closures.
     ///

@@ -45,6 +45,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-023 | **CLOSED** — a value function reaching its end is `E2182` | Diagnostics / functions | — | Delegated for 0.9.9 — ruled 2026-09-23, 0.9.9_Hardened_4 |
 | ODR-024 | **CLOSED** — a borrowed or `mut` parameter that is not `Copy` is a source, passed by address | Language / regions / functions | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_5 |
 | ODR-025 | **CLOSED** — `[ERR-4]`'s function-taking methods are eager, move the payload in, take `once fn`; a lambda infers `owned` | Standard library / closures | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_6 |
+| ODR-026 | **CLOSED** — a type with its own `drop` is `Clone` only when it says so | Language / ownership | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_7 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -179,6 +180,56 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-026 — is a type with its own `drop` implicitly `Clone`? — **CLOSED**
+
+    ID:        ODR-026
+    Status:    CLOSED — ruled 2026-09-24 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_7
+    Category:  LANGUAGE / OWNERSHIP
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_6.md [STR-5], [OWN-8], [DRP-1]
+
+    Question:  `[STR-5]` makes a struct or enum implement `Clone` field-wise,
+               automatically, when every field implements it. A type with its own
+               `drop` releases something when it dies. Does the implicit rule
+               cover it?
+
+    Blocks implementation:            YES — implicit `Clone` cannot be built without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Reproducer.** `struct Buffer: p: *mut u8` with `fn drop(mut self)` freeing
+`p` (in an `unsafe` block, as `[UNS-*]` allows). Every field is `Copy`, so the
+literal rule makes `Buffer` `Clone`; `b.clone()` in Safe code copies `p`, and
+both values free it: a double free with no `unsafe` at the call.
+
+**Options.**
+- **(A) The literal rule: every type whose fields are cloneable.** Rejected:
+  Safe code reaches a double free, against `[BRW-9]` and `[UNS-4]`.
+- **(B) No implicit `Clone` for a type with its own `drop`.** A destructor is
+  the mark of a type that manages something its fields do not describe; its
+  author writes `clone` (or `@derive(Clone)`, which asserts the field-wise copy
+  is right).
+
+**Ruling: (B).** `[STR-5]`'s implicit `Clone` does not apply to a struct or
+enum that declares `drop`; `@derive(Clone)` or a written `clone` still gives it
+one. A missing `clone` on such a type says so (`E1010`, with the help to write
+`fn clone(self) -> T`). Implicit `Eq` and `Debug` are unaffected: neither
+duplicates what `drop` releases.
+
+**Implementation (2026-09-24).** Implicit `Clone` is built with this ruling:
+every struct and enum without `@no_derive(Clone)`, a written `clone` or its own
+`drop` gets a field-wise `clone` when all its fields are cloneable, generic
+instances included (the derived body takes the declaration's span). An
+implicit `clone` nothing calls is not emitted (`[COST-1]`:
+`ember_mir::prune_unused_implicit`). Classes still need `@derive(Clone)`
+(`[OWN-8]`). `@no_derive(Eq)` and `@no_derive(Debug)`
+are `E0900` until implicit `Debug` exists and `Eq` can be opted out of. Tests:
+`STR-5/accept_implicit_clone.em`, `STR-5/reject_no_derive_clone_opts_out.em`,
+`STR-5/reject_implicit_clone_of_a_type_with_drop.em`, and `OWN-8`'s two reject
+cases, retargeted at types with `drop`.
 
 ---
 

@@ -306,7 +306,12 @@ struct GenericStruct {
     generic_params: Vec<GenericParam>,
     fields: Vec<FieldDef>,
     derives_copy: bool,
-    derives_clone: bool,
+    /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
+    /// implicit request a struct or enum makes, `None` for none.
+    clone_request: Option<bool>,
+    /// The declaration, for code derived for an instance (a `clone` body needs
+    /// a real source span).
+    decl_span: Span,
     /// `[MOD-7]` — carried to every instantiation, so a `pub(read)` field of
     /// `Buffer[T]` is read-only outside `Buffer`'s module for every `T`.
     declaring_module: usize,
@@ -332,7 +337,12 @@ struct GenericEnum {
     repr: Ty,
     repr_is_explicit: bool,
     derives_copy: bool,
-    derives_clone: bool,
+    /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
+    /// implicit request a struct or enum makes, `None` for none.
+    clone_request: Option<bool>,
+    /// The declaration, for code derived for an instance (a `clone` body needs
+    /// a real source span).
+    decl_span: Span,
     declaring_module: usize,
     implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
@@ -346,7 +356,12 @@ struct GenericClass {
     params: Vec<Symbol>,
     fields: Vec<FieldDef>,
     defaults: Vec<Option<ast::Expr>>,
-    derives_clone: bool,
+    /// `[STR-5]` — `Some(true)` for `@derive(Clone)`, `Some(false)` for the
+    /// implicit request a struct or enum makes, `None` for none.
+    clone_request: Option<bool>,
+    /// The declaration, for code derived for an instance (a `clone` body needs
+    /// a real source span).
+    decl_span: Span,
     /// Resolved only when this recipe is instantiated, after owner type
     /// arguments have concrete bindings. Keeping the source expression avoids
     /// materializing an unusable `Base[T]` runtime class.
@@ -635,10 +650,10 @@ struct Checker<'a> {
     /// program rather than found by walking the module again.
     lambdas: Vec<Function>,
     /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
-    derived_clone_methods: Vec<(DefId, Ty, Span)>,
+    derived_clone_methods: Vec<(DefId, Ty, Span, bool)>,
     /// Candidates resolved after every source method is known, so field order
     /// never changes whether a legal derived clone is available.
-    pending_derived_clones: Vec<(Ty, Span)>,
+    pending_derived_clones: Vec<(Ty, Span, bool)>,
     /// Every method reachable as `value.name(...)`, keyed by the receiver's
     /// type and the method name.
     methods: HashMap<(Ty, Symbol), MethodEntry>,
@@ -2469,7 +2484,8 @@ impl<'a> Checker<'a> {
                     generic_params,
                     fields,
                     derives_copy: has_derive(&item.attrs, "Copy"),
-                    derives_clone: has_derive(&item.attrs, "Clone"),
+                    clone_request: clone_request(&item.attrs, false),
+                    decl_span: item.span,
                     implements: decl.implements.clone(),
                     methods,
                 },
@@ -2534,7 +2550,8 @@ impl<'a> Checker<'a> {
                     repr,
                     repr_is_explicit,
                     derives_copy: has_derive(&item.attrs, "Copy"),
-                    derives_clone: has_derive(&item.attrs, "Clone"),
+                    clone_request: clone_request(&item.attrs, false),
+                    decl_span: item.span,
                     declaring_module: self.current_module,
                     implements: decl.implements.clone(),
                     methods,
@@ -2618,7 +2635,8 @@ impl<'a> Checker<'a> {
                     params,
                     fields,
                     defaults,
-                    derives_clone: has_derive(&item.attrs, "Clone"),
+                    clone_request: clone_request(&item.attrs, true),
+                    decl_span: item.span,
                     base,
                     implements: decl.implements.clone(),
                     methods,
@@ -4530,16 +4548,34 @@ impl<'a> Checker<'a> {
             .then_some(entry.def)
     }
 
-    fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
-        if !has_derive(attrs, "Clone") {
-            return;
+    fn has_own_drop(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(*id).has_drop,
+            TyKind::Enum(id) => self.types.enum_def(*id).has_drop,
+            _ => false,
         }
-        self.pending_derived_clones.push((ty, span));
+    }
+
+    /// `[STR-5]` — a struct or enum implements `Clone` field-wise when every
+    /// field does, unless `@no_derive(Clone)` opts out or it writes its own
+    /// `clone`; a class only when `@derive(Clone)` asks (`[OWN-8]`).
+    fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
+        let is_class = matches!(self.types.kind(ty), TyKind::Class(_));
+        if let Some(explicit) = clone_request(attrs, is_class) {
+            self.pending_derived_clones.push((ty, span, explicit));
+        }
     }
 
     fn resolve_derived_clones(&mut self) {
         let mut pending = std::mem::take(&mut self.pending_derived_clones);
-        while let Some(index) = pending.iter().position(|(ty, _)| {
+        let clone = Symbol::intern("clone");
+        // ODR-026 — a type with its own `drop` manages something a field-wise
+        // copy would duplicate (a pointer it frees, a handle it closes), so it
+        // is `Clone` only when it says so.
+        pending.retain(|(ty, _, explicit)| {
+            *explicit || (!self.methods.contains_key(&(*ty, clone)) && !self.has_own_drop(*ty))
+        });
+        while let Some(index) = pending.iter().position(|(ty, _, _)| {
             match self.types.kind(*ty) {
                 TyKind::Struct(id) => {
                     self.types.struct_def(*id).fields.iter().all(|field| self.is_cloneable(field.ty))
@@ -4554,7 +4590,7 @@ impl<'a> Checker<'a> {
                 _ => false,
             }
         }) {
-            let (ty, span) = pending.swap_remove(index);
+            let (ty, span, explicit) = pending.swap_remove(index);
             let signature = Signature {
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
@@ -4569,7 +4605,7 @@ impl<'a> Checker<'a> {
                 None,
                 span,
             ) {
-                self.derived_clone_methods.push((def, ty, span));
+                self.derived_clone_methods.push((def, ty, span, explicit));
                 let clone = Symbol::intern("std.core.Clone");
                 if self.interfaces.contains_key(&clone)
                     && !self.implemented.iter().any(|(owner, interface, _)| {
@@ -4580,7 +4616,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        for (ty, _) in pending {
+        for (ty, _, _) in pending.into_iter().filter(|(_, _, explicit)| *explicit) {
             let field = match *self.types.kind(ty) {
                 TyKind::Struct(id) => self.types.struct_def(id).fields.iter().find(|field| {
                     !self.is_cloneable(field.ty)
@@ -6167,8 +6203,8 @@ impl<'a> Checker<'a> {
                 });
             }
         }
-        if decl.derives_clone {
-            self.pending_derived_clones.push((ty, span));
+        if let Some(explicit) = decl.clone_request {
+            self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
         // The `implements` clause belongs to the generic declaration, so its
@@ -6353,8 +6389,8 @@ impl<'a> Checker<'a> {
                 });
             }
         }
-        if decl.derives_clone {
-            self.pending_derived_clones.push((ty, span));
+        if let Some(explicit) = decl.clone_request {
+            self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
         let interface_bindings = decl
@@ -6618,8 +6654,8 @@ impl<'a> Checker<'a> {
         let mut layouts = HashMap::new();
         let _ = self.class_virtual_layout(id, &mut layouts);
         self.validate_concrete_class_abstract_methods(id, span);
-        if decl.derives_clone {
-            self.pending_derived_clones.push((ty, span));
+        if let Some(explicit) = decl.clone_request {
+            self.pending_derived_clones.push((ty, decl.decl_span, explicit));
             self.resolve_derived_clones();
         }
         let interface_bindings = decl
@@ -7715,6 +7751,7 @@ impl<'a> Checker<'a> {
                 borrows: self.signatures[def.0 as usize].borrows.clone(),
                 sources: self.declared_sources(def),
                 is_lambda: false,
+                emit_if_used: false,
                 closure_environment: None,
                 closure_captures_by_move: false,
                 class_owner: None,
@@ -7890,6 +7927,7 @@ impl<'a> Checker<'a> {
                     borrows: signature.borrows,
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
+                    emit_if_used: false,
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner: Some(class_owner),
@@ -8159,6 +8197,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             sources: self.declared_sources(def),
             is_lambda: false,
+            emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: None,
@@ -8298,7 +8337,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn take_derived_clone_bodies(&mut self) -> Vec<Function> {
         std::mem::take(&mut self.derived_clone_methods)
             .into_iter()
-            .filter_map(|(def, ty, span)| {
+            .filter_map(|(def, ty, span, explicit)| {
                 let self_local = LocalId(1);
                 // `[BRW-8]` (ODR-024) — the receiver is borrowed, so a type
                 // passed by address arrives as `ref T` and is read through.
@@ -8439,6 +8478,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     is_lambda: false,
+                    emit_if_used: !explicit,
                     closure_environment: None,
                     closure_captures_by_move: false,
                     class_owner,
@@ -8709,6 +8749,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: self.signatures[def.0 as usize].borrows.clone(),
             sources: self.declared_sources(def),
             is_lambda: false,
+            emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
             class_owner: match self.types.kind(owner) {
@@ -17352,6 +17393,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                 }
             }
+            // `[STR-5]` — `@no_derive(Clone)` opts out of the implicit
+            // `Clone`; opting out of `Eq` or `Debug` is not built.
+            if name == "no_derive" {
+                for arg in &attr.args {
+                    let (opted, span) = match arg {
+                        ast::AttrArg::Expr(expr) => match &expr.kind {
+                            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                                (segments[0].name.as_str(), expr.span)
+                            }
+                            _ => ("", expr.span),
+                        },
+                        ast::AttrArg::Named { value, .. } => ("", value.span),
+                    };
+                    if opted != "Clone" {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E0900,
+                                span,
+                                format!("`@no_derive({opted})` is not implemented yet"),
+                            )
+                            .note("`@no_derive(Clone)` is built; `Eq` and `Debug` are not [STR-5]"),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -18990,11 +19056,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let Some(entry) = self.lookup_method(receiver.ty, name.name) else {
             let shown = self.types.display(receiver.ty);
-            self.error(
+            let mut diagnostic = Diagnostic::error(
                 codes::E1010,
                 name.span,
                 format!("`{shown}` has no method named `{}`", name.name),
             );
+            // `[STR-5]`, ODR-026 — say why a struct or enum is not `Clone`.
+            if name.name.is("clone") && matches!(self.types.kind(receiver.ty), TyKind::Struct(_) | TyKind::Enum(_)) {
+                diagnostic = if self.has_own_drop(receiver.ty) {
+                    diagnostic
+                        .help(format!("write `fn clone(self) -> {shown}`, copying what `drop` releases"))
+                        .note("a type with its own `drop` is `Clone` only when it says so: a field-wise copy would release it twice (ODR-026)")
+                } else {
+                    diagnostic.note("a struct or enum is `Clone` when every field is, unless it writes `@no_derive(Clone)` [STR-5]")
+                };
+            }
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let def = entry.def;
@@ -19835,6 +19912,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             borrows: None,
             sources,
             is_lambda: true,
+            emit_if_used: false,
             closure_environment,
             closure_captures_by_move,
             class_owner: None,
@@ -24810,7 +24888,8 @@ enum Gather<'a> {
 /// `"item"` means any declaration.
 const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["derive"], &["struct", "enum", "class"], true),
-    (&["no_derive"], &["struct", "enum", "class"], false),
+    // `[STR-5]` — built for `Clone`; its other arguments are refused below.
+    (&["no_derive"], &["struct", "enum", "class"], true),
     // `[LAY-2]` — `@layout(c)` is the C ABI layout, every struct's default,
     // which the C backend always emits.
     (&["layout"], &["struct", "enum"], true),
@@ -24848,6 +24927,30 @@ const RESERVED_ATTRIBUTES: &[&str] = &["no_runtime_checks", "allocator", "gpu"];
 
 /// Appendix H.2 — attributes 0.9.9 removed, named as such when written.
 const REMOVED_ATTRIBUTES: &[&str] = &["thread_local", "latebound"];
+
+/// `[STR-5]` — what `Clone` a declaration asks for: `Some(true)` when it
+/// writes `@derive(Clone)`, `Some(false)` for a struct's or enum's implicit
+/// request (a class makes none), `None` under `@no_derive(Clone)`.
+fn clone_request(attrs: &[ast::Attribute], is_class: bool) -> Option<bool> {
+    if has_derive(attrs, "Clone") {
+        Some(true)
+    } else if is_class || has_attribute_argument(attrs, "no_derive", "Clone") {
+        None
+    } else {
+        Some(false)
+    }
+}
+
+/// Whether `@<attribute>(…, name, …)` is written.
+fn has_attribute_argument(attrs: &[ast::Attribute], attribute: &str, name: &str) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path.len() == 1
+            && attr.path[0].name.is(attribute)
+            && attr.args.iter().any(|arg| matches!(arg,
+                ast::AttrArg::Expr(e) if matches!(&e.kind,
+                    ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is(name))))
+    })
+}
 
 fn has_derive(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| {

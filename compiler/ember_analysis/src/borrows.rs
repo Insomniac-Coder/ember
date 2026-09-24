@@ -3793,6 +3793,7 @@ mod callable_region_metadata_tests {
             borrows: None,
             sources: Vec::new(),
             is_lambda: false,
+            emit_if_used: false,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,

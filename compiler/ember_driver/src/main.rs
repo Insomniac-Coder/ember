@@ -1961,6 +1961,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     let mut bodies = ember_mir::lower(program, &types, &common, &map);
+    // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
+    ember_mir::prune_unused_implicit(&mut bodies, &types);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }

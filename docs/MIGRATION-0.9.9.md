@@ -110,8 +110,9 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 | ODR-023 | which diagnostic reports a value function that can reach its end (`[FN-10]`)? | `E2182`, with the path's last statement labelled | H4 |
 | ODR-024 | may a returned view borrow a borrowed parameter that is not itself a view (`[LT-1]` vs `[FN-1]`, M2)? | yes: a borrowed or `mut` non-`Copy` parameter is a source, passed by address | H5 |
 | ODR-025 | what do `[ERR-4]`'s function-taking methods accept (`[CLO-7]` named `Option.map` as a stored callback)? | eager; payload moved in (`filter` borrows); `once fn`; a lambda infers `owned`, never `mut` | H6 |
+| ODR-026 | is a type with its own `drop` implicitly `Clone` (`[STR-5]`)? | no: a field-wise copy would release twice; `@derive(Clone)` or a written `clone` | H7 |
 
-The next number is ODR-026.
+The next number is ODR-027.
 
 ## 5. Progress log
 
@@ -410,3 +411,9 @@ The next number is ODR-026.
   retaining); derived `Clone` accepts such fields. The `E3040`/`E3030` helps that say to clone now
   work for lists and text. Testing it found the nested drop-glue loops sharing one index (D-231),
   which crashed any `Array` of structs owning an `Array` of strings at scope end; fixed.
+* **2026-09-24 — `[STR-5]` implicit `Clone`; ODR-026; Hardened_7 cut.** Every struct and enum whose
+  fields are all cloneable is `Clone` with nothing written, generic instances included; a written
+  `clone` replaces it and `@no_derive(Clone)` opts out. ODR-026 keeps it off a type that declares
+  `drop` (a field-wise copy of a pointer it frees is a double free reachable from Safe code); a
+  missing `clone` there says so. `@no_derive(Eq)`/`(Debug)` stay `E0900`.  An implicit `clone` nothing calls is pruned after lowering (`[COST-1]`), so a program pays for
+  one only where it clones (`STR-5/accept_an_unused_implicit_clone_is_not_emitted.em`).
