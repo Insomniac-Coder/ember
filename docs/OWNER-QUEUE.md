@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-040 | **CLOSED** — the operator interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg`, `not` (a method name after `fn` and `.`) and each with `_assign`; every number type implements the interface of each operator it has, written in `std.core`; one `type Output` serves every interface of an `extend` block; `Output = T` only in a bound | Language / interfaces / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_17 |
 | ODR-039 | **CLOSED** — `[STD-20]`'s integer methods: `checked_`/`wrapping_`/`saturating_`/`overflowing_` for `add`, `sub`, `mul`, `floordiv`, `rem`, `pow`, `neg` (and the shifts, not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_16 |
 | ODR-038 | **CLOSED** — ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`, `f64` for an `f64`); `T.Name` names a type parameter's associated type | Standard library / math; interfaces | — | Owner ruling 2026-09-25, 0.9.9_Hardened_15 |
 | ODR-037 | **CLOSED** — `std.math.Float` (only `f32` and `f64`, `E2042`) is the bound of `[STD-21]`'s generic functions: it provides the operators, typed literals and the float methods; `PI`, `TAU` and `E` are untyped constants | Standard library / math | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_14 |
@@ -193,6 +194,87 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-040 — the operator interfaces' methods, and which of them the numbers implement — **CLOSED**
+
+    ID:        ODR-040
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_17
+    Category:  LANGUAGE / INTERFACES / NUMBERS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_16.md Part IV §8, [TYP-17], [TYP-21],
+               [MOD-5], [LEX-1]
+
+    Question:  Part IV §8 writes `Add.add` and `Neg.neg` and says "likewise"
+               for `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `BitAnd`,
+               `BitOr`, `BitXor`, `Shl`, `Shr`, `Not` and each `…Assign`
+               form: what are those methods called, given that `not` is a
+               keyword? `[TYP-21]` says a scalar's operators are built in,
+               yet `[TYP-17]`'s own example, `sum[T: Add[Output = T] +
+               Default]`, is the sum of numbers: does a number implement the
+               operator interfaces, and which? An `extend` block that
+               implements several of them, each with `type Output`: is
+               `Output` written once or once per interface? May an
+               implementation write `implements Add[Output = V]`?
+
+    Blocks implementation:            YES — std cannot declare the interfaces without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Method names.** (A) The interface's name in lower case with no separator,
+  as `add`: `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`,
+  `bitxor`, `shl`, `shr`, `neg`, `not`, and `add_assign`, …,
+  `floordiv_assign`, `bitand_assign`, …; these are Rust's names where Rust
+  has the operator, and ODR-039 already named `checked_floordiv`. (B) Snake
+  case, `floor_div` and `bit_and`: `checked_floordiv` would then be the odd
+  one out. **(A)**. `Not`'s method is `not`, which is a keyword: it becomes
+  a method name where one is expected, after `fn` and after `.` (as ODR-030
+  and ODR-035 made `extend` and `union` contextual); `a.not()` is `~a`, and
+  `not a` keeps its meaning. Renaming the method (`bitnot`) or requiring
+  `r#not` was not considered.
+- **Do the numbers implement them?** (i) Yes: each number type implements the
+  interface of each operator it has, with `Rhs = Self` and `Output = Self`,
+  so generic code bounded by `Add[Output = T]` takes `i32` and `f64` as it
+  takes a user's `Vec3`, and `[TYP-17]`'s example means what it shows. (ii)
+  No: generic arithmetic over numbers would need a second, number-only
+  interface for what `Add` already says. **(i)**. The operators stay built
+  in; an implementation's method is the operator (`3.add(4)` is `3 + 4`,
+  and panics where `+` does). The memberships are written in `std.core`, as
+  `Number`'s are in `std.math`, not supplied by the compiler.
+- **One `type Output` for several interfaces.** (a) An `extend` block that
+  names several interfaces gives an associated type once, for every one of
+  them that declares it: `extend i32 implements Add, Sub, Mul, …: type
+  Output = i32`. (b) One block per interface: thirteen blocks for each of
+  fourteen number types. **(a)**. A type whose `Output`s differ (`Mat4 *
+  Vec4` is a `Vec4`, `Mat4 * Mat4` a `Mat4`) writes a block for each.
+- **`implements Add[Output = V]`.** (a) `E2020`: a binding is written only in
+  a bound, and an implementation says `type Output = V` in its block, the
+  one place `[IFC-4]` already gives it. (b) Accept both spellings. **(a)**.
+
+**Ruling.**
+- The operator interfaces' methods are `add`, `sub`, `mul`, `div`,
+  `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg`
+  and `not`, and each `…Assign` form's method is its operator's with
+  `_assign` (`floordiv_assign`, `bitand_assign`). `not` is a method name
+  after `fn` and after `.`, and the logical operator everywhere else.
+- Every integer type implements `Add`, `Sub`, `Mul`, `FloorDiv`, `Rem`,
+  `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl` and `Shr` and their
+  `…Assign` forms; `f16`, `f32` and `f64` implement `Add`, `Sub`, `Mul`,
+  `Div`, `FloorDiv`, `Rem`, `Pow` and `Neg` and their `…Assign` forms. Each
+  is the instance with `Rhs = Self`, and `Output` is the type itself. An
+  integer implements neither `Div` (`/` on integers is `E2240`) nor anything
+  for `/=`. `bool`, `char` and `String` implement none of them: `String`'s
+  `+` consumes its left operand (`[TXT-11]`), which `Add.add(self, …)` does
+  not. A shift amount or an exponent of another integer type is the built-in
+  operator's, not an interface's.
+- An `extend` block that implements several interfaces gives each associated
+  type once, for every interface of the block that declares it.
+- `Name = T` inside an interface's brackets is written only in a bound
+  (`T: Add[Output = T]`); in an `implements` list it is `E2020`.
+- With a bound that leaves `Output` unsaid (`T: Add`), `a + b` is a
+  `T.Output`: the signature names it (`-> T.Output`) or the use is `E2040`.
 
 ---
 

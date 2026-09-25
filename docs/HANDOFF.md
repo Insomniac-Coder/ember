@@ -10724,14 +10724,16 @@ the running narrative behind it.
     header naming itself).
   * `f19e748` (D-280, D-306), `c3e3582` (ODR-037, ODR-038; Hardened_14 and
     _15), `17fb89e`, `c9e2322` (`docs/AUTOPILOT.md`).
-  * The unattended session of 2026-09-26, below: D-272 first.
+  * The unattended session of 2026-09-26, below: D-272 first, then
+    `69fff89` (D-308 to D-312), `8ebe762` (A2, ODR-039), `fa3c7a8` (MSVC's
+    infinity and NaN constants), then A3 (ODR-040).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_16.md`
-  (ODR-039), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h16/` is frozen.
-* **Next numbers:** ODR-040, D-313, ADR-049.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_17.md`
+  (ODR-040), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h17/` is frozen.
+* **Next numbers:** ODR-041, D-318, ADR-050.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10831,6 +10833,36 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   `u128` forms). `i64.MAX`, `f64.EPSILON` and the rest are `scalar_constant`,
   reached from a `Field` expression whose base names a scalar type (a local
   of that name wins). `math.fma` is in `std/src/math.em`.
+* **Then A3: the operator interfaces (ODR-040, Hardened_17, ADR-049).**
+  `std/src/core.em` declares Part IV §8's `Add` to `Shr`, `Neg`, `Not` and
+  the `…Assign` forms; the prelude exports them (`bind_prelude`'s list,
+  `[MOD-5]`). Each number type's memberships are written at the end of
+  `core.em`, one `type Output` serving every interface of its block; their
+  methods are the built-in operators (`builtin_operator_method_fits`,
+  `synth_number_operator_method`: `3.add(4)` is `3 + 4`).
+  * Bounds bind associated types: `GenericParam.bindings` (`bound_bindings`),
+    checked at each call (`bindings_met`) and read by `project()`. An operator
+    on a type parameter calls its bound's method (`synth_bound_operator`); an
+    `Output` the bound leaves unsaid is `E2040` at the operator.
+  * An operator on any other type needs its prelude interface (D-315,
+    `operator_implemented`, through the `implemented` registry): binary
+    operators, `-`/`~` (`call_unary_operator`), `**` (in `power`) and `op=`
+    (`compound_through_interfaces`: `add_assign`, else `a = a + b`, in
+    `[EXP-2]`'s order). `Set`'s `|`, `&`, `-`, `^` are declared through the
+    interfaces in `std/src/collections.em`.
+  * Fixed on the way: D-313 (two instances of one generic interface,
+    `Mul[Vec2]` and `Mul[Mat2]`: `block_interfaces_of`, `instance_assoc`,
+    `choose_instance_by_types`), D-314 (`-x` of an unsigned value panics
+    unless 0), D-317 (a generic extension's `type Name = …`,
+    `record_extension_assoc`). `not` is a method name after `fn` and `.`
+    (`expect_member_name` in `ember_parser`).
+  * **Not done yet:** `Index`, `IndexMut` and `IndexSet` are not declared in
+    std; `a[i]` still finds a method named `index`, `index_mut` or
+    `index_set` by its name, and a type parameter cannot be indexed through a
+    bound.
+* **Found: D-316, open.** `f16` arithmetic is integer arithmetic on the
+  truncated value (`-1.5` prints `65535.0`), and `f16` is not a `Number`.
+  Fix it before A4.
 
 **The owner's standing instructions (all still in force)**
 
@@ -11070,10 +11102,12 @@ in `docs/AUTOPILOT.md` §2):
    Done 2026-09-26.
 2. ~~`[STD-20]`: the float constants and the integer methods; `math.fma` (`[STD-3]`).~~ Done
    2026-09-26 (ODR-039, Hardened_16).
-3. The operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`, likewise `Sub`,
+3. ~~The operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`, likewise `Sub`,
    `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, the bit operators and the `…Assign`
    forms), with a bound's associated-type binding (`Add[Output = T]`) and every number type
-   meeting them. `[TYP-17]`'s own `sum[T: Add[Output = T] + Default]` example must run.
+   meeting them. `[TYP-17]`'s own `sum[T: Add[Output = T] + Default]` example must run.~~ Done
+   2026-09-26 (ODR-040, Hardened_17), but for `Index`, `IndexMut` and `IndexSet`, which are
+   next, after D-316 (`f16` arithmetic).
 4. The rest of `[STD-21]`: `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`,
    `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize`,
    `normalize_or_zero` and the operators; `KahanSum`; `std.math.det` (`[DET-4]`: the same bits on

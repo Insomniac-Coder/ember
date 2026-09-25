@@ -817,16 +817,21 @@ extend[T: Eq + Hash + Clone, H: Hasher + Default] Set[T, H]:
                 out.add(x.clone())
         return out
 
-    pub fn bitor(self, other: Set[T, H]) -> Set[T, H]:
+## `s | t`, `s & t`, `s - t` and `s ^ t` are those operations (`[STD-16]`): a
+## set implements the operators' interfaces (`[TYP-21]`).
+extend[T: Eq + Hash + Clone, H: Hasher + Default] Set[T, H] implements BitOr, BitAnd, Sub, BitXor:
+    type Output = Set[T, H]
+
+    fn bitor(self, other: Set[T, H]) -> Set[T, H]:
         return self.union(other)
 
-    pub fn bitand(self, other: Set[T, H]) -> Set[T, H]:
+    fn bitand(self, other: Set[T, H]) -> Set[T, H]:
         return self.intersection(other)
 
-    pub fn sub(self, other: Set[T, H]) -> Set[T, H]:
+    fn sub(self, other: Set[T, H]) -> Set[T, H]:
         return self.difference(other)
 
-    pub fn bitxor(self, other: Set[T, H]) -> Set[T, H]:
+    fn bitxor(self, other: Set[T, H]) -> Set[T, H]:
         return self.symmetric_difference(other)
 
 extend[T: Eq + Hash + Ord + Clone, H: Hasher + Default] Set[T, H]:

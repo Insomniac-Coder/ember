@@ -741,3 +741,15 @@ The next number is ODR-027.
   `pow`, `signum`, `div_trunc`, `rem_trunc`, `count_ones`, `leading_zeros`, `trailing_zeros`,
   `is_power_of_two`, `next_power_of_two`, and `T.MIN`/`T.MAX`; `f32`/`f64` have `INF`, `NAN`,
   `EPSILON`, `MIN` (`-MAX`) and `MAX`. `math.fma` is a fused multiply-add (`[STD-3]`).
+* **2026-09-26 — the operator interfaces (ODR-040; Hardened_17; ADR-049).** `std.core` declares
+  Part IV §8's `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`,
+  `BitOr`, `BitXor`, `Shl`, `Shr` and their `…Assign` forms, and the prelude exports them. Every
+  number type implements those of its operators, so `[TYP-17]`'s `sum[T: Add[Output = T] +
+  Default]` takes `i32`, `f64` and a program's type alike; `3.add(4)` is `3 + 4`. A bound binds an
+  associated type (`Add[Output = T]`), checked at each call; `a + b`, `-a`, `a ** b` and `a += b`
+  on a type parameter go through its bounds. A type implements two instances of one interface
+  (`Mul[Vec2]` and `Mul[Mat2]`, D-313). `a += b` calls `add_assign`, else is `a = a + b`. An
+  operator needs its interface (D-315): a method that merely shares the name no longer gives one,
+  so a `Set`'s `add` is not its `+`, and `Set` implements `BitOr`, `BitAnd`, `Sub` and `BitXor`.
+  `-x` on an unsigned value panics unless `x` is 0 (D-314). A generic extension may state an
+  associated type (D-317). `not` is a method name after `fn` and `.`.

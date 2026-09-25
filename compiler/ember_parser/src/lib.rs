@@ -260,6 +260,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A method's name, after `fn` or `.`: an identifier, or `not`, which
+    /// is a keyword only where an operand is expected. Part IV §8's `Not`
+    /// interface has the method `not` (`~x`), and a reserved word that blocks
+    /// a standard-library method name is contextual (ODR-040, as ODR-030 made
+    /// `extend`).
+    fn expect_member_name(&mut self) -> Ident {
+        if let TokenKind::Keyword(Kw::Not) = self.peek() {
+            let span = self.span();
+            self.bump();
+            return Ident { name: Symbol::intern("not"), span };
+        }
+        self.expect_ident()
+    }
+
     /// Emit a diagnostic, respecting `[AST-2]`'s cascade limit.
     fn report(&mut self, mut diagnostic: Diagnostic) {
         // `[DIA-14]` — the parse stopped at a token the lexer has already

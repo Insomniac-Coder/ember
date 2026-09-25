@@ -292,6 +292,10 @@ struct GenericParam {
     /// type `Name` of the parameter at this index. Each call fills it in from
     /// what the argument's type says `Name` is (`type Real = f64`).
     projection: Option<(u32, Symbol)>,
+    /// `[TYP-17]` — a bound's associated-type binding, `T: Add[Output = T]`:
+    /// the bound's interface instance, the associated type's name, and the
+    /// type the bound says it is. Inside the body `a + b` is then a `T`.
+    bindings: Vec<(Symbol, Symbol, Ty)>,
 }
 
 /// `[CLO-3]`, `[CLO-6]` — the signature a `fn(A) -> R` parameter may be called
@@ -441,6 +445,9 @@ struct GenericExtension {
     /// Every interface the extension implements, resolved.
     interfaces: Vec<Symbol>,
     implements: Vec<ast::TypeExpr>,
+    /// `[IFC-4]` — the block's `type Name = …`, over the extension's
+    /// parameters: `type Output = Set[T, H]`.
+    assoc: Vec<(Symbol, Ty)>,
     span: Span,
     declaring_module: usize,
 }
@@ -838,6 +845,23 @@ struct Checker<'a> {
     /// What each implementing type declared its associated types to be:
     /// `(the type, the name) -> the type it stands for`.
     assoc_values: HashMap<(Ty, Symbol), Ty>,
+    /// `[IFC-4]`, D-313 — what one implementation says an associated type
+    /// is, by interface instance: a type's `Mul[Vec4]` and `Mul[Mat4]` may
+    /// have different `Output`s.
+    instance_assoc: HashMap<(Ty, Symbol, Symbol), Ty>,
+    /// The interface instance whose associated types `project` reads first,
+    /// while one implementation or one call through it is checked.
+    assoc_instance: Option<Symbol>,
+    /// Part IV §8 — what `Self` is in a generic interface's default arguments
+    /// (`Add[Rhs = Self]`) while an interface use is resolved: the
+    /// implementing type, or the parameter a bound is on.
+    interface_self: Option<Ty>,
+    /// D-313 — the interfaces an `extend … implements A, B` block implements,
+    /// each member belonging to the one that declares it.
+    block_interfaces: Vec<Symbol>,
+    /// Whether the interface use being resolved is a bound, where
+    /// `Add[Output = T]` binds an associated type.
+    accept_bindings: bool,
     /// `[IFC-4]` — while a signature is read, the hidden parameter each
     /// `T.Name` it mentions stands for.
     projection_params: HashMap<(Symbol, Symbol), Ty>,
@@ -1135,6 +1159,11 @@ impl<'a> Checker<'a> {
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
+            instance_assoc: HashMap::new(),
+            assoc_instance: None,
+            interface_self: None,
+            block_interfaces: Vec::new(),
+            accept_bindings: false,
             projection_params: HashMap::new(),
             instances: HashMap::new(),
             generic_of: HashMap::new(),
@@ -1810,19 +1839,33 @@ impl<'a> Checker<'a> {
             // resolve to nothing and report `[TYP-17]`'s "its bounds do not
             // provide one" about a bound that did.
             let mut bounds = Vec::new();
+            let mut bindings = Vec::new();
             for bound in &param.bounds {
                 match interface_name(bound) {
+                    // Part IV §8 — a generic interface named bare takes its
+                    // defaults, with `Self` the parameter: `T: Add` is
+                    // `Add[T]`.
+                    Some(name)
+                        if self
+                            .interfaces
+                            .get(&self.resolve_name(name))
+                            .is_some_and(|def| !def.generic_params.is_empty()) =>
+                    {
+                        bounds.extend(self.resolve_interface_use_for(bound, ty));
+                    }
                     Some(name) => bounds.push(self.resolve_name(name)),
                     // D-261 — `Q: AsKey[K]` names an instance of a generic
                     // interface, over the parameters declared before it.
                     None if matches!(&bound.kind, ast::TypeKind::Path { args, .. } if !args.is_empty()) => {
-                        bounds.extend(self.bound_interface(bound));
+                        let Some(instance) = self.bound_interface(bound, ty) else { continue };
+                        bounds.push(instance);
+                        bindings.extend(self.bound_bindings(bound, instance));
                     }
                     None => {}
                 }
             }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
-            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None });
+            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, bindings });
         }
         declared
     }
@@ -1866,7 +1909,14 @@ impl<'a> Checker<'a> {
         let index = (index_base + generics.len()) as u32;
         let name = Symbol::intern(&format!("Callable{index}"));
         let param_ty = self.types.intern(TyKind::Param { index, name });
-        generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound), default: None, projection: None });
+        generics.push(GenericParam {
+            name,
+            bounds: Vec::new(),
+            callable: Some(bound),
+            default: None,
+            projection: None,
+            bindings: Vec::new(),
+        });
         param_ty
     }
 
@@ -2190,7 +2240,9 @@ impl<'a> Checker<'a> {
                 "std.core",
                 &[
                     "Eq", "Ord", "Ordering", "Default", "Clone", "Iterator", "Range", "RangeInclusive", "RangeFrom",
-                    "RangeTo",
+                    "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
+                    "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
+                    "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
                 ],
             ),
             ("std.collections", &["Hash", "Map", "Set"]),
@@ -3057,6 +3109,14 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
+            let mut assoc = Vec::new();
+            for member in &decl.members {
+                if let ast::MemberKind::TypeAlias(alias) = &member.kind
+                    && let Some(value) = &alias.value
+                {
+                    assoc.push((alias.name.name, self.resolve_type(value)));
+                }
+            }
             self.type_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
@@ -3071,6 +3131,7 @@ impl<'a> Checker<'a> {
                     interface,
                     interfaces,
                     implements: decl.implements.clone(),
+                    assoc,
                     span: item.span,
                     declaring_module: self.current_module,
                 });
@@ -3421,8 +3482,31 @@ impl<'a> Checker<'a> {
                 extension.declaring_module,
             );
             self.type_params = owner_params;
+            self.record_extension_assoc(ty, &extension, &bindings, &implementations);
             for (implemented_ty, interface, interface_span) in implementations {
                 self.check_implementation(implemented_ty, interface, interface_span);
+            }
+        }
+    }
+
+    /// `[IFC-4]` — a generic extension's `type Name = …` for the instance it
+    /// was applied to, and for each interface of the block that declares
+    /// `Name` (D-313).
+    fn record_extension_assoc(
+        &mut self,
+        ty: Ty,
+        extension: &GenericExtension,
+        bindings: &[(Symbol, Ty)],
+        implementations: &[(Ty, Symbol, Span)],
+    ) {
+        let args: Vec<Ty> = bindings.iter().map(|&(_, arg)| arg).collect();
+        for &(name, value) in &extension.assoc {
+            let value = self.substitute_ty(value, &args);
+            self.assoc_values.insert((ty, name), value);
+            for &(implemented, interface, _) in implementations {
+                if self.interfaces.get(&interface).is_some_and(|def| def.assoc.iter().any(|(assoc, _)| *assoc == name)) {
+                    self.instance_assoc.insert((implemented, interface, name), value);
+                }
             }
         }
     }
@@ -3541,6 +3625,7 @@ impl<'a> Checker<'a> {
                 callable: None,
                 default: None,
                 projection: None,
+                bindings: Vec::new(),
             })
             .collect();
         generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
@@ -4335,11 +4420,14 @@ impl<'a> Checker<'a> {
                     // and a prelude binding can give the same definition two
                     // spellings (`Ord` and `std.core.Ord`), but they must never
                     // become two interfaces during ambiguity checking.
-                    let interface = decl
-                        .implements
-                        .first()
-                        .and_then(interface_name)
-                        .map(|name| self.resolve_name(name));
+                    // D-313 — a generic interface's implementation is of one
+                    // instance (`Mul[Vec4]`), and its methods are that
+                    // instance's, so another instance's may share their names.
+                    let interfaces = self.block_interfaces_of(&decl.implements, ty);
+                    let interface = interfaces.first().copied().or_else(|| {
+                        decl.implements.first().and_then(interface_name).map(|name| self.resolve_name(name))
+                    });
+                    let saved_block = std::mem::replace(&mut self.block_interfaces, interfaces);
                     self.collect_members(
                         ty,
                         &decl.members,
@@ -4348,6 +4436,7 @@ impl<'a> Checker<'a> {
                         item.span,
                         item_index,
                     );
+                    self.block_interfaces = saved_block;
                     // Inherent `extend` blocks can add class virtual methods
                     // after the class header.  Keep them in source/module
                     // order for `[DSP-2]`; interface extensions are excluded
@@ -4375,11 +4464,22 @@ impl<'a> Checker<'a> {
     }
 
     fn check_implementation(&mut self, ty: Ty, interface: Symbol, span: Span) {
+        let saved = self.assoc_instance.replace(interface);
+        self.check_implementation_of(ty, interface, span);
+        self.assoc_instance = saved;
+    }
+
+    /// What `ty`'s implementation of `interface` says `name` is.
+    fn implementation_assoc(&self, ty: Ty, interface: Symbol, name: Symbol) -> Option<Ty> {
+        self.instance_assoc.get(&(ty, interface, name)).or_else(|| self.assoc_values.get(&(ty, name))).copied()
+    }
+
+    fn check_implementation_of(&mut self, ty: Ty, interface: Symbol, span: Span) {
         let Some(def) = self.interfaces.get(&interface) else { return };
         let required = def.methods.clone();
         let supertraits = def.supertraits.clone();
         let assoc = def.assoc.clone();
-        let assoc_missing = assoc.iter().any(|(name, _)| !self.assoc_values.contains_key(&(ty, *name)));
+        let assoc_missing = assoc.iter().any(|(name, _)| self.implementation_assoc(ty, interface, *name).is_none());
 
         for (method, declaration, receiver, _) in required {
             let implementation = if receiver.is_some() {
@@ -4399,6 +4499,11 @@ impl<'a> Checker<'a> {
                 && matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F64))
                 && self.builtin_float_method_fits(method, declaration)
             {
+                continue;
+            }
+            // ODR-040 — a number's operators are built in, and are the
+            // methods of the operator interfaces it implements.
+            if implementation.is_none() && receiver.is_some() && self.builtin_operator_method_fits(ty, method, declaration, receiver) {
                 continue;
             }
             let Some((implementation, actual_receiver)) = implementation else {
@@ -4424,7 +4529,7 @@ impl<'a> Checker<'a> {
         // `[IFC-4]` — each associated type is given, and meets its bounds.
         for (name, bounds) in assoc {
             let shown = self.types.display(ty);
-            let Some(&value) = self.assoc_values.get(&(ty, name)) else {
+            let Some(value) = self.implementation_assoc(ty, interface, name) else {
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E2040,
@@ -4461,6 +4566,30 @@ impl<'a> Checker<'a> {
                 format!("`{interface}` requires `{parent}`, which `{shown}` does not implement"),
             );
         }
+    }
+
+    /// ODR-040 — whether `ty`'s built-in operator is the interface method
+    /// `method` as declared: `i32`'s `+` is `Add[i32]`'s `add`, taking an
+    /// `i32` and giving the implementation's `Output`; `+=` is `add_assign`,
+    /// on a `mut self`, giving nothing.
+    fn builtin_operator_method_fits(&mut self, ty: Ty, method: Symbol, declaration: DefId, receiver: Option<Mode>) -> bool {
+        let Some((op, assign)) = operator_method_named(method.as_str()) else { return false };
+        if !number_has_operator(self.types, ty, op) {
+            return false;
+        }
+        let signature = self.signatures[declaration.0 as usize].clone();
+        let operands = match op {
+            OperatorMethod::Binary(_) => 1,
+            OperatorMethod::Unary(_) => 0,
+        };
+        let wanted_receiver = if assign { Mode::Mut } else { Mode::Borrow };
+        let ret = self.types.substitute_self(signature.ret, ty);
+        let ret = self.resolve_assoc(ret, ty);
+        signature.generics.is_empty()
+            && receiver == Some(wanted_receiver)
+            && signature.params.len() == operands
+            && signature.params.iter().all(|(_, param, _, _)| self.types.substitute_self(*param, ty) == ty)
+            && ret == if assign { self.common.void } else { ty }
     }
 
     /// Whether `f32`'s and `f64`'s built-in method `method` has the shape the
@@ -4941,29 +5070,81 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        if args.is_empty() {
-            if !definition.generic_params.is_empty() {
-                self.error(
-                    codes::E2020,
-                    ty.span,
-                    format!(
-                        "`{written}` takes {} type arguments, found 0",
-                        definition.generic_params.len()
-                    ),
-                );
-                return None;
-            }
+        if args.is_empty() && definition.generic_params.is_empty() {
             return Some(name);
         }
         let mut resolved = Vec::with_capacity(args.len());
         for arg in args {
-            let ast::GenericArg::Type(arg) = arg else {
-                self.error(codes::E1010, ty.span, "expected a type argument");
-                return None;
-            };
-            resolved.push(self.resolve_type(arg));
+            match arg {
+                ast::GenericArg::Type(arg) => resolved.push(self.resolve_type(arg)),
+                // A bound's `Output = T` is read by the bound's own path
+                // (`bound_bindings`); anywhere else it has nothing to bind.
+                ast::GenericArg::Assoc { name: assoc, .. } => {
+                    if !self.accept_bindings {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2020,
+                                assoc.span,
+                                format!("`{} = …` binds an associated type only in a bound", assoc.name),
+                            )
+                            .help(format!("an implementation states it in its block: `type {} = …`", assoc.name)),
+                        );
+                        return None;
+                    }
+                }
+                ast::GenericArg::Const(_) => {
+                    self.error(codes::E1010, ty.span, "expected a type argument");
+                    return None;
+                }
+            }
+        }
+        // Part IV §8 — an omitted trailing argument takes its default, where
+        // `Self` is the type the use is about: `implements Add` on `V` is
+        // `Add[V]`, and a bound `T: Add` is `Add[T]`.
+        let wanted = definition.generic_params.len();
+        if resolved.len() < wanted {
+            for param in &definition.generic_params[resolved.len()..] {
+                let Some(default) = param.default else {
+                    self.error(
+                        codes::E2020,
+                        ty.span,
+                        format!("`{written}` takes {wanted} type arguments, found {}", resolved.len()),
+                    );
+                    return None;
+                };
+                let default = self.substitute_ty(default, &resolved);
+                let default = match self.interface_self {
+                    Some(owner) => self.types.substitute_self(default, owner),
+                    None => default,
+                };
+                resolved.push(default);
+            }
+        }
+        // `Neg[Output = T]` binds only: the interface is not generic, and
+        // its use is the interface itself.
+        if resolved.is_empty() && definition.generic_params.is_empty() {
+            return Some(name);
         }
         self.instantiate_interface(name, &definition, &resolved, ty.span)
+    }
+
+    /// D-313 — the interfaces an `extend` block's `implements` names, each as
+    /// the instance it is for `owner`. Errors are the implementation
+    /// check's to report, once.
+    fn block_interfaces_of(&mut self, implements: &[ast::TypeExpr], owner: Ty) -> Vec<Symbol> {
+        let quiet = self.sink.mark();
+        let resolved = implements.iter().filter_map(|entry| self.resolve_interface_use_for(entry, owner)).collect();
+        self.sink.rollback(quiet);
+        resolved
+    }
+
+    /// An interface use with `Self` known: the implementing type, or the
+    /// parameter a bound is on, for `[Rhs = Self]` defaults.
+    fn resolve_interface_use_for(&mut self, ty: &ast::TypeExpr, owner: Ty) -> Option<Symbol> {
+        let saved = self.interface_self.replace(owner);
+        let resolved = self.resolve_interface_use(ty);
+        self.interface_self = saved;
+        resolved
     }
 
     /// `[TYP-16]` applied to an interface contract: a specialized interface
@@ -5434,9 +5615,28 @@ impl<'a> Checker<'a> {
             let Some(value) = &alias.value else { continue };
             let value = self.resolve_type(value);
             self.assoc_values.insert((ty, alias.name.name), value);
+            // D-313 — and for each interface of the block that declares it,
+            // so `type Output = i32` serves `Add` and `Sub` alike.
+            let interfaces: Vec<Symbol> =
+                if self.block_interfaces.is_empty() { from_interface.into_iter().collect() } else { self.block_interfaces.clone() };
+            for interface in interfaces {
+                if self.interfaces.get(&interface).is_some_and(|def| def.assoc.iter().any(|(name, _)| *name == alias.name.name)) {
+                    self.instance_assoc.insert((ty, interface, alias.name.name), value);
+                }
+            }
         }
         for (member_index, member) in members.iter().enumerate() {
             let ast::MemberKind::Fn(decl) = &member.kind else { continue };
+            // D-313 — in a block implementing several interfaces, a method is
+            // the interface's that declares it.
+            let from_interface = self
+                .block_interfaces
+                .iter()
+                .copied()
+                .find(|interface| {
+                    self.interfaces.get(interface).is_some_and(|def| def.methods.iter().any(|(name, ..)| *name == decl.name.name))
+                })
+                .or(from_interface);
             let is_abstract_class_method = decl.body.is_none()
                 && from_interface.is_none()
                 && decl.dispatch == ast::Dispatch::Virtual
@@ -5721,7 +5921,7 @@ impl<'a> Checker<'a> {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
                 _ => Symbol::intern("<invalid interface>"),
             };
-            let Some(name) = self.resolve_interface_use(entry) else { continue };
+            let Some(name) = self.resolve_interface_use_for(entry, ty) else { continue };
             // `[STD-27]` — `Float` is `f32`'s and `f64`'s only: a literal must
             // be able to become the type, which no other type can promise.
             if name.is("std.math.Float")
@@ -7146,7 +7346,12 @@ impl<'a> Checker<'a> {
         });
         let default = param.default.map(|default| self.substitute_ty(default, args));
         let bounds = param.bounds.iter().map(|&bound| self.substitute_bound(bound, args)).collect();
-        GenericParam { name: param.name, bounds, callable, default, projection: param.projection }
+        let bindings = param
+            .bindings
+            .iter()
+            .map(|&(instance, name, value)| (self.substitute_bound(instance, args), name, self.substitute_ty(value, args)))
+            .collect();
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, bindings }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -7188,21 +7393,78 @@ impl<'a> Checker<'a> {
     /// D-261 — the interface a bound with arguments names. A generic type's
     /// methods declare their parameters before interfaces are collected; such
     /// a bound is named now and instantiated once they are.
-    fn bound_interface(&mut self, bound: &ast::TypeExpr) -> Option<Symbol> {
+    fn bound_interface(&mut self, bound: &ast::TypeExpr, owner: Ty) -> Option<Symbol> {
         let ast::TypeKind::Path { segments, args } = &bound.kind else { return None };
-        let [single] = segments.as_slice() else { return self.resolve_interface_use(bound) };
+        let [single] = segments.as_slice() else { return self.resolve_interface_use_for(bound, owner) };
         let name = self.resolve_name(single.name);
         if self.interfaces.contains_key(&name) {
-            return self.resolve_interface_use(bound);
+            let saved = std::mem::replace(&mut self.accept_bindings, true);
+            let resolved = self.resolve_interface_use_for(bound, owner);
+            self.accept_bindings = saved;
+            return resolved;
         }
         let mut resolved = Vec::with_capacity(args.len());
         for arg in args {
-            let ast::GenericArg::Type(arg) = arg else { return self.resolve_interface_use(bound) };
-            resolved.push(self.resolve_type(arg));
+            match arg {
+                ast::GenericArg::Type(arg) => resolved.push(self.resolve_type(arg)),
+                ast::GenericArg::Assoc { .. } => {}
+                ast::GenericArg::Const(_) => return self.resolve_interface_use(bound),
+            }
         }
         let instance = self.interface_instance_name(name, &resolved);
         self.pending_bound_interfaces.push((name, resolved, bound.span));
         Some(instance)
+    }
+
+    /// `[TYP-17]` — whether `ty`, standing for `param`, gives each associated
+    /// type the value `param`'s bounds bind it to (`T: Add[Output = T]` with
+    /// `T` a `U` needs `U`'s `Add` to have `Output = U`); `E2040` otherwise.
+    fn bindings_met(&mut self, param: &GenericParam, ty: Ty, substitution: &[Ty], span: Span) -> bool {
+        let mut met = true;
+        for &(instance, assoc, value) in &param.bindings {
+            let instance = self.substitute_bound(instance, substitution);
+            let wanted = self.substitute_ty(value, substitution);
+            let saved = self.assoc_instance.replace(instance);
+            let actual = self.project(ty, assoc);
+            self.assoc_instance = saved;
+            if actual == Some(wanted) || wanted == self.common.error {
+                continue;
+            }
+            let shown = self.types.display(ty);
+            let wanted_shown = self.types.display(wanted);
+            let interface = self.interface_shown(instance);
+            let actual_shown = actual.map_or("not stated".to_string(), |actual| format!("`{}`", self.types.display(actual)));
+            self.error(
+                codes::E2040,
+                span,
+                format!(
+                    "`{shown}`'s `{assoc}` for `{interface}` is {actual_shown}, but `{}`'s bound needs `{wanted_shown}`",
+                    param.name
+                ),
+            );
+            met = false;
+        }
+        met
+    }
+
+    /// `[TYP-17]` — the associated-type bindings a bound writes
+    /// (`Add[Output = T]`), each checked against what the interface declares.
+    fn bound_bindings(&mut self, bound: &ast::TypeExpr, instance: Symbol) -> Vec<(Symbol, Symbol, Ty)> {
+        let ast::TypeKind::Path { args, .. } = &bound.kind else { return Vec::new() };
+        let declared: Vec<Symbol> =
+            self.interfaces.get(&instance).map(|def| def.assoc.iter().map(|(name, _)| *name).collect()).unwrap_or_default();
+        let mut bindings = Vec::new();
+        for arg in args {
+            let ast::GenericArg::Assoc { name, ty } = arg else { continue };
+            let value = self.resolve_type(ty);
+            if !declared.contains(&name.name) && self.interfaces.contains_key(&instance) {
+                let shown = self.interface_shown(instance);
+                self.error(codes::E2040, name.span, format!("`{shown}` has no associated type `{}`", name.name));
+                continue;
+            }
+            bindings.push((instance, name.name, value));
+        }
+        bindings
     }
 
     /// An interface as the source writes it: `AsKey[String]`, not the
@@ -8179,6 +8441,7 @@ impl<'a> Checker<'a> {
                     extension.declaring_module,
                 );
                 self.type_params = class_params;
+                self.record_extension_assoc(ty, extension, bindings, &implementations);
                 for (implemented_ty, interface, interface_span) in implementations {
                     self.check_implementation(implemented_ty, interface, interface_span);
                 }
@@ -9768,19 +10031,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // `[TYP-24]` — an `extend T implements I:` block's methods are I's,
             // which `methods` alone cannot tell apart when two interfaces
             // offer one name.
-            let from_interface = match &item.kind {
-                ast::ItemKind::Extend(decl) => match decl.implements.as_slice() {
-                    [ast::TypeExpr { kind: ast::TypeKind::Path { segments, args }, .. }]
-                        if segments.len() == 1 && args.is_empty() =>
-                    {
-                        let qualified = self.resolve_name(segments[0].name);
-                        self.interfaces.contains_key(&qualified).then_some(qualified)
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
             let Some(owner) = owner else { continue };
+            // D-313 — each of the block's interfaces, as an instance, so a
+            // method is found under the one that declares it.
+            let block_interfaces = match &item.kind {
+                ast::ItemKind::Extend(decl) => self.block_interfaces_of(&decl.implements, owner),
+                _ => Vec::new(),
+            };
             for member in members {
                 let ast::MemberKind::Fn(decl) = &member.kind else { continue };
                 let Some(block) = &decl.body else { continue };
@@ -9788,6 +10045,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     .params
                     .iter()
                     .any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                let from_interface = block_interfaces.iter().copied().find(|interface| {
+                    self.interfaces.get(interface).is_some_and(|def| def.methods.iter().any(|(name, ..)| *name == decl.name.name))
+                });
                 let def = if has_receiver {
                     let entry = from_interface
                         .and_then(|interface| self.interface_methods.get(&(owner, interface, decl.name.name)).copied())
@@ -11652,9 +11912,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return;
                 }
                 // D-195, `[TXT-11]` — `s += t` on a `String` appends, as
-                // `push_str`; no other non-numeric `op=` exists yet.
+                // `push_str`. Any other type that is not a number goes through
+                // its operator interfaces (`[TYP-21]`). A `Float` parameter's
+                // operators are built in, as its `+` is.
                 if let Some(bin) = op
                     && !self.types.is_numeric(place_ty)
+                    && !self.float_param(place_ty)
                     && place_ty != self.common.error
                 {
                     let is_string = matches!(*self.types.kind(place_ty), TyKind::Vec { elem } if elem == self.common.u8);
@@ -11678,8 +11941,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         }));
                         return;
                     }
+                    if let Some(methods) = compound_methods(*bin)
+                        && self.offers_operator(place_ty, methods)
+                    {
+                        self.compound_through_interfaces(place, target, value, methods, *bin, stmt.span, out);
+                        return;
+                    }
                     let shown = self.types.display(place_ty);
-                    self.error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                    let mut diagnostic =
+                        Diagnostic::error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                    if let Some((method, assign)) = compound_methods(*bin)
+                        && let (Some(interface), Some(assign)) = (operator_interface(method), operator_interface(assign))
+                    {
+                        diagnostic = diagnostic.note(format!(
+                            "a type has `{}=` by implementing `{assign}`, or `{interface}` with its own type as `Output` [TYP-21]",
+                            bin.as_str()
+                        ));
+                    }
+                    self.sink.emit(diagnostic);
                     return;
                 }
                 // `[EXP-2]` — `a[i] op= x` evaluates `x`, then the place once,
@@ -16319,6 +16598,113 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// ODR-040 — `x.add(y)` on a number: the built-in `+`, with the other
+    /// operand checked against the receiver's type (any integer for a shift,
+    /// `[TYP-10]`).
+    fn synth_number_operator_method(
+        &mut self,
+        receiver: Expr,
+        op: OperatorMethod,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
+        let ty = receiver.ty;
+        let wanted = match op {
+            OperatorMethod::Binary(_) => 1,
+            OperatorMethod::Unary(_) => 0,
+        };
+        if args.len() != wanted || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{}` takes {wanted} argument(s), found {}", name.name, args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        match op {
+            OperatorMethod::Binary(op) => {
+                let rhs = if matches!(op, ast::BinOp::Shl | ast::BinOp::Shr) {
+                    self.synth_committed(&args[0].value)
+                } else {
+                    self.check_expr(&args[0].value, ty)
+                };
+                let Some(hir_op) = convert_binop(op) else { return Expr { ty: self.common.error, kind: ExprKind::Error, span } };
+                Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(receiver), rhs: Box::new(rhs) }, span }
+            }
+            // `-x` on an integer is `0 - x`, checked (D-192, D-314).
+            OperatorMethod::Unary(ast::UnOp::Neg) if self.types.is_integral(ty) => {
+                let zero = Expr { ty, kind: ExprKind::Int(0), span };
+                Expr { ty, kind: ExprKind::Binary { op: BinOp::Sub, lhs: Box::new(zero), rhs: Box::new(receiver) }, span }
+            }
+            OperatorMethod::Unary(op) => {
+                let op = if op == ast::UnOp::Neg { UnOp::Neg } else { UnOp::BitNot };
+                Expr { ty, kind: ExprKind::Unary { op, operand: Box::new(receiver) }, span }
+            }
+        }
+    }
+
+    /// `[TYP-17]`, `[TYP-21]` (ODR-040) — an operator on a type parameter is
+    /// its bound's operator interface: with `T: Add[Output = T]`, `a + b`
+    /// calls `add` and is a `T`. The bound is the one whose method takes the
+    /// other operand's type (`Add[T]` or `Add[f32]`); a literal takes that
+    /// type. The operands come back when no bound offers the operator.
+    fn synth_bound_operator(&mut self, index: u32, lhs: Expr, rhs: Option<Expr>, method: &str, span: Span) -> Result<Expr, (Expr, Option<Expr>)> {
+        let name = Symbol::intern(method);
+        let bounds = self.current_generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+        let mut found = None;
+        for bound in bounds {
+            let Some(def) = self.interfaces.get(&bound) else { continue };
+            let Some(&(_, declaration, Some(receiver_mode), _)) =
+                def.methods.iter().find(|(m, _, receiver, _)| *m == name && receiver.is_some())
+            else {
+                continue;
+            };
+            let params = self.signatures[declaration.0 as usize].params.clone();
+            let takes = match (&rhs, params.as_slice()) {
+                (None, []) => true,
+                (Some(rhs), [(_, param, _, _)]) => {
+                    let param = self.types.substitute_self(*param, lhs.ty);
+                    rhs.ty == param || (self.types.is_untyped_literal(rhs.ty) && self.literal_fits(rhs, param))
+                }
+                _ => false,
+            };
+            if takes {
+                found = Some((bound, declaration, receiver_mode));
+                break;
+            }
+        }
+        let Some((bound, declaration, receiver_mode)) = found else { return Err((lhs, rhs)) };
+        self.bound_calls.insert(span, bound);
+        let concrete = lhs.ty;
+        let ret = self.signatures[declaration.0 as usize].ret;
+        let ret = self.types.substitute_self(ret, concrete);
+        let saved_instance = self.assoc_instance.replace(bound);
+        let ret = self.resolve_assoc(ret, concrete);
+        self.assoc_instance = saved_instance;
+        // `T: Add` says nothing of `Output`: the result is a `T.Output`,
+        // which only a signature naming it can hold.
+        if let TyKind::Assoc { name: assoc } = *self.types.kind(ret) {
+            let shown = self.types.display(concrete);
+            let interface = self.interface_shown(bound);
+            let interface = interface.rsplit_once('.').map_or(interface.as_str(), |(_, short)| short).to_string();
+            let bound_with = match interface.strip_suffix(']') {
+                Some(open) => format!("{open}, {assoc} = …]"),
+                None => format!("{interface}[{assoc} = …]"),
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{method}` on `{shown}` returns a `{shown}.{assoc}`, and nothing here says what that is"))
+                    .help(format!("say it in the bound, `{shown}: {bound_with}`, or name it in the signature, `-> {shown}.{assoc}`"))
+                    .note("inside a generic body only the bounds' operations are available [TYP-17]"),
+            );
+            return Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let mut args = vec![self.pass_receiver_to(lhs, receiver_mode, declaration, span)];
+        if let Some(rhs) = rhs {
+            let (_, param, mode, _) = self.signatures[declaration.0 as usize].params[0];
+            let param = self.types.substitute_self(param, concrete);
+            let rhs = self.coerce(rhs, param);
+            args.push(self.pass_argument(rhs, param, mode));
+        }
+        Ok(Expr { ty: ret, kind: ExprKind::Call { callee: declaration, arg_eval_order: None, args, latebound: false }, span })
+    }
+
     /// `[STD-20]` (ODR-039) — the integer methods, built into every integer
     /// type as the float ones are (`[STD-27]`): each is one operation. The
     /// `checked_`, `wrapping_`, `saturating_` and `overflowing_` families are
@@ -19092,6 +19478,42 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let shown = self.types.display(operand.ty);
                     self.error(codes::E2020, span, format!("`not` needs a `bool`, found `{shown}`"));
                 }
+                // `[TYP-17]` (ODR-040) — `-a` and `~a` on a type parameter are
+                // its bound's `Neg` and `Not`.
+                let mut operand = operand;
+                if let TyKind::Param { index, .. } = *self.types.kind(operand.ty)
+                    && !self.float_param(operand.ty)
+                    && *op != ast::UnOp::Not
+                {
+                    let method = if *op == ast::UnOp::Neg { "neg" } else { "not" };
+                    match self.synth_bound_operator(index, operand, None, method, span) {
+                        Ok(call) => return call,
+                        Err((back, _)) => operand = back,
+                    }
+                }
+                // `[TYP-21]` — on a type that is not a number, `-a` and `~a`
+                // are its `Neg.neg` and `Not.not`; `[TYP-14]` — through a
+                // reference.
+                if *op != ast::UnOp::Not {
+                    operand = self.read_through(operand);
+                    let method = if *op == ast::UnOp::Neg { "neg" } else { "not" };
+                    if !self.types.is_numeric(operand.ty) && self.operator_implemented(operand.ty, method) {
+                        return self.call_unary_operator(method, operand, span);
+                    }
+                    let plain = self.types.is_numeric(operand.ty)
+                        || self.float_param(operand.ty)
+                        || matches!(self.types.kind(operand.ty), TyKind::Range(_))
+                        || operand.ty == self.common.error;
+                    if !plain {
+                        let shown = self.types.display(operand.ty);
+                        let (symbol, interface) = if *op == ast::UnOp::Neg { ("-", "Neg") } else { ("~", "Not") };
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2020, span, format!("`{symbol}` cannot be applied to `{shown}`"))
+                                .note(format!("a type has `{symbol}` by implementing `{interface}` [TYP-21]")),
+                        );
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
+                }
                 let (hir_op, ty) = match op {
                     ast::UnOp::Neg => (UnOp::Neg, operand.ty),
                     ast::UnOp::BitNot => (UnOp::BitNot, operand.ty),
@@ -19101,8 +19523,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // its minimum, which must panic like any overflow (and is
                 // undefined behaviour in C). `-x` is `0 - x`, whose checking
                 // follows the function's overflow policy. An untyped literal
-                // stays a constant (`[LEX-24]`).
-                if hir_op == UnOp::Neg && matches!(self.types.kind(ty), TyKind::Int(_)) {
+                // stays a constant (`[LEX-24]`). D-314 — an unsigned value's
+                // negation overflows unless it is zero; C's wrapped it.
+                if hir_op == UnOp::Neg && matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Uint(_)) {
                     let zero = Expr { ty, kind: ExprKind::Int(0), span };
                     return Expr {
                         ty,
@@ -20444,6 +20867,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     unmet = true;
                 }
             }
+            if !unmet && !self.bindings_met(param, ty, &substitution, span) {
+                unmet = true;
+            }
         }
         // Instantiating the body with a type that misses a bound would only
         // report the same mistake again inside it ([DIA-14]).
@@ -20725,6 +21151,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     );
                     unmet = true;
                 }
+            }
+            if !unmet && !self.bindings_met(param, ty, &substitution, span) {
+                unmet = true;
             }
         }
         // As for a generic function: no instance around a missed bound
@@ -21117,6 +21546,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 callable: None,
                 default: None,
                 projection: Some(((index_base + base_index) as u32, assoc.name)),
+                bindings: Vec::new(),
             });
             self.projection_params.insert((base.name, assoc.name), ty);
         }
@@ -21141,10 +21571,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// What `ty.name` is: the implementation's `type name = …`, or for a type
     /// parameter the hidden parameter standing for it.
     fn project(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
+        if let Some(instance) = self.assoc_instance
+            && let Some(&value) = self.instance_assoc.get(&(ty, instance, name))
+        {
+            return Some(value);
+        }
         if let Some(&value) = self.assoc_values.get(&(ty, name)) {
             return Some(value);
         }
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
+        // `[TYP-17]` — `T: Add[Output = T]` says what `T`'s `Output` is.
+        if let Some(param) = self.current_generics.get(index as usize)
+            && let Some(&(_, _, value)) = param
+                .bindings
+                .iter()
+                .find(|(instance, assoc, _)| *assoc == name && self.assoc_instance.is_none_or(|wanted| wanted == *instance))
+        {
+            return Some(value);
+        }
         let (slot, param) =
             self.current_generics.iter().enumerate().find(|(_, param)| param.projection == Some((index, name)))?;
         let param_name = param.name;
@@ -23147,6 +23591,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.synth_float_method(receiver, name, args, span);
         }
+        // ODR-040 — a number's operator called as its interface's method:
+        // `x.add(y)` is `x + y` (a generic body's call through a bound,
+        // checked again on a number).
+        if matches!(self.types.kind(receiver.ty), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_))
+            && explicit.is_empty()
+            && let Some((op, false)) = operator_method_named(name.name.as_str())
+            && number_has_operator(self.types, receiver.ty, op)
+            && IntMethod::named(name.name.as_str()).is_none()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_number_operator_method(receiver, op, name, args, span);
+        }
         // `[STD-20]` (ODR-039) — an integer's methods, built in as a float's are.
         if matches!(self.types.kind(receiver.ty), TyKind::Int(_) | TyKind::Uint(_))
             && explicit.is_empty()
@@ -23456,6 +23912,83 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Part IV.11 — a call of a method `self.methods` holds (or a base
     /// class's, or a callable field): the path a receiver takes once no
     /// compiler-known method has claimed the name.
+    /// D-313 — a type may implement several instances of one generic
+    /// interface (`Mul[Vec4]` and `Mul[Mat4]`), each with its own method of
+    /// a name. A call takes the one whose parameters the arguments' types
+    /// match; with none or several, the entry found stands and the call
+    /// reports what is wrong.
+    fn choose_instance_method(&mut self, ty: Ty, name: Symbol, entry: MethodEntry, args: &[ast::Arg]) -> MethodEntry {
+        let Some(interface) = entry.from_interface else { return entry };
+        let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
+        let candidates: Vec<MethodEntry> = self
+            .interface_methods
+            .iter()
+            .filter(|((owner, instance, method), _)| {
+                *owner == ty
+                    && *method == name
+                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| *other == origin)
+            })
+            .map(|(_, candidate)| *candidate)
+            .collect();
+        if candidates.len() < 2 {
+            return entry;
+        }
+        // The arguments' types, found without keeping anything the finding
+        // reports.
+        let quiet = self.sink.mark();
+        let found: Vec<Expr> = args
+            .iter()
+            .map(|arg| {
+                let value = self.synth(&arg.value);
+                self.read_through(value)
+            })
+            .collect();
+        self.sink.rollback(quiet);
+        let found: Vec<&Expr> = found.iter().collect();
+        self.choose_among(candidates, entry, &found)
+    }
+
+    /// D-313 — as `choose_instance_method`, for arguments already checked.
+    fn choose_instance_by_types(&mut self, ty: Ty, name: Symbol, entry: MethodEntry, found: &[&Expr]) -> MethodEntry {
+        let Some(interface) = entry.from_interface else { return entry };
+        let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
+        let candidates: Vec<MethodEntry> = self
+            .interface_methods
+            .iter()
+            .filter(|((owner, instance, method), _)| {
+                *owner == ty
+                    && *method == name
+                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| *other == origin)
+            })
+            .map(|(_, candidate)| *candidate)
+            .collect();
+        if candidates.len() < 2 {
+            return entry;
+        }
+        self.choose_among(candidates, entry, found)
+    }
+
+    /// The one candidate whose parameters `found`'s types fit, else `entry`.
+    fn choose_among(&self, candidates: Vec<MethodEntry>, entry: MethodEntry, found: &[&Expr]) -> MethodEntry {
+        let matching: Vec<MethodEntry> = candidates
+            .into_iter()
+            .filter(|candidate| {
+                // A method's first parameter is its receiver.
+                let params = &self.signatures[candidate.def.0 as usize].params[1..];
+                params.len() == found.len()
+                    && params.iter().zip(found.iter()).all(|((_, want, _, _), have)| {
+                        have.ty == *want
+                            || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
+                            || self.types.widens_to(have.ty, *want)
+                    })
+            })
+            .collect();
+        match matching.as_slice() {
+            [only] => *only,
+            _ => entry,
+        }
+    }
+
     fn synth_registered_method(
         &mut self,
         mut receiver: Expr,
@@ -23480,7 +24013,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 found
             }
-            None => self.lookup_method(receiver.ty, name.name),
+            None => self
+                .lookup_method(receiver.ty, name.name)
+                .map(|entry| self.choose_instance_method(receiver.ty, name.name, entry, args)),
         };
         let Some(entry) = found else {
             // `[CLO-11]` — with no method of that name, a field of callable
@@ -23549,10 +24084,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[TYP-24]` — the same name reachable through two implemented
         // interfaces has to be disambiguated by the caller.
         if let Some(interface) = entry.from_interface.filter(|_| named.is_none()) {
+            // D-313 — another instance of the same generic interface is not
+            // a rival: the argument types chose between them.
+            let origin = |this: &Self, instance: Symbol| this.open_interface_origin.get(&instance).map(|(name, _)| *name);
+            let own_origin = origin(self, interface);
             let others: Vec<Symbol> = self
                 .implemented
                 .iter()
                 .filter(|(t, i, _)| *t == receiver.ty && *i != interface)
+                .filter(|(_, i, _)| own_origin.is_none() || origin(self, *i) != own_origin)
                 .filter(|(_, i, _)| {
                     self.interfaces
                         .get(i)
@@ -23737,8 +24277,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
         let ret = self.types.substitute_self(ret, concrete);
-        // `[IFC-4]` — `Self.Real` of a type parameter is its hidden `T.Real`.
+        // `[IFC-4]` — `Self.Real` of a type parameter is its hidden `T.Real`,
+        // or what the bound binds it to (`Add[Output = T]`).
+        let saved_instance = self.assoc_instance.replace(bound);
         let ret = self.resolve_assoc(ret, concrete);
+        self.assoc_instance = saved_instance;
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {
@@ -29151,11 +29694,152 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         value
     }
 
+    /// `[TYP-21]` — whether `ty` has the operator `a op= b` needs: its
+    /// `…Assign` method or the operator's own, declared for the type or, on a
+    /// type parameter, by one of its bounds.
+    fn offers_operator(&mut self, ty: Ty, (method, assign): (&str, &str)) -> bool {
+        self.has_operator_method(ty, assign) || self.has_operator_method(ty, method)
+    }
+
+    fn has_operator_method(&mut self, ty: Ty, method: &str) -> bool {
+        let name = Symbol::intern(method);
+        match *self.types.kind(ty) {
+            TyKind::Param { index, .. } => self.current_generics.get(index as usize).is_some_and(|param| {
+                param.bounds.iter().any(|bound| {
+                    self.interfaces
+                        .get(bound)
+                        .is_some_and(|def| def.methods.iter().any(|(m, _, receiver, _)| *m == name && receiver.is_some()))
+                })
+            }),
+            _ => self.operator_implemented(ty, method),
+        }
+    }
+
+    /// `[TYP-21]` (D-315) — whether `ty` has the operator whose method is
+    /// `method`: an implementation of that operator's interface in the
+    /// prelude (`std.core.Add`, any instance: `Mul[Vec4]`, `Mul[Mat4]`), whose
+    /// method it then is. A method that only shares the name is not one: a
+    /// `Set`'s `add` inserts.
+    fn operator_implemented(&mut self, ty: Ty, method: &str) -> bool {
+        let Some(interface) = operator_interface(method) else { return false };
+        // A built-in generic instance takes its extensions when first used.
+        self.extend_builtin_instance(ty);
+        if !self.methods.contains_key(&(ty, Symbol::intern(method))) {
+            return false;
+        }
+        let wanted = format!("std.core.{interface}");
+        let origin = |name: &Symbol| self.open_interface_origin.get(name).map_or(*name, |(origin, _)| *origin);
+        self.implemented.iter().any(|(t, name, _)| *t == ty && origin(name).as_str() == wanted)
+    }
+
+    /// `[TYP-21]` — `a op= b` on a type that is not a number calls
+    /// `OpAssign.op_assign(b)` on the place where the type (or, on a type
+    /// parameter, a bound) has it, and is `a = a op b` through `Op`
+    /// otherwise, whose result must be `a`'s type. `[EXP-2]` — `b` is
+    /// evaluated first, then the place once.
+    #[allow(clippy::too_many_arguments)]
+    fn compound_through_interfaces(
+        &mut self,
+        place: Expr,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        (method, assign): (&str, &str),
+        bin: ast::BinOp,
+        span: Span,
+        out: &mut Vec<Stmt>,
+    ) {
+        let place_ty = place.ty;
+        let param = match *self.types.kind(place_ty) {
+            TyKind::Param { index, .. } => Some(index),
+            _ => None,
+        };
+        let operand = self.synth(value);
+        let mut operand = self.read_through(operand);
+        while self.box_inner(operand.ty).is_some() {
+            operand = self.read_box_through(operand);
+        }
+        let holds = computes_in_path(&place);
+        if holds && !matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Local(_)) {
+            let committed = self.commit(operand);
+            operand = self.hold_value(committed, out);
+        }
+        let place = if holds { self.hoist_place(place, out) } else { place };
+        let operator = bin.as_str();
+        let unmatched = |this: &mut Self, operand: &Expr, name: &str| {
+            let (shown, other) = (this.types.display(place_ty), this.types.display(operand.ty));
+            this.error(codes::E2040, span, format!("`{shown}`'s bounds have no `{name}` that takes a `{other}`, which `{operator}=` needs"));
+        };
+        if self.has_operator_method(place_ty, assign) {
+            let call = match param {
+                Some(index) => match self.synth_bound_operator(index, place, Some(operand), assign, span) {
+                    Ok(call) => call,
+                    Err((_, operand)) => {
+                        let operand = operand.expect("given");
+                        unmatched(self, &operand, assign);
+                        return;
+                    }
+                },
+                None => self.call_operator(assign, place, operand, span),
+            };
+            out.push(Stmt::Expr(call));
+            return;
+        }
+        // `a = a op b`: the place read again (`copy_place`) where it was
+        // held, else named again.
+        let current = match holds.then(|| copy_place(&place)).flatten() {
+            Some(read) => read,
+            None => self.synth(target),
+        };
+        let result = match param {
+            Some(index) => match self.synth_bound_operator(index, current, Some(operand), method, span) {
+                Ok(call) => call,
+                Err((_, operand)) => {
+                    let operand = operand.expect("given");
+                    unmatched(self, &operand, method);
+                    return;
+                }
+            },
+            None => self.call_operator(method, current, operand, span),
+        };
+        if result.ty != place_ty && result.ty != self.common.error {
+            let (shown, wanted) = (self.types.display(result.ty), self.types.display(place_ty));
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`{operator}=` would store a `{shown}` in a `{wanted}`"))
+                    .primary_label(format!("`{method}` returns a `{shown}` here"))
+                    .note(format!(
+                        "`a {operator}= b` is `a = a {operator} b` unless the type has `{assign}` [TYP-21]"
+                    )),
+            );
+            return;
+        }
+        out.push(Stmt::Assign { place, value: result });
+    }
+
+    /// `[TYP-21]` — `-a` and `~a` on a type that is not a number: its
+    /// `Neg.neg` and `Not.not`.
+    fn call_unary_operator(&mut self, method: &str, operand: Expr, span: Span) -> Expr {
+        let name = Symbol::intern(method);
+        let entry = self.methods[&(operand.ty, name)];
+        let def = entry.def;
+        if let Some(job) = self.deferred_methods.remove(&def) {
+            self.pending_methods.push(job);
+        }
+        if self.signatures[def.0 as usize].params.len() != 1 {
+            self.error(codes::E2020, span, format!("`{method}` must take no argument to be used as an operator"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let ret = self.signatures[def.0 as usize].ret;
+        let receiver = self.pass_receiver_to(operand, entry.receiver, def, span);
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, arg_eval_order: None, args: vec![receiver], latebound: false }, span }
+    }
+
     /// `[TYP-21]` — the interface call an operator desugars to, once the
     /// method has been found on the left operand's type.
     fn call_operator(&mut self, method: &str, lhs: Expr, rhs: Expr, span: Span) -> Expr {
         let name = Symbol::intern(method);
-        let entry = &self.methods[&(lhs.ty, name)];
+        let entry = self.methods[&(lhs.ty, name)];
+        // D-313 — `m * v` and `m * n` are `Mul[Vec4]` and `Mul[Mat4]`.
+        let entry = self.choose_instance_by_types(lhs.ty, name, entry, &[&rhs]);
         let def = entry.def;
         let receiver_mode = entry.receiver;
         // A method a generic extension registered is checked once called.
@@ -29595,7 +30279,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn power(&mut self, base: Expr, exponent: Expr, exponent_ast: &ast::Expr, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let exponent = self.read_through(exponent);
-        let base = self.read_through(base);
+        let mut base = self.read_through(base);
+        // `[TYP-21]` — `a ** b` on a type that is not a number is its
+        // `Pow.pow`; on a type parameter, its bound's.
+        let mut exponent = exponent;
+        if !self.types.is_numeric(base.ty) && !self.float_param(base.ty) && base.ty != self.common.error {
+            if let TyKind::Param { index, .. } = *self.types.kind(base.ty) {
+                match self.synth_bound_operator(index, base, Some(exponent), "pow", span) {
+                    Ok(call) => return call,
+                    Err((back, other)) => {
+                        base = back;
+                        exponent = other.expect("given");
+                    }
+                }
+            } else if self.operator_implemented(base.ty, "pow") {
+                return self.call_operator("pow", base, exponent, span);
+            }
+        }
         // `[STD-27]` — a literal beside a `Float` parameter is one.
         let exponent = if self.float_param(base.ty) && self.types.is_untyped_literal(exponent.ty) {
             self.adopt_literal(exponent, base.ty)
@@ -29637,7 +30337,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         if !self.types.is_integral(ty) {
             let shown = self.types.display(ty);
-            self.error(codes::E2020, base.span, format!("`**` takes a number, not `{shown}`"));
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, base.span, format!("`**` takes a number, not `{shown}`"))
+                    .note("a type has `**` by implementing `Pow` [TYP-21]"),
+            );
             return error;
         }
         if !self.types.is_integral(exponent_ty) {
@@ -29868,11 +30571,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
 
+        // `[TYP-17]`, `[TYP-21]` (ODR-040) — an operator on a type parameter
+        // is its bound's operator interface.
+        if let TyKind::Param { index, .. } = *self.types.kind(lhs.ty)
+            && !self.float_param(lhs.ty)
+            && !hir_op.is_comparison()
+            && let Some(method) = operator_method(op)
+        {
+            match self.synth_bound_operator(index, lhs, Some(rhs), method, span) {
+                Ok(call) => return call,
+                Err((l, r)) => {
+                    lhs = l;
+                    rhs = r.expect("given");
+                }
+            }
+        }
         // `[TYP-21]` — an operator on a non-scalar is an interface method
         // call. `a + b` on a `Vec3` is `a.add(b)`, with both sides passed in
         // the modes the interface declared.
         if let Some(method) = operator_method(op) {
-            if self.methods.contains_key(&(lhs.ty, Symbol::intern(method))) {
+            let found = match operator_interface(method) {
+                Some(_) => self.operator_implemented(lhs.ty, method),
+                None => self.methods.contains_key(&(lhs.ty, Symbol::intern(method))),
+            };
+            if found {
                 return self.call_operator(method, lhs, rhs, span);
             }
         }
@@ -29997,6 +30719,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     "Ember does not convert between numeric types implicitly; {cast} makes them agree [TYP-4]"
                 ));
             }
+            if !self.types.is_numeric(lhs.ty)
+                && let Some(interface) = operator_method(op).and_then(operator_interface)
+            {
+                diagnostic = diagnostic.note(format!("a type has `{}` by implementing `{interface}` [TYP-21]", op.as_str()));
+            }
             // ODR-022 — a side declared from a literal is the likelier fix.
             let diagnostic = self.literal_local_help(diagnostic, &lhs, rhs.ty);
             let diagnostic = self.literal_local_help(diagnostic, &rhs, lhs.ty);
@@ -30014,11 +30741,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && operand_ty != self.common.error
         {
             let shown = self.types.display(operand_ty);
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{}` cannot be applied to `{shown}`", op.as_str()),
-            );
+            let mut diagnostic =
+                Diagnostic::error(codes::E2020, span, format!("`{}` cannot be applied to `{shown}`", op.as_str()));
+            if let Some(interface) = operator_method(op).and_then(operator_interface) {
+                diagnostic = diagnostic.note(format!("a type has `{}` by implementing `{interface}` [TYP-21]", op.as_str()));
+            }
+            self.sink.emit(diagnostic);
         }
 
         // D-187 — C compares only scalars, pointers and unit-only enums. Every
@@ -30061,6 +30789,59 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ty = if hir_op.is_comparison() { self.common.bool_ } else { operand_ty };
         Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
     }
+}
+
+/// `[TYP-21]` — the prelude interface whose method an operator calls.
+fn operator_interface(method: &str) -> Option<&'static str> {
+    Some(match method {
+        "add" => "Add",
+        "sub" => "Sub",
+        "mul" => "Mul",
+        "div" => "Div",
+        "floordiv" => "FloorDiv",
+        "rem" => "Rem",
+        "pow" => "Pow",
+        "neg" => "Neg",
+        "not" => "Not",
+        "bitand" => "BitAnd",
+        "bitor" => "BitOr",
+        "bitxor" => "BitXor",
+        "shl" => "Shl",
+        "shr" => "Shr",
+        "add_assign" => "AddAssign",
+        "sub_assign" => "SubAssign",
+        "mul_assign" => "MulAssign",
+        "div_assign" => "DivAssign",
+        "floordiv_assign" => "FloorDivAssign",
+        "rem_assign" => "RemAssign",
+        "pow_assign" => "PowAssign",
+        "bitand_assign" => "BitAndAssign",
+        "bitor_assign" => "BitOrAssign",
+        "bitxor_assign" => "BitXorAssign",
+        "shl_assign" => "ShlAssign",
+        "shr_assign" => "ShrAssign",
+        _ => return None,
+    })
+}
+
+/// `[TYP-21]` — the operator interface method an augmented assignment
+/// `a op= b` names, and its `…Assign` form.
+fn compound_methods(op: ast::BinOp) -> Option<(&'static str, &'static str)> {
+    Some(match op {
+        ast::BinOp::Add => ("add", "add_assign"),
+        ast::BinOp::Sub => ("sub", "sub_assign"),
+        ast::BinOp::Mul => ("mul", "mul_assign"),
+        ast::BinOp::Div => ("div", "div_assign"),
+        ast::BinOp::FloorDiv => ("floordiv", "floordiv_assign"),
+        ast::BinOp::Rem => ("rem", "rem_assign"),
+        ast::BinOp::Pow => ("pow", "pow_assign"),
+        ast::BinOp::BitAnd => ("bitand", "bitand_assign"),
+        ast::BinOp::BitOr => ("bitor", "bitor_assign"),
+        ast::BinOp::BitXor => ("bitxor", "bitxor_assign"),
+        ast::BinOp::Shl => ("shl", "shl_assign"),
+        ast::BinOp::Shr => ("shr", "shr_assign"),
+        _ => return None,
+    })
 }
 
 /// `[TYP-21]` — the interface method each operator desugars to.
@@ -30701,6 +31482,62 @@ impl IntMethod {
             self,
             IntMethod::Pow | IntMethod::Family(_, IntFamilyOp::Pow | IntFamilyOp::Op(hir::IntOp::Shl | hir::IntOp::Shr))
         )
+    }
+}
+
+/// ODR-040 — an operator as its interface's method: `add` is `+`, `neg` is
+/// unary `-`, `not` is `~`, and `add_assign` is `+=`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OperatorMethod {
+    Binary(ast::BinOp),
+    Unary(ast::UnOp),
+}
+
+/// The operator a method of Part IV §8's operator interfaces stands for, and
+/// whether it is the `…Assign` form.
+fn operator_method_named(name: &str) -> Option<(OperatorMethod, bool)> {
+    let (base, assign) = match name.strip_suffix("_assign") {
+        Some(base) => (base, true),
+        None => (name, false),
+    };
+    let op = match base {
+        "add" => OperatorMethod::Binary(ast::BinOp::Add),
+        "sub" => OperatorMethod::Binary(ast::BinOp::Sub),
+        "mul" => OperatorMethod::Binary(ast::BinOp::Mul),
+        "div" => OperatorMethod::Binary(ast::BinOp::Div),
+        "floordiv" => OperatorMethod::Binary(ast::BinOp::FloorDiv),
+        "rem" => OperatorMethod::Binary(ast::BinOp::Rem),
+        "pow" => OperatorMethod::Binary(ast::BinOp::Pow),
+        "bitand" => OperatorMethod::Binary(ast::BinOp::BitAnd),
+        "bitor" => OperatorMethod::Binary(ast::BinOp::BitOr),
+        "bitxor" => OperatorMethod::Binary(ast::BinOp::BitXor),
+        "shl" => OperatorMethod::Binary(ast::BinOp::Shl),
+        "shr" => OperatorMethod::Binary(ast::BinOp::Shr),
+        "neg" if !assign => OperatorMethod::Unary(ast::UnOp::Neg),
+        "not" if !assign => OperatorMethod::Unary(ast::UnOp::BitNot),
+        _ => return None,
+    };
+    Some((op, assign))
+}
+
+/// Whether a number type has the operator built in: every operator on an
+/// integer but `/` (`E2240`), the arithmetic ones on a float.
+fn number_has_operator(types: &TypeTable, ty: Ty, op: OperatorMethod) -> bool {
+    match types.kind(ty) {
+        TyKind::Int(_) | TyKind::Uint(_) => op != OperatorMethod::Binary(ast::BinOp::Div),
+        TyKind::Float(_) => matches!(
+            op,
+            OperatorMethod::Binary(
+                ast::BinOp::Add
+                    | ast::BinOp::Sub
+                    | ast::BinOp::Mul
+                    | ast::BinOp::Div
+                    | ast::BinOp::FloorDiv
+                    | ast::BinOp::Rem
+                    | ast::BinOp::Pow
+            ) | OperatorMethod::Unary(ast::UnOp::Neg)
+        ),
+        _ => false,
     }
 }
 

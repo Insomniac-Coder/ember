@@ -1312,7 +1312,7 @@ impl Parser<'_> {
                         };
                         ExprKind::TupleField { base: Box::new(first), index: inner }
                     } else {
-                        let name = self.expect_ident();
+                        let name = self.expect_member_name();
                         ExprKind::Field { base: Box::new(expr), name }
                     }
                 }

@@ -31,6 +31,107 @@ pub interface Default:
 pub interface Clone:
     fn clone(self) -> Self
 
+## Part IV §8 — the operator interfaces. `a + b` on a type that is not a
+## number calls its `Add.add(a, b)` (`[TYP-21]`); `Rhs` is the right operand's
+## type, `Self` unless the implementation names another (`Mul[Vec4]`), and
+## `Output` the result's. `a += b` calls `AddAssign.add_assign` where a type
+## implements it, and is `a = a + b` otherwise. A number's operators are
+## built in; the `extend` blocks at the end of this file say which of these
+## interfaces each number type meets, so generic code bounded by them
+## (`T: Add[Output = T]`) takes numbers too (ODR-040).
+pub interface Add[Rhs = Self]:
+    type Output
+    fn add(self, rhs: Rhs) -> Output
+
+pub interface Sub[Rhs = Self]:
+    type Output
+    fn sub(self, rhs: Rhs) -> Output
+
+pub interface Mul[Rhs = Self]:
+    type Output
+    fn mul(self, rhs: Rhs) -> Output
+
+pub interface Div[Rhs = Self]:
+    type Output
+    fn div(self, rhs: Rhs) -> Output
+
+pub interface FloorDiv[Rhs = Self]:
+    type Output
+    fn floordiv(self, rhs: Rhs) -> Output
+
+pub interface Rem[Rhs = Self]:
+    type Output
+    fn rem(self, rhs: Rhs) -> Output
+
+pub interface Pow[Rhs = Self]:
+    type Output
+    fn pow(self, rhs: Rhs) -> Output
+
+pub interface BitAnd[Rhs = Self]:
+    type Output
+    fn bitand(self, rhs: Rhs) -> Output
+
+pub interface BitOr[Rhs = Self]:
+    type Output
+    fn bitor(self, rhs: Rhs) -> Output
+
+pub interface BitXor[Rhs = Self]:
+    type Output
+    fn bitxor(self, rhs: Rhs) -> Output
+
+pub interface Shl[Rhs = Self]:
+    type Output
+    fn shl(self, rhs: Rhs) -> Output
+
+pub interface Shr[Rhs = Self]:
+    type Output
+    fn shr(self, rhs: Rhs) -> Output
+
+## Unary `-` and `~`.
+pub interface Neg:
+    type Output
+    fn neg(self) -> Output
+
+pub interface Not:
+    type Output
+    fn not(self) -> Output
+
+pub interface AddAssign[Rhs = Self]:
+    fn add_assign(mut self, rhs: Rhs)
+
+pub interface SubAssign[Rhs = Self]:
+    fn sub_assign(mut self, rhs: Rhs)
+
+pub interface MulAssign[Rhs = Self]:
+    fn mul_assign(mut self, rhs: Rhs)
+
+pub interface DivAssign[Rhs = Self]:
+    fn div_assign(mut self, rhs: Rhs)
+
+pub interface FloorDivAssign[Rhs = Self]:
+    fn floordiv_assign(mut self, rhs: Rhs)
+
+pub interface RemAssign[Rhs = Self]:
+    fn rem_assign(mut self, rhs: Rhs)
+
+pub interface PowAssign[Rhs = Self]:
+    fn pow_assign(mut self, rhs: Rhs)
+
+pub interface BitAndAssign[Rhs = Self]:
+    fn bitand_assign(mut self, rhs: Rhs)
+
+pub interface BitOrAssign[Rhs = Self]:
+    fn bitor_assign(mut self, rhs: Rhs)
+
+pub interface BitXorAssign[Rhs = Self]:
+    fn bitxor_assign(mut self, rhs: Rhs)
+
+pub interface ShlAssign[Rhs = Self]:
+    fn shl_assign(mut self, rhs: Rhs)
+
+pub interface ShrAssign[Rhs = Self]:
+    fn shr_assign(mut self, rhs: Rhs)
+
 ## Part IV §8's canonical associated-type iterator contract. Named standard
 ## iterators, including the Arena-backed collection and Span iterators,
 ## implement this interface rather than introducing a second iterator
@@ -372,3 +473,80 @@ extend[T: Display] Array[T]:
                 out += sep
             out += f"{self[i]}"
         return out
+
+## ODR-040 — the number types and the operator interfaces. Each operand and
+## each result is the type itself; the operators are the built-in ones, so an
+## integer's `+` panics on overflow here too (`[TYP-8]`). An integer has no
+## `/` (`E2240`) and a float no bit operators.
+
+extend i8 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = i8
+
+extend i16 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = i16
+
+extend i32 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = i32
+
+extend i64 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = i64
+
+extend i128 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = i128
+
+extend isize implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = isize
+
+extend u8 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = u8
+
+extend u16 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = u16
+
+extend u32 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = u32
+
+extend u64 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = u64
+
+extend u128 implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = u128
+
+extend usize implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, BitOr, BitXor, Shl, Shr, \
+        AddAssign, SubAssign, MulAssign, FloorDivAssign, RemAssign, PowAssign, BitAndAssign, BitOrAssign, \
+        BitXorAssign, ShlAssign, ShrAssign:
+    type Output = usize
+
+extend f16 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
+        AddAssign, SubAssign, MulAssign, DivAssign, FloorDivAssign, RemAssign, PowAssign:
+    type Output = f16
+
+extend f32 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
+        AddAssign, SubAssign, MulAssign, DivAssign, FloorDivAssign, RemAssign, PowAssign:
+    type Output = f32
+
+extend f64 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
+        AddAssign, SubAssign, MulAssign, DivAssign, FloorDivAssign, RemAssign, PowAssign:
+    type Output = f64

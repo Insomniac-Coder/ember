@@ -1597,3 +1597,46 @@ carries them where C has no 128-bit integer (MSVC).
   is a template in `runtime/ember_rt/templates/tests/`, rendered by
   `tools/generate_runtime.py`, since it calls runtime functions by name
   (`[RT-5]`).
+
+## ADR-049 — the operator interfaces: how numbers meet them, and how an operator finds its method
+
+**Decided 2026-09-26, with ODR-040 and D-313 to D-315.** ODR-040 says which
+interfaces each number type implements and what the methods are called; it
+does not say how the compiler supplies a number's methods or finds a type's
+operator.
+
+- **A number's methods are its built-in operators.** `std.core`'s
+  `extend i32 implements Add, Sub, …: type Output = i32` blocks have no method
+  bodies: the implementation check takes a number's operator in place of
+  each method (`builtin_operator_method_fits`, as `[STD-27]`'s float methods
+  are built into `f32` and `f64`), and `x.add(y)` is checked as `x + y`
+  (`synth_number_operator_method`), panicking where the operator does. The
+  alternative, a body per method in `std` (`fn add(self, rhs: i32) -> i32:
+  return self + rhs`), is some 330 methods that say nothing the operators do
+  not, each a call where an operator was. The memberships themselves are
+  written in `std.core`, not supplied by the compiler.
+- **Generic code is checked through its bounds, and each instance on its own
+  types.** Inside `sum[T: Add[Output = T]]`, `total + x` is a call of the
+  bound's `add` whose type the binding gives; the instance for `i32` is
+  checked again on `i32`, where `+` is the built-in operator, so going through
+  the interface costs a number nothing.
+- **An operator finds its method through the implemented-interface
+  registry** (D-315): the type must implement the prelude interface
+  (`std.core.Add`, in any instance), and the method is then chosen among that
+  interface's instances by the other operand's type (D-313). Asking the
+  method which interface it came from would not do: a struct body's methods
+  are registered as inherent even when its header says `implements Add`.
+- **`a op= b`** calls `OpAssign`'s method where the type or a bound has it,
+  and is otherwise `a = a op b` with a result of `a`'s type (`[TYP-21]`). In
+  both, the operand is evaluated first and the place once (`[EXP-2]`), as the
+  numeric form does.
+- **`not` is a member name only after `fn` and `.`** (the parser's
+  `expect_member_name`); everywhere else it is the keyword it was.
+- **An `Output` a bound leaves unsaid.** `T: Add` makes `a + b` a
+  `T.Output` that no binding resolves. The checker reports it where the
+  operator is (`E2040`, naming `T.Output`, the binding to add and the
+  signature that would name it), instead of the later mismatch "expected
+  `T`, found `Self.Output`", which named neither.
+- **A generic extension's associated types** are resolved over the
+  extension's parameters when it is collected and substituted when it is
+  applied to an instance (D-317), the way its methods are.

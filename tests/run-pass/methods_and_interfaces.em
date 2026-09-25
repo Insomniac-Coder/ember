@@ -7,9 +7,6 @@ interface Shape:
     fn sides(self) -> i32:
         return 0
 
-interface Add:
-    fn add(self, rhs: Vec2) -> Vec2
-
 struct Square implements Shape:
     side: f32
 
@@ -34,8 +31,11 @@ extend Vec2:
     fn length_squared(self) -> f32:
         return self.x * self.x + self.y * self.y
 
-# `[TYP-21]` — an operator on a non-scalar is an interface call.
+# `[TYP-21]` — an operator on a non-scalar is a call of the prelude's
+# operator interface (`[MOD-5]`), here `Add`.
 extend Vec2 implements Add:
+    type Output = Vec2
+
     fn add(self, rhs: Vec2) -> Vec2:
         return Vec2(self.x + rhs.x, self.y + rhs.y)
 

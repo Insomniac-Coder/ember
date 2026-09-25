@@ -580,7 +580,7 @@ impl Parser<'_> {
             Dispatch::Static
         };
         self.expect_kw(Kw::Fn);
-        let name = self.expect_ident();
+        let name = self.expect_member_name();
         let generics = self.parse_generic_params();
 
         self.expect_punct(Punct::LParen);
