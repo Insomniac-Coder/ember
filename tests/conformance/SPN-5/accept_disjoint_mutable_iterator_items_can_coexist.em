@@ -9,13 +9,13 @@ fn main():
     iterator = view.iter_mut()
     first = iterator.next()
     second = iterator.next()
-    match first:
+    match owned first:
         Some(a):
             replacement: i32 = 10
             a = ref mut replacement
         None:
             pass
-    match second:
+    match owned second:
         Some(b):
             replacement: i32 = 20
             b = ref mut replacement

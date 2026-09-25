@@ -651,3 +651,22 @@ The next number is ODR-027.
     that never goes back. They also found `drain(0..=u64.MAX)` draining nothing and `sorted` of
     `Ord` types refused, both fixed. A test they prompted exposed D-258: a `drop` in an `extend`
     block did not stop the implicit `Clone` (ODR-026).
+* **2026-09-25 — what `Map` needs first (D-259 to D-274).** The Map/Set work began with two
+  read-only agents (a spec checklist of 89 requirements, and a map of the machinery to reuse) and
+  18 probe programs; nine of the probes failed. Fixed:
+  * `[GRM-13]` (D-259): a `match` on a place not written `owned` binds non-`Copy` parts by
+    reference; `ref x`/`ref mut x` in a pattern borrow; `match owned e:` binds by move. std's
+    `option_*`/`result_*` helpers and five tests that moved out of a matched local now say
+    `match owned`. An arm ending in a `match` whose arms all leave no longer hoists a name
+    (D-260).
+  * Type-parameter defaults (`H = DefaultHasher`) work in types and constructors (D-266); `[]`
+    and `None` take a generic constructor's field type once the parameters are known (D-264);
+    constructors accept positional arguments before named ones, as calls do (D-269).
+  * `Hash` for every type in `[TYP-36]`'s column but class handles (D-265, D-273 open), and
+    `@derive(Hash)`; `DefaultHasher` is now FxHash's class and `Default` (ADR-047).
+  * `char as u32` and `u8 as char` (D-271); a `ref Array` field indexes (D-262); `@view` is
+    optional documentation, and `E2030` is `@view` on a type that is not a view (D-274).
+  * Found and left open: D-261 (a bound on a generic interface with arguments, `Q: AsKey[K]`),
+    D-263 (`()` as a `void` value), D-267 (a field default naming a type parameter), D-268
+    (implicit `Eq` of a type holding one with a written `eq`), D-270 (a generic enum's variant
+    without type arguments), D-272 (`i128`/`u128` in C), D-273.

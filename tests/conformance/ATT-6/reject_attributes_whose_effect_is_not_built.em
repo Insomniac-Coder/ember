@@ -4,7 +4,7 @@
 #$ error[E0900]: `@inline` is not implemented yet
 #$ error[E0900]: `@export` is not implemented yet
 #$ error[E0900]: `@unroll` is not implemented yet
-#$ error[E0900]: deriving `Hash` is not implemented yet
+#$ error[E0900]: deriving `Ord` is not implemented yet
 # A listed attribute whose effect is not built is rejected with `E0900`, never
 # accepted and ignored.
 
@@ -16,7 +16,7 @@ fn twice(x: int) -> int:
 extern "C" fn exported(x: i32) -> i32:
     return x
 
-@derive(Copy, Hash)
+@derive(Copy, Ord)
 struct Key:
     id: int
 

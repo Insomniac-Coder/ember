@@ -2735,9 +2735,10 @@ impl<'a> Builder<'a> {
         // borrowed parameter passed by address, `[BRW-8]`) is read in place,
         // not moved out into a temporary.
         let scrutinee_place = match &scrutinee.kind {
-            hir::ExprKind::Local(_) | hir::ExprKind::Field { .. } | hir::ExprKind::Deref(_) => {
-                self.lower_place(scrutinee)
-            }
+            hir::ExprKind::Local(_)
+            | hir::ExprKind::Field { .. }
+            | hir::ExprKind::Deref(_)
+            | hir::ExprKind::Index { .. } => self.lower_place(scrutinee),
             _ => {
                 let temp = self.temp(scrutinee.ty, scrutinee.span);
                 self.push(StmtKind::StorageLive(temp));
@@ -2901,14 +2902,15 @@ impl<'a> Builder<'a> {
         match &pattern.kind {
             hir::PatternKind::Wild | hir::PatternKind::Error => {}
 
-            hir::PatternKind::Bind { local, sub } => {
+            hir::PatternKind::Bind { local, sub, by_ref } => {
                 let target = self.local_map[local.0 as usize];
-                let value = self.read(place.clone(), pattern.ty);
+                // `[GRM-13]` — a reference binding borrows the matched place.
+                let rvalue = match by_ref {
+                    Some(mutable) => Rvalue::Ref { place: place.clone(), mutable: *mutable },
+                    None => Rvalue::Use(self.read(place.clone(), pattern.ty)),
+                };
                 self.push(StmtKind::StorageLive(target));
-                self.push(StmtKind::Assign {
-                    place: Place::local(target),
-                    rvalue: Rvalue::Use(value),
-                });
+                self.push(StmtKind::Assign { place: Place::local(target), rvalue });
                 // Pattern bindings are ordinary arm locals. In particular a
                 // `Copy` class handle needs its matching release at arm exit;
                 // without this registration each successful `Some(handle)`

@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 11:00 IST
+#### Start here after a context reset — state at 2026-09-25 16:00 IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10716,28 +10716,33 @@ the running narrative behind it.
   * `4398dc0`: D-254's fix.
   * `d01cbac` and `6f57fa2`: MSVC works (D-251 to D-253, part of D-255).
   * `9df14af`: D-255, MSVC on a long PATH, with a read-only review's three fixes.
-  * The `[STD-15]` commit (ODR-031, Hardened_12; D-256 to D-258), the newest.
+  * `e2bcfb3`: the rest of `[STD-15]` (ODR-031, Hardened_12; D-256 to D-258).
+  * The Map-groundwork commit (D-259 to D-274), the newest.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_12.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h12/` is frozen.
-* **Next numbers:** ODR-032, D-259.
+* **Next numbers:** ODR-032, D-275.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
   |---|---:|
-  | P1 | 85 |
+  | P1 | 88 |
   | P2 | 85 |
   | P3 | 47 |
-  | P4 | 9 |
+  | P4 | 10 |
   | P5 | 8 |
   | P6 | 2 |
   | P7 | 0 |
   | 7a | 4 |
   | P8 | 13 |
-  | Overall | 48 |
+  | Overall | 49 |
+
+  P1 rose for `[GRM-13]`, `[GRM-15]`, `[TYP-6]`, `[TYP-16]` defaults,
+  `[TYP-23]`, `[TYP-25]`, `[TYP-34]`, `[TYP-36]`'s `Hash` column and
+  `[HASH-1]`/`[HASH-2]`; P4 for `@derive(Hash)` (`[DRV-1]`).
 
   Format rules for the table are in the memory file
   `feedback_phase_completion_table`. The overall is weighted over P1–P6 and
@@ -10863,7 +10868,36 @@ time, no pauses).
 * Two read-only reviewers broke the first D-257 version (a compiler panic and
   a C name clash); both fixed, with tests that fail without the fixes.
 
-**Immediate next task:** the backlog below, from item 1.
+**Done next: what `Map` needs first (D-259 to D-274).** The owner approved the
+Map/Set plan (up to 4 read-only agents, 2 phases, "Approve, no pauses"). Phase 1
+ran: its two results are summarised in `docs/DESIGN-MAP-SET-ITERATION.md`'s
+working notes and were saved outside the repo. 18 probe programs followed;
+nine failed. Fixed, each with a test that failed before:
+
+* **D-259, `[GRM-13]`.** A `match` on a place not written `owned` binds
+  non-`Copy` parts by reference (HIR `Bind { by_ref }`, MIR `Rvalue::Ref`;
+  `match_by_ref` in the checker); `ref x`/`ref mut x` borrow; `match owned e:`
+  binds by move; an indexed scrutinee is matched in place. Code that moved out
+  of a matched local now says `match owned` (std's `option_*`/`result_*`).
+* **D-260.** The `[CTL-10]` hoisting check's `block_diverges` counts a
+  statement `match` whose arms all leave.
+* **D-264, D-266, D-269.** Constructor arguments take their field's type once
+  the parameters are known; `GenericParam.default` (`with_type_defaults`,
+  `fill_solved_defaults`); `constructor_slots` binds positional then named
+  arguments.
+* **D-265 and `@derive(Hash)`.** std writes `Hash` for `char`, 128-bit
+  integers, text, `Span`, `Array`, `Option` and `Result`; the checker builds it
+  for tuples, fixed arrays, unit enums, range types, `void` and derived types
+  (`synth_hash_of`, `hashes`, `check_derived_hashes`, `hash_derived`).
+  `DefaultHasher` is FxHash's class and `Default` (ADR-047).
+* **D-262, D-271, D-274.** Index through a `ref` field; `char as u32`,
+  `u8 as char`; `@view` optional, `E2030` for `@view` on a non-view.
+* **Open, found on the way:** D-261 (`Q: AsKey[K]` bounds give no methods),
+  D-263 (`()` as `void`), D-267, D-268 (implicit `Eq` over a written `eq`),
+  D-270 (a generic enum's variant without type arguments), D-272
+  (`i128`/`u128` never reach C), D-273 (class handles are not `Hash`).
+
+**Immediate next task:** backlog item 1, at "D-268 and D-261, then `Map`".
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
@@ -10946,9 +10980,15 @@ unless named otherwise):
 
 **Backlog, in order:**
 
-1. **Ask the owner for the pick** in `docs/DESIGN-MAP-SET-ITERATION.md`
-   (`Map`/`Set`, generators, iterator adapters; the document recommends shape
-   A for both).
+1. **`Map`/`Set` and iteration, shape A for both** (the owner's picks,
+   2026-09-25, recorded in `docs/DESIGN-MAP-SET-ITERATION.md`). Done: the
+   generics probe and `Hash` (above). Next: D-268 and D-261; then rule the
+   Map/Set ODRs (ODR-032 on; the checklist's open questions) and cut
+   Hardened_13; then `Map`/`Set` in Ember with explicit calls; then the
+   routes (`m[k]`, `m[k] = v`, `k in m`, `len`, `for`), printing, equality,
+   literals; then phase 2 of the plan, two read-only reviewers. After that:
+   the coroutine transform, generator expressions and adapters with
+   `[CTL-3b]` fusion.
 2. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.
 3. **Owned callables:** DEVIATIONS D6 (`once fn` parameter types) and
    [CLO-3] owned callable values.

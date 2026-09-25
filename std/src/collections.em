@@ -77,23 +77,95 @@ extend bool implements Hash:
         else:
             h.write_u8(0)
 
-## `[HASH-2]` — one deliberately simple deterministic implementation. The
-## exact mixer is replaceable and therefore is not part of Ember's source
-## compatibility contract. No `Copy` derive is present: this state is moved.
+extend char implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_u32(self as u32)
+
+extend i128 implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_u64(self as u64)
+        h.write_u64((self >> 64) as u64)
+
+extend u128 implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_u64(self as u64)
+        h.write_u64((self >> 64) as u64)
+
+## `[TYP-36]`, `[STD-12]` — text hashes its bytes, then a byte no UTF-8 text
+## contains, so `("ab", "c")` and `("a", "bc")` feed different streams. A
+## `String` hashes exactly as the `str` it holds.
+extend str implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_bytes(self.as_bytes())
+        h.write_u8(255)
+
+extend String implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_bytes(self.as_bytes())
+        h.write_u8(255)
+
+## A sequence hashes its length, then its elements: `[[1], [2, 3]]` and
+## `[[1, 2], [3]]` differ. A fixed array hashes as its `Span`.
+extend[T: Hash] Span[T] implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_usize(self.len() as usize)
+        for x in self:
+            x.hash(h)
+
+extend[T: Hash] Array[T] implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        h.write_usize(self.len() as usize)
+        for x in self:
+            x.hash(h)
+
+extend[T: Hash] Option[T] implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        match self:
+            Some(x):
+                h.write_u8(1)
+                x.hash(h)
+            None:
+                h.write_u8(0)
+
+extend[T: Hash, E: Hash] Result[T, E] implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        match self:
+            Ok(x):
+                h.write_u8(0)
+                x.hash(h)
+            Err(e):
+                h.write_u8(1)
+                e.hash(h)
+
+## `[HASH-2]` — fixed-seed and FxHash's class: one rotate, one xor and one
+## multiply per word. The exact mixer is replaceable and therefore is not part
+## of Ember's source compatibility contract. Bytes go in eight to a word. No
+## `Copy` derive is present: this state is moved.
 pub struct DefaultHasher implements Hasher:
     state: u64
 
     fn new() -> DefaultHasher:
-        return DefaultHasher(1)
+        return DefaultHasher(0)
 
+    @overflow(wrap)
     fn mix(mut self, word: u64):
-        self.state = ((self.state << 7) | (self.state >> 57)) ^ word
+        self.state = (((self.state << 5) | (self.state >> 59)) ^ word) * 0x517cc1b727220a95
 
     fn write_bytes(mut self, bytes: Span[u8]):
         index = 0
-        while index < bytes.len():
-            self.mix(bytes[index] as u64)
-            index = index + 1
+        while index + 8 <= bytes.len():
+            word: u64 = 0
+            for k in range(8):
+                word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
+            self.mix(word)
+            index = index + 8
+        if index < bytes.len():
+            word: u64 = 0
+            k = 0
+            while index + k < bytes.len():
+                word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
+                k = k + 1
+            self.mix(word)
 
     fn write_u8(mut self, x: u8):
         self.mix(x as u64)
@@ -127,6 +199,10 @@ pub struct DefaultHasher implements Hasher:
 
     fn finish(owned self) -> u64:
         return self.state
+
+extend DefaultHasher implements Default:
+    fn default() -> DefaultHasher:
+        return DefaultHasher.new()
 
 pub enum CapacityError:
     Full

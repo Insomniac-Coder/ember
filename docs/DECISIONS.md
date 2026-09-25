@@ -1522,3 +1522,38 @@ object (`ember_build::runtime_object`).
 - **Not done.** Nothing prunes old objects (each runtime edit leaves up to
   three, one per profile), and only the include directories' own files are
   hashed, not their subdirectories (the runtime's headers are flat).
+
+## ADR-047 — What each type feeds a `Hasher`, and `DefaultHasher`'s mixer
+
+**Decided 2026-09-25, with D-265.** `[HASH-1]` asks for "a deterministic
+representation" that equal values share; `[DRV-1]` fixes a derived type's
+order ("each field in declaration order; enums feed the variant index first");
+`[HASH-2]` caps `DefaultHasher`'s cost at FxHash's and leaves the mixer
+replaceable. The rest was open, and is:
+
+- **Scalars** feed the write of their width; `bool` a `u8`; `char` its scalar
+  value as a `u32`; `i128`/`u128` the low `u64` then the high one.
+- **Text** feeds its bytes, then `0xFF`, a byte no UTF-8 text contains, so a
+  tuple `("ab", "c")` and `("a", "bc")` feed different streams. `String`
+  feeds exactly what its `str` feeds (`[STD-12]` needs that).
+- **Sequences** (`Array`, `Span`, and a fixed array as its `Span`) feed their
+  length as a `usize`, then each element: `[[1], [2, 3]]` and `[[1, 2], [3]]`
+  differ. An `Array[u8]` is a `String` inside the checker and feeds as one;
+  equal byte arrays still hash equally.
+- **`Option`** feeds a `u8` tag (0 for `None`, 1 for `Some`) then the payload;
+  **`Result`** 0 for `Ok`, 1 for `Err`. A **unit-only enum** feeds its
+  discriminant as a `u64`; a **derived enum** its variant index as a `u64`.
+  **Tuples** and **derived structs** feed their fields in order; **`void`**
+  feeds nothing; a **range type** feeds its representation.
+- **Where it lives.** What std can extend is written in Ember in
+  `std/src/collections.em`. Tuples, fixed arrays, unit-only enums, range types,
+  `void` and derived types cannot be extended from std, so the checker builds
+  their `hash` from the same parts (`synth_hash_of`), and `implements` walks
+  the same kinds (`hashes`).
+- **`DefaultHasher`** starts at 0 and mixes each word as
+  `state = (rotl(state, 5) ^ word) * 0x517cc1b727220a95` (FxHash's step:
+  one rotate, one xor, one multiply). Bytes go in eight to a word,
+  little-endian, with a short last word. The 0.9.8 mixer (`rotl 7`, xor)
+  made `hash(k)` of a lone `u64` equal to `k ^ 128`, so keys differing only
+  above a power-of-two table's mask all collided. `finish` returns the state;
+  a table takes its index from the high bits, where the multiply mixes best.

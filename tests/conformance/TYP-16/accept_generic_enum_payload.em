@@ -10,7 +10,7 @@ enum Message[T]:
     Value(value: T)
 
     fn into_value(owned self) -> T:
-        match self:
+        match owned self:
             Message.Value(value): return value
 
 struct Token:

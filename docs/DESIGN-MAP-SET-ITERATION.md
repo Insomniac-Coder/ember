@@ -2,7 +2,12 @@
 
 Two pieces of Phase 1 that are large enough that the shape should be chosen before
 they are built (owner rule: price both shapes first). Both are M1 items in
-`docs/MIGRATION-0.9.9.md`. Nothing here is built.
+`docs/MIGRATION-0.9.9.md`.
+
+**The owner's picks (2026-09-25): shape A for both.** `Map`/`Set` are written in Ember in
+the standard library, and iteration gets real generators (a coroutine transform in MIR),
+adapters as library generics, and `[CTL-3b]` fusion in the checker. Build in the order at
+the end of this document.
 
 ## 1. `Map[K, V, H = DefaultHasher]` and `Set[T, H]`
 
@@ -85,3 +90,30 @@ in Phase 1, and it serves three rule families at once.
    and `@derive(Hash)`.
 2. `Map`/`Set` in Ember (shape A).
 3. The coroutine transform; generator expressions; adapters with `[CTL-3b]` fusion.
+
+## Working notes, 2026-09-25 (after the owner's picks: A and A)
+
+**Plan phase 1** (two read-only agents) is done:
+
+- **The spec's requirements** for `Map`/`Set`: 89, from `[STD-11]`, `[STD-16]`, `[STD-12]`,
+  `[STD-17]`, `[STD-8]`, `[HASH-1]`–`[HASH-4]`, `[TYP-36]`, `[TYP-38]`, `[GRM-26]`, `[GRM-27]`,
+  `[TYP-39]`, `[CTL-1]`, `[CTL-2]`, `[DET-2]` and Appendix E. The spec leaves open questions for
+  ODRs: the `Set` method list, capacity APIs, where the allocator parameter goes beside `H`,
+  `entry`'s API past `or_insert`, `get_mut`'s signature, the iterator types, duplicate keys in a
+  literal, how an empty `Set` prints, `sorted(m)`'s element type, what `into_iter` yields, and
+  whether `RandomState` makes a function `Nondet`.
+- **The machinery to reuse:** `ArenaMap` (compiler-lowered, linear), the `Hash`/`Hasher`
+  interfaces, and the routes a library type needs and does not yet get: `m[k]` (no
+  `Index`/`IndexMut`/`IndexSet`), `k in m` (no `Contains`), `for k in m` (no `Iterable`),
+  `len(m)`, printing as `{k: v}`, equality as sets, and `{…}` literals (not parsed).
+- **Layout it recommends:** `entries: Array[Option[Entry]]` in insertion order (a removed entry is
+  `None`, compacted when half are gone), `slots` for open addressing over a power of two, the hash
+  stored per entry, a fresh `H.default()` per hash.
+- **Iteration before generators:** `for` over a `Map` lowers to a counted loop over the entries;
+  `keys()`/`values()`/`items()` values are `@view` structs whose `next` is written in Ember, with
+  `[LT-1]`'s tie to the iterator documented until generators (`[CORO-6]`) replace them.
+
+**The probes** (18) found D-259 to D-274 in `docs/DEFECTS.md`. Fixed first: `[GRM-13]`'s binding
+by reference (D-259), type-parameter defaults (D-266), `Hash` across `[TYP-36]` with
+`@derive(Hash)` (D-265, ADR-047), and five smaller ones. Still open before `Map` is written:
+D-268 (implicit `Eq` over a written `eq`) and D-261 (`Q: AsKey[K]`).

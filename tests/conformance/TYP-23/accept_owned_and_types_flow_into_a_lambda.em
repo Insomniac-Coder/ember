@@ -10,7 +10,7 @@
 # ternary branch `None` takes its type from the other branch.
 
 fn opt_map[T, U](owned o: Option[T], f: fn(owned T) -> U) -> Option[U]:
-    match o:
+    match owned o:
         Some(v):
             return Some(f(v))
         None:
@@ -20,7 +20,7 @@ fn apply[T, U](owned x: T, f: fn(owned T) -> U) -> U:
     return f(x)
 
 fn unwrap2[T](owned o: Option[T]) -> T:
-    match o:
+    match owned o:
         Some(v):
             return v
         None:

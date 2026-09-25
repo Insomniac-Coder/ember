@@ -175,7 +175,7 @@ codes! {
     E2020 = (Error, 2020, Types, "[TYP-4]", "mismatched types");
     E2035 = (Error, 2035, Types, "[CTL-0]", "condition must be `bool`");
     E2036 = (Error, 2036, Types, "[GRM-19]", "this pattern always matches");
-    E2030 = (Error, 2030, Types, "[TYP-14]", "a struct carrying a borrow must be declared `@view`");
+    E2030 = (Error, 2030, Types, "[TYP-34]", "`@view` on a type that is not a view");
     E2040 = (Error, 2040, Types, "[TYP-17]", "unsatisfied interface bound");
     E2041 = (Error, 2041, Types, "[TYP-19]", "overlapping `extend` implementations");
     E2050 = (Error, 2050, Types, "[TYP-22]", "interface is not `dyn`-compatible");

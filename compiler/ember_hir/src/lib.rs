@@ -533,7 +533,9 @@ pub enum PatternKind {
     /// `_`, and anything that always matches.
     Wild,
     /// Binds whatever it matched to a local, then keeps testing `sub`.
-    Bind { local: LocalId, sub: Option<Box<Pattern>> },
+    /// `by_ref` is `Some(mutable)` when the local is a reference to the
+    /// matched place rather than a copy or move of it (`[GRM-13]`).
+    Bind { local: LocalId, sub: Option<Box<Pattern>>, by_ref: Option<bool> },
     /// An integer, `bool` or `char` literal, already narrowed to `ty`.
     Int(i128),
     /// One enum variant, with a sub-pattern per payload field in order.
@@ -1352,12 +1354,17 @@ fn dump_pattern(
 ) -> String {
     match &pattern.kind {
         PatternKind::Wild => "_".to_string(),
-        PatternKind::Bind { local, sub } => {
+        PatternKind::Bind { local, sub, by_ref } => {
             let name = function
                 .local(*local)
                 .name
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| format!("_{}", local.0));
+            let name = match by_ref {
+                Some(true) => format!("ref mut {name}"),
+                Some(false) => format!("ref {name}"),
+                None => name,
+            };
             match sub {
                 Some(sub) => format!("{name} @ {}", dump_pattern(sub, function, types)),
                 None => name,
