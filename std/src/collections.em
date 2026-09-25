@@ -318,12 +318,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     ## Closes up removed entries, then lists every entry in a table of `size`.
     fn rebuild(mut self, size: int):
         if self.entries.len() != self.live:
-            kept = 0
-            for i in range(self.entries.len()):
-                if self.entries[i].is_some():
-                    self.entries.swap(kept, i)
-                    kept += 1
-            self.entries.truncate(kept)
+            self.entries.retain(fn(e) => e.is_some())
         self.slots.clear()
         for _ in range(size):
             self.slots.push(-1)

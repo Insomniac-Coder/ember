@@ -1611,6 +1611,10 @@ impl TypeTable {
                 }
             }
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
+            // D-306 — an instance name holds the slot too: `Option[U]` over
+            // a function's first parameter and over a method's second are two
+            // types, and named alike they were one.
+            TyKind::Param { name, index } if !user => format!("{name}{index}"),
             TyKind::Param { name, .. } => name.to_string(),
             TyKind::Assoc { name } => format!("Self.{name}"),
             TyKind::Dyn { interfaces } => format!(

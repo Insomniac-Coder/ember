@@ -15,7 +15,7 @@
 mod usefulness;
 mod name_suggestions;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ember_ast as ast;
 use ember_hir as hir;
@@ -1011,6 +1011,12 @@ struct Checker<'a> {
     /// `[TYP-34]` — each type written `@view`, with the attribute's span,
     /// judged once every type has its fields (D-300).
     pending_views: Vec<(Ty, Symbol, Span)>,
+    /// D-280 — a generic method registered on an opaque owner (one whose
+    /// arguments are the caller's own parameters) numbers its own parameters
+    /// after them. Its signature's `generics` starts with one placeholder per
+    /// slot below that, and this holds what each placeholder stands for: the
+    /// caller's parameter, solved before the call is inferred.
+    generic_prefix: HashMap<DefId, Vec<Ty>>,
     /// `[TYP-17]` — set once every implementation is collected. Before
     /// then a generic struct named with concrete arguments has its bounds
     /// checked later, from `pending_struct_bounds` (D-301).
@@ -1166,6 +1172,7 @@ impl<'a> Checker<'a> {
             or_bindings: None,
             match_by_ref: false,
             pending_views: Vec::new(),
+            generic_prefix: HashMap::new(),
             bounds_known: false,
             pending_struct_bounds: Vec::new(),
             unmet_instances: HashSet::new(),
@@ -3228,7 +3235,7 @@ impl<'a> Checker<'a> {
         modules: &[LoadedModule],
     ) {
         for method in methods {
-            if !method.generics.is_empty() || !method.has_body {
+            if !method.has_body {
                 continue;
             }
             let def = match (method.receiver, interface) {
@@ -3246,10 +3253,22 @@ impl<'a> Checker<'a> {
             };
             let ast::MemberKind::Fn(decl) = &member.kind else { continue };
             let Some(block) = &decl.body else { continue };
+            // D-280 — a generic method's own parameters follow the owner's
+            // (`generic_prefix`): opaque too, with their bounds.
+            let base = self.generic_prefix.get(&def).map_or(0, Vec::len);
+            if !method.generics.is_empty() && base != params.len() {
+                continue;
+            }
             self.current_module = module_index;
             let args = self.opaque_arguments(params);
             self.type_params = params.iter().map(|param| param.name).zip(args).collect();
             self.current_generics = params.to_vec();
+            let own: Vec<GenericParam> = self.signatures[def.0 as usize].generics[base..].to_vec();
+            for (index, param) in own.iter().enumerate() {
+                let ty = self.types.intern(TyKind::Param { index: (base + index) as u32, name: param.name });
+                self.type_params.insert(param.name, ty);
+            }
+            self.current_generics.extend(own);
             let _ = self.check_one_method(owner, decl, block, def, &member.attrs, member.span);
             self.generically_checked.insert(method.source);
             self.type_params.clear();
@@ -3423,6 +3442,37 @@ impl<'a> Checker<'a> {
     /// queued rather than checked here: an instantiation is usually reached
     /// in the middle of checking some other body, which is not a place to
     /// start checking a new one.
+    /// Each type parameter a type mentions, by slot: through references,
+    /// sequences, tuples, callables and the fields of nominal types (an
+    /// opaque instance's arguments live there).
+    fn params_in(&self, ty: Ty, out: &mut BTreeMap<u32, Ty>, seen: &mut HashSet<Ty>) {
+        match self.types.kind(ty).clone() {
+            TyKind::Param { index, .. } => {
+                out.insert(index, ty);
+            }
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.params_in(inner, out, seen),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => self.params_in(elem, out, seen),
+            TyKind::Tuple(items) => items.iter().for_each(|&item| self.params_in(item, out, seen)),
+            TyKind::Fn { params, ret, .. } => {
+                params.iter().for_each(|param| self.params_in(param.ty, out, seen));
+                self.params_in(ret, out, seen);
+            }
+            TyKind::Struct(id) if seen.insert(ty) => {
+                self.types.struct_def(id).fields.iter().for_each(|field| self.params_in(field.ty, out, seen))
+            }
+            TyKind::Class(id) if seen.insert(ty) => {
+                self.types.class_def(id).fields.iter().for_each(|field| self.params_in(field.ty, out, seen))
+            }
+            TyKind::Enum(id) if seen.insert(ty) => self
+                .types
+                .enum_def(id)
+                .variants
+                .iter()
+                .for_each(|variant| variant.fields.iter().for_each(|field| self.params_in(field.ty, out, seen))),
+            _ => {}
+        }
+    }
+
     fn register_recipe_method(
         &mut self,
         ty: Ty,
@@ -3436,11 +3486,21 @@ impl<'a> Checker<'a> {
         // method parameters follow them. Substitute the owner and map the
         // method parameters back to zero-based indices for ordinary call
         // inference/monomorphisation.
+        // D-280 — over an opaque owner the method's parameters come after
+        // the caller's parameters its arguments mention, so the two never
+        // share a slot.
+        let mut mentioned = BTreeMap::new();
+        if !method.generics.is_empty() {
+            for &(_, bound) in owner_bindings {
+                self.params_in(bound, &mut mentioned, &mut HashSet::new());
+            }
+        }
+        let base = mentioned.keys().next_back().map_or(0, |&last| last as usize + 1);
         let method_params: Vec<Ty> = method
             .generics
             .iter()
             .enumerate()
-            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: (base + index) as u32, name: param.name }))
             .collect();
         let mut combined: Vec<Ty> = owner_bindings.iter().map(|&(_, ty)| ty).collect();
         combined.extend(method_params);
@@ -3453,14 +3513,24 @@ impl<'a> Checker<'a> {
             params.push((param_name, self.types.substitute_self(param_ty, ty), mode, param_span));
         }
         let ret = self.substitute_ty(method.ret, &combined);
+        let prefix: Vec<Ty> = (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
+        let mut generics: Vec<GenericParam> = prefix
+            .iter()
+            .map(|&ty| GenericParam {
+                name: match *self.types.kind(ty) {
+                    TyKind::Param { name, .. } => name,
+                    _ => Symbol::intern("_"),
+                },
+                bounds: Vec::new(),
+                callable: None,
+                default: None,
+            })
+            .collect();
+        generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
         let signature = Signature {
             params,
             ret: self.types.substitute_self(ret, ty),
-            generics: method
-                .generics
-                .iter()
-                .map(|param| self.substitute_generic_param(param, &combined))
-                .collect(),
+            generics,
             borrows: method.borrows.clone(),
         };
         let generic = !signature.generics.is_empty();
@@ -3470,6 +3540,9 @@ impl<'a> Checker<'a> {
             }
             None => self.register_associated(ty, method.name, signature, interface, method.span),
         }?;
+        if base > 0 {
+            self.generic_prefix.insert(def, prefix);
+        }
         // `[DRP-1]` — a generic that writes `fn drop` gives every one of its
         // instantiations a destructor.
         if method.name.is("drop") {
@@ -4330,23 +4403,31 @@ impl<'a> Checker<'a> {
         }
 
         let expected_generics = self.signatures[declaration.0 as usize].generics.clone();
-        let actual_generics = self.signatures[implementation.0 as usize].generics.clone();
+        // D-280 — an implementation on an opaque owner numbers its own
+        // parameters after the caller's (`generic_prefix`); the interface's
+        // take the same slots, and the caller's stay as they are.
+        let prefix = self.generic_prefix.get(&implementation).cloned().unwrap_or_default();
+        let base = prefix.len();
+        let actual_generics = self.signatures[implementation.0 as usize].generics[base..].to_vec();
         if expected_generics.len() != actual_generics.len() {
             return false;
         }
         // Generic parameter names are not part of a callable signature. Map
         // both sides to one canonical parameter vector before comparing the
         // declared types, so `fn map[T]` and `fn map[U]` are alpha-equivalent.
+        // The interface's side is mapped before `Self` becomes the owner, so
+        // the owner's own parameters are not renumbered with it.
         let canonical = expected_generics
             .iter()
             .enumerate()
             .map(|(index, param)| {
                 self.types.intern(TyKind::Param {
-                    index: index as u32,
+                    index: (base + index) as u32,
                     name: param.name,
                 })
             })
             .collect::<Vec<_>>();
+        let actual_canonical: Vec<Ty> = prefix.iter().copied().chain(canonical.iter().copied()).collect();
         for (expected, actual) in expected_generics.iter().zip(&actual_generics) {
             let expected_bounds: HashSet<_> = expected.bounds.iter().copied().collect();
             let actual_bounds: HashSet<_> = actual.bounds.iter().copied().collect();
@@ -4363,18 +4444,18 @@ impl<'a> Checker<'a> {
                     if expected.mode != actual.mode {
                         return false;
                     }
-                    let expected = self.types.substitute_self(expected.ty, owner);
+                    let expected = self.substitute_ty(expected.ty, &canonical);
+                    let expected = self.types.substitute_self(expected, owner);
                     let expected = self.resolve_assoc(expected, owner);
-                    let expected = self.substitute_ty(expected, &canonical);
-                    let actual = self.substitute_ty(actual.ty, &canonical);
+                    let actual = self.substitute_ty(actual.ty, &actual_canonical);
                     if expected != actual {
                         return false;
                     }
                 }
-                let expected_ret = self.types.substitute_self(expected.ret, owner);
+                let expected_ret = self.substitute_ty(expected.ret, &canonical);
+                let expected_ret = self.types.substitute_self(expected_ret, owner);
                 let expected_ret = self.resolve_assoc(expected_ret, owner);
-                let expected_ret = self.substitute_ty(expected_ret, &canonical);
-                let actual_ret = self.substitute_ty(actual.ret, &canonical);
+                let actual_ret = self.substitute_ty(actual.ret, &actual_canonical);
                 if expected_ret != actual_ret {
                     return false;
                 }
@@ -4410,18 +4491,18 @@ impl<'a> Checker<'a> {
         for ((expected, expected_mode), (actual, actual_mode)) in
             expected_params.into_iter().zip(actual_written.iter().copied())
         {
+            let expected = self.substitute_ty(expected, &canonical);
             let expected = self.types.substitute_self(expected, owner);
             let expected = self.resolve_assoc(expected, owner);
-            let expected = self.substitute_ty(expected, &canonical);
-            let actual = self.substitute_ty(actual, &canonical);
+            let actual = self.substitute_ty(actual, &actual_canonical);
             if expected != actual || expected_mode != actual_mode {
                 return false;
             }
         }
+        let expected_ret = self.substitute_ty(expected_ret, &canonical);
         let expected_ret = self.types.substitute_self(expected_ret, owner);
         let expected_ret = self.resolve_assoc(expected_ret, owner);
-        let expected_ret = self.substitute_ty(expected_ret, &canonical);
-        let actual_ret = self.substitute_ty(actual_ret, &canonical);
+        let actual_ret = self.substitute_ty(actual_ret, &actual_canonical);
         expected_ret == actual_ret
     }
 
@@ -9282,6 +9363,11 @@ impl<'a> Checker<'a> {
                     });
                     self.type_params.insert(param.name, ty);
                 }
+                // D-280 — a method the opaque check already read reports only
+                // what that check could not see.
+                let generic = self.generically_checked.contains(&source.source);
+                let quiet_before = quiet.diagnostics().len();
+                let saved = generic.then(|| std::mem::replace(self.sink, std::mem::take(&mut quiet)));
                 let _ = self.check_one_method(
                     source.owner,
                     decl,
@@ -9290,6 +9376,19 @@ impl<'a> Checker<'a> {
                     &member.attrs,
                     member.span,
                 );
+                if let Some(saved) = saved {
+                    quiet = std::mem::replace(self.sink, saved);
+                    let concrete: Vec<Diagnostic> = quiet.diagnostics()[quiet_before..]
+                        .iter()
+                        .filter(|diagnostic| {
+                            !self.sink.diagnostics().iter().any(|existing| {
+                                existing.code == diagnostic.code && existing.primary.span == diagnostic.primary.span
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    self.emit_concrete_instantiation_diagnostics(concrete);
+                }
                 self.type_params.clear();
                 self.current_generics.clear();
             }
@@ -19845,14 +19944,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .copied()
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
+        // D-280 — the caller's parameters the owner mentions come first,
+        // already solved; explicit arguments name the method's own.
+        let prefix = self.generic_prefix.get(&def).cloned().unwrap_or_default();
+        let base = prefix.len();
+        let fixed = base + explicit.len();
 
-        if explicit.len() > generics.len() {
+        if explicit.len() > generics.len() - base {
             self.error(
                 codes::E2020,
                 span,
                 format!(
                     "`{name}` takes {} type arguments, found {}",
-                    generics.len(),
+                    generics.len() - base,
                     explicit.len()
                 ),
             );
@@ -19873,8 +19977,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect::<Vec<_>>();
 
         let mut solved: Vec<Option<Ty>> = vec![None; generics.len()];
+        for (slot, &ty) in prefix.iter().enumerate() {
+            solved[slot] = Some(ty);
+        }
         for (slot, ty) in explicit.iter().enumerate() {
-            solved[slot] = Some(*ty);
+            solved[base + slot] = Some(*ty);
         }
         let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
         // `[TYP-23]` — as for a generic function, an untyped literal waits
@@ -19910,7 +20017,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 value.ty,
                 &generics,
                 &mut solved,
-                explicit.len(),
+                fixed,
             )
             {
                 let want = self.types.display(param_ty);
@@ -19931,7 +20038,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (index, param_ty, value) in deferred_literals {
             let value = self.literal_for_bounds(value, param_ty, &generics, &solved);
             let mut trial = solved.clone();
-            if self.unify_generic_argument(param_ty, value.ty, &generics, &mut trial, explicit.len()) {
+            if self.unify_generic_argument(param_ty, value.ty, &generics, &mut trial, fixed) {
                 for (slot, fixed) in solved.iter_mut().zip(trial) {
                     if slot.is_none() {
                         *slot = fixed;
@@ -19960,7 +20067,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 value.ty,
                 &generics,
                 &mut solved,
-                explicit.len(),
+                fixed,
             )
             {
                 let want = self.types.display(param_ty);

@@ -10728,7 +10728,7 @@ the running narrative behind it.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_13.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h13/` is frozen.
-* **Next numbers:** ODR-037, D-306.
+* **Next numbers:** ODR-037, D-307.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10950,21 +10950,22 @@ new code lives:
 * `clones_by_parts`/`clone_by_parts` (D-303); `enum_associated` and
   `collecting_generic` in the enum and class collectors (D-304).
 
-**Immediate next task:** D-280 (a method's own type parameters renumbered
-from 0 collide with the caller's in a generic type's opaque check: keep the
-ranges apart and offset inference; repro in the ledger row) and D-284; then
-`for k in owned m`; then D-305. The D-280 plan: in `register_recipe_method`,
-number the method's own parameters from `base` = 1 + the highest `Param`
-index in the owner's arguments (0 for a concrete owner, so nothing changes
-there), and record the caller's parameters as a `generic_prefix` on the
-`Signature` (empty at every other construction site). In
-`synth_generic_method_call`, `solved` starts as the prefix (fixed) followed by
-the method's own slots; explicit type arguments land at `base`; `callable_hint`
-and `unify_generic_argument` take `base` so they index `generics[index -
-base]`; `instantiate_method` substitutes with the whole vector. Then
-`Map.rebuild` can go back to `retain(fn(e) => e.is_some())`, and the generic
-methods of generic types skipped by `check_opaque_methods` may become
-checkable.
+**Then: D-280 and D-306, fixed.** A generic method's own type parameters on an
+opaque owner are numbered after the caller's (`generic_prefix`), and a type
+parameter's slot is part of an instance's name (`U0`, `U1`). The per-type
+methods of generic types with type parameters of their own are now checked
+opaquely too.
+
+**Immediate next task (owner asked, 2026-09-25):** `std/src/math.em` generic.
+Step 1: drop `min_i32`/`max_i32`/`clamp_i32` and the `_f32` copies; the prelude
+`min`/`max`/`clamp` (compiler-built, any `Ord` type, floats by totalOrder) take
+over, with D-142's `[RNG-4]` transfer moved onto them (they lower to inline
+code, not a call: record the interval where they are built); update the four
+tests that import the copies. Step 2: an ODR (ODR-037) for the bound `[STD-21]`
+needs, "generic over `f32` and `f64`", which the spec does not name: a `Float`
+interface both implement, its operators, how a literal like `3.0` is typed in
+a generic body, and the C math calls (`sqrtf`/`sqrt`); then write
+`[STD-21]`'s functions once each. Then D-284, `for k in owned m`, D-305.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):

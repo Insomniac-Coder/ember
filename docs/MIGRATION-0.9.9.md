@@ -713,3 +713,9 @@ The next number is ODR-027.
   checked where it is named (D-301); `@view` does not depend on declaration order (D-300); an
   enum's associated functions can be called (D-304). Open: D-305. Every Hardened_8 to 13 header
   now names its own hardening; the cut writes it (`appx_h.py`'s `write_header`).
+* **2026-09-25 — D-280 and D-306 fixed.** A lambda passed to a callable parameter from inside a
+  generic type's own methods takes its type from the call (`self.items.retain(fn(e) => …)`): a
+  method's own type parameters are numbered after the caller's (D-280). A generic type's methods
+  with type parameters of their own are checked once with every parameter opaque. An instance
+  over a type parameter is one per slot, so `fn f[U](…, g: fn(…) -> U) -> Option[U]` returns an
+  `Option[U]` of its own `U` (D-306, present before the 0.9.9 work).
