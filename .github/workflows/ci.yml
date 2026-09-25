@@ -36,9 +36,22 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
       - name: Test
-        run: cargo test --workspace --locked
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked 2>&1 | tee test-output.txt
         env:
           EMBER_CC: ${{ matrix.cc }}
+
+      # A job's log can only be read when signed in; its annotations can be
+      # read by anyone. On a failure, the failing tests' output becomes one.
+      - name: failures as an annotation
+        if: failure()
+        shell: bash
+        run: |
+          awk '/^failures:$/{f=1} f{print}' test-output.txt | head -c 60000 > failures.txt
+          PY=$(command -v python || command -v python3)
+          "$PY" -c "t = open('failures.txt', encoding='utf-8', errors='replace').read() or 'no failures: block in the output'; print('::error title=test failures::' + t.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))"
 
       # `[DIA-7]` — "CI fails if the conformance suite produces any
       # unclassified borrow error". The file exists only when there is one.
