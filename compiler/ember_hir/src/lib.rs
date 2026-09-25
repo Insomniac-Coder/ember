@@ -400,6 +400,9 @@ pub enum FStringPart {
 pub enum ParseKind {
     Signed,
     Unsigned,
+    /// D-272 — `i128` and `u128`, whose bounds no 64-bit argument carries.
+    I128,
+    U128,
     F32,
     F64,
     Bool,

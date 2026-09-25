@@ -5001,6 +5001,327 @@ static size_t encode_utf8(uint32_t c, unsigned char* out) {
     return 4;
 }
 
+/* -- 128-bit integers (D-272) ------------------------------------------------
+ *
+ * The header has the operators. Here are what the halves need beyond them
+ * (division and the float conversions), then what both forms share:
+ * formatting, `parse` and `range`. */
+
+#if !defined(EMBER_NATIVE_INT128)
+
+/* The leading zero bits of a 64-bit value; 64 for zero. */
+static int nlz64(uint64_t x) {
+    int n = 0;
+    if (x == 0) {
+        return 64;
+    }
+    if (x <= 0x00000000FFFFFFFFu) { n += 32; x <<= 32; }
+    if (x <= 0x0000FFFFFFFFFFFFu) { n += 16; x <<= 16; }
+    if (x <= 0x00FFFFFFFFFFFFFFu) { n += 8; x <<= 8; }
+    if (x <= 0x0FFFFFFFFFFFFFFFu) { n += 4; x <<= 4; }
+    if (x <= 0x3FFFFFFFFFFFFFFFu) { n += 2; x <<= 2; }
+    if (x <= 0x7FFFFFFFFFFFFFFFu) { n += 1; }
+    return n;
+}
+
+/* Hacker's Delight's `divlu`: (u1:u0) / v for u1 < v, so the quotient fits
+ * 64 bits, in 32-bit digits after normalising v. Each estimated digit is at
+ * most two too large; the loops correct it. The remainder through `r` when it
+ * is not null. */
+static uint64_t divlu(uint64_t u1, uint64_t u0, uint64_t v, uint64_t* r) {
+    const uint64_t b = (uint64_t)1 << 32;
+    int s = nlz64(v);
+    v <<= s;
+    uint64_t vn1 = v >> 32, vn0 = v & 0xFFFFFFFFu;
+    uint64_t un32 = s == 0 ? u1 : (u1 << s) | (u0 >> (64 - s));
+    uint64_t un10 = u0 << s;
+    uint64_t un1 = un10 >> 32, un0 = un10 & 0xFFFFFFFFu;
+    uint64_t q1 = un32 / vn1, rhat = un32 - q1 * vn1;
+    while (q1 >= b || q1 * vn0 > b * rhat + un1) {
+        q1 -= 1;
+        rhat += vn1;
+        if (rhat >= b) {
+            break;
+        }
+    }
+    uint64_t un21 = un32 * b + un1 - q1 * v;
+    uint64_t q0 = un21 / vn1;
+    rhat = un21 - q0 * vn1;
+    while (q0 >= b || q0 * vn0 > b * rhat + un0) {
+        q0 -= 1;
+        rhat += vn1;
+        if (rhat >= b) {
+            break;
+        }
+    }
+    if (r) {
+        *r = (un21 * b + un0 - q0 * v) >> s;
+    }
+    return q1 * b + q0;
+}
+
+ember_u128 ember_u128_divmod(ember_u128 a, ember_u128 b, ember_u128* rem) {
+    if (b.hi == 0) {
+        /* A 64-bit divisor: the high half first, then its remainder with the
+         * low half, which `divlu` takes since that remainder is below b. */
+        uint64_t r;
+        uint64_t q1 = a.hi / b.lo;
+        uint64_t q0 = divlu(a.hi % b.lo, a.lo, b.lo, &r);
+        if (rem) {
+            *rem = ember_u128_make(0, r);
+        }
+        return ember_u128_make(q1, q0);
+    }
+    /* A divisor of 65 bits or more, so the quotient fits 64 bits. Hacker's
+     * Delight's doubleword division: estimate from the divisor's top 64 bits
+     * (normalised) and half the dividend (so the estimate cannot overflow),
+     * which is exact or one too large once one is taken off, then correct. */
+    int n = nlz64(b.hi);
+    uint64_t v1 = ember_u128_shl(b, (uint32_t)n).hi;
+    ember_u128 u1 = ember_u128_shr(a, 1);
+    uint64_t q1 = divlu(u1.hi, u1.lo, v1, NULL);
+    uint64_t q0 = ember_u128_shr(ember_u128_shl(ember_u128_make(0, q1), (uint32_t)n), 63).lo;
+    if (q0 != 0) {
+        q0 -= 1;
+    }
+    ember_u128 r = ember_u128_sub(a, ember_u128_mul(ember_u128_make(0, q0), b));
+    if (!ember_u128_lt(r, b)) {
+        q0 += 1;
+        r = ember_u128_sub(r, b);
+    }
+    if (rem) {
+        *rem = r;
+    }
+    return ember_u128_make(0, q0);
+}
+
+static int nlz128(ember_u128 v) { return v.hi != 0 ? nlz64(v.hi) : 64 + nlz64(v.lo); }
+
+/* `v` rounded to `digits` significant bits, to nearest with ties to even, as
+ * a double. Exact: the result has at most 53 bits and is at most 2^128. */
+static double u128_round(ember_u128 v, int digits) {
+    int length = 128 - nlz128(v);
+    if (length <= digits) {
+        return (double)v.lo;
+    }
+    int shift = length - digits;
+    uint64_t m = ember_u128_shr(v, (uint32_t)shift).lo;
+    ember_u128 rest = ember_u128_sub(v, ember_u128_shl(ember_u128_make(0, m), (uint32_t)shift));
+    ember_u128 half = ember_u128_shl(ember_u128_make(0, 1), (uint32_t)(shift - 1));
+    if (ember_u128_lt(half, rest) || (ember_u128_eq(rest, half) && (m & 1) != 0)) {
+        m += 1;
+    }
+    return ldexp((double)m, shift);
+}
+
+double ember_u128_to_f64(ember_u128 v) { return u128_round(v, 53); }
+
+/* Past `f32`'s largest finite value the rounded result is infinite. */
+float ember_u128_to_f32(ember_u128 v) {
+    double d = u128_round(v, 24);
+    return d >= 340282366920938463463374607431768211456.0 ? (float)HUGE_VAL : (float)d;
+}
+
+double ember_i128_to_f64(ember_i128 v) {
+    double d = u128_round(ember_i128_magnitude(v), 53);
+    return ember_i128_is_negative(v) ? -d : d;
+}
+
+float ember_i128_to_f32(ember_i128 v) {
+    float f = (float)u128_round(ember_i128_magnitude(v), 24);
+    return ember_i128_is_negative(v) ? -f : f;
+}
+
+/* [TYP-6]: toward zero, saturating, NaN to 0. Below 2^128 a double's integer
+ * part splits exactly into the two halves: the high one is the quotient by
+ * 2^64 (an exact scaling) and the low one what is left, which is exact too. */
+static ember_u128 u128_from_double(double m) {
+    uint64_t hi = (uint64_t)(m / 18446744073709551616.0);
+    uint64_t lo = (uint64_t)(m - (double)hi * 18446744073709551616.0);
+    return ember_u128_make(hi, lo);
+}
+
+ember_i128 ember_ftoi_i128(double v) {
+    if (v != v) {
+        return ember_i128_make(0, 0);
+    }
+    if (v <= -170141183460469231731687303715884105728.0) {
+        return ember_i128_make(EMBER_I128_SIGN, 0);
+    }
+    if (v >= 170141183460469231731687303715884105728.0) {
+        return ember_i128_make(~EMBER_I128_SIGN, UINT64_MAX);
+    }
+    ember_u128 m = u128_from_double(v < 0 ? -v : v);
+    return ember_u128_to_i128(v < 0 ? ember_u128_neg(m) : m);
+}
+
+ember_u128 ember_ftoi_u128(double v) {
+    if (v != v || v <= 0) {
+        return ember_u128_make(0, 0);
+    }
+    if (v >= 340282366920938463463374607431768211456.0) {
+        return ember_u128_make(UINT64_MAX, UINT64_MAX);
+    }
+    return u128_from_double(v);
+}
+
+#endif /* the halves */
+
+/* The digits of `hi:lo` in `base` (2 to 16), least significant first, into
+ * `reversed`; returns how many. Above 64 bits the value is divided in 32-bit
+ * pieces, which needs no 128-bit division; the quotient of a value of 65 bits
+ * or more by at most 16 is never 0, so no leading zero appears. */
+static size_t digits_reversed(uint64_t hi, uint64_t lo, unsigned base, const char* numerals, char* reversed) {
+    size_t n = 0;
+    while (hi != 0) {
+        uint64_t limbs[4] = {hi >> 32, hi & 0xFFFFFFFFu, lo >> 32, lo & 0xFFFFFFFFu};
+        uint64_t rest = 0;
+        for (int i = 0; i < 4; ++i) {
+            uint64_t current = (rest << 32) | limbs[i];
+            limbs[i] = current / base;
+            rest = current % base;
+        }
+        hi = (limbs[0] << 32) | limbs[1];
+        lo = (limbs[2] << 32) | limbs[3];
+        reversed[n++] = numerals[rest];
+    }
+    do {
+        reversed[n++] = numerals[lo % base];
+        lo /= base;
+    } while (lo != 0);
+    return n;
+}
+
+/* An integer's `Display`: a `-` below zero, then its decimal digits. `text`
+ * holds 41 bytes, enough for `i128`'s least value. */
+static size_t integer_text(char* text, bool negative, uint64_t hi, uint64_t lo) {
+    char reversed[40];
+    size_t n = digits_reversed(hi, lo, 10, "0123456789", reversed);
+    size_t at = 0;
+    if (negative) {
+        text[at++] = '-';
+    }
+    while (n > 0) {
+        text[at++] = reversed[--n];
+    }
+    return at;
+}
+
+void ember_fmt_i128(ember_vec* out, ember_i128 value) {
+    char text[41];
+    ember_u128 m = ember_i128_magnitude(value);
+    ember_vec_extend(out, text, integer_text(text, ember_i128_is_negative(value), ember_u128_hi(m), ember_u128_lo(m)));
+}
+
+void ember_fmt_u128(ember_vec* out, ember_u128 value) {
+    char text[41];
+    ember_vec_extend(out, text, integer_text(text, false, ember_u128_hi(value), ember_u128_lo(value)));
+}
+
+/* `[TXT-10]` (ODR-029) — `parse` for 128-bit integers, with the statuses the
+ * 64-bit forms give. */
+static uint8_t parse_digits128(ember_str s, size_t at, ember_u128 limit) {
+    if (at >= s.len) {
+        return 2;
+    }
+    ember_u128 value = ember_u128_make(0, 0);
+    ember_u128 ten = ember_u128_make(0, 10);
+    for (; at < s.len; ++at) {
+        unsigned char c = s.ptr[at];
+        if (c < '0' || c > '9') {
+            return 2;
+        }
+        ember_u128 digit = ember_u128_make(0, (uint64_t)(c - '0'));
+        if (ember_u128_gt(value, ember_u128_div(ember_u128_sub(limit, digit), ten))) {
+            return 3;
+        }
+        value = ember_u128_add(ember_u128_mul(value, ten), digit);
+    }
+    return 0;
+}
+
+static ember_u128 digits_value128(ember_str s, size_t at) {
+    ember_u128 value = ember_u128_make(0, 0);
+    for (; at < s.len; ++at) {
+        value = ember_u128_add(ember_u128_mul(value, ember_u128_make(0, 10)), ember_u128_make(0, (uint64_t)(s.ptr[at] - '0')));
+    }
+    return value;
+}
+
+uint8_t ember_parse_i128_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    ember_u128 limit = negative ? ember_u128_make(EMBER_I128_SIGN, 0) : ember_u128_make(~EMBER_I128_SIGN, UINT64_MAX);
+    return parse_digits128(s, at, limit);
+}
+
+ember_i128 ember_parse_i128_value(ember_str s) {
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    ember_u128 magnitude = digits_value128(s, at);
+    return ember_u128_to_i128(negative ? ember_u128_neg(magnitude) : magnitude);
+}
+
+uint8_t ember_parse_u128_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    return parse_digits128(s, s.ptr[0] == '+' ? 1 : 0, ember_u128_make(UINT64_MAX, UINT64_MAX));
+}
+
+ember_u128 ember_parse_u128_value(ember_str s) {
+    return digits_value128(s, s.ptr[0] == '+' ? 1 : 0);
+}
+
+/* `[STD-26]` over 128-bit integers, as over 64-bit ones. A count past
+ * `SIZE_MAX` is `SIZE_MAX`: no loop runs that long. */
+static size_t saturated_count(ember_u128 distance, ember_u128 step) {
+    ember_u128 one = ember_u128_make(0, 1);
+    ember_u128 count = ember_u128_add(ember_u128_div(ember_u128_sub(distance, one), step), one);
+    if (ember_u128_hi(count) != 0) {
+        return SIZE_MAX;
+    }
+#if SIZE_MAX < UINT64_MAX
+    if (ember_u128_lo(count) > SIZE_MAX) {
+        return SIZE_MAX;
+    }
+#endif
+    return (size_t)ember_u128_lo(count);
+}
+
+size_t ember_range_count_i128(ember_i128 start, ember_i128 stop, ember_i128 step) {
+    ember_u128 from = ember_i128_to_u128(start), to = ember_i128_to_u128(stop);
+    if (!ember_i128_is_negative(step)) {
+        if (!ember_i128_lt(start, stop)) {
+            return 0;
+        }
+        return saturated_count(ember_u128_sub(to, from), ember_i128_to_u128(step));
+    }
+    if (!ember_i128_lt(stop, start)) {
+        return 0;
+    }
+    return saturated_count(ember_u128_sub(from, to), ember_i128_magnitude(step));
+}
+
+size_t ember_range_count_u128(ember_u128 start, ember_u128 stop, ember_u128 step) {
+    if (!ember_u128_lt(start, stop)) {
+        return 0;
+    }
+    return saturated_count(ember_u128_sub(stop, start), step);
+}
+
+/* Wrapping arithmetic: the true value lies between `start` and `stop`. */
+ember_i128 ember_range_nth_i128(ember_i128 start, ember_i128 step, size_t k) {
+    return ember_i128_add(start, ember_i128_mul(ember_i128_from_u64((uint64_t)k), step));
+}
+
+ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k) {
+    return ember_u128_add(start, ember_u128_mul(ember_u128_from_u64((uint64_t)k), step));
+}
+
 /* `[STD-9]` — each type has one printer taking its stream; `print`/`println`
  * write to standard output and `eprint`/`eprintln` to standard error. */
 static void print_str_to(FILE* out, ember_str s) {
@@ -5011,6 +5332,17 @@ static void print_str_to(FILE* out, ember_str s) {
 
 static void print_i64_to(FILE* out, int64_t v) { fprintf(out, "%" PRId64, v); }
 static void print_u64_to(FILE* out, uint64_t v) { fprintf(out, "%" PRIu64, v); }
+
+static void print_i128_to(FILE* out, ember_i128 v) {
+    char text[41];
+    ember_u128 m = ember_i128_magnitude(v);
+    fwrite(text, 1, integer_text(text, ember_i128_is_negative(v), ember_u128_hi(m), ember_u128_lo(m)), out);
+}
+
+static void print_u128_to(FILE* out, ember_u128 v) {
+    char text[41];
+    fwrite(text, 1, integer_text(text, false, ember_u128_hi(v), ember_u128_lo(v)), out);
+}
 
 static void print_f32_to(FILE* out, float v) {
     char buffer[32];
@@ -5047,6 +5379,8 @@ static void print_char_to(FILE* out, uint32_t v) {
 EMBER_PRINTERS(str, ember_str)
 EMBER_PRINTERS(i64, int64_t)
 EMBER_PRINTERS(u64, uint64_t)
+EMBER_PRINTERS(i128, ember_i128)
+EMBER_PRINTERS(u128, ember_u128)
 EMBER_PRINTERS(f32, float)
 EMBER_PRINTERS(f64, double)
 EMBER_PRINTERS(bool, bool)
@@ -5218,22 +5552,19 @@ static char* print_sized(const char* format, int precision, double value) {
     return text;
 }
 
-static void fmt_spec_integer(ember_vec* out, bool negative, uint64_t magnitude, ember_fmt_spec spec) {
+/* The magnitude is `hi:lo`, so one function serves every width (D-272). */
+static void fmt_spec_integer(ember_vec* out, bool negative, uint64_t hi, uint64_t lo, ember_fmt_spec spec) {
     char kind = spec.kind == 0 || spec.kind == '?' ? 'd' : spec.kind;
     if (strchr("eEfFgG%", kind)) {
-        double value = (double)magnitude;
+        double value = ember_u128_to_f64(ember_u128_make(hi, lo));
         fmt_spec_float(out, negative ? -value : value, false, spec);
         return;
     }
     unsigned base = kind == 'x' || kind == 'X' ? 16 : kind == 'b' ? 2 : kind == 'o' ? 8 : 10;
     const char* numerals = kind == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
-    char reversed[72];
-    size_t n = 0;
-    do {
-        reversed[n++] = numerals[magnitude % base];
-        magnitude /= base;
-    } while (magnitude != 0);
-    char digits[72];
+    char reversed[136];
+    size_t n = digits_reversed(hi, lo, base, numerals, reversed);
+    char digits[136];
     for (size_t i = 0; i < n; ++i) {
         digits[i] = reversed[n - 1 - i];
     }
@@ -5250,11 +5581,20 @@ static void fmt_spec_integer(ember_vec* out, bool negative, uint64_t magnitude, 
 
 void ember_fmt_spec_i64(ember_vec* out, int64_t value, ember_fmt_spec spec) {
     uint64_t magnitude = value < 0 ? (uint64_t)(-(value + 1)) + 1 : (uint64_t)value;
-    fmt_spec_integer(out, value < 0, magnitude, spec);
+    fmt_spec_integer(out, value < 0, 0, magnitude, spec);
 }
 
 void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec) {
-    fmt_spec_integer(out, false, value, spec);
+    fmt_spec_integer(out, false, 0, value, spec);
+}
+
+void ember_fmt_spec_i128(ember_vec* out, ember_i128 value, ember_fmt_spec spec) {
+    ember_u128 m = ember_i128_magnitude(value);
+    fmt_spec_integer(out, ember_i128_is_negative(value), ember_u128_hi(m), ember_u128_lo(m), spec);
+}
+
+void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec) {
+    fmt_spec_integer(out, false, ember_u128_hi(value), ember_u128_lo(value), spec);
 }
 
 static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_spec spec) {

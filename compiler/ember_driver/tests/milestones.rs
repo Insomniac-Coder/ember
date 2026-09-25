@@ -2519,6 +2519,60 @@ struct S:
     );
 }
 
+/// D-272 — the generated C touches a 128-bit value only through the
+/// runtime's helpers, so a program means the same where the runtime carries
+/// `i128` and `u128` as two 64-bit halves (MSVC's form). Here the halves are
+/// forced on a compiler that has `__int128`, where a C operator applied to one
+/// would otherwise pass unnoticed: it must compile without a warning and print
+/// what the native build prints.
+#[test]
+fn the_128_bit_programs_run_with_the_halves() {
+    let root = workspace_root();
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+    let (ember_build::Toolchain::Clang(cc) | ember_build::Toolchain::Gcc(cc)) = &toolchain else { return };
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let dir = temporary_directory("int128-halves");
+    for relative in [
+        "tests/conformance/TYP-1/accept_128_bit_integers",
+        "tests/conformance/TYP-6/accept_128_bit_casts",
+        "tests/conformance/TXT-10/accept_parse_128_bit_integers",
+        "tests/conformance/STD-26/accept_ranges_of_128_bit_integers",
+        "tests/conformance/STD-11/accept_128_bit_keys",
+    ] {
+        let relative = format!("{relative}.{SOURCE_EXT}");
+        let native = ember(&["run", &relative, "--out-dir", &dir.join("native").to_string_lossy()], &root);
+        assert_eq!(native.exit, 0, "{relative}: {}", native.stderr);
+        let emitted = ember(&["build", &relative, "--emit", "c"], &root);
+        assert_eq!(emitted.exit, 0, "emitting C for {relative} failed:\n{}", emitted.stderr);
+        let source = dir.join("program.c");
+        std::fs::write(&source, &emitted.stdout).expect("the C is writable");
+        let program = dir.join("program");
+        let mut compile = Command::new(cc);
+        compile
+            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-O1"])
+            .arg(format!("-D{}_SOFT_INT128", ember_branding::SYMBOL_PREFIX.to_uppercase()))
+            .arg("-I")
+            .arg(runtime.join("include"))
+            .arg(&source)
+            .arg(runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX)))
+            .arg("-o")
+            .arg(&program);
+        if !cfg!(windows) {
+            compile.arg("-lm");
+        }
+        let compiled = compile.output().expect("the C compiler runs");
+        assert!(
+            compiled.status.success(),
+            "{relative} with the halves:\n{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let ran = Command::new(&program).output().expect("the program runs");
+        assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), native.stdout, "{relative}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[TST-4]`/`[TST-4a]` — every rule directory under `tests/conformance/` is
 /// run, and every file in one carries its expectations. A directory that
 /// exists but is never executed is what `[TST-4a]` calls "not coverage".

@@ -355,6 +355,337 @@ EMBER_FLOAT_TO_INT(u32, uint32_t, 0, UINT32_MAX)
 EMBER_FLOAT_TO_INT(u64, uint64_t, 0, UINT64_MAX)
 EMBER_FLOAT_TO_INT(usize, size_t, 0, SIZE_MAX)
 
+/* -- 128-bit integers ---------------------------------------------------------
+ *
+ * D-272, [TYP-1]: `i128` and `u128`. Where the C compiler has a 128-bit
+ * integer (GCC and Clang on a 64-bit target, whose `__int128` is what [FFI-8]
+ * maps `i128` to), the two types are C's own and each helper below is one
+ * operator. MSVC has none, and clang-cl's `__int128` division calls
+ * compiler-rt functions that MSVC's linker does not bring in, so there both
+ * types are a pair of 64-bit halves: two's complement, low half first (the
+ * bytes a little-endian `__int128` has), aligned to 16 as `align_of[i128]()`
+ * says. The generated C calls a helper for every operation on a 128-bit
+ * value, whichever form the types take, so a program means the same on every
+ * compiler. Defining EMBER_SOFT_INT128 selects the halves on GCC and Clang
+ * too, which is how they are tested against `__int128` there.
+ *
+ * Every helper is total. A shift uses its amount modulo 128 (the compiler has
+ * already refused or masked a larger one); the arithmetic wraps; a divisor is
+ * never zero (the compiler checks it first), and `MIN / -1` wraps to `MIN`.
+ * The `ember_ck_*` forms report overflow exactly as the narrower ones do.
+ */
+
+#if !defined(EMBER_SOFT_INT128) && defined(__SIZEOF_INT128__) && !defined(_MSC_VER)
+#define EMBER_NATIVE_INT128 1
+#endif
+
+#define EMBER_I128_SIGN ((uint64_t)1 << 63)
+
+#if defined(EMBER_NATIVE_INT128)
+
+__extension__ typedef __int128 ember_i128;
+__extension__ typedef unsigned __int128 ember_u128;
+
+static inline ember_u128 ember_u128_make(uint64_t hi, uint64_t lo) {
+    return ((ember_u128)hi << 64) | (ember_u128)lo;
+}
+static inline ember_i128 ember_i128_make(uint64_t hi, uint64_t lo) {
+    return (ember_i128)ember_u128_make(hi, lo);
+}
+static inline uint64_t ember_u128_hi(ember_u128 v) { return (uint64_t)(v >> 64); }
+static inline uint64_t ember_u128_lo(ember_u128 v) { return (uint64_t)v; }
+static inline ember_u128 ember_i128_to_u128(ember_i128 v) { return (ember_u128)v; }
+static inline ember_i128 ember_u128_to_i128(ember_u128 v) { return (ember_i128)v; }
+
+static inline ember_i128 ember_i128_from_i64(int64_t v) { return (ember_i128)v; }
+static inline ember_i128 ember_i128_from_u64(uint64_t v) { return (ember_i128)v; }
+static inline ember_u128 ember_u128_from_i64(int64_t v) { return (ember_u128)(ember_i128)v; }
+static inline ember_u128 ember_u128_from_u64(uint64_t v) { return (ember_u128)v; }
+
+static inline double ember_u128_to_f64(ember_u128 v) { return (double)v; }
+static inline float ember_u128_to_f32(ember_u128 v) { return (float)v; }
+static inline double ember_i128_to_f64(ember_i128 v) { return (double)v; }
+static inline float ember_i128_to_f32(ember_i128 v) { return (float)v; }
+
+/* [TYP-6]: toward zero, saturating, NaN to 0. 2^127 and 2^128 are exact. */
+static inline ember_i128 ember_ftoi_i128(double v) {
+    if (v != v) { return 0; }
+    if (v <= -170141183460469231731687303715884105728.0) { return ember_i128_make(EMBER_I128_SIGN, 0); }
+    if (v >= 170141183460469231731687303715884105728.0) { return ember_i128_make(~EMBER_I128_SIGN, UINT64_MAX); }
+    return (ember_i128)v;
+}
+static inline ember_u128 ember_ftoi_u128(double v) {
+    if (v != v || v <= 0) { return 0; }
+    if (v >= 340282366920938463463374607431768211456.0) { return ember_u128_make(UINT64_MAX, UINT64_MAX); }
+    return (ember_u128)v;
+}
+
+static inline bool ember_u128_eq(ember_u128 a, ember_u128 b) { return a == b; }
+static inline bool ember_u128_lt(ember_u128 a, ember_u128 b) { return a < b; }
+static inline bool ember_i128_eq(ember_i128 a, ember_i128 b) { return a == b; }
+static inline bool ember_i128_lt(ember_i128 a, ember_i128 b) { return a < b; }
+
+static inline ember_u128 ember_u128_and(ember_u128 a, ember_u128 b) { return a & b; }
+static inline ember_u128 ember_u128_or(ember_u128 a, ember_u128 b) { return a | b; }
+static inline ember_u128 ember_u128_xor(ember_u128 a, ember_u128 b) { return a ^ b; }
+static inline ember_u128 ember_u128_not(ember_u128 a) { return ~a; }
+static inline ember_u128 ember_u128_shl(ember_u128 a, uint32_t n) { return a << (n & 127); }
+static inline ember_u128 ember_u128_shr(ember_u128 a, uint32_t n) { return a >> (n & 127); }
+/* GCC and Clang shift a negative signed value arithmetically. */
+static inline ember_i128 ember_i128_shr(ember_i128 a, uint32_t n) { return a >> (n & 127); }
+
+static inline ember_u128 ember_u128_add(ember_u128 a, ember_u128 b) { return a + b; }
+static inline ember_u128 ember_u128_sub(ember_u128 a, ember_u128 b) { return a - b; }
+static inline ember_u128 ember_u128_mul(ember_u128 a, ember_u128 b) { return a * b; }
+static inline ember_u128 ember_u128_div(ember_u128 a, ember_u128 b) { return a / b; }
+static inline ember_u128 ember_u128_rem(ember_u128 a, ember_u128 b) { return a % b; }
+
+EMBER_CHECKED_OPS(i128, ember_i128)
+EMBER_CHECKED_OPS(u128, ember_u128)
+
+#else /* the halves */
+
+#if defined(_MSC_VER)
+typedef struct __declspec(align(16)) ember_u128 { uint64_t lo; uint64_t hi; } ember_u128;
+typedef struct __declspec(align(16)) ember_i128 { uint64_t lo; uint64_t hi; } ember_i128;
+#else
+typedef struct ember_u128 { _Alignas(16) uint64_t lo; uint64_t hi; } ember_u128;
+typedef struct ember_i128 { _Alignas(16) uint64_t lo; uint64_t hi; } ember_i128;
+#endif
+
+static inline ember_u128 ember_u128_make(uint64_t hi, uint64_t lo) {
+    ember_u128 r;
+    r.lo = lo;
+    r.hi = hi;
+    return r;
+}
+static inline ember_i128 ember_i128_make(uint64_t hi, uint64_t lo) {
+    ember_i128 r;
+    r.lo = lo;
+    r.hi = hi;
+    return r;
+}
+static inline uint64_t ember_u128_hi(ember_u128 v) { return v.hi; }
+static inline uint64_t ember_u128_lo(ember_u128 v) { return v.lo; }
+static inline ember_u128 ember_i128_to_u128(ember_i128 v) { return ember_u128_make(v.hi, v.lo); }
+static inline ember_i128 ember_u128_to_i128(ember_u128 v) { return ember_i128_make(v.hi, v.lo); }
+
+static inline ember_i128 ember_i128_from_i64(int64_t v) {
+    return ember_i128_make(v < 0 ? UINT64_MAX : 0, (uint64_t)v);
+}
+static inline ember_i128 ember_i128_from_u64(uint64_t v) { return ember_i128_make(0, v); }
+static inline ember_u128 ember_u128_from_i64(int64_t v) {
+    return ember_u128_make(v < 0 ? UINT64_MAX : 0, (uint64_t)v);
+}
+static inline ember_u128 ember_u128_from_u64(uint64_t v) { return ember_u128_make(0, v); }
+
+/* Rounded to nearest, ties to even, from the bits themselves (not through a
+ * 64-bit conversion, which would round twice). In ember_rt.c. */
+double ember_u128_to_f64(ember_u128 v);
+float ember_u128_to_f32(ember_u128 v);
+double ember_i128_to_f64(ember_i128 v);
+float ember_i128_to_f32(ember_i128 v);
+ember_i128 ember_ftoi_i128(double v);
+ember_u128 ember_ftoi_u128(double v);
+
+static inline bool ember_u128_eq(ember_u128 a, ember_u128 b) { return a.lo == b.lo && a.hi == b.hi; }
+static inline bool ember_u128_lt(ember_u128 a, ember_u128 b) {
+    return a.hi < b.hi || (a.hi == b.hi && a.lo < b.lo);
+}
+static inline bool ember_i128_eq(ember_i128 a, ember_i128 b) { return a.lo == b.lo && a.hi == b.hi; }
+/* Flipping the sign bit turns two's complement order into unsigned order. */
+static inline bool ember_i128_lt(ember_i128 a, ember_i128 b) {
+    return ember_u128_lt(ember_u128_make(a.hi ^ EMBER_I128_SIGN, a.lo), ember_u128_make(b.hi ^ EMBER_I128_SIGN, b.lo));
+}
+
+static inline ember_u128 ember_u128_and(ember_u128 a, ember_u128 b) { return ember_u128_make(a.hi & b.hi, a.lo & b.lo); }
+static inline ember_u128 ember_u128_or(ember_u128 a, ember_u128 b) { return ember_u128_make(a.hi | b.hi, a.lo | b.lo); }
+static inline ember_u128 ember_u128_xor(ember_u128 a, ember_u128 b) { return ember_u128_make(a.hi ^ b.hi, a.lo ^ b.lo); }
+static inline ember_u128 ember_u128_not(ember_u128 a) { return ember_u128_make(~a.hi, ~a.lo); }
+static inline ember_u128 ember_u128_shl(ember_u128 a, uint32_t n) {
+    n &= 127;
+    if (n == 0) { return a; }
+    if (n >= 64) { return ember_u128_make(a.lo << (n - 64), 0); }
+    return ember_u128_make((a.hi << n) | (a.lo >> (64 - n)), a.lo << n);
+}
+static inline ember_u128 ember_u128_shr(ember_u128 a, uint32_t n) {
+    n &= 127;
+    if (n == 0) { return a; }
+    if (n >= 64) { return ember_u128_make(0, a.hi >> (n - 64)); }
+    return ember_u128_make(a.hi >> n, (a.lo >> n) | (a.hi << (64 - n)));
+}
+/* Arithmetic: a negative value is complemented, shifted and complemented
+ * back, so the vacated bits fill with ones. */
+static inline ember_i128 ember_i128_shr(ember_i128 a, uint32_t n) {
+    uint64_t fill = (a.hi & EMBER_I128_SIGN) ? UINT64_MAX : 0;
+    ember_u128 u = ember_u128_shr(ember_u128_make(a.hi ^ fill, a.lo ^ fill), n);
+    return ember_i128_make(u.hi ^ fill, u.lo ^ fill);
+}
+
+static inline ember_u128 ember_u128_add(ember_u128 a, ember_u128 b) {
+    uint64_t lo = a.lo + b.lo;
+    return ember_u128_make(a.hi + b.hi + (lo < a.lo), lo);
+}
+static inline ember_u128 ember_u128_sub(ember_u128 a, ember_u128 b) {
+    return ember_u128_make(a.hi - b.hi - (a.lo < b.lo), a.lo - b.lo);
+}
+/* The full product of two 64-bit values, from four 32-bit ones. */
+static inline ember_u128 ember_u128_mul64(uint64_t a, uint64_t b) {
+    uint64_t a0 = a & 0xFFFFFFFFu, a1 = a >> 32, b0 = b & 0xFFFFFFFFu, b1 = b >> 32;
+    uint64_t p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+    uint64_t middle = (p00 >> 32) + (p01 & 0xFFFFFFFFu) + (p10 & 0xFFFFFFFFu);
+    return ember_u128_make(p11 + (p01 >> 32) + (p10 >> 32) + (middle >> 32), (middle << 32) | (p00 & 0xFFFFFFFFu));
+}
+static inline ember_u128 ember_u128_mul(ember_u128 a, ember_u128 b) {
+    ember_u128 p = ember_u128_mul64(a.lo, b.lo);
+    p.hi += a.hi * b.lo + a.lo * b.hi;
+    return p;
+}
+/* The quotient, and the remainder through `rem` when it is not null. In
+ * ember_rt.c. */
+ember_u128 ember_u128_divmod(ember_u128 a, ember_u128 b, ember_u128* rem);
+static inline ember_u128 ember_u128_div(ember_u128 a, ember_u128 b) { return ember_u128_divmod(a, b, NULL); }
+static inline ember_u128 ember_u128_rem(ember_u128 a, ember_u128 b) {
+    ember_u128 r;
+    ember_u128_divmod(a, b, &r);
+    return r;
+}
+
+static inline bool ember_ck_add_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+    *out = ember_u128_add(a, b);
+    return ember_u128_lt(*out, a);
+}
+static inline bool ember_ck_sub_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+    *out = ember_u128_sub(a, b);
+    return ember_u128_lt(a, b);
+}
+/* Out of range when both high halves are set, or when the one cross product
+ * (or its sum with the low product's high half) passes 64 bits. */
+static inline bool ember_ck_mul_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+    ember_u128 low = ember_u128_mul64(a.lo, b.lo);
+    ember_u128 cross = a.hi != 0 ? ember_u128_mul64(a.hi, b.lo) : ember_u128_mul64(a.lo, b.hi);
+    *out = ember_u128_mul(a, b);
+    if (a.hi != 0 && b.hi != 0) { return true; }
+    return cross.hi != 0 || low.hi + cross.lo < low.hi;
+}
+/* Signed: out of range when the operands' signs call for one sign and the
+ * wrapped result has the other. */
+static inline bool ember_ck_add_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    *out = ember_u128_to_i128(ember_u128_add(ember_i128_to_u128(a), ember_i128_to_u128(b)));
+    return ((~(a.hi ^ b.hi) & (a.hi ^ out->hi)) & EMBER_I128_SIGN) != 0;
+}
+static inline bool ember_ck_sub_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    *out = ember_u128_to_i128(ember_u128_sub(ember_i128_to_u128(a), ember_i128_to_u128(b)));
+    return (((a.hi ^ b.hi) & (a.hi ^ out->hi)) & EMBER_I128_SIGN) != 0;
+}
+/* The magnitudes' product must fit, and be at most 2^127 - 1 (2^127 when the
+ * result is negative). */
+static inline bool ember_ck_mul_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    bool na = (a.hi & EMBER_I128_SIGN) != 0, nb = (b.hi & EMBER_I128_SIGN) != 0;
+    ember_u128 ua = ember_i128_to_u128(a), ub = ember_i128_to_u128(b), p;
+    ember_u128 zero = ember_u128_make(0, 0);
+    bool over = ember_ck_mul_u128(na ? ember_u128_sub(zero, ua) : ua, nb ? ember_u128_sub(zero, ub) : ub, &p);
+    *out = ember_u128_to_i128(ember_u128_mul(ua, ub));
+    if (over) { return true; }
+    if (na != nb) { return p.hi > EMBER_I128_SIGN || (p.hi == EMBER_I128_SIGN && p.lo != 0); }
+    return (p.hi & EMBER_I128_SIGN) != 0;
+}
+
+#endif /* 128-bit form */
+
+/* The rest, the same in both forms. */
+static inline bool ember_u128_ne(ember_u128 a, ember_u128 b) { return !ember_u128_eq(a, b); }
+static inline bool ember_u128_le(ember_u128 a, ember_u128 b) { return !ember_u128_lt(b, a); }
+static inline bool ember_u128_gt(ember_u128 a, ember_u128 b) { return ember_u128_lt(b, a); }
+static inline bool ember_u128_ge(ember_u128 a, ember_u128 b) { return !ember_u128_lt(a, b); }
+static inline bool ember_i128_ne(ember_i128 a, ember_i128 b) { return !ember_i128_eq(a, b); }
+static inline bool ember_i128_le(ember_i128 a, ember_i128 b) { return !ember_i128_lt(b, a); }
+static inline bool ember_i128_gt(ember_i128 a, ember_i128 b) { return ember_i128_lt(b, a); }
+static inline bool ember_i128_ge(ember_i128 a, ember_i128 b) { return !ember_i128_lt(a, b); }
+
+static inline int64_t ember_u128_to_i64(ember_u128 v) { return (int64_t)ember_u128_lo(v); }
+static inline uint64_t ember_u128_to_u64(ember_u128 v) { return ember_u128_lo(v); }
+static inline int64_t ember_i128_to_i64(ember_i128 v) { return (int64_t)ember_u128_lo(ember_i128_to_u128(v)); }
+static inline uint64_t ember_i128_to_u64(ember_i128 v) { return ember_u128_lo(ember_i128_to_u128(v)); }
+
+static inline ember_u128 ember_u128_neg(ember_u128 a) { return ember_u128_sub(ember_u128_make(0, 0), a); }
+
+/* The signed forms wrap through the unsigned ones, whose bits are the same. */
+#define EMBER_I128_THROUGH_U128(NAME)                                              \
+    static inline ember_i128 ember_i128_##NAME(ember_i128 a, ember_i128 b) {       \
+        return ember_u128_to_i128(ember_u128_##NAME(ember_i128_to_u128(a), ember_i128_to_u128(b))); \
+    }
+EMBER_I128_THROUGH_U128(and)
+EMBER_I128_THROUGH_U128(or)
+EMBER_I128_THROUGH_U128(xor)
+EMBER_I128_THROUGH_U128(add)
+EMBER_I128_THROUGH_U128(sub)
+EMBER_I128_THROUGH_U128(mul)
+static inline ember_i128 ember_i128_not(ember_i128 a) { return ember_u128_to_i128(ember_u128_not(ember_i128_to_u128(a))); }
+static inline ember_i128 ember_i128_neg(ember_i128 a) { return ember_u128_to_i128(ember_u128_neg(ember_i128_to_u128(a))); }
+static inline ember_i128 ember_i128_shl(ember_i128 a, uint32_t n) {
+    return ember_u128_to_i128(ember_u128_shl(ember_i128_to_u128(a), n));
+}
+static inline bool ember_i128_is_negative(ember_i128 a) {
+    return (ember_u128_hi(ember_i128_to_u128(a)) & EMBER_I128_SIGN) != 0;
+}
+static inline ember_u128 ember_i128_magnitude(ember_i128 a) {
+    ember_u128 u = ember_i128_to_u128(a);
+    return ember_i128_is_negative(a) ? ember_u128_neg(u) : u;
+}
+
+/* C's truncating division and remainder, on magnitudes: the quotient is
+ * negative when the signs differ, the remainder takes the dividend's sign.
+ * `MIN / -1` wraps to `MIN` and `MIN % -1` is 0. */
+static inline ember_i128 ember_i128_div(ember_i128 a, ember_i128 b) {
+    ember_u128 q = ember_u128_div(ember_i128_magnitude(a), ember_i128_magnitude(b));
+    return ember_u128_to_i128(ember_i128_is_negative(a) != ember_i128_is_negative(b) ? ember_u128_neg(q) : q);
+}
+static inline ember_i128 ember_i128_rem(ember_i128 a, ember_i128 b) {
+    ember_u128 r = ember_u128_rem(ember_i128_magnitude(a), ember_i128_magnitude(b));
+    return ember_u128_to_i128(ember_i128_is_negative(a) ? ember_u128_neg(r) : r);
+}
+/* [TYP-28]: `//` rounds toward negative infinity, `%` takes the divisor's
+ * sign. */
+static inline ember_i128 ember_i128_floordiv(ember_i128 a, ember_i128 b) {
+    ember_i128 q = ember_i128_div(a, b);
+    ember_i128 r = ember_i128_rem(a, b);
+    if (!ember_i128_eq(r, ember_i128_make(0, 0)) && ember_i128_is_negative(a) != ember_i128_is_negative(b)) {
+        q = ember_i128_sub(q, ember_i128_make(0, 1));
+    }
+    return q;
+}
+static inline ember_i128 ember_i128_floorrem(ember_i128 a, ember_i128 b) {
+    ember_i128 r = ember_i128_rem(a, b);
+    if (!ember_i128_eq(r, ember_i128_make(0, 0)) && ember_i128_is_negative(r) != ember_i128_is_negative(b)) {
+        r = ember_i128_add(r, b);
+    }
+    return r;
+}
+
+static inline bool ember_i128_is_min_by_minus_one(ember_i128 a, ember_i128 b) {
+    return ember_i128_eq(a, ember_i128_make(EMBER_I128_SIGN, 0)) && ember_i128_eq(b, ember_i128_make(UINT64_MAX, UINT64_MAX));
+}
+static inline bool ember_ck_div_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    if (ember_i128_is_min_by_minus_one(a, b)) { *out = a; return true; }
+    *out = ember_i128_div(a, b);
+    return false;
+}
+static inline bool ember_ck_rem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    if (ember_i128_is_min_by_minus_one(a, b)) { *out = ember_i128_make(0, 0); return true; }
+    *out = ember_i128_rem(a, b);
+    return false;
+}
+static inline bool ember_ck_floordiv_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    if (ember_i128_is_min_by_minus_one(a, b)) { *out = a; return true; }
+    *out = ember_i128_floordiv(a, b);
+    return false;
+}
+static inline bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+    *out = ember_i128_floorrem(a, b);
+    return false;
+}
+
 /* -- memory ---------------------------------------------------------------- */
 
 /* [HEAP-1] Every heap type allocates through these. ember_alloc never returns
@@ -565,6 +896,8 @@ typedef struct ember_fmt_spec {
 
 void ember_fmt_spec_i64(ember_vec* out, int64_t value, ember_fmt_spec spec);
 void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec);
+void ember_fmt_spec_i128(ember_vec* out, ember_i128 value, ember_fmt_spec spec);
+void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec);
 void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec);
 void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec);
 void ember_fmt_spec_str(ember_vec* out, ember_str value, ember_fmt_spec spec);
@@ -616,6 +949,10 @@ uint8_t ember_parse_signed_status(ember_str s, int64_t max);
 int64_t ember_parse_signed_value(ember_str s);
 uint8_t ember_parse_unsigned_status(ember_str s, uint64_t max);
 uint64_t ember_parse_unsigned_value(ember_str s);
+uint8_t ember_parse_i128_status(ember_str s);
+ember_i128 ember_parse_i128_value(ember_str s);
+uint8_t ember_parse_u128_status(ember_str s);
+ember_u128 ember_parse_u128_value(ember_str s);
 uint8_t ember_parse_float_status(ember_str s);
 double ember_parse_f64_value(ember_str s);
 float ember_parse_f32_value(ember_str s);
@@ -636,6 +973,10 @@ size_t ember_range_count_i64(int64_t start, int64_t stop, int64_t step);
 size_t ember_range_count_u64(uint64_t start, uint64_t stop, uint64_t step);
 int64_t ember_range_nth_i64(int64_t start, int64_t step, size_t k);
 uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k);
+size_t ember_range_count_i128(ember_i128 start, ember_i128 stop, ember_i128 step);
+size_t ember_range_count_u128(ember_u128 start, ember_u128 stop, ember_u128 step);
+ember_i128 ember_range_nth_i128(ember_i128 start, ember_i128 step, size_t k);
+ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k);
 
 /* -- formatting ------------------------------------------------------------ */
 
@@ -644,6 +985,8 @@ uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k);
  * one from the argument's type, exactly as it does for `println`. */
 void ember_fmt_i64(ember_vec* out, int64_t value);
 void ember_fmt_u64(ember_vec* out, uint64_t value);
+void ember_fmt_i128(ember_vec* out, ember_i128 value);
+void ember_fmt_u128(ember_vec* out, ember_u128 value);
 void ember_fmt_f64(ember_vec* out, double value);
 void ember_fmt_f32(ember_vec* out, float value);
 void ember_fmt_bool(ember_vec* out, bool value);
@@ -685,6 +1028,10 @@ void ember_print_i64(int64_t v);
 void ember_println_i64(int64_t v);
 void ember_print_u64(uint64_t v);
 void ember_println_u64(uint64_t v);
+void ember_print_i128(ember_i128 v);
+void ember_println_i128(ember_i128 v);
+void ember_print_u128(ember_u128 v);
+void ember_println_u128(ember_u128 v);
 void ember_print_f32(float v);
 void ember_println_f32(float v);
 void ember_print_f64(double v);
@@ -700,6 +1047,10 @@ void ember_eprint_i64(int64_t v);
 void ember_eprintln_i64(int64_t v);
 void ember_eprint_u64(uint64_t v);
 void ember_eprintln_u64(uint64_t v);
+void ember_eprint_i128(ember_i128 v);
+void ember_eprintln_i128(ember_i128 v);
+void ember_eprint_u128(ember_u128 v);
+void ember_eprintln_u128(ember_u128 v);
 void ember_eprint_f32(float v);
 void ember_eprintln_f32(float v);
 void ember_eprint_f64(double v);

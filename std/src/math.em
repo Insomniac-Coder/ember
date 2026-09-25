@@ -57,7 +57,7 @@ extend f64 implements Float:
     pass
 
 ## Every number type: the decimal type its answers come back as, and how to
-## turn it into one. (`i128` and `u128` join once they reach C, D-272.)
+## turn it into one.
 pub interface Number:
     type Real: Float
     fn to_real(self) -> Real
@@ -78,6 +78,11 @@ extend i32 implements Number:
         return self as f64
 
 extend i64 implements Number:
+    type Real = f64
+    fn to_real(self) -> f64:
+        return self as f64
+
+extend i128 implements Number:
     type Real = f64
     fn to_real(self) -> f64:
         return self as f64
@@ -103,6 +108,11 @@ extend u32 implements Number:
         return self as f64
 
 extend u64 implements Number:
+    type Real = f64
+    fn to_real(self) -> f64:
+        return self as f64
+
+extend u128 implements Number:
     type Real = f64
     fn to_real(self) -> f64:
         return self as f64

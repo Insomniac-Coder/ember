@@ -12570,11 +12570,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // The largest value of the type; a signed type's least is `-max - 1`.
         let bound = |ty, value: u128| Expr { ty, kind: ExprKind::Int(value), span };
         let (kind, bounds): (hir::ParseKind, Vec<Expr>) = match *self.types.kind(target) {
-            TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128) => {
-                let shown = self.types.display(target);
-                self.error(codes::E0900, span, format!("parsing a `{shown}` is not implemented yet"));
-                return error;
-            }
+            TyKind::Int(ember_types::IntTy::I128) => (hir::ParseKind::I128, Vec::new()),
+            TyKind::Uint(UintTy::U128) => (hir::ParseKind::U128, Vec::new()),
             TyKind::Int(_) => {
                 let bits = ember_types::bit_width(&self.types, target).unwrap_or(64);
                 let max = (1u128 << (bits - 1)) - 1;
@@ -12681,11 +12678,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, range.span, format!("`get` takes a range of integers, not `{shown}`"));
             return error;
         }
-        if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
-            let shown = self.types.display(range.ty);
-            self.error(codes::E0900, range.span, format!("`get` with a `{shown}` is not implemented yet"));
-            return error;
-        }
         let range_ty = range.ty;
         let view = self.declare(None, str_ty, span);
         let held = self.declare(None, range_ty, span);
@@ -12778,11 +12770,67 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// An integer converted to `int` for a bounds test. A `u64` past `int`'s
     /// maximum wraps negative, which the test rejects as out of bounds, as
-    /// the value is.
+    /// the value is. An `i128` or `u128` outside `int` would keep only its low
+    /// bits and could land inside the bounds, so it becomes `-1` (D-272).
     fn coerce_numeric_to_int(&mut self, value: Expr) -> Expr {
-        let int_ty = self.common.i64;
+        let (int_ty, bool_ty) = (self.common.i64, self.common.bool_);
         let span = value.span;
-        Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(value), to: int_ty }, span }
+        let ty = value.ty;
+        if !matches!(self.types.kind(ty), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
+            return Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(value), to: int_ty }, span };
+        }
+        let held = self.declare(None, ty, span);
+        let local = || Expr { ty, kind: ExprKind::Local(held), span };
+        let compare = |op, bound: i64| Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op,
+                lhs: Box::new(local()),
+                rhs: Box::new(Expr { ty, kind: ExprKind::Int(i128::from(bound) as u128), span }),
+            },
+            span,
+        };
+        let fits = if matches!(self.types.kind(ty), TyKind::Int(_)) {
+            Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::And,
+                    lhs: Box::new(compare(BinOp::Ge, i64::MIN)),
+                    rhs: Box::new(compare(BinOp::Le, i64::MAX)),
+                },
+                span,
+            }
+        } else {
+            compare(BinOp::Le, i64::MAX)
+        };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let inside = Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(local()), to: int_ty }, span };
+        let outside = Expr {
+            ty: int_ty,
+            kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(Expr { ty: int_ty, kind: ExprKind::Int(1), span }) },
+            span,
+        };
+        let chosen = Expr {
+            ty: int_ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(fits),
+                arms: vec![arm(hir::PatternKind::Int(1), inside), arm(hir::PatternKind::Wild, outside)],
+            },
+            span,
+        };
+        Expr {
+            ty: int_ty,
+            kind: ExprKind::Block {
+                block: Block { stmts: vec![Stmt::Let { local: held, init: Some(value) }], span },
+                value: Box::new(chosen),
+            },
+            span,
+        }
     }
 
     /// `[TXT-10]` — `to_string`, `starts_with`, `ends_with`, `find`, `rfind`,
@@ -14166,10 +14214,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return error;
         }
-        if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
-            self.error(codes::E0900, span, format!("`len` of a `{shown}` is not implemented yet"));
-            return error;
-        }
         let (usize_ty, int_ty, bool_ty) = (self.common.usize, self.common.i64, self.common.bool_);
         let (range_ty, range_span) = (range.ty, range.span);
         let r = self.declare(None, range_ty, range_span);
@@ -14197,8 +14241,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }),
             },
         ];
-        // `a..=b` has `b` too, when it is not empty.
+        let message = || Expr {
+            ty: self.common.str_,
+            kind: ExprKind::Str("len: the range has more values than an `int` can hold".to_string()),
+            span,
+        };
+        // `a..=b` has `b` too, when it is not empty. The count is checked
+        // before the `+ 1`, which could otherwise overflow (a 128-bit range's
+        // count stops at `usize`'s maximum).
         if shape == "std.core.RangeInclusive" {
+            let below = Expr {
+                ty: bool_ty,
+                kind: ExprKind::Binary {
+                    op: BinOp::Lt,
+                    lhs: Box::new(count()),
+                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(i64::MAX as u128), span }),
+                },
+                span,
+            };
             stmts.push(Stmt::If {
                 cond: Expr {
                     ty: bool_ty,
@@ -14206,7 +14266,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     span,
                 },
                 then_block: Block {
-                    stmts: vec![Stmt::Assign {
+                    stmts: vec![Stmt::Expr(Expr {
+                        ty: self.common.void,
+                        kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![below, message()] },
+                        span,
+                    }), Stmt::Assign {
                         place: count(),
                         value: Expr {
                             ty: usize_ty,
@@ -14232,14 +14296,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             },
             span,
         };
-        let message = Expr {
-            ty: self.common.str_,
-            kind: ExprKind::Str("len: the range has more values than an `int` can hold".to_string()),
-            span,
-        };
         stmts.push(Stmt::Expr(Expr {
             ty: self.common.void,
-            kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![fits, message] },
+            kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![fits, message()] },
             span,
         }));
         Expr {
@@ -15858,11 +15917,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if !self.types.is_integral(bound) {
                     let shown = self.types.display(range.ty);
                     self.error(codes::E2020, range.span, format!("`drain` takes a range of integers, not `{shown}`"));
-                    return error;
-                }
-                if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
-                    let shown = self.types.display(range.ty);
-                    self.error(codes::E0900, range.span, format!("`drain` with a `{shown}` is not implemented yet"));
                     return error;
                 }
                 let int_ty = self.common.i64;

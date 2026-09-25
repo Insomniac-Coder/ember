@@ -1,0 +1,339 @@
+/* D-272: the runtime's 128-bit integers as a pair of 64-bit halves (the form
+ * MSVC uses), checked against the C compiler's own `__int128`.
+ *
+ * Rendered by tools/generate_runtime.py. The build crate's test compiles it
+ * and the runtime with EMBER_SOFT_INT128 defined, so the header gives the
+ * halves. Every helper the generated C calls is compared bit for bit with
+ * `__int128` over edge values and a few million pseudo-random ones. Prints
+ * `ok` and exits 0, or prints the first differences and exits 1. Needs a
+ * compiler with `__int128`, so the test does not run under MSVC. */
+
+#include "ember_rt.h"
+
+#include <stdlib.h>
+
+#if !defined(__SIZEOF_INT128__) || defined(EMBER_NATIVE_INT128)
+#error "build with EMBER_SOFT_INT128 on a compiler that has __int128"
+#endif
+
+typedef unsigned __int128 ref_u;
+typedef __int128 ref_i;
+
+static uint64_t state = 0x9E3779B97F4A7C15u;
+
+/* splitmix64 */
+static uint64_t next(void) {
+    uint64_t z = (state += 0x9E3779B97F4A7C15u);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9u;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBu;
+    return z ^ (z >> 31);
+}
+
+static ref_u edges[] = {
+    0, 1, 2, 3, 7, 10, 255, 0xFFFFFFFFu, 0x100000000u, 0x7FFFFFFFFFFFFFFFu, 0x8000000000000000u,
+    0xFFFFFFFFFFFFFFFFu,
+};
+
+/* A value of a random shape: small, 64-bit, full, a power of two near an
+ * edge, or an edge itself, possibly negated. */
+static ref_u sample(void) {
+    uint64_t pick = next() % 9;
+    ref_u v;
+    switch (pick) {
+    case 0: v = next() % 100; break;
+    case 1: v = next(); break;
+    case 2: v = ((ref_u)next() << 64) | next(); break;
+    case 3: v = (ref_u)1 << (next() % 128); break;
+    case 4: v = ((ref_u)1 << (next() % 128)) - 1; break;
+    case 5: v = edges[next() % (sizeof edges / sizeof edges[0])]; break;
+    case 6: v = ((ref_u)(next() >> (next() % 64)) << 64) | next(); break;
+    case 7: v = ((ref_u)1 << 127) + (next() % 3) - 1; break;
+    default: v = ((ref_u)next() << 64) | (next() >> (next() % 64)); break;
+    }
+    if (next() % 4 == 0) {
+        v = 0 - v;
+    }
+    return v;
+}
+
+static ember_u128 to_u(ref_u v) { return ember_u128_make((uint64_t)(v >> 64), (uint64_t)v); }
+static ember_i128 to_i(ref_u v) { return ember_i128_make((uint64_t)(v >> 64), (uint64_t)v); }
+static ref_u from_u(ember_u128 v) { return ((ref_u)v.hi << 64) | v.lo; }
+static ref_u from_i(ember_i128 v) { return ((ref_u)v.hi << 64) | v.lo; }
+
+static long failures = 0;
+
+static void hex(ref_u v, char* out) {
+    snprintf(out, 40, "%016llx%016llx", (unsigned long long)(uint64_t)(v >> 64), (unsigned long long)(uint64_t)v);
+}
+
+static void fail(const char* what, ref_u a, ref_u b, ref_u got, ref_u want) {
+    char ha[40], hb[40], hg[40], hw[40];
+    hex(a, ha);
+    hex(b, hb);
+    hex(got, hg);
+    hex(want, hw);
+    if (failures < 20) {
+        printf("%s: a=%s b=%s got=%s want=%s\n", what, ha, hb, hg, hw);
+    }
+    failures += 1;
+}
+
+#define CHECK(what, got, want) \
+    do { if ((ref_u)(got) != (ref_u)(want)) { fail(what, a, b, (ref_u)(got), (ref_u)(want)); } } while (0)
+
+static bool bits_equal_f64(double x, double y) { return memcmp(&x, &y, sizeof x) == 0; }
+static bool bits_equal_f32(float x, float y) { return memcmp(&x, &y, sizeof x) == 0; }
+
+/* The reference for `as`: toward zero, saturating, NaN to 0. */
+static ref_i ref_ftoi_i(double v) {
+    if (v != v) { return 0; }
+    if (v <= -0x1p127) { return (ref_i)((ref_u)1 << 127); }
+    if (v >= 0x1p127) { return (ref_i)(((ref_u)1 << 127) - 1); }
+    return (ref_i)v;
+}
+
+static ref_u ref_ftoi_u(double v) {
+    if (v != v || v <= 0) { return 0; }
+    if (v >= 0x1p128) { return ~(ref_u)0; }
+    return (ref_u)v;
+}
+
+static void check_pair(ref_u a, ref_u b) {
+    ember_u128 ua = to_u(a), ub = to_u(b);
+    ember_i128 ia = to_i(a), ib = to_i(b);
+    ref_i sa = (ref_i)a, sb = (ref_i)b;
+    uint32_t n = (uint32_t)(b & 127);
+
+    CHECK("u add", from_u(ember_u128_add(ua, ub)), a + b);
+    CHECK("u sub", from_u(ember_u128_sub(ua, ub)), a - b);
+    CHECK("u mul", from_u(ember_u128_mul(ua, ub)), a * b);
+    CHECK("u and", from_u(ember_u128_and(ua, ub)), a & b);
+    CHECK("u or", from_u(ember_u128_or(ua, ub)), a | b);
+    CHECK("u xor", from_u(ember_u128_xor(ua, ub)), a ^ b);
+    CHECK("u not", from_u(ember_u128_not(ua)), ~a);
+    CHECK("u neg", from_u(ember_u128_neg(ua)), 0 - a);
+    CHECK("u shl", from_u(ember_u128_shl(ua, n)), a << n);
+    CHECK("u shr", from_u(ember_u128_shr(ua, n)), a >> n);
+    CHECK("u eq", ember_u128_eq(ua, ub), a == b);
+    CHECK("u ne", ember_u128_ne(ua, ub), a != b);
+    CHECK("u lt", ember_u128_lt(ua, ub), a < b);
+    CHECK("u le", ember_u128_le(ua, ub), a <= b);
+    CHECK("u gt", ember_u128_gt(ua, ub), a > b);
+    CHECK("u ge", ember_u128_ge(ua, ub), a >= b);
+    CHECK("i shl", from_i(ember_i128_shl(ia, n)), a << n);
+    CHECK("i shr", from_i(ember_i128_shr(ia, n)), (ref_u)(sa >> n));
+    CHECK("i eq", ember_i128_eq(ia, ib), sa == sb);
+    CHECK("i lt", ember_i128_lt(ia, ib), sa < sb);
+    CHECK("i le", ember_i128_le(ia, ib), sa <= sb);
+    CHECK("i gt", ember_i128_gt(ia, ib), sa > sb);
+    CHECK("i ge", ember_i128_ge(ia, ib), sa >= sb);
+    CHECK("i neg", from_i(ember_i128_neg(ia)), 0 - a);
+    CHECK("i not", from_i(ember_i128_not(ia)), ~a);
+
+    ember_u128 uo;
+    ref_u ro;
+    bool over, want;
+    over = ember_ck_add_u128(ua, ub, &uo);
+    want = __builtin_add_overflow(a, b, &ro);
+    CHECK("u ck_add", from_u(uo), ro);
+    CHECK("u ck_add overflow", over, want);
+    over = ember_ck_sub_u128(ua, ub, &uo);
+    want = __builtin_sub_overflow(a, b, &ro);
+    CHECK("u ck_sub", from_u(uo), ro);
+    CHECK("u ck_sub overflow", over, want);
+    over = ember_ck_mul_u128(ua, ub, &uo);
+    want = __builtin_mul_overflow(a, b, &ro);
+    CHECK("u ck_mul", from_u(uo), ro);
+    CHECK("u ck_mul overflow", over, want);
+
+    ember_i128 io;
+    ref_i rs;
+    over = ember_ck_add_i128(ia, ib, &io);
+    want = __builtin_add_overflow(sa, sb, &rs);
+    CHECK("i ck_add", from_i(io), (ref_u)rs);
+    CHECK("i ck_add overflow", over, want);
+    over = ember_ck_sub_i128(ia, ib, &io);
+    want = __builtin_sub_overflow(sa, sb, &rs);
+    CHECK("i ck_sub", from_i(io), (ref_u)rs);
+    CHECK("i ck_sub overflow", over, want);
+    over = ember_ck_mul_i128(ia, ib, &io);
+    want = __builtin_mul_overflow(sa, sb, &rs);
+    CHECK("i ck_mul", from_i(io), (ref_u)rs);
+    CHECK("i ck_mul overflow", over, want);
+
+    if (b != 0) {
+        CHECK("u div", from_u(ember_u128_div(ua, ub)), a / b);
+        CHECK("u rem", from_u(ember_u128_rem(ua, ub)), a % b);
+        ember_u128 r;
+        CHECK("u divmod", from_u(ember_u128_divmod(ua, ub, &r)), a / b);
+        CHECK("u divmod rem", from_u(r), a % b);
+        bool min_by_minus_one = a == ((ref_u)1 << 127) && sb == -1;
+        ref_i q = min_by_minus_one ? sa : sa / sb;
+        ref_i m = min_by_minus_one ? 0 : sa % sb;
+        CHECK("i div", from_i(ember_i128_div(ia, ib)), (ref_u)q);
+        CHECK("i rem", from_i(ember_i128_rem(ia, ib)), (ref_u)m);
+        ref_i fq = q, fm = m;
+        if (m != 0 && ((m < 0) != (sb < 0))) {
+            fq = q - 1;
+            fm = m + sb;
+        }
+        CHECK("i floordiv", from_i(ember_i128_floordiv(ia, ib)), (ref_u)fq);
+        CHECK("i floorrem", from_i(ember_i128_floorrem(ia, ib)), (ref_u)fm);
+        over = ember_ck_div_i128(ia, ib, &io);
+        CHECK("i ck_div", from_i(io), (ref_u)q);
+        CHECK("i ck_div overflow", over, min_by_minus_one);
+        over = ember_ck_rem_i128(ia, ib, &io);
+        CHECK("i ck_rem", from_i(io), (ref_u)m);
+        CHECK("i ck_rem overflow", over, min_by_minus_one);
+        over = ember_ck_floordiv_i128(ia, ib, &io);
+        CHECK("i ck_floordiv", from_i(io), (ref_u)fq);
+        CHECK("i ck_floordiv overflow", over, min_by_minus_one);
+        over = ember_ck_floorrem_i128(ia, ib, &io);
+        CHECK("i ck_floorrem", from_i(io), (ref_u)fm);
+        CHECK("i ck_floorrem overflow", over, false);
+    }
+
+    if (!bits_equal_f64(ember_u128_to_f64(ua), (double)a)) { CHECK("u to_f64", 1, 0); }
+    if (!bits_equal_f32(ember_u128_to_f32(ua), (float)a)) { CHECK("u to_f32", 1, 0); }
+    if (!bits_equal_f64(ember_i128_to_f64(ia), (double)sa)) { CHECK("i to_f64", 1, 0); }
+    if (!bits_equal_f32(ember_i128_to_f32(ia), (float)sa)) { CHECK("i to_f32", 1, 0); }
+
+    CHECK("i to_i64", ember_i128_to_i64(ia), (ref_u)(int64_t)(uint64_t)a);
+    CHECK("u to_u64", ember_u128_to_u64(ua), (uint64_t)a);
+    CHECK("i from_i64", from_i(ember_i128_from_i64((int64_t)(uint64_t)a)), (ref_u)(ref_i)(int64_t)(uint64_t)a);
+    CHECK("u from_i64", from_u(ember_u128_from_i64((int64_t)(uint64_t)a)), (ref_u)(ref_i)(int64_t)(uint64_t)a);
+}
+
+/* A double of a random shape: an integer of any size near a power of two,
+ * a fraction, or a special value. */
+static double sample_double(void) {
+    uint64_t pick = next() % 6;
+    double sign = next() % 2 ? -1.0 : 1.0;
+    switch (pick) {
+    case 0: return sign * ldexp((double)(next() >> 11), (int)(next() % 140) - 53);
+    case 1: return sign * ldexp(1.0, (int)(next() % 131));
+    case 2: return sign * (double)(next() % 1000) / 7.0;
+    case 3: return sign * nextafter(ldexp(1.0, 127 + (int)(next() % 2)), next() % 2 ? 0.0 : HUGE_VAL);
+    case 4: {
+        uint64_t bits = next();
+        double d;
+        memcpy(&d, &bits, sizeof d);
+        return d;
+    }
+    default: return next() % 2 ? HUGE_VAL * sign : nan("");
+    }
+}
+
+static void check_double(double v) {
+    ref_u a = 0, b = 0;
+    CHECK("ftoi i128", from_i(ember_ftoi_i128(v)), (ref_u)ref_ftoi_i(v));
+    CHECK("ftoi u128", from_u(ember_ftoi_u128(v)), ref_ftoi_u(v));
+}
+
+/* The reference decimal text of a value. */
+static size_t ref_text(ref_u magnitude, bool negative, char* out) {
+    char reversed[48];
+    size_t n = 0, at = 0;
+    do {
+        reversed[n++] = (char)('0' + (int)(magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0);
+    if (negative) {
+        out[at++] = '-';
+    }
+    while (n > 0) {
+        out[at++] = reversed[--n];
+    }
+    out[at] = '\0';
+    return at;
+}
+
+static void check_text(ref_u a) {
+    ref_u b = 0;
+    char want[48];
+    ember_vec v = ember_vec_empty();
+    ember_fmt_u128(&v, to_u(a));
+    size_t len = ref_text(a, false, want);
+    if (v.len != len || memcmp(v.ptr, want, len) != 0) { CHECK("fmt u128", 1, 0); }
+    v.len = 0;
+    ref_i s = (ref_i)a;
+    ember_fmt_i128(&v, to_i(a));
+    len = ref_text(s < 0 ? 0 - a : a, s < 0, want);
+    if (v.len != len || memcmp(v.ptr, want, len) != 0) { CHECK("fmt i128", 1, 0); }
+    ember_str text = ember_vec_as_str(&v);
+    if (ember_parse_i128_status(text) != 0) { CHECK("parse i128 status", 1, 0); }
+    CHECK("parse i128", from_i(ember_parse_i128_value(text)), a);
+    ember_vec_free(&v, 1);
+}
+
+static void check_parse_limits(void) {
+    ref_u a = 0, b = 0;
+    static const char* statuses[][2] = {
+        {"170141183460469231731687303715884105727", "0"},
+        {"170141183460469231731687303715884105728", "3"},
+        {"-170141183460469231731687303715884105728", "0"},
+        {"-170141183460469231731687303715884105729", "3"},
+        {"+5", "0"},
+        {"", "1"},
+        {"-", "2"},
+        {"12a", "2"},
+        {"999999999999999999999999999999999999999999x", "3"},
+    };
+    for (size_t i = 0; i < sizeof statuses / sizeof statuses[0]; ++i) {
+        ember_str s = {(const unsigned char*)statuses[i][0], strlen(statuses[i][0])};
+        CHECK(statuses[i][0], ember_parse_i128_status(s), (uint8_t)(statuses[i][1][0] - '0'));
+    }
+    ember_str umax = {(const unsigned char*)"340282366920938463463374607431768211455", 39};
+    ember_str over = {(const unsigned char*)"340282366920938463463374607431768211456", 39};
+    ember_str negative = {(const unsigned char*)"-1", 2};
+    CHECK("parse u128 max", ember_parse_u128_status(umax), 0);
+    CHECK("parse u128 max value", from_u(ember_parse_u128_value(umax)), ~(ref_u)0);
+    CHECK("parse u128 over", ember_parse_u128_status(over), 3);
+    CHECK("parse u128 negative", ember_parse_u128_status(negative), 2);
+}
+
+static void check_ranges(void) {
+    ref_u a = 0, b = 0;
+    ember_i128 big = ember_i128_make(EMBER_I128_SIGN, 0);
+    ember_i128 top = ember_i128_make(~EMBER_I128_SIGN, UINT64_MAX);
+    CHECK("range count all", ember_range_count_i128(big, top, ember_i128_from_i64(1)), SIZE_MAX);
+    CHECK("range count down", ember_range_count_i128(ember_i128_from_i64(10), ember_i128_from_i64(-10), ember_i128_from_i64(-3)), 7);
+    CHECK("range count empty", ember_range_count_i128(ember_i128_from_i64(10), ember_i128_from_i64(10), ember_i128_from_i64(1)), 0);
+    CHECK("range count u", ember_range_count_u128(ember_u128_from_u64(0), ember_u128_make(1, 0), ember_u128_make(0, 1u << 31)), (size_t)1 << 33);
+    CHECK("range nth", from_i(ember_range_nth_i128(top, ember_i128_from_i64(-5), 3)), (ref_u)((ref_i)(((ref_u)1 << 127) - 1) - 15));
+}
+
+int main(int argc, char** argv) {
+    long iterations = argc > 1 ? atol(argv[1]) : 2000000;
+    size_t count = sizeof edges / sizeof edges[0];
+    for (size_t i = 0; i < count; ++i) {
+        for (size_t j = 0; j < count; ++j) {
+            for (int si = 0; si < 2; ++si) {
+                for (int sj = 0; sj < 2; ++sj) {
+                    ref_u a = si ? 0 - edges[i] : edges[i];
+                    ref_u b = sj ? 0 - edges[j] : edges[j];
+                    check_pair(a, b);
+                    check_pair(a << 64, b);
+                    check_pair(a, b << 64);
+                    check_pair(a << 64 | b, b << 64 | a);
+                }
+            }
+        }
+    }
+    for (long i = 0; i < iterations; ++i) {
+        check_pair(sample(), sample());
+        if (i % 16 == 0) {
+            check_double(sample_double());
+            check_text(sample());
+        }
+    }
+    check_parse_limits();
+    check_ranges();
+    if (failures != 0) {
+        printf("%ld failures\n", failures);
+        return 1;
+    }
+    printf("ok\n");
+    return 0;
+}

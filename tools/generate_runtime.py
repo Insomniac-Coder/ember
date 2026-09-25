@@ -14,6 +14,9 @@ Usage::
 ``--out-dir`` and ``--prefix`` are useful for generator tests and for a future
 packaging step; normal builds use the branding source and the checked-in
 runtime directory.
+
+The runtime's own C tests (``templates/tests/*.c.in``) call runtime functions
+by name, so they are templates too, rendered into ``tests/`` beside ``src/``.
 """
 
 from __future__ import annotations
@@ -76,6 +79,15 @@ def generated_contents(prefix: str) -> tuple[str, str]:
     return render(header, prefix), render(source, prefix)
 
 
+def generated_tests(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
+    """Each C test template's output path and rendered text."""
+
+    return [
+        (out_dir / "tests" / template.name[: -len(".in")], render(template.read_text(encoding="utf-8"), prefix))
+        for template in sorted((TEMPLATES / "tests").glob("*.c.in"))
+    ]
+
+
 def write_outputs(out_dir: Path, prefix: str) -> tuple[Path, Path]:
     header_path, source_path = output_paths(out_dir, prefix)
     header, source = generated_contents(prefix)
@@ -83,12 +95,16 @@ def write_outputs(out_dir: Path, prefix: str) -> tuple[Path, Path]:
     source_path.parent.mkdir(parents=True, exist_ok=True)
     header_path.write_text(header, encoding="utf-8", newline="\n")
     source_path.write_text(source, encoding="utf-8", newline="\n")
+    for test_path, test in generated_tests(out_dir, prefix):
+        test_path.parent.mkdir(parents=True, exist_ok=True)
+        test_path.write_text(test, encoding="utf-8", newline="\n")
     return header_path, source_path
 
 
 def check_outputs(out_dir: Path, prefix: str) -> bool:
-    expected = generated_contents(prefix)
-    paths = output_paths(out_dir, prefix)
+    tests = generated_tests(out_dir, prefix)
+    expected = [*generated_contents(prefix), *(test for _, test in tests)]
+    paths = [*output_paths(out_dir, prefix), *(path for path, _ in tests)]
     ok = True
     for path, wanted in zip(paths, expected):
         if not path.exists():

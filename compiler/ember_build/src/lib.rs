@@ -686,6 +686,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// D-272 — the runtime's 128-bit integers as two 64-bit halves (MSVC's
+    /// form) agree bit for bit with the C compiler's `__int128`: the test
+    /// program, rendered from `templates/tests/int128_halves.c.in`, compares
+    /// every helper over edge values and two million random ones. MSVC has
+    /// no `__int128` to compare with, so there it does not run.
+    #[test]
+    fn the_128_bit_halves_agree_with_int128() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let (Toolchain::Clang(cc) | Toolchain::Gcc(cc)) = &toolchain else { return };
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime")
+            .join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("int128-halves-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test directory is creatable");
+        let program = dir.join("int128_halves");
+        let mut command = Command::new(cc);
+        command
+            .args(gnu_flags(Profile::Release))
+            .arg(format!("-D{}_SOFT_INT128", ember_branding::SYMBOL_PREFIX.to_uppercase()))
+            .arg("-I")
+            .arg(runtime.join("include"))
+            .arg(runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX)))
+            .arg(runtime.join("tests").join("int128_halves.c"))
+            .arg("-o")
+            .arg(&program);
+        if !cfg!(windows) {
+            command.arg("-lm");
+        }
+        run(command).expect("the test program compiles");
+        let output = Command::new(&program).output().expect("the test program runs");
+        let _ = std::fs::remove_dir_all(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success() && stdout.trim() == "ok", "{stdout}");
+    }
+
     #[test]
     fn a_toolchain_is_found_on_this_machine() {
         // Phase 0's exit criterion needs one; if this fails, the environment

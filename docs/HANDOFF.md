@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 late evening IST
+#### Start here after a context reset — state at 2026-09-26 night IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10721,14 +10721,17 @@ the running narrative behind it.
   * `08693bf`: `Map`/`Set` (ODR-032 to ODR-036, Hardened_13); CI green.
   * `94c21ac`: D-263, D-279, D-282, D-286.
   * The reviewer-fixes commit (D-287 to D-305, and every Hardened_8 to 13
-    header naming itself), the newest.
+    header naming itself).
+  * `f19e748` (D-280, D-306), `c3e3582` (ODR-037, ODR-038; Hardened_14 and
+    _15), `17fb89e`, `c9e2322` (`docs/AUTOPILOT.md`).
+  * The unattended session of 2026-09-26, below: D-272 first.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_15.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h15/` is frozen.
-* **Next numbers:** ODR-037, D-307.
+* **Next numbers:** ODR-039, D-312, ADR-049.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10766,6 +10769,47 @@ the running narrative behind it.
   `tasks/impl-0.9.9/rule_sizes.py` (pass the seven percentages).
   "Phase estimates against 0.9.9" further down gives the method; its table is
   current.
+
+**The unattended session of 2026-09-26 (a cloud session, Linux, 4 cores,
+clang 18 and gcc 13; the owner asleep, "no workflows, you go solo").** Work
+goes straight to `main`, as `docs/AUTOPILOT.md` says.
+
+* **D-272, fixed: `i128` and `u128` reach C** (ADR-048). The runtime carries
+  both as C's `__int128` where the compiler has it and as two 64-bit halves
+  elsewhere (MSVC, and clang-cl, whose `__int128` division needs compiler-rt).
+  The generated C touches a 128-bit value only through runtime helpers
+  (`ember_i128_add`, `ember_ck_mul_u128`, `ember_i128_to_f64`, …), so a program
+  means the same on every compiler. In the backend: `wide_int`,
+  `wide_constant`, `wide_operand(s)`, `wide_binary`, `wide_cast`,
+  `shift_amount`, plus 128-bit arms in `constant`, `rvalue`, `SwitchInt`,
+  `TotalLess`, `RangeCount`/`RangeNth`, `ParseStatus`/`ParseValue`
+  (`ParseKind::I128`/`U128`), `builtin_suffix`, `eq_expr` and
+  `less_behind_pointers`. `parse`, `len`, `get` and `drain` over 128-bit
+  values work (they were `E0900`); a 128-bit bound outside `int` is out of
+  bounds (`coerce_numeric_to_int`). `i128` and `u128` joined `Number` in
+  `std/src/math.em`.
+  * **Testing the halves on Linux:** `ember_build`'s
+    `the_128_bit_halves_agree_with_int128` compiles
+    `runtime/ember_rt/tests/int128_halves.c` (rendered by
+    `tools/generate_runtime.py` from `templates/tests/int128_halves.c.in`)
+    with `EMBER_SOFT_INT128` and compares every helper with `__int128`. The
+    driver's `the_128_bit_programs_run_with_the_halves` builds the 128-bit
+    conformance programs with the halves forced and `-Werror`. To run any
+    program with the halves by hand, put `#define EMBER_SOFT_INT128 1` at the
+    top of the generated `runtime/ember_rt/include/ember_rt.h` (the runtime
+    object cache is keyed by the header, so it rebuilds), then restore it
+    with `python tools/generate_runtime.py`.
+  * Also fixed on the way: `len(a..=b)` checks the count before its `+ 1`, so a
+    range one value too long for an `int` panics with `len`'s message, not as
+    an overflow of the count.
+* **Found, open (all older than 0.9.9's work, all small):**
+  * D-308: `x << n` with `n` of another integer type is `E2020`; `[TYP-10]`
+    accepts any integer type for `n`.
+  * D-309: a negative shift amount does not panic (`[TYP-10]`).
+  * D-310: a negative literal pattern (`-5 =>`) is `E0100`; III.6's
+    `literal_pattern := ["-"] INT` allows it.
+  * D-311: a signed minimum written as a literal (`x: i8 = -128`) is
+    `E2010`; `[LEX-24]` makes it one constant.
 
 **The owner's standing instructions (all still in force)**
 
@@ -11001,7 +11045,8 @@ in `docs/AUTOPILOT.md` §2):
 
 **A. Finish `std.math`, where it was left on 2026-09-25** (`std/src/math.em`, ODR-038):
 
-1. D-272, so `i128` and `u128` reach C; then add both to `Number` in `std/src/math.em`.
+1. ~~D-272, so `i128` and `u128` reach C; then add both to `Number` in `std/src/math.em`.~~
+   Done 2026-09-26.
 2. `[STD-20]`: the float constants (`f64.INF`, `NAN`, `EPSILON`, `MIN`, `MAX`: an associated
    constant on a scalar type, not built yet) and the integer methods (`abs`, `pow`, `signum`,
    `div_trunc`, `rem_trunc`, `checked_*`, `wrapping_*`, `saturating_*`, `overflowing_*`,
@@ -11170,6 +11215,13 @@ unless named otherwise):
 * **The runtime object cache** is `%LOCALAPPDATA%\ember\cache\runtime`; set
   `EMBER_CACHE` to move it. Its key covers the runtime's source and headers, so
   an edit to the runtime needs no manual clean.
+* **On a Linux cloud session** (2026-09-26): the quick check needs
+  `EMBER=target/debug/ember` (its default is `ember.exe`); `EMBER_CC=clang` or
+  `gcc`; the full suite takes about 3 minutes on 4 cores. `unicode_case.py
+  --check` passes only under the Python that wrote the tables (3.14.2, named
+  in their first line); CI does not run it. Under uv's `3.14.0rc2`
+  (`uv run --no-project --python 3.14 python tools/unicode_case.py --check`)
+  the tables are identical and only that comment differs.
 
 **Recipes**
 

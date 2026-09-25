@@ -1557,3 +1557,43 @@ replaceable. The rest was open, and is:
   made `hash(k)` of a lone `u64` equal to `k ^ 128`, so keys differing only
   above a power-of-two table's mask all collided. `finish` returns the state;
   a table takes its index from the high bits, where the multiply mixes best.
+
+## ADR-048 — `i128` and `u128` in C: `__int128` where it exists, two halves elsewhere
+
+**Decided 2026-09-26, with D-272.** `[TYP-1]` gives both types 16 bytes and
+`[FFI-8]` maps C's `__int128` to `i128`; nothing says how the C backend
+carries them where C has no 128-bit integer (MSVC).
+
+- **Two forms, one set of operations.** Where the C compiler has `__int128`
+  (GCC and Clang, except clang-cl) `ember_i128`/`ember_u128` are C's own
+  types, as `[FFI-8]` needs. Elsewhere they are a struct of two `uint64_t`
+  halves, two's complement, low half first (the bytes a little-endian
+  `__int128` has), aligned to 16 as the type table says. clang-cl has
+  `__int128` but its division calls compiler-rt functions that MSVC's linker
+  does not bring in, so it takes the halves.
+- **The generated C never applies a C operator to a 128-bit value**: every
+  operation is a runtime helper (`ember_i128_add`, `ember_ck_mul_u128`,
+  `ember_i128_to_f64`, …), a one-line `static inline` operator in the native
+  form. So one generated program means the same under every compiler. The
+  alternative, C operators with the halves only where C lacks the type, would
+  have made the MSVC build the only check of the backend's routing, and CI's
+  only MSVC jobs the only place a missed route showed.
+- **Conversions** round to nearest, ties to even, from the bits (the halves
+  never go through a 64-bit conversion, which would round twice); a float
+  converts toward zero and saturates, NaN to 0 (`[TYP-6]`).
+- **Division** in the halves is Hacker's Delight's: `divlu` (128/64 in 32-bit
+  digits) and the doubleword quotient estimated from the divisor's top 64
+  bits, corrected once.
+- **Ranges.** `range(a, b, step)` over a 128-bit type counts in 128 bits; a
+  count past `usize`'s maximum is that maximum (no loop runs so long), and
+  `len` then panics as for any range too long for an `int`. A 128-bit bound
+  of `get` or `drain` outside `int` is out of bounds, not its low 64 bits.
+- **Tests.** `ember_build`'s `the_128_bit_halves_agree_with_int128` compares
+  every helper in the halves with `__int128`, bit for bit, over edge values and
+  two million random ones (GCC and Clang; MSVC has nothing to compare with).
+  The driver's `the_128_bit_programs_run_with_the_halves` builds the 128-bit
+  conformance programs with the halves forced (`EMBER_SOFT_INT128`), with
+  `-Werror`, where a missed route would be a compile error. The C test source
+  is a template in `runtime/ember_rt/templates/tests/`, rendered by
+  `tools/generate_runtime.py`, since it calls runtime functions by name
+  (`[RT-5]`).

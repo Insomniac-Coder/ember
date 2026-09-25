@@ -35,6 +35,8 @@ def main() -> int:
         out_dir = Path(directory) / "runtime"
         paths = generate_runtime.write_outputs(out_dir, "aurora")
         assert all(path.exists() for path in paths)
+        halves = (out_dir / "tests" / "int128_halves.c").read_text(encoding="utf-8")
+        assert "aurora_u128_divmod" in halves and "ember_" not in halves
         assert generate_runtime.check_outputs(out_dir, "aurora")
 
     assert generate_runtime.check_outputs(generate_runtime.DEFAULT_OUT, "ember")

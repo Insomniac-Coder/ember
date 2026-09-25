@@ -47,6 +47,7 @@ EXEMPT = {
 GENERATED_RUNTIME = {
     Path("runtime/ember_rt/include/ember_rt.h"),
     Path("runtime/ember_rt/src/ember_rt.c"),
+    Path("runtime/ember_rt/tests/int128_halves.c"),
 }
 
 SEARCH = [

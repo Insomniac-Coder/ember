@@ -484,6 +484,9 @@ impl Emitter<'_> {
     /// `a < b` for two elements behind `const void*`, in `Ord`'s order:
     /// totalOrder for floats (`[TYP-37]`), bytes for text.
     fn less_behind_pointers(&self, ty: Ty) -> String {
+        if let Some(suffix) = self.wide_int(ty) {
+            return format!("{RT}{suffix}_lt(*(const {RT}{suffix}*)a, *(const {RT}{suffix}*)b)");
+        }
         match self.types.kind(ty) {
             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64(*(const double*)a, *(const double*)b)"),
             TyKind::Float(_) => format!("{RT}total_lt_f32(*(const float*)a, *(const float*)b)"),
@@ -683,6 +686,9 @@ impl Emitter<'_> {
     fn eq_expr(&self, a: &str, b: &str, ty: Ty) -> String {
         if let Some((a, b)) = self.text_pair(a, b, ty) {
             return format!("({RT}str_cmp({a}, {b}) == 0)");
+        }
+        if let Some(suffix) = self.wide_int(ty) {
+            return format!("{RT}{suffix}_eq({a}, {b})");
         }
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Vec { .. } => {}
@@ -3409,6 +3415,16 @@ impl Emitter<'_> {
                 }
             }
             Terminator::SwitchInt { discr, targets, otherwise } => {
+                // D-272 — C's `switch` takes no 128-bit value on MSVC.
+                if let Some(suffix) = self.operand_type(discr, body).and_then(|ty| self.wide_int(ty)) {
+                    let discr = self.operand(discr, body);
+                    for (value, target) in targets {
+                        let value = self.wide_constant(*value as u128, suffix);
+                        self.line(&format!("    if ({RT}{suffix}_eq({discr}, {value})) {{ goto bb{}; }}", target.0));
+                    }
+                    self.line(&format!("    goto bb{};", otherwise.0));
+                    return;
+                }
                 let discr = self.operand(discr, body);
                 // Phase 0 only produces two-way branches on a boolean.
                 if let [(value, target)] = targets.as_slice() {
@@ -3647,7 +3663,7 @@ impl Emitter<'_> {
                 IntTy::I16 => "i16",
                 IntTy::I32 => "i32",
                 IntTy::I64 => "i64",
-                IntTy::I128 => "i64",
+                IntTy::I128 => "i128",
                 IntTy::Isize => "isize",
             },
             TyKind::Uint(u) => match u {
@@ -3655,12 +3671,126 @@ impl Emitter<'_> {
                 UintTy::U16 => "u16",
                 UintTy::U32 => "u32",
                 UintTy::U64 => "u64",
-                UintTy::U128 => "u64",
+                UintTy::U128 => "u128",
                 UintTy::Usize => "usize",
             },
             _ => "i64",
         }
         .to_string()
+    }
+
+    /// D-272 — `i128` and `u128` are the runtime's `ember_i128`/`ember_u128`,
+    /// which are not C integers on every compiler (MSVC has no 128-bit
+    /// integer), so every operation on one is a runtime helper named with
+    /// this suffix.
+    fn wide_int(&self, ty: Ty) -> Option<&'static str> {
+        match self.types.kind(ty) {
+            TyKind::Int(IntTy::I128) => Some("i128"),
+            TyKind::Uint(UintTy::U128) => Some("u128"),
+            _ => None,
+        }
+    }
+
+    /// A 128-bit constant from its two's-complement bits.
+    fn wide_constant(&self, bits: u128, suffix: &str) -> String {
+        format!("{RT}{suffix}_make(UINT64_C({:#x}), UINT64_C({:#x}))", (bits >> 64) as u64, bits as u64)
+    }
+
+    /// A C value of the type `from` as a 128-bit value: sign-extended from a
+    /// signed integer or an enum's discriminant, zero-extended from anything
+    /// else, reinterpreted from the other 128-bit type.
+    fn to_wide(&self, value: &str, from: Ty, suffix: &str) -> String {
+        if let Some(from_suffix) = self.wide_int(from) {
+            if from_suffix == suffix {
+                return value.to_string();
+            }
+            return format!("{RT}{from_suffix}_to_{suffix}({value})");
+        }
+        match self.types.kind(from) {
+            TyKind::Int(_) | TyKind::Enum(_) => format!("{RT}{suffix}_from_i64((int64_t)({value}))"),
+            _ => format!("{RT}{suffix}_from_u64((uint64_t)({value}))"),
+        }
+    }
+
+    /// The 128-bit type an operation on these operands works in, when either
+    /// operand has one.
+    fn wide_operands(&self, lhs: &Operand, rhs: &Operand, body: &Body) -> Option<Ty> {
+        [lhs, rhs]
+            .into_iter()
+            .filter_map(|operand| self.operand_type(operand, body))
+            .find(|ty| self.wide_int(*ty).is_some())
+    }
+
+    /// An operand as a value of the 128-bit type `wide`: a constant is
+    /// rendered in it, anything of another type converted.
+    fn wide_operand(&self, operand: &Operand, body: &Body, wide: Ty) -> String {
+        let suffix = self.wide_int(wide).expect("a 128-bit type");
+        match (operand, self.operand_type(operand, body)) {
+            (_, Some(ty)) if ty == wide => self.operand(operand, body),
+            (Operand::Const(Const::Int { value, .. }), _) => self.wide_constant(*value, suffix),
+            (_, Some(ty)) => self.to_wide(&self.operand(operand, body), ty, suffix),
+            (_, None) => self.operand(operand, body),
+        }
+    }
+
+    /// A shift amount as the helpers take it: its low bits, which the checks
+    /// before the shift have already bounded (`[TYP-10]`).
+    fn shift_amount(&self, operand: &Operand, body: &Body) -> String {
+        let amount = self.operand(operand, body);
+        match self.operand_type(operand, body).and_then(|ty| self.wide_int(ty)) {
+            Some(suffix) => format!("(uint32_t){RT}{suffix}_to_u64({amount})"),
+            None => format!("(uint32_t)({amount})"),
+        }
+    }
+
+    /// A binary operation in a 128-bit type: one runtime helper. Floor
+    /// division and modulo are C's on an unsigned type, where they agree.
+    fn wide_binary(&self, op: ember_mir::BinOp, lhs: &Operand, rhs: &Operand, wide: Ty, body: &Body) -> String {
+        use ember_mir::BinOp;
+        let suffix = self.wide_int(wide).expect("a 128-bit type");
+        let signed = suffix == "i128";
+        let a = self.wide_operand(lhs, body, wide);
+        let name = match op {
+            BinOp::Shl | BinOp::Shr => {
+                let stem = if op == BinOp::Shl { "shl" } else { "shr" };
+                return format!("{RT}{suffix}_{stem}({a}, {})", self.shift_amount(rhs, body));
+            }
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            BinOp::Rem => "rem",
+            BinOp::FloorDiv => if signed { "floordiv" } else { "div" },
+            BinOp::FloorRem => if signed { "floorrem" } else { "rem" },
+            BinOp::BitAnd => "and",
+            BinOp::BitOr => "or",
+            BinOp::BitXor => "xor",
+            BinOp::Eq | BinOp::Is => "eq",
+            BinOp::Ne | BinOp::IsNot => "ne",
+            BinOp::Lt => "lt",
+            BinOp::Le => "le",
+            BinOp::Gt => "gt",
+            BinOp::Ge => "ge",
+            BinOp::And | BinOp::Or => unreachable!("`and` and `or` take `bool`s"),
+        };
+        format!("{RT}{suffix}_{name}({a}, {})", self.wide_operand(rhs, body, wide))
+    }
+
+    /// A numeric cast to or from a 128-bit type (`[TYP-6]`): a float
+    /// saturates toward zero, a narrower integer is extended, and a narrower
+    /// target takes the low bits, as every integer cast does.
+    fn wide_cast(&self, operand: &Operand, from: Ty, to: Ty, body: &Body) -> String {
+        let value = self.operand(operand, body);
+        match (self.wide_int(from), self.wide_int(to)) {
+            (_, Some(suffix)) if self.types.is_float(from) => format!("{RT}ftoi_{suffix}({value})"),
+            (_, Some(suffix)) => self.to_wide(&value, from, suffix),
+            (Some(suffix), None) if self.types.is_float(to) => {
+                let float = if matches!(self.types.kind(to), TyKind::Float(FloatTy::F32)) { "f32" } else { "f64" };
+                format!("{RT}{suffix}_to_{float}({value})")
+            }
+            (Some(suffix), None) => format!("(({}){RT}{suffix}_to_u64({value}))", self.c_type(to)),
+            (None, None) => unreachable!("wide_cast is called for a 128-bit type"),
+        }
     }
 
     /// Build the representation-level result shared by Array and Span split
@@ -4025,6 +4155,9 @@ impl Emitter<'_> {
                     // `[TYP-37]` — floats by totalOrder, everything else by `<`.
                     Builtin::TotalLess => {
                         let (a, b) = (&rendered[0], &rendered[1]);
+                        if let Some(suffix) = self.wide_int(*arg_ty) {
+                            return format!("{RT}{suffix}_lt({a}, {b})");
+                        }
                         return match self.types.kind(*arg_ty) {
                             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64({a}, {b})"),
                             TyKind::Float(_) => format!("{RT}total_lt_f32({a}, {b})"),
@@ -4036,6 +4169,10 @@ impl Emitter<'_> {
                     // 64 bits, signed or unsigned as the type is; each value
                     // lies between `start` and `stop`, so it converts back.
                     Builtin::RangeCount | Builtin::RangeNth => {
+                        if let Some(suffix) = self.wide_int(*arg_ty) {
+                            let stem = if matches!(which, Builtin::RangeCount) { "count" } else { "nth" };
+                            return format!("{RT}range_{stem}_{suffix}({})", rendered.join(", "));
+                        }
                         let unsigned = matches!(self.types.kind(*arg_ty), TyKind::Uint(_));
                         let (wide, suffix) = if unsigned { ("uint64_t", "u64") } else { ("int64_t", "i64") };
                         let widen = |v: &String| format!("({wide})({v})");
@@ -4086,6 +4223,8 @@ impl Emitter<'_> {
                             ParseKind::Unsigned => {
                                 format!("{RT}parse_unsigned_status({}, (uint64_t)({}))", rendered[0], rendered[1])
                             }
+                            ParseKind::I128 => format!("{RT}parse_i128_status({})", rendered[0]),
+                            ParseKind::U128 => format!("{RT}parse_u128_status({})", rendered[0]),
                             ParseKind::F32 | ParseKind::F64 => format!("{RT}parse_float_status({})", rendered[0]),
                             ParseKind::Bool => format!("{RT}parse_bool_status({})", rendered[0]),
                             ParseKind::Char => format!("{RT}parse_char_status({})", rendered[0]),
@@ -4096,6 +4235,8 @@ impl Emitter<'_> {
                         return match kind {
                             ParseKind::Signed => format!("{RT}parse_signed_value({})", rendered[0]),
                             ParseKind::Unsigned => format!("{RT}parse_unsigned_value({})", rendered[0]),
+                            ParseKind::I128 => format!("{RT}parse_i128_value({})", rendered[0]),
+                            ParseKind::U128 => format!("{RT}parse_u128_value({})", rendered[0]),
                             ParseKind::F32 => format!("{RT}parse_f32_value({})", rendered[0]),
                             ParseKind::F64 => format!("{RT}parse_f64_value({})", rendered[0]),
                             ParseKind::Bool => format!("(({}).len == 4)", rendered[0]),
@@ -4655,6 +4796,9 @@ impl Emitter<'_> {
     }
 
     fn builtin_suffix(&self, ty: ember_types::Ty) -> &'static str {
+        if let Some(suffix) = self.wide_int(ty) {
+            return suffix;
+        }
         match self.types.kind(ty) {
             TyKind::Bool => "bool",
             TyKind::Char => "char",
@@ -4849,6 +4993,9 @@ impl Emitter<'_> {
     fn constant(&self, constant: &Const) -> String {
         match constant {
             Const::Int { value, ty } => {
+                if let Some(wide) = self.wide_int(*ty) {
+                    return self.wide_constant(*value, wide);
+                }
                 let suffix = match self.types.kind(*ty) {
                     TyKind::Int(IntTy::I64 | IntTy::Isize) => "LL",
                     TyKind::Uint(UintTy::U64 | UintTy::Usize) => "ULL",
@@ -4885,6 +5032,11 @@ impl Emitter<'_> {
     fn rvalue(&self, rvalue: &Rvalue, body: &Body, target: Ty) -> String {
         match rvalue {
             Rvalue::Use(o) => self.operand(o, body),
+            // D-272 — an operation on a 128-bit value is a runtime helper.
+            Rvalue::BinaryOp { op, lhs, rhs } if self.wide_operands(lhs, rhs, body).is_some() => {
+                let wide = self.wide_operands(lhs, rhs, body).expect("checked by the guard");
+                self.wide_binary(*op, lhs, rhs, wide, body)
+            }
             // `[TYP-29]`, ODR-021 — float floor division and modulo are the
             // runtime's Python-exact helpers; C has no operator for either.
             Rvalue::BinaryOp {
@@ -4933,7 +5085,15 @@ impl Emitter<'_> {
                 )
             }
             Rvalue::UnaryOp { op, operand } => {
+                let wide = self.operand_type(operand, body).and_then(|ty| self.wide_int(ty));
                 let operand = self.operand(operand, body);
+                if let Some(suffix) = wide {
+                    return match op {
+                        ember_mir::UnOp::Neg => format!("{RT}{suffix}_neg({operand})"),
+                        ember_mir::UnOp::BitNot => format!("{RT}{suffix}_not({operand})"),
+                        ember_mir::UnOp::Not => unreachable!("`not` takes a `bool`"),
+                    };
+                }
                 match op {
                     ember_mir::UnOp::Neg => format!("(-{operand})"),
                     ember_mir::UnOp::Not => format!("(!{operand})"),
@@ -4941,6 +5101,12 @@ impl Emitter<'_> {
                 }
             }
             Rvalue::Cast { kind, operand, to } => {
+                if matches!(kind, CastKind::Widen | CastKind::Numeric)
+                    && let Some(from) = self.operand_type(operand, body)
+                    && (self.wide_int(from).is_some() || self.wide_int(*to).is_some())
+                {
+                    return self.wide_cast(operand, from, *to, body);
+                }
                 let value = self.operand(operand, body);
                 let ty = self.c_type(*to);
                 match kind {
