@@ -3,7 +3,7 @@
 `Vec2/3/4`, `IVec2/3/4` and `UVec2/3/4` differ only in their size and their
 component type, so this writes them: each struct with its constants and
 methods, then three operator blocks (vector and vector, vector and scalar,
-scalar and vector). The result is the part of `std/src/math.em` from the
+scalar and vector). The result is the part of `std/src/math/mod.em` from the
 line after `MARKER` to the matrices' heading.
 
     python tools/gen_math_vectors.py            # rewrite that part
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MATH = ROOT / "std" / "src" / "math.em"
+MATH = ROOT / "std" / "src" / "math" / "mod.em"
 MARKER = "## (Written by `tools/gen_math_vectors.py`, to the matrices: edit the script, not this.)"
 END = "## -- matrices ("
 
@@ -176,12 +176,12 @@ def main():
     wanted = rendered(source)
     if "--check" in sys.argv[1:]:
         if wanted != source:
-            print("std/src/math.em's vectors differ from tools/gen_math_vectors.py; run it")
+            print("std/src/math/mod.em's vectors differ from tools/gen_math_vectors.py; run it")
             return 1
-        print("std/src/math.em's vectors are as generated")
+        print("std/src/math/mod.em's vectors are as generated")
         return 0
     MATH.write_text(wanted, encoding="utf-8", newline="\n")
-    print("wrote std/src/math.em's vectors")
+    print("wrote std/src/math/mod.em's vectors")
     return 0
 
 

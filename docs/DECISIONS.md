@@ -1766,3 +1766,37 @@ Mul[Vec3]`). Two things in the checker had to change for it.
   the same instance, one recorded under the bare origin (as a generic
   extension records it) and one of an unrelated interface still are, as
   before.
+
+## ADR-054 — `std.math.det`: fdlibm in Ember, with arithmetic where fdlibm uses bits
+
+**Decided 2026-09-26, with ODR-046.** `[DET-4]` wants the same bits on every
+target; any fixed sequence of IEEE operations gives that, now that no C
+compiler may fuse a multiply and an add (D-325). This is the sequence.
+
+- **The algorithms are fdlibm's**, as FreeBSD's `msun` has them: `exp`,
+  `log`, the `sin`/`cos`/`tan` kernels, the medium range reduction, `atan`,
+  `atan2` and `pow`, with their constants. They are written in Ember in
+  `std/src/math/det.em` (so `std.math` became `std/src/math/mod.em`,
+  `[MOD-1]`), not in the C runtime: the language's own arithmetic rules make
+  them deterministic, and a compile-time evaluator can reuse them (`[CT-4]`).
+- **No bit access.** Where fdlibm reads or writes a float's words, the code
+  scales by exact powers of two (`two_to`, `scalbn`), finds an exponent by
+  comparing with powers of two (`split_exponent`), and replaces "clear the
+  low word" with Veltkamp's split (`high_part`, 26 significant bits), which
+  keeps every product fdlibm needs exact (26 + 26 bits fit in 53).
+- **Huge arguments** (|x| ≥ 2^20 π/2) are reduced by Payne and Hanek's
+  method with integers: the 53-bit mantissa times a 192-bit window of 2/π's
+  bits (a table of 23 words, generated from 2/π to 1600 bits), modulo 2^192,
+  gives the quadrant and 190 fraction bits; the fraction becomes a
+  double-double and is multiplied by π/2 with Dekker's product.
+- **`f32`** calls the `f64` function and rounds once; `sqrt` is the IEEE
+  square root of either type. The functions are generic over a private
+  interface, `Deterministic`, that `f32` and `f64` implement.
+- **How it was checked.** A Python model of the same operations (Python
+  floats are IEEE doubles) was compared with mpmath at 200 to 1400 bits over
+  20000 random arguments per range: below one unit in the last place
+  everywhere, `atan2` below 1.26; the hardest argument for reduction,
+  6381956970095103 × 2^797, is exact. The Ember module was then compared with
+  the model bit for bit over 1455 arguments and eight functions, in every
+  profile and under clang and gcc, and over 600 `f32` arguments. The model is
+  `tools/det_model.py`, and `tools/check_det.py` repeats the comparison in CI.

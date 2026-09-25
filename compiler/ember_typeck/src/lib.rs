@@ -960,6 +960,12 @@ struct Checker<'a> {
     expr_consts: HashMap<Symbol, ConstState>,
     assoc_consts: HashMap<(Ty, Symbol), ConstState>,
     const_order: Vec<(ConstKey, Span)>,
+    /// Every item `const`'s value as written, and its module, from the first
+    /// pass: a range type's bound may name one before constants are collected
+    /// (D-329).
+    const_values: HashMap<Symbol, (ast::Expr, usize)>,
+    /// How many constants `const_bound` is following, against a cycle.
+    const_bound_depth: usize,
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
@@ -1254,6 +1260,8 @@ impl<'a> Checker<'a> {
             expr_consts: HashMap::new(),
             assoc_consts: HashMap::new(),
             const_order: Vec::new(),
+            const_values: HashMap::new(),
+            const_bound_depth: 0,
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
@@ -1814,16 +1822,38 @@ impl<'a> Checker<'a> {
                 }
                 Bound::Float(if negate { -*value } else { *value })
             }
+            // D-329 — a `const` is read as written, since range types are
+            // collected before constants are: its own value is a bound.
+            ast::ExprKind::Path { segments }
+                if segments.len() == 1
+                    && self.const_bound_depth < 16
+                    && let Some((value, module)) = self.const_values.get(&self.resolve_name(segments[0].name)).cloned() =>
+            {
+                let caller = std::mem::replace(&mut self.current_module, module);
+                self.const_bound_depth += 1;
+                let found = self.const_bound(&value, want_float);
+                self.const_bound_depth -= 1;
+                self.current_module = caller;
+                match found? {
+                    Bound::Int(v) => Bound::Int(if negate { -v } else { v }),
+                    Bound::Float(v) => Bound::Float(if negate { -v } else { v }),
+                }
+            }
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
-                match self.constants.get(&segments[0].name).map(|c| &c.kind) {
-                    Some(hir::ExprKind::Int(value)) => {
+                // A negative constant is its magnitude negated (D-327).
+                let found = self.constants.get(&segments[0].name).map(|c| match &c.kind {
+                    hir::ExprKind::Unary { op: UnOp::Neg, operand } => (true, &operand.kind),
+                    kind => (false, kind),
+                });
+                match found {
+                    Some((minus, hir::ExprKind::Int(value))) => {
                         let v = i128::try_from(*value).ok()?;
-                        let v = if negate { -v } else { v };
+                        let v = if negate != minus { -v } else { v };
                         if want_float { Bound::Float(v as f64) } else { Bound::Int(v) }
                     }
-                    Some(hir::ExprKind::Float(value)) if want_float => {
+                    Some((minus, hir::ExprKind::Float(value))) if want_float => {
                         let value = *value;
-                        Bound::Float(if negate { -value } else { value })
+                        Bound::Float(if negate != minus { -value } else { value })
                     }
                     _ => {
                         self.error(
@@ -2329,6 +2359,9 @@ impl<'a> Checker<'a> {
             self.visible[index].insert(name, qualified);
             self.item_spans.insert(qualified, item.span);
             self.item_visibility.insert(qualified, item.vis.kind);
+            if let ast::ItemKind::Const(decl) = &item.kind {
+                self.const_values.insert(qualified, (decl.value.clone(), index));
+            }
         }
     }
 
@@ -4513,16 +4546,15 @@ impl<'a> Checker<'a> {
                         // as the literal would there.
                         None => {
                             let value = self.synth(&decl.value);
-                            match value.kind {
-                                ExprKind::Int(_) | ExprKind::Float(_) if self.types.is_untyped_literal(value.ty) => value,
-                                _ => self.commit(value),
+                            if is_literal_value(&value.kind) && self.types.is_untyped_literal(value.ty) {
+                                value
+                            } else {
+                                self.commit(value)
                             }
                         }
                     };
-                    if !matches!(
-                        value.kind,
-                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
-                    ) && value.ty != self.common.error
+                    // D-327 — `-1.5` and `-5` are literals too (`[LEX-24]`).
+                    if !is_literal_value(&value.kind) && value.ty != self.common.error
                         // Already reported: the value did not check ([DIA-14]).
                         && !matches!(value.kind, ExprKind::Error)
                     {
@@ -22579,22 +22611,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.resolve_namespace_prefix(&segments).ok()
     }
 
-    /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
-    /// reached through a module, for positions where a type is named.
     /// A `const` or `static`, substituted where it is named: an untyped one
     /// is its literal, to take a type there (V.7).
     fn constant_use(&self, qualified: Symbol, span: Span) -> Expr {
-        let value = &self.constants[&qualified];
-        let kind = match &value.kind {
-            ExprKind::Int(v) => ExprKind::Int(*v),
-            ExprKind::Float(v) => ExprKind::Float(*v),
-            ExprKind::Bool(v) => ExprKind::Bool(*v),
-            ExprKind::Str(s) => ExprKind::Str(s.clone()),
-            _ => ExprKind::Error,
-        };
-        Expr { ty: value.ty, kind, span }
+        literal_copy(&self.constants[&qualified], span)
     }
 
+    /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
+    /// reached through a module, for positions where a type is named.
     fn item_through_module(&self, expr: &ast::Expr) -> Option<Symbol> {
         let ast::ExprKind::Field { base, name } = &expr.kind else { return None };
         let module = self.namespace_named(base)?;
@@ -31681,6 +31705,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ty = if hir_op.is_comparison() { self.common.bool_ } else { operand_ty };
         Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
     }
+}
+
+/// Whether a checked constant is a literal: `5`, `1.5`, `true`, `"s"`, or a
+/// number's negation, `-5` (`[LEX-24]`, D-327).
+fn is_literal_value(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
+        ExprKind::Unary { op: UnOp::Neg, operand } => matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_)),
+        _ => false,
+    }
+}
+
+/// A literal constant's copy, for one use at `span`.
+fn literal_copy(value: &Expr, span: Span) -> Expr {
+    let kind = match &value.kind {
+        ExprKind::Int(v) => ExprKind::Int(*v),
+        ExprKind::Float(v) => ExprKind::Float(*v),
+        ExprKind::Bool(v) => ExprKind::Bool(*v),
+        ExprKind::Str(s) => ExprKind::Str(s.clone()),
+        ExprKind::Unary { op: UnOp::Neg, operand } => {
+            ExprKind::Unary { op: UnOp::Neg, operand: Box::new(literal_copy(operand, span)) }
+        }
+        _ => ExprKind::Error,
+    };
+    Expr { ty: value.ty, kind, span }
 }
 
 /// Whether a `const`'s value is a bare literal, as the literal constants are

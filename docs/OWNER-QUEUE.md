@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-046 | **CLOSED** — `std.math.det`'s functions take `f32` or `f64` and answer in it (an `f32`'s result is the `f64` one rounded once), within one unit in the last place (`atan2` 1.3); an integer is converted by the program | Standard library / determinism | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_21 |
 | ODR-045 | **CLOSED** — a type's `const` is named `T.NAME` (`Self.NAME` inside it) and is private to its module unless `pub`; constants name one another in any order, one whose value depends on itself is `E6001`, and a panic while one is evaluated is `E6004` | Language / declarations | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
 | ODR-044 | **CLOSED** — `[CG-C-11]`'s pragma is emitted where the compiler implements it (clang's `#pragma STDC FP_CONTRACT OFF`, MSVC's `#pragma fp_contract(off)`); gcc, which does not and warns about it, has `-ffp-contract=off` alone | Implementation / C backend | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
 | ODR-043 | **CLOSED** — `std.math` has the module table's vectors, matrices, `Quat`, `Transform` and shapes, with public components, the operators and the methods graphics libraries agree on (`[STD-28]`); `KahanSum` is an `f64` accumulator with Neumaier's correction | Standard library / math | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
@@ -199,6 +200,47 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-046 — the form of `std.math.det`'s functions — **CLOSED**
+
+    ID:        ODR-046
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_21
+    Category:  STANDARD LIBRARY / DETERMINISM
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_20.md [DET-4], [DET-2], [STD-21]
+
+    Question:  `[DET-4]` names the functions (`sin`, `cos`, `tan`, `exp`, `log`,
+               `pow`, `atan2`, `sqrt`) and the types (`f32`, `f64`), and asks for
+               the same bits on every target. One function per name or one per
+               type? How does an `f32` result relate to the `f64` one? Do they
+               take integers, as `std.math`'s do (ODR-038)? How accurate are
+               they?
+
+    Blocks implementation:            YES — the signatures
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Form.** (a) One generic function per name, answering in its argument's
+  type: `det.sin(x)`, as `std.math`'s are written. (b) C's pair, `sin` and
+  `sinf`. **(a)**: one name to learn, and generic code over the two types
+  can call it.
+- **`f32`.** (1) Computed in `f64` and rounded once: nearly always the
+  correctly rounded `f32`, and the same bits everywhere. (2) Separate `f32`
+  algorithms: faster, and a few units less accurate. **(1)**.
+- **Integers.** (i) Taken, answering in `f64`, as `std.math`'s functions do.
+  (ii) Not taken: `[DET-4]` says `f32` and `f64`, and a program that wants
+  reproducible results says which precision it computes in. **(ii)**.
+- **Accuracy.** fdlibm's: within one unit in the last place, `atan2` within
+  1.3 (the rounding of `y / x` adds to `atan`'s). Correct rounding
+  everywhere would cost a slower algorithm for every call.
+
+**Ruling.** (a), (1), (ii): each function takes `f32` or `f64` and answers in
+that type, an `f32`'s result being the `f64` one rounded once; each is within
+one unit in the last place of the exact result, `atan2` within 1.3; `sqrt` is
+IEEE 754's. `[DET-4]` says so.
 
 ---
 

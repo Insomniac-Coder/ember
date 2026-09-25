@@ -114,6 +114,10 @@ jobs:
       - name: error pages compile as documented
         run: python tools/error_pages.py
 
+      # `[DET-4]` — std.math.det gives the bits of its model, bit for bit.
+      - name: std.math.det matches its model
+        run: python tools/check_det.py
+
       # `[TST-6]` — Appendix A is generated from its fixture, so the quick
       # reference cannot drift away from something that parses.
       - name: Appendix A matches its fixture

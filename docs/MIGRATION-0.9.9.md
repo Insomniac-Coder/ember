@@ -782,3 +782,10 @@ The next number is ODR-027.
   * **Floating point** (D-325): the C compiler no longer fuses `a * b + c` (`[CG-C-11]`, ODR-044).
   * **`W2015`** shows what the type keeps (D-324) and reaches a literal under a minus or inside
     arithmetic (D-326).
+* **2026-09-26 — `std.math.det` (ODR-046; Hardened_21; ADR-054).** `import math.det`, then
+  `det.sin(x)`, `det.cos`, `det.tan`, `det.exp`, `det.log`, `det.pow`, `det.atan2` and `det.sqrt`
+  for `f32` or `f64`: the same bits on every target (`[DET-4]`), within one unit in the last place
+  (`atan2` 1.3). fdlibm's algorithms in Ember, `std/src/math/det.em`; `std.math` itself moved to
+  `std/src/math/mod.em` (`[MOD-1]`). Fixed on the way: a negative literal `const` (`-5`, `-1.5`)
+  compiles (D-327), and a `const` may bound a range type (D-329). Found and open: a method without
+  `pub` is callable from other modules (D-328).

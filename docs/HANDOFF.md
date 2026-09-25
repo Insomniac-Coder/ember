@@ -10728,21 +10728,21 @@ the running narrative behind it.
     `69fff89` (D-308 to D-312), `8ebe762` (A2, ODR-039), `fa3c7a8` (MSVC's
     infinity and NaN constants), `1c63f12` (A3, ODR-040; CI green),
     `9298803` (D-316 `f16`, ODR-041, and D-318; CI green), `89fb9ca` (A3's
-    indexing, ODR-042, D-320, D-321; CI green), then A4's first part
-    (`std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326).
+    indexing, ODR-042, D-320, D-321; CI green), `bbcf3b2` (A4's first part:
+    `std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326;
+    CI green), then `std.math.det` (ODR-046, D-327 to D-329).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_20.md`
-  (ODR-043 to ODR-045), pinned in `docs/spec-source/development-target.json`.
-  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h20/` is
-  frozen.
-* **Next numbers:** ODR-046, D-327, ADR-054.
-* **Next task:** the rest of A4: `std.math.det` (`[DET-4]`: `sin`, `cos`,
-  `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt` for `f32` and `f64`, the same
-  bits on every target, in Ember or the runtime's C with no platform `libm`
-  call), then `NonZero[T]` (`[STD-4]`, which needs `Option`'s niche). Then
-  AUTOPILOT's B list.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_21.md`
+  (ODR-046), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h21/` is frozen.
+* **Next numbers:** ODR-047, D-330, ADR-055.
+* **Next task:** the rest of A4, `NonZero[T]` (`[STD-4]`: a `Copy` wrapper
+  for each integer type with a niche, `Option[NonZero[T]]` the size of `T`,
+  made by `NonZero.new(v) -> Option[NonZero[T]]`; dividing by one needs no
+  zero check). Then AUTOPILOT's B list, where D-328 (method visibility) also
+  belongs.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10924,6 +10924,18 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   * **W2015 (D-324, D-326)** shows the kept value, walks into a minus and
     arithmetic, and does not repeat a warning the sink holds.
   * New error pages: `E2150`, `E6001`, `E6004`.
+* **Then `std.math.det` (`[DET-4]`, ODR-046, ADR-054; Hardened_21).**
+  `std/src/math/det.em` (so `std.math` is now `std/src/math/mod.em`): fdlibm's
+  `exp`, `log`, `sin`/`cos`/`tan`, `atan2` and `pow` in Ember, with exact
+  power-of-two scaling, `split_exponent`, Veltkamp's `high_part` for fdlibm's
+  low-word tricks, and Payne-Hanek with `u128` arithmetic over a 2/π table
+  for huge trig arguments. `import math.det`; `det.sin(x)` for `f32` or
+  `f64` (a private `Deterministic` interface). `tools/det_model.py` is the
+  same operations in Python (measured against mpmath once, ADR-054);
+  `tools/check_det.py` compares the module with it bit for bit (CI runs it),
+  and `tests/conformance/DET-4/` holds verified values. Found on the way: D-327
+  (negative literal constants; fixed), D-329 (a `const` range bound; fixed),
+  D-328 (private methods are callable from other modules; **open**).
 
 **The owner's standing instructions (all still in force)**
 
@@ -11354,6 +11366,8 @@ unless named otherwise):
   * `test_runtime_generation.py`
   * `gen_math_vectors.py --check` (after editing the vector generator, run
     it without `--check` first; CI runs it too)
+  * `check_det.py`: `std/src/math/det.em` against `tools/det_model.py`, bit
+    for bit (change both together; CI runs it too)
   * `hardening_check.py`
   * `unicode_case.py --check`
   * `split_spec.py --check docs/spec-source/ember-spec.md docs/spec`

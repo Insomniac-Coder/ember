@@ -291,6 +291,9 @@ ODRS = [
                 'name one another in any order, a cycle is `E6001` and a panic while evaluating one `E6004` '
                 '(Hardened_20)',
      '`[CT-1]`, `[CT-7]`, `[MOD-2]`'),
+    ('ODR-046', '`std.math.det`\'s functions take `f32` or `f64` and answer in it, an `f32` result being the `f64` '
+                'one rounded once; each within one unit in the last place (`atan2` 1.3); no integers (Hardened_21)',
+     '`[DET-4]`'),
 ]
 
 H5_HEAD = """
@@ -302,7 +305,8 @@ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Harde
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
-Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045.
+Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
+Hardened_21 adds ODR-046.
 
 | ODR | Ruling | Rules |
 |---|---|---|
