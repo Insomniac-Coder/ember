@@ -10733,7 +10733,7 @@ the running narrative behind it.
 
   | Phase | % |
   |---|---:|
-  | P1 | 94 |
+  | P1 | 95 |
   | P2 | 85 |
   | P3 | 47 |
   | P4 | 10 |
@@ -10742,9 +10742,12 @@ the running narrative behind it.
   | P7 | 0 |
   | 7a | 4 |
   | P8 | 13 |
-  | Overall | 51 |
+  | Overall | 54 |
 
-  Given 2026-09-25 late evening, after the reviewer fixes: P1 93 to 94 for
+  Given 2026-09-25 night, after `c3e3582`: P1 94 to 95 for `[IFC-3]` and
+  `[IFC-4]` (associated types named from a type parameter, bounded and
+  checked; a parent met by an implicit `Eq`). `std.math`'s Part XV rules sit
+  in no phase. Before that, after the reviewer fixes: P1 93 to 94 for
   `[EXP-2]`, `[EXP-4]`, `[TYP-34]` and `[EXP-6]`'s `E3012` made to hold.
   Before that, after `08693bf`, P1 rose (88 to 93) for the
   `Map`/`Set` work's Part II–VI rules: `[HASH-1]`–`[HASH-4]`, `[TYP-17]`
@@ -10753,8 +10756,14 @@ the running narrative behind it.
   `[MOD-5]`. The Part XV `Map` rules themselves sit in no phase.
 
   Format rules for the table are in the memory file
-  `feedback_phase_completion_table`. The overall is weighted over P1–P6 and
-  7a by rule count: 233, 72, 68, 35, 86, 49 and 94. P7 is excluded.
+  `feedback_phase_completion_table`. Since 2026-09-25 night the overall is
+  weighted by each phase's rules' length in words in Hardened_15 (the owner
+  asked for size, not count): P1 10741 (230 rules: Parts I–VI but `CLS` and
+  `CORO`), P2 2760 (`OWN BRW LT DRP SPN CELL`, 72), P3 2519 (`OBJ RC EXC DSP
+  WK CLS`, 68), P4 1332 (`EFF CT RFL DRV`, 35), P5 3353 (`FFI`, 86), P6 3095
+  (`THR JOB PAR SOA SIMD ECS`, 49), 7a 2785 (`CORO DET HR BUD MONO`, 94). P7
+  is excluded. By rule count the same table gives 52%. The script is
+  `rule_sizes.py` in the session scratchpad; rebuild it from this list.
   "Phase estimates against 0.9.9" further down gives the method; its table is
   current.
 
