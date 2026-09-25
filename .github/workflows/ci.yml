@@ -35,11 +35,10 @@ jobs:
         if: runner.os == 'Windows'
       - name: Build
         run: cargo build --workspace --locked
+      # The platform's own shell: on Windows, Git's bash would put its own
+      # `link` ahead of the MSVC linker and Rust could not link the tests.
       - name: Test
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test --workspace --locked 2>&1 | tee test-output.txt
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/run_logged.py test-output.txt cargo test --workspace --locked
         env:
           EMBER_CC: ${{ matrix.cc }}
 
@@ -47,10 +46,7 @@ jobs:
       # read by anyone. On a failure, the end of the output becomes one.
       - name: failures as an annotation
         if: failure()
-        shell: bash
-        run: |
-          PY=$(command -v python || command -v python3)
-          "$PY" tools/ci_failure_annotation.py test-output.txt
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/ci_failure_annotation.py test-output.txt
 
       # `[DIA-7]` — "CI fails if the conformance suite produces any
       # unclassified borrow error". The file exists only when there is one.
