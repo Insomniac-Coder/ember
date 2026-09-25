@@ -10721,7 +10721,7 @@ the running narrative behind it.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_11.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h11/` is frozen.
-* **Next numbers:** ODR-031, D-255.
+* **Next numbers:** ODR-031, D-256.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10919,7 +10919,10 @@ unless named otherwise):
 
 **Backlog, in order:**
 
-1. **The rest of [STD-15].**
+1. **D-255** (open): MSVC is not found outside a Visual Studio developer
+   environment when PATH is long. Never probe it with a stripped or empty
+   environment (that opened a Windows error box on the owner's screen).
+2. **The rest of [STD-15].**
    * `sort_by` and `sort_by_key`: the runtime's `ember_vec_sort` takes a
      plain `bool (*less)(const void*, const void*)`. A closure comparator
      needs a context pointer: an `ember_vec_sort_ctx`, plus a generated
@@ -10929,21 +10932,21 @@ unless named otherwise):
      `std/src/collections.em`. It needs a builtin, `next` in
      `synth_span_iterator_method`, lowering and codegen.
    * `drain(range)`.
-2. **Ask the owner for the pick** in `docs/DESIGN-MAP-SET-ITERATION.md`
+3. **Ask the owner for the pick** in `docs/DESIGN-MAP-SET-ITERATION.md`
    (`Map`/`Set`, generators, iterator adapters; the document recommends shape
    A for both).
-3. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.
-4. **Owned callables:** DEVIATIONS D6 (`once fn` parameter types) and
+4. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.
+5. **Owned callables:** DEVIATIONS D6 (`once fn` parameter types) and
    [CLO-3] owned callable values.
-5. **Generic methods of a generic type** that have type parameters of their
+6. **Generic methods of a generic type** that have type parameters of their
    own are still validated per concrete owner only. `check_opaque_methods`
    skips them, because the owner's and the method's parameter indices would
    collide.
-6. **The table stands in for three declarations.** `Display`, `Debug` and
+7. **The table stands in for three declarations.** `Display`, `Debug` and
    `Copy` are answered from the table while std does not declare them.
    Declaring them needs `Formatter` and `FmtError`, and user-written
    `Display` for structs.
-7. **The remaining "not yet probed" rows** in `docs/AUDIT-0.9.9.md`.
+8. **The remaining "not yet probed" rows** in `docs/AUDIT-0.9.9.md`.
 
 **Traps learned on 2026-09-25**
 

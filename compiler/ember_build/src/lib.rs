@@ -116,6 +116,15 @@ impl Toolchain {
         if !cfg!(windows) {
             return None;
         }
+        // Already a Visual Studio developer environment (a Developer Prompt,
+        // or CI's msvc-dev-cmd): used as it is, as the one the user chose.
+        let here = Toolchain::Msvc { cl: PathBuf::from("cl.exe"), env: BTreeMap::new() };
+        if std::env::var_os("VCINSTALLDIR").is_some()
+            && std::env::var_os("INCLUDE").is_some()
+            && compiler_file(&here).is_some()
+        {
+            return Some(here);
+        }
         let vcvars = Self::find_vcvars()?;
         let env = msvc_environment(&vcvars)?;
         // With the captured environment, `cl` resolves through its own PATH.

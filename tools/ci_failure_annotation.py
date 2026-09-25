@@ -16,4 +16,7 @@ lines = text.split('\n')
 start = next((i for i, line in enumerate(lines) if line == 'failures:'), None)
 chosen = lines[start:] if start is not None else lines[-150:]
 body = '\n'.join(chosen)[-60000:] or 'the test output is empty'
-print('::error title=test failures::' + body.replace('%', '%25').replace('\n', '%0A'))
+# Bytes, in UTF-8: on Windows a piped stdout uses the ANSI code page, and printing a
+# character outside it raised instead of annotating.
+line = '::error title=test failures::' + body.replace('%', '%25').replace('\n', '%0A') + '\n'
+sys.stdout.buffer.write(line.encode('utf-8'))
