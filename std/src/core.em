@@ -151,6 +151,81 @@ fn result_unwrap_or_else[T, E](owned r: Result[T, E], f: fn(owned E) -> T) -> T:
         Err(e):
             return f(e)
 
+## `[TYP-36]` — the table's `Default` column: zero, `0.0`, `false`, `'\0'`,
+## empty text, an empty `Array` and `None`.
+
+extend i8 implements Default:
+    fn default() -> i8:
+        return 0
+
+extend i16 implements Default:
+    fn default() -> i16:
+        return 0
+
+extend i32 implements Default:
+    fn default() -> i32:
+        return 0
+
+extend i64 implements Default:
+    fn default() -> i64:
+        return 0
+
+extend isize implements Default:
+    fn default() -> isize:
+        return 0
+
+extend u8 implements Default:
+    fn default() -> u8:
+        return 0
+
+extend u16 implements Default:
+    fn default() -> u16:
+        return 0
+
+extend u32 implements Default:
+    fn default() -> u32:
+        return 0
+
+extend u64 implements Default:
+    fn default() -> u64:
+        return 0
+
+extend usize implements Default:
+    fn default() -> usize:
+        return 0
+
+extend f32 implements Default:
+    fn default() -> f32:
+        return 0.0
+
+extend f64 implements Default:
+    fn default() -> f64:
+        return 0.0
+
+extend bool implements Default:
+    fn default() -> bool:
+        return false
+
+extend char implements Default:
+    fn default() -> char:
+        return '\0'
+
+extend str implements Default:
+    fn default() -> str:
+        return ""
+
+extend String implements Default:
+    fn default() -> String:
+        return String.from("")
+
+extend[T] Array[T] implements Default:
+    fn default() -> Array[T]:
+        return []
+
+extend[T] Option[T] implements Default:
+    fn default() -> Option[T]:
+        return None
+
 ## `[STD-15]` — the `Array` methods written in Ember (`[GRM-34]`). A method
 ## the compiler knows by a name comes first (`[TYP-24]`); these are found
 ## after it, and one a program never calls is not emitted (`[COST-1]`).
@@ -191,6 +266,17 @@ extend[T] Array[T]:
                 order[at] = at
                 at = next
             order[at] = at
+
+## `[STR-5]` — element-wise equality through `T: Eq`. The checker routes a
+## comparison of sequences here when the element type holds a written `eq`.
+extend[T: Eq] Span[T]:
+    fn eq_elements(self, other: Span[T]) -> bool:
+        if self.len() != other.len():
+            return false
+        for i in range(self.len()):
+            if self[i] != other[i]:
+                return false
+        return true
 
 extend[T: Eq] Array[T]:
     ## Drops each element equal to the one kept before it, so a sorted array

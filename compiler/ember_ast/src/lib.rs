@@ -611,6 +611,10 @@ pub enum ExprKind {
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
     Tuple(Vec<Expr>),
     ArrayLit(Vec<Expr>),
+    /// `{k: v, …}` and `{}` — `[GRM-26]`, `[TYP-38]`.
+    MapLit(Vec<(Expr, Expr)>),
+    /// `{a, …}` — `[GRM-26]`, `[TYP-38]`.
+    SetLit(Vec<Expr>),
     /// `[GRM-27]` — `[e for x in xs if c]`, an `Array`; `[GRM-38]` —
     /// `(e for x in xs)`, a generator expression.
     Comprehension { kind: ComprehensionKind, element: Box<Expr>, clauses: Vec<CompClause> },

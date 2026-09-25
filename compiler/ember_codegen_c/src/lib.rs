@@ -787,6 +787,58 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[TYP-39]` (ODR-034) — a `Map` prints `{k: v, …}` and a `Set` `{a, …}`,
+    /// in insertion order, each part by its `Debug`; an empty `Set` prints
+    /// `set()`, since `{}` is an empty `Map`. The layout is read from the
+    /// declarations in `std/src/collections.em`: a `Set`'s first field is its
+    /// `Map`, a `Map`'s first field its entries, `Array[Option[MapSlot]]`,
+    /// and a slot has `key` and `value`.
+    fn fmt_map_body(&self, ty: Ty) -> String {
+        let text = |s: &str| format!("{RT}vec_extend(out, \"{s}\", {});", s.len());
+        let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a Map or Set is a struct") };
+        let def = self.types.struct_def(id);
+        let is_set = def.origin.as_ref().is_some_and(|(name, _)| name.as_str() == "std.collections.Set");
+        let (map_ty, access) = if is_set { (def.fields[0].ty, "v->map.") } else { (ty, "v->") };
+        let TyKind::Struct(map_id) = *self.types.kind(map_ty) else { unreachable!("a Set holds a Map") };
+        let map_def = self.types.struct_def(map_id);
+        let entries = &map_def.fields[0];
+        let TyKind::Vec { elem: option } = *self.types.kind(entries.ty) else { unreachable!("a Map's entries are an Array") };
+        let TyKind::Enum(option_id) = *self.types.kind(option) else { unreachable!("an entry is an Option") };
+        let some = self
+            .types
+            .enum_def(option_id)
+            .variants
+            .iter()
+            .find(|variant| variant.name.as_str() == "Some")
+            .expect("an Option has Some");
+        let payload = &some.fields[0];
+        let TyKind::Struct(slot_id) = *self.types.kind(payload.ty) else { unreachable!("an entry holds a MapSlot") };
+        let slot = self.types.struct_def(slot_id);
+        let field = |name: &str| slot.fields.iter().find(|f| f.name.as_str() == name).expect("a MapSlot field");
+        let (key, value) = (field("key"), field("value"));
+        let at = format!("e->payload.{}.{}", some.name, payload.name);
+        let mut item = vec![self.debug_stmt("out", &format!("{at}.{}", key.name), key.ty)];
+        if !is_set {
+            item.push(text(": "));
+            item.push(self.debug_stmt("out", &format!("{at}.{}", value.name), value.ty));
+        }
+        let option_c = self.c_type(option);
+        let walk = format!(
+            "{open} {{ int first = 1; for (size_t i = 0; i < {access}{entries}.len; ++i) {{              const {option_c}* e = &((const {option_c}*){access}{entries}.ptr)[i];              if (e->tag != {tag}) continue; if (!first) {{ {sep} }} first = 0; {item} }} }} {close}",
+            open = text("{"),
+            close = text("}"),
+            sep = text(", "),
+            entries = entries.name,
+            tag = some.discriminant,
+            item = item.join(" "),
+        );
+        if is_set {
+            format!("if ({access}live == 0) {{ {} }} else {{ {walk} }}", text("set()"))
+        } else {
+            walk
+        }
+    }
+
     /// Define every requested `Display` function, to a fixpoint, then the
     /// print wrappers, and put their prototypes where the marker stands.
     fn emit_fmt_fns(&mut self) {
@@ -830,6 +882,15 @@ impl Emitter<'_> {
                         }
                         parts.push(text(")"));
                         parts.join(" ")
+                    }
+                    // `[TYP-39]` (ODR-034) — `{'a': 1}`, `{}`, `{1, 2}`, `set()`.
+                    TyKind::Struct(id)
+                        if matches!(
+                            self.types.struct_def(id).origin.as_ref().map(|(name, _)| name.as_str()),
+                            Some("std.collections.Map" | "std.collections.Set")
+                        ) =>
+                    {
+                        self.fmt_map_body(ty)
                     }
                     // `[STR-5]`, `[TYP-36]` — `Point(x=1, y=2)`.
                     TyKind::Struct(id) => {

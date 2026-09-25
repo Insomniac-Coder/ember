@@ -117,6 +117,11 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 | ODR-029 | what does `parse[T]()` accept (`[TXT-10]`)? | strict (no white space); `ParseError` is `Empty`, `Invalid` or `Overflow` | H10 |
 | ODR-030 | how can `Array` have a method named `extend` (`[LEX-15]`)? | `extend` is a contextual keyword | H11 |
 | ODR-031 | what do `sort_by`, `sort_by_key`, `windows` and `drain` take and give (`[STD-15]`)? | stable sorts, `f` once per element; shared windows, panic on `0`; `drain(r) -> Array[T]` over any integer range | H12 |
+| ODR-032 | what are `Map`'s and `Set`'s parameters and methods (`[STD-11]`, `[STD-12]`, `[STD-16]`, `[ALC-1]`, `[CTL-1]`)? | `Map[K, V, H, A]`; full method lists; `AsKey[K]: Hash` with `is_key` and `to_key`, every `K: Eq + Hash` is `AsKey[K]`; owned iteration yields keys | H13 |
+| ODR-033 | what does hashing promise, and when is it `Nondet` (`[HASH-1]`–`[HASH-3]`, `[DET-2]`)? | `Hasher`'s methods, user hashers allowed; `DefaultHasher` fixed per version on every target; making a `RandomState` is `Nondet`; amortised costs | H13 |
+| ODR-036 | may a `Map` hold views, as an `Array` of static `str`s may (`[TYP-15]`, `[STD-11]`)? | no: keys, values and elements are not views (`E3063`); `{…}` text with no context is `String` | H13 |
+| ODR-035 | how does `Set` have a method named `union` (`[LEX-15]`)? | `union` is contextual: reserved only where an item would begin `union` and a name | H13 |
+| ODR-034 | how do `Map`/`Set` print, compare and read as literals (`[TYP-39]`, `[TYP-38]`)? | `{}` and `set()`; Python's `repr` for strings; `==` as sets; a repeated key keeps its first position and last value; `[a, b]` is never a `Set` | H13 |
 
 The next number is ODR-027.
 
@@ -670,3 +675,24 @@ The next number is ODR-027.
     D-263 (`()` as a `void` value), D-267 (a field default naming a type parameter), D-268
     (implicit `Eq` of a type holding one with a written `eq`), D-270 (a generic enum's variant
     without type arguments), D-272 (`i128`/`u128` in C), D-273.
+* **2026-09-25 — `Map` and `Set` (ODR-032 to ODR-036, Hardened_13; D-261, D-267, D-268, D-275
+  to D-286).**
+  * `Map[K, V, H = DefaultHasher]` and `Set[T, H]` are Ember in `std/src/collections.em`, in the
+    prelude: insertion order in `entries`, an open-addressed `slots` table probed from the hash's
+    high bits, removed entries closed up once half are gone, a fresh `H.default()` per hash. The
+    methods are ODR-032's; `AsKey[K]` has `is_key` and `to_key`, every `K: Eq + Hash` is its own
+    `AsKey`, and std gives `str` `AsKey[String]`.
+  * The routes are general, keyed on the interface methods' names, not on `Map`: `m[k]` is
+    `*m.index(k)` (`index_mut` where written), `m[k] = v` calls `index_set`, `m[k] op= v` holds
+    the `index_mut` reference once, `k in m` calls `contains`, `len(m)` calls `len`, and a `for`
+    over a type with `iter()` and no `next` iterates `iter()`. `sorted(m)` sorts the keys.
+  * `{k: v}` and `{a, b}` literals (`{}` needs a type); a repeated key keeps its first position
+    and last value; text with no context is `String` (ODR-036). `{… for …}` is `E0900`.
+  * Printing: `{'a': 1}`, `{}`, `{1, 2}`, `set()`; `==` compares as sets of entries.
+  * ODR-035: `union` is contextual. ODR-036: no view keys or values (`E3063`).
+  * Found and fixed on the way: `Q: AsKey[K]` bounds (D-261), field defaults naming type
+    parameters (D-267), implicit `Eq` over a written `eq` (D-268), `!=` through `eq` (D-275),
+    `o == None` (D-276), one `L1001` per declaration (D-277), `Self` in generic types' methods
+    and `Self(…)` (D-278), `[TYP-36]`'s `Default` (D-281), struct `init` (D-283, part), and
+    instances made by signatures missing extensions (D-285). Open: D-279, D-280, D-282, D-284,
+    D-286.

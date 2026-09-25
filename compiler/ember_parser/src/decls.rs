@@ -219,9 +219,16 @@ impl Parser<'_> {
                 self.at_kw_at(1, Kw::Fn) || self.at_kw_at(1, Kw::Extern)
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
-            TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl(),
+            TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl(),
             _ => false,
         }
+    }
+
+    /// ODR-035 — where a `union` declaration would begin: `union` and a name.
+    /// The word is reserved there and an identifier everywhere else.
+    pub(crate) fn at_union_decl(&self) -> bool {
+        matches!(self.peek(), TokenKind::Ident(s) if s.is("union"))
+            && matches!(self.peek_at(1), TokenKind::Ident(_))
     }
 
     pub(crate) fn parse_item(&mut self) -> Option<Item> {
@@ -305,6 +312,17 @@ impl Parser<'_> {
             // `abstract class` — `abstract` is contextual (`[LEX-15]`).
             TokenKind::Ident(s) if s.is("abstract") && self.at_kw_at(1, Kw::Class) => {
                 Some(ItemKind::Class(self.parse_class()))
+            }
+            // ODR-035 — `union` is contextual: reserved only where a
+            // declaration would begin, an item `union` and a name.
+            TokenKind::Ident(_) if self.at_union_decl() => {
+                let span = self.span();
+                self.bump();
+                self.report(
+                    Diagnostic::error(codes::E0005, span, "`union` is reserved for a later version")
+                        .help("rename the item, or write `r#union` to use the word as an identifier"),
+                );
+                None
             }
             TokenKind::Reserved(reserved) => {
                 let reserved = *reserved;

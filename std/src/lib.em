@@ -4,7 +4,8 @@
 ##
 ##   `std.core`  Part IV §8's interfaces, and `Ordering`
 ##   `std.math`  Part XV's scalar mathematics
-##   `std.collections`  `[ARN-5]`'s Arena-backed collection declarations
+##   `std.collections`  `Map`, `Set` and hashing (`[STD-11]`, `[HASH-1]`), and
+##                      `[ARN-5]`'s Arena-backed collection declarations
 ##   `std.mem`  `[UNS-10]`'s lowest-level interior-mutability primitive
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1

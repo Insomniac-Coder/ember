@@ -18,9 +18,8 @@ fn reset(old: Bag) -> Bag:
     return Bag(Array[i32]())
 
 fn main():
-    c: Cell[i32] = Cell(1)
-    y = c.take()              #$ error[E2020]: `take` on `Cell[i32]` needs `i32: Default`
     b: Cell[Bag] = Cell(Bag(Array[i32]()))
+    y = b.take()              #$ error[E2020]: `take` on `Cell[Bag]` needs `Bag: Default`
     x = b.get()               #$ error[E2020]: `get` on `Cell[Bag]` needs `Bag: Copy`
     b.update(reset)            #$ error[E2020]: `update` on `Cell[Bag]` needs `Bag: Copy` or `Bag: Default`
     Cell(5).set(6)            #$ error[E2140]: `set` needs a cell to write into, not a temporary

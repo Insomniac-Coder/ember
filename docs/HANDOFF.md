@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 16:00 IST
+#### Start here after a context reset — state at 2026-09-25 21:00 IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10717,14 +10717,15 @@ the running narrative behind it.
   * `d01cbac` and `6f57fa2`: MSVC works (D-251 to D-253, part of D-255).
   * `9df14af`: D-255, MSVC on a long PATH, with a read-only review's three fixes.
   * `e2bcfb3`: the rest of `[STD-15]` (ODR-031, Hardened_12; D-256 to D-258).
-  * The Map-groundwork commit (D-259 to D-274), the newest.
+  * `b748723`: what `Map` needs first (D-259 to D-274); CI green.
+  * The `Map`/`Set` commit (ODR-032 to ODR-036, Hardened_13), the newest.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_12.md`,
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_13.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
-  sources are `tasks/spec-0.9.9/parts/`; `parts-h12/` is frozen.
-* **Next numbers:** ODR-032, D-275.
+  sources are `tasks/spec-0.9.9/parts/`; `parts-h13/` is frozen.
+* **Next numbers:** ODR-037, D-287.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10897,7 +10898,18 @@ nine failed. Fixed, each with a test that failed before:
   D-270 (a generic enum's variant without type arguments), D-272
   (`i128`/`u128` never reach C), D-273 (class handles are not `Hash`).
 
-**Immediate next task:** backlog item 1, at "D-268 and D-261, then `Map`".
+**Done next: `Map` and `Set`** (ODR-032 to ODR-036, Hardened_13). They are Ember
+in `std/src/collections.em` and in the prelude; `docs/MIGRATION-0.9.9.md`'s
+entry lists what was built and fixed. Where the routes live: the `index` route
+in the `IndexOrInstantiate` synthesis, `index_set` in the `Assign` arm (with
+`hold_called_place` for `op=`), `contains` in `synth_membership`, `len` in the
+prelude `len`, `iter()` in `check_for_iterator`, literals in
+`synth_map_literal`/`synth_set_literal`/`fill_collection`, printing in
+codegen's `fmt_map_body`. The own-key `AsKey` is `is_own_key`/`synth_own_key`.
+
+**Immediate next task:** backlog item 1's remainder: phase 2 of the Map/Set plan
+(two read-only reviewers, owner-approved), then the open defects it left
+(D-279, D-280, D-282, D-284, D-286) and `for k in owned m`.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
@@ -10984,9 +10996,8 @@ unless named otherwise):
    2026-09-25, recorded in `docs/DESIGN-MAP-SET-ITERATION.md`). Done: the
    generics probe and `Hash` (above). Next: D-268 and D-261; then rule the
    Map/Set ODRs (ODR-032 on; the checklist's open questions) and cut
-   Hardened_13; then `Map`/`Set` in Ember with explicit calls; then the
-   routes (`m[k]`, `m[k] = v`, `k in m`, `len`, `for`), printing, equality,
-   literals; then phase 2 of the plan, two read-only reviewers. After that:
+   Hardened_13 (done); `Map`/`Set` with their routes, printing, equality and
+   literals (done); then phase 2 of the plan, two read-only reviewers. After that:
    the coroutine transform, generator expressions and adapters with
    `[CTL-3b]` fusion.
 2. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.

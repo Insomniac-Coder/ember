@@ -1075,6 +1075,61 @@ impl Parser<'_> {
                     }
                 }
             }
+            // `[GRM-26]` — `{` whose first element is followed by `:` is a map
+            // literal, otherwise a set literal; `{}` is an empty map.
+            TokenKind::Punct(Punct::LBrace) => {
+                let start = self.span();
+                self.bump();
+                if self.eat_punct(Punct::RBrace) {
+                    ExprKind::MapLit(Vec::new())
+                } else {
+                    let first = self.parse_expr();
+                    if self.eat_punct(Punct::Colon) {
+                        let value = self.parse_expr();
+                        if self.at_kw(Kw::For) {
+                            self.parse_comp_clauses();
+                            self.expect_punct(Punct::RBrace);
+                            self.report(Diagnostic::error(
+                                codes::E0900,
+                                start.to(self.prev_span()),
+                                "a map comprehension is not implemented yet",
+                            ));
+                            ExprKind::Error
+                        } else {
+                            let mut entries = vec![(first, value)];
+                            while self.eat_punct(Punct::Comma) {
+                                if self.at_punct(Punct::RBrace) {
+                                    break;
+                                }
+                                let key = self.parse_expr();
+                                self.expect_punct(Punct::Colon);
+                                entries.push((key, self.parse_expr()));
+                            }
+                            self.expect_punct(Punct::RBrace);
+                            ExprKind::MapLit(entries)
+                        }
+                    } else if self.at_kw(Kw::For) {
+                        self.parse_comp_clauses();
+                        self.expect_punct(Punct::RBrace);
+                        self.report(Diagnostic::error(
+                            codes::E0900,
+                            start.to(self.prev_span()),
+                            "a set comprehension is not implemented yet",
+                        ));
+                        ExprKind::Error
+                    } else {
+                        let mut items = vec![first];
+                        while self.eat_punct(Punct::Comma) {
+                            if self.at_punct(Punct::RBrace) {
+                                break;
+                            }
+                            items.push(self.parse_expr());
+                        }
+                        self.expect_punct(Punct::RBrace);
+                        ExprKind::SetLit(items)
+                    }
+                }
+            }
             TokenKind::Ident(_) | TokenKind::RawIdent(_) => {
                 let mut segments = vec![self.expect_ident()];
                 // `[LEX-21]`, `[GRM-24]` (0.9.9) — `.` is the one path

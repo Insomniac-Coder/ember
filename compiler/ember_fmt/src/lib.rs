@@ -890,6 +890,15 @@ impl Printer<'_> {
                 let items: Vec<String> = items.iter().map(|e| self.expr_pure(e)).collect();
                 format!("[{}]", items.join(", "))
             }
+            ast::ExprKind::MapLit(entries) => {
+                let entries: Vec<String> =
+                    entries.iter().map(|(k, v)| format!("{}: {}", self.expr_pure(k), self.expr_pure(v))).collect();
+                format!("{{{}}}", entries.join(", "))
+            }
+            ast::ExprKind::SetLit(items) => {
+                let items: Vec<String> = items.iter().map(|e| self.expr_pure(e)).collect();
+                format!("{{{}}}", items.join(", "))
+            }
             ast::ExprKind::ArrayRepeat { value, count } => {
                 format!("[{}; {}]", self.expr_pure(value), self.expr_pure(count))
             }

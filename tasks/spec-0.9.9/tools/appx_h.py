@@ -236,6 +236,24 @@ ODRS = [
                 'apart, none when `n > len`, and panics on `0`; `drain(r) -> Array[T]` takes any integer range and '
                 'panics outside `0..=len` (Hardened_12)',
      '`[STD-15]`'),
+    ('ODR-032', '`Map[K, V, H, A]` and `Set[T, H, A]`: the hasher before the allocator; the full method lists '
+                'with signatures; `AsKey[K]: Hash` has `is_key` and `to_key`, and every `K: Eq + Hash` is '
+                '`AsKey[K]`; owned iteration of a `Map` yields its keys (Hardened_13)',
+     '`[STD-11]`, `[STD-12]`, `[STD-16]`, `[ALC-1]`, `[CTL-1]`'),
+    ('ODR-033', 'the `Hasher` methods, and users may implement it; `DefaultHasher`\'s values are fixed for one '
+                'version on every target; making a `RandomState` is `Nondet`; a panicking `hash` or `eq` aborts; '
+                '`Map`\'s constant time is amortised (Hardened_13)',
+     '`[HASH-1]`, `[HASH-2]`, `[HASH-3]`, `[DET-2]`, `[STD-11]`'),
+    ('ODR-034', 'an empty `Map` prints `{}` and an empty `Set` `set()`; strings `Debug` as Python\'s `repr`; '
+                '`Map`/`Set` `==` compares as sets; a repeated literal key keeps its first position and last '
+                'value; a list literal is never a `Set`; `sorted(m)` sorts the keys (Hardened_13)',
+     '`[TYP-39]`, `[STD-16]`, `[TYP-38]`'),
+    ('ODR-035', '`union` is contextual: reserved only where an item would begin `union` and a name, so `Set` '
+                'can have its `union` method (Hardened_13)',
+     '`[LEX-15]`'),
+    ('ODR-036', 'a `Map`\'s keys and values and a `Set`\'s elements are not views (`E3063`); text in a `{…}` '
+                'literal with no context is `String` (Hardened_13)',
+     '`[STD-11]`, `[TYP-38]`'),
 ]
 
 H5_HEAD = """
@@ -245,7 +263,7 @@ Each ambiguity found while implementing 0.9.9 is an owner decision request (`doc
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
 Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
-Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031.
+Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036.
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -179,6 +179,7 @@ pub fn check(
         checker.collect_generic_extensions(&loaded.module);
     }
     checker.resolve_pending_generic_implements();
+    checker.resolve_pending_bound_interfaces();
     checker.extend_early_instances();
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
@@ -194,6 +195,10 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    // An instance a signature made before the implementations were collected
+    // may have missed an extension whose bound they meet (`Map[String, V]`'s
+    // `K: Hash` needs `String`'s); it is offered each one again.
+    checker.extend_early_instances();
     checker.resolve_derived_clones();
     checker.validate_class_methods(modules);
     checker.assign_class_virtual_slots();
@@ -980,6 +985,17 @@ struct Checker<'a> {
     /// `[TYP-36]` — the structs and enums declared `@derive(Hash)`, by
     /// declaration name (a generic one's instances by their origin).
     hash_derived: HashSet<Symbol>,
+    /// D-261 — an interface instance whose arguments name type parameters
+    /// (`AsKey[K]` in a bound), by generic interface and arguments, and back:
+    /// a use substitutes the arguments and instantiates again.
+    open_interfaces: HashMap<(Symbol, Vec<Ty>), Symbol>,
+    open_interface_origin: HashMap<Symbol, (Symbol, Vec<Ty>)>,
+    /// Bounds naming a generic interface before interfaces were collected
+    /// (a generic type's method): instantiated right after they are.
+    pending_bound_interfaces: Vec<(Symbol, Vec<Ty>, Span)>,
+    /// D-278 — the generic type whose methods are being collected, with its
+    /// own parameters: `W[T]` inside `W`'s methods is their `Self`.
+    collecting_generic: Option<(Symbol, Vec<Ty>)>,
     /// The loops currently open, innermost last, each with its label if it has
     /// one. `break`/`continue` index into this to find their target.
     loop_labels: Vec<Option<Symbol>>,
@@ -1109,6 +1125,10 @@ impl<'a> Checker<'a> {
             or_bindings: None,
             match_by_ref: false,
             hash_derived: HashSet::new(),
+            open_interfaces: HashMap::new(),
+            open_interface_origin: HashMap::new(),
+            pending_bound_interfaces: Vec::new(),
+            collecting_generic: None,
             loop_labels: Vec::new(),
             in_defer: false,
             in_unsafe: false,
@@ -1713,12 +1733,18 @@ impl<'a> Checker<'a> {
             // imported. Storing what was written made an imported bound
             // resolve to nothing and report `[TYP-17]`'s "its bounds do not
             // provide one" about a bound that did.
-            let bounds = param
-                .bounds
-                .iter()
-                .filter_map(interface_name)
-                .map(|name| self.resolve_name(name))
-                .collect();
+            let mut bounds = Vec::new();
+            for bound in &param.bounds {
+                match interface_name(bound) {
+                    Some(name) => bounds.push(self.resolve_name(name)),
+                    // D-261 — `Q: AsKey[K]` names an instance of a generic
+                    // interface, over the parameters declared before it.
+                    None if matches!(&bound.kind, ast::TypeKind::Path { args, .. } if !args.is_empty()) => {
+                        bounds.extend(self.bound_interface(bound));
+                    }
+                    None => {}
+                }
+            }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
             declared.push(GenericParam { name: param.name.name, bounds, callable: None, default });
         }
@@ -2091,7 +2117,7 @@ impl<'a> Checker<'a> {
                     "RangeTo",
                 ],
             ),
-            ("std.collections", &["Hash"]),
+            ("std.collections", &["Hash", "Map", "Set"]),
         ];
         let by_path: HashMap<String, usize> =
             modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
@@ -2649,15 +2675,16 @@ impl<'a> Checker<'a> {
                     _ => None,
                 })
                 .collect();
+            let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
+            self.collecting_generic = Some((name, own));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                 if fn_decl.body.is_none() {
                     continue;
                 }
-                let Some((receiver, signature)) = self.method_signature(
+                let Some((receiver, signature)) = self.generic_method_signature(
                     fn_decl,
-                    None,
                     &member.attrs,
                     member.span,
                     params.len(),
@@ -2682,6 +2709,7 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
+            self.collecting_generic = None;
             self.type_params.clear();
             if has_derive(&item.attrs, "Hash") {
                 self.hash_derived.insert(name);
@@ -2731,9 +2759,8 @@ impl<'a> Checker<'a> {
                 if fn_decl.body.is_none() {
                     continue;
                 }
-                let Some((receiver, signature)) = self.method_signature(
+                let Some((receiver, signature)) = self.generic_method_signature(
                     fn_decl,
-                    None,
                     &member.attrs,
                     member.span,
                     params.len(),
@@ -2816,9 +2843,8 @@ impl<'a> Checker<'a> {
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
-                let Some((receiver, signature)) = self.method_signature(
+                let Some((receiver, signature)) = self.generic_method_signature(
                     fn_decl,
-                    None,
                     &member.attrs,
                     member.span,
                     params.len(),
@@ -2903,9 +2929,8 @@ impl<'a> Checker<'a> {
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
-                let Some((receiver, signature)) = self.method_signature(
+                let Some((receiver, signature)) = self.generic_method_signature(
                     fn_decl,
-                    None,
                     &member.attrs,
                     member.span,
                     params.len(),
@@ -3345,11 +3370,13 @@ impl<'a> Checker<'a> {
             params.push((Symbol::intern("self"), ty, receiver, method.span));
         }
         for &(param_name, param_ty, mode, param_span) in &method.params {
-            params.push((param_name, self.substitute_ty(param_ty, &combined), mode, param_span));
+            let param_ty = self.substitute_ty(param_ty, &combined);
+            params.push((param_name, self.types.substitute_self(param_ty, ty), mode, param_span));
         }
+        let ret = self.substitute_ty(method.ret, &combined);
         let signature = Signature {
             params,
-            ret: self.substitute_ty(method.ret, &combined),
+            ret: self.types.substitute_self(ret, ty),
             generics: method
                 .generics
                 .iter()
@@ -4684,8 +4711,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         }
-        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
-        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        let instance = self.interface_instance_name(name, args);
         if self.interfaces.contains_key(&instance) {
             return Some(instance);
         }
@@ -5011,6 +5037,21 @@ impl<'a> Checker<'a> {
     /// A missing receiver denotes an associated function, not a malformed
     /// method; `Default.default()` is the first standard interface member
     /// whose semantics depend on this distinction.
+    /// D-278 — a generic type's method, whose `Self` is the instance: a
+    /// placeholder now, replaced by each instance (`register_recipe_method`).
+    fn generic_method_signature(
+        &mut self,
+        decl: &ast::FnDecl,
+        attrs: &[ast::Attribute],
+        span: Span,
+        generic_index_base: usize,
+    ) -> Option<(Option<Mode>, Signature)> {
+        let outer = self.self_ty.replace(self.common.self_ty);
+        let signature = self.method_signature(decl, None, attrs, span, generic_index_base);
+        self.self_ty = outer;
+        signature
+    }
+
     fn method_signature(
         &mut self,
         decl: &ast::FnDecl,
@@ -5680,6 +5721,13 @@ impl<'a> Checker<'a> {
         span: Span,
         name_span: Span,
     ) -> Ty {
+        if let Some((collecting, own)) = &self.collecting_generic
+            && self.resolve_name(name) == *collecting
+            && args.len() == own.len()
+            && args.iter().zip(own).all(|((arg, _), own)| arg == own)
+        {
+            return self.common.self_ty;
+        }
         let require = |this: &mut Self, expected: usize| {
             if args.len() == expected {
                 true
@@ -6029,6 +6077,14 @@ impl<'a> Checker<'a> {
     /// integer and float kinds, floats the float kinds, and text (`str`,
     /// `String`, `bool`, `char`) `s` and a precision that shortens it.
     fn format_spec_applies(&self, spec: &hir::FormatSpec, ty: Ty) -> Result<(), String> {
+        // A parameter bounded by `Debug` or `Display` formats in each
+        // instance; the opaque body is checked and never emitted.
+        if let TyKind::Param { index, .. } = *self.types.kind(ty)
+            && self.param_bound_named(index, &["Display", "Debug"])
+            && matches!(spec.kind, None | Some('?' | 's'))
+        {
+            return Ok(());
+        }
         let text = self.is_text(ty) || matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char);
         let float_kind = matches!(spec.kind, Some('e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%'));
         match self.types.kind(ty) {
@@ -6114,12 +6170,12 @@ impl<'a> Checker<'a> {
             | TyKind::Range(_)
             | TyKind::Class(_)
             | TyKind::ClassInterface(_) => true,
-            // ponytail: a component with a hand-written `eq` fails closed
-            // (E2040) until generated equality can call a method.
+            // A component with a written `eq` has `Eq`; comparing a type that
+            // holds one goes through `synth_eq_of` (D-268).
             TyKind::Struct(_) | TyKind::Enum(_)
                 if self.methods.contains_key(&(ty, Symbol::intern("eq"))) =>
             {
-                false
+                true
             }
             // `@no_derive(Eq)` opts out of the implicit one.
             TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
@@ -6774,7 +6830,8 @@ impl<'a> Checker<'a> {
             latebound: bound.latebound,
         });
         let default = param.default.map(|default| self.substitute_ty(default, args));
-        GenericParam { name: param.name, bounds: param.bounds.clone(), callable, default }
+        let bounds = param.bounds.iter().map(|&bound| self.substitute_bound(bound, args)).collect();
+        GenericParam { name: param.name, bounds, callable, default }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -6791,6 +6848,78 @@ impl<'a> Checker<'a> {
             };
             solved[index] = Some(self.substitute_ty(default, &known));
         }
+    }
+
+    /// The name of `name[args]`. Two parameters may share a name at different
+    /// positions, so an instance over parameters is numbered rather than
+    /// named by them, and remembered so a use can substitute it (D-261).
+    fn interface_instance_name(&mut self, name: Symbol, args: &[Ty]) -> Symbol {
+        let key = (name, args.to_vec());
+        if let Some(&instance) = self.open_interfaces.get(&key) {
+            return instance;
+        }
+        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
+        if !args.iter().any(|&ty| self.types.is_generic(ty)) {
+            let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+            self.open_interface_origin.insert(instance, key);
+            return instance;
+        }
+        let instance = Symbol::intern(&format!("{name}_{}_{}", stem.join("_"), self.open_interfaces.len()));
+        self.open_interfaces.insert(key.clone(), instance);
+        self.open_interface_origin.insert(instance, key);
+        instance
+    }
+
+    /// D-261 — the interface a bound with arguments names. A generic type's
+    /// methods declare their parameters before interfaces are collected; such
+    /// a bound is named now and instantiated once they are.
+    fn bound_interface(&mut self, bound: &ast::TypeExpr) -> Option<Symbol> {
+        let ast::TypeKind::Path { segments, args } = &bound.kind else { return None };
+        let [single] = segments.as_slice() else { return self.resolve_interface_use(bound) };
+        let name = self.resolve_name(single.name);
+        if self.interfaces.contains_key(&name) {
+            return self.resolve_interface_use(bound);
+        }
+        let mut resolved = Vec::with_capacity(args.len());
+        for arg in args {
+            let ast::GenericArg::Type(arg) = arg else { return self.resolve_interface_use(bound) };
+            resolved.push(self.resolve_type(arg));
+        }
+        let instance = self.interface_instance_name(name, &resolved);
+        self.pending_bound_interfaces.push((name, resolved, bound.span));
+        Some(instance)
+    }
+
+    /// An interface as the source writes it: `AsKey[String]`, not the
+    /// instance's name.
+    fn interface_shown(&self, interface: Symbol) -> String {
+        match self.open_interface_origin.get(&interface) {
+            Some((name, args)) => {
+                let args: Vec<String> = args.iter().map(|&ty| self.types.display(ty)).collect();
+                format!("{name}[{}]", args.join(", "))
+            }
+            None => interface.to_string(),
+        }
+    }
+
+    fn resolve_pending_bound_interfaces(&mut self) {
+        for (name, args, span) in std::mem::take(&mut self.pending_bound_interfaces) {
+            match self.interfaces.get(&name).cloned() {
+                Some(definition) => {
+                    let _ = self.instantiate_interface(name, &definition, &args, span);
+                }
+                None => self.error(codes::E1010, span, format!("cannot find interface `{name}` in this scope")),
+            }
+        }
+    }
+
+    /// D-261 — a bound after substitution: an instance over parameters is
+    /// instantiated again over their arguments; any other bound is itself.
+    fn substitute_bound(&mut self, bound: Symbol, args: &[Ty]) -> Symbol {
+        let Some((name, over)) = self.open_interface_origin.get(&bound).cloned() else { return bound };
+        let Some(definition) = self.interfaces.get(&name).cloned() else { return bound };
+        let substituted: Vec<Ty> = over.iter().map(|&ty| self.substitute_ty(ty, args)).collect();
+        self.instantiate_interface(name, &definition, &substituted, Span::DUMMY).unwrap_or(bound)
     }
 
     /// The type arguments with each omitted trailing one taken from its
@@ -6943,6 +7072,121 @@ impl<'a> Checker<'a> {
         slots
     }
 
+    /// `std.collections.Map` or `Set` when `ty` is an instance of one.
+    fn collection_named(&self, ty: Ty) -> Option<&'static str> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match self.types.struct_def(id).origin.as_ref().map(|(name, _)| name.as_str()) {
+            Some("std.collections.Map") => Some("std.collections.Map"),
+            Some("std.collections.Set") => Some("std.collections.Set"),
+            _ => None,
+        }
+    }
+
+    /// The type a literal's element has with no context: its own, literals
+    /// committed, and text as `String`, since a map holds no views (ODR-036).
+    fn collection_element_type(&mut self, element: &ast::Expr) -> Ty {
+        let quiet = self.sink.mark();
+        let value = self.synth_committed(element);
+        let value = self.read_through(value);
+        self.sink.rollback(quiet);
+        if self.is_text(value.ty) {
+            self.types.intern(TyKind::Vec { elem: self.common.u8 })
+        } else {
+            value.ty
+        }
+    }
+
+    /// `[TYP-38]` (ODR-034) — a map literal is `Map[K, V]()` and one `insert`
+    /// per entry, in order, so a repeated key keeps its first position and its
+    /// last value. `K` and `V` come from the type expected, else from the
+    /// first entry.
+    fn synth_map_literal(&mut self, entries: &[(ast::Expr, ast::Expr)], expected: Option<Ty>, span: Span) -> Expr {
+        let ty = match expected.filter(|&want| self.collection_named(want) == Some("std.collections.Map")) {
+            Some(ty) => ty,
+            None => {
+                let Some((key, value)) = entries.first() else {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2060, span, "cannot tell what `{}` holds")
+                            .help("give it a type: `m: Map[String, int] = {}`"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                let key = self.collection_element_type(key);
+                let value = self.collection_element_type(value);
+                self.instantiate_named_generic("std.collections.Map", &[key, value], span)
+            }
+        };
+        let calls: Vec<Vec<&ast::Expr>> = entries.iter().map(|(key, value)| vec![key, value]).collect();
+        self.fill_collection(ty, "insert", calls, span)
+    }
+
+    /// `[TYP-38]` — a set literal is `Set[T]()` and one `add` per element.
+    fn synth_set_literal(&mut self, items: &[ast::Expr], expected: Option<Ty>, span: Span) -> Expr {
+        let ty = match expected.filter(|&want| self.collection_named(want) == Some("std.collections.Set")) {
+            Some(ty) => ty,
+            None => {
+                let element = self.collection_element_type(&items[0]);
+                self.instantiate_named_generic("std.collections.Set", &[element], span)
+            }
+        };
+        let calls: Vec<Vec<&ast::Expr>> = items.iter().map(|item| vec![item]).collect();
+        self.fill_collection(ty, "add", calls, span)
+    }
+
+    /// An empty collection of type `ty`, then `method` called with each group
+    /// of arguments in order, as one expression.
+    fn fill_collection(&mut self, ty: Ty, method: &str, calls: Vec<Vec<&ast::Expr>>, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return error };
+        let Some(empty) = self.construct_through_init(id, &[], span) else { return error };
+        let local = self.declare(None, ty, span);
+        let mut stmts = vec![Stmt::Let { local, init: Some(empty) }];
+        let name = ast::Ident { name: Symbol::intern(method), span };
+        for call in calls {
+            let args: Vec<ast::Arg> =
+                call.into_iter().map(|value| ast::Arg { name: None, value: value.clone(), span: value.span }).collect();
+            let receiver = Expr { ty, kind: ExprKind::Local(local), span };
+            let call = self.synth_registered_method(receiver, span, name, &args, Vec::new(), span);
+            stmts.push(Stmt::Expr(call));
+        }
+        let value = Expr { ty, kind: ExprKind::Local(local), span };
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// `[STR-6]` (D-283) — a struct that declares `init(self, …)` is built by
+    /// it, not by the memberwise constructor: from its field defaults, then
+    /// `init` runs on the value with the arguments. `init`'s own visibility
+    /// decides who may construct. `None` for a struct without an `init`.
+    fn construct_through_init(&mut self, id: StructId, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let ty = self.types.intern(TyKind::Struct(id));
+        let init = Symbol::intern("init");
+        self.lookup_method(ty, init)?;
+        let name = self.types.struct_def(id).name;
+        if let Some(field) = self.types.struct_def(id).fields.iter().find(|field| !field.has_default) {
+            let field = field.name;
+            self.error(
+                codes::E0900,
+                span,
+                format!("`init` on `{name}`, whose field `{field}` has no default, is not implemented yet"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+        let slots = (0..self.types.struct_def(id).fields.len()).map(|_| None).collect();
+        let value = self.finish_struct_literal(id, name, slots, span);
+        let local = self.declare(None, ty, span);
+        let receiver = Expr { ty, kind: ExprKind::Local(local), span };
+        let call = self.synth_registered_method(receiver, span, ast::Ident { name: init, span }, args, Vec::new(), span);
+        let result = Expr { ty, kind: ExprKind::Local(local), span };
+        Some(Expr {
+            ty,
+            kind: ExprKind::Block {
+                block: Block { stmts: vec![Stmt::Let { local, init: Some(value) }, Stmt::Expr(call)], span },
+                value: Box::new(result),
+            },
+            span,
+        })
+    }
+
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
     /// struct. The type arguments come from the values, unless they were
     /// written out.
@@ -6971,6 +7215,22 @@ impl<'a> Checker<'a> {
         for (slot, ty) in explicit.iter().enumerate() {
             if slot < solved.len() {
                 solved[slot] = Some(*ty);
+            }
+        }
+        // D-283 — a struct with an `init` takes `init`'s arguments, not its
+        // fields: its parameters are written out or defaulted.
+        if decl.methods.iter().any(|method| method.name.is("init") && method.receiver.is_some()) {
+            self.fill_solved_defaults(&decl.generic_params, &mut solved);
+            let Some(substitution) = solved.iter().copied().collect::<Option<Vec<Ty>>>() else {
+                self.error(codes::E2060, span, format!("cannot tell `{name}`'s type arguments here; write `{name}[...](...)`"));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let ty = self.instantiate_struct(name, decl, &substitution, span);
+            let TyKind::Struct(id) = *self.types.kind(ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            if let Some(built) = self.construct_through_init(id, args, span) {
+                return built;
             }
         }
         // Unify each declared field type with the value given for it.
@@ -7094,6 +7354,24 @@ impl<'a> Checker<'a> {
                     decl.params.len(),
                     args.len()
                 ),
+            );
+            return self.common.error;
+        }
+        // ODR-036 — a `Map`'s keys and values and a `Set`'s elements are not
+        // views: a view inside would make the map itself a view, confined to
+        // locals (`[TYP-15]`). Text keys are `String`.
+        let elements = match name.as_str() {
+            "std.collections.Map" => 2,
+            "std.collections.Set" => 1,
+            _ => 0,
+        };
+        if let Some(&view) = args.iter().take(elements).find(|&&arg| self.types.is_view(arg)) {
+            let shown = self.types.display(view);
+            let owner = if elements == 2 { "a `Map` key or value" } else { "a `Set` element" };
+            self.sink.emit(
+                Diagnostic::error(codes::E3063, span, format!("`{shown}` is a view, so it may not be {owner}"))
+                    .help("store an owned value: `String` for text")
+                    .note("a view inside a map would make the map a view, confined to locals [TYP-15] (ODR-036)"),
             );
             return self.common.error;
         }
@@ -9758,9 +10036,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // ordinary capture/lifetime checks establish the safe boundary.
             ast::ExprKind::Lambda(_) => true,
             ast::ExprKind::Match { .. } => true,
-            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => {
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
                 items.iter().any(Self::class_init_uses_whole_self)
             }
+            ast::ExprKind::MapLit(entries) => entries
+                .iter()
+                .any(|(k, v)| Self::class_init_uses_whole_self(k) || Self::class_init_uses_whole_self(v)),
             ast::ExprKind::Comprehension { element, clauses, .. } => {
                 Self::class_init_uses_whole_self(element)
                     || clauses.iter().any(|clause| match clause {
@@ -10769,6 +11050,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                 }
 
+                // `[STD-17]` — `a[i] = v` calls `index_set(i, v)` when the type
+                // has one: a `Map` inserts. The base is looked at quietly
+                // first, since most targets are ordinary places.
+                if op.is_none()
+                    && let ast::ExprKind::IndexOrInstantiate { base, args } = &target.kind
+                    && let [ast::TypeOrExpr::Expr(key)] = args.as_slice()
+                {
+                    let quiet = self.sink.mark();
+                    let probe = self.synth(base);
+                    let probe = self.read_through(probe);
+                    self.sink.rollback(quiet);
+                    if self.lookup_method(probe.ty, Symbol::intern("index_set")).is_some() {
+                        let receiver = self.synth(base);
+                        let receiver = self.read_through(receiver);
+                        let name = ast::Ident { name: Symbol::intern("index_set"), span: target.span };
+                        let call_args = [
+                            ast::Arg { name: None, value: key.clone(), span: key.span },
+                            ast::Arg { name: None, value: value.clone(), span: value.span },
+                        ];
+                        let call = self.synth_registered_method(receiver, base.span, name, &call_args, Vec::new(), stmt.span);
+                        out.push(Stmt::Expr(call));
+                        return;
+                    }
+                }
                 let previous_target = self.in_assignment_target;
                 self.in_assignment_target = true;
                 let place = self.synth(target);
@@ -10870,18 +11175,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
                     return;
                 }
+                // A place reached through a call — `m[k]` through `index_mut`
+                // (`[STD-17]`) — is evaluated once: `op=` reads and writes
+                // through the one reference.
+                let (place, mut reread) = self.hold_called_place(place, out);
                 let value = match op {
                     // `a op= b` is `a = a op b` when no `AddAssign` exists
                     // (`[TYP-21]`); Phase 0 has scalars only, so it always is.
                     Some(ast::BinOp::Pow) => {
-                        let base = self.synth(target);
+                        let base = match reread.take() {
+                            Some(read) => read,
+                            None => self.synth(target),
+                        };
                         let exponent = self.synth(value);
                         let raised = self.power(base, exponent, value, stmt.span);
                         self.coerce(raised, place_ty)
                     }
                     Some(bin) => {
                         let rhs = self.check_expr(value, place_ty);
-                        let lhs = self.synth(target);
+                        let lhs = match reread.take() {
+                            Some(read) => read,
+                            None => self.synth(target),
+                        };
                         let op = convert_binop(*bin);
                         if op.is_some_and(|op| {
                             self.reject_integer_true_division(op, place_ty, stmt.span)
@@ -14654,6 +14969,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let elem = match *self.types.kind(haystack.ty) {
             TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            // `[STD-8]` — a type with a `contains` method: `k in m`.
+            _ if self.lookup_method(haystack.ty, Symbol::intern("contains")).is_some() => {
+                let name = ast::Ident { name: Symbol::intern("contains"), span };
+                let arg = ast::Arg { name: None, value: needle.clone(), span: needle.span };
+                let found = self.synth_registered_method(haystack, container.span, name, &[arg], Vec::new(), span);
+                return negated(found);
+            }
             _ => {
                 let shown = self.types.display(haystack.ty);
                 self.sink.emit(
@@ -15130,6 +15452,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let elem = match *self.types.kind(value.ty) {
             TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
             _ if value.ty == self.common.error => return error,
+            // ODR-034 — `sorted(m)` is the keys, `sorted(s)` the elements.
+            _ if self.collection_named(value.ty).is_some() => {
+                let method = match self.collection_named(value.ty) {
+                    Some("std.collections.Map") => "sorted_keys",
+                    _ => "sorted_elements",
+                };
+                if self.lookup_method(value.ty, Symbol::intern(method)).is_none() {
+                    let shown = self.types.display(value.ty);
+                    self.error(codes::E2040, span, format!("`sorted` of a `{shown}` needs its elements `Ord` and `Clone`"));
+                    return error;
+                }
+                let name = ast::Ident { name: Symbol::intern(method), span };
+                let value_span = value.span;
+                return self.synth_registered_method(value, value_span, name, &[], Vec::new(), span);
+            }
             _ => {
                 let shown = self.types.display(value.ty);
                 self.error(codes::E0900, args[0].value.span, format!("`sorted` of a `{shown}` is not implemented yet"));
@@ -15369,6 +15706,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     TyKind::Array { len, .. } => Expr { ty: int_ty, kind: ExprKind::Int(u128::from(len)), span },
                     _ if value.ty == self.common.error => error,
+                    // `[STD-26]` — `len(x)` is `x.len()` for a collection.
+                    _ if self.lookup_method(value.ty, Symbol::intern("len")).is_some() => {
+                        let name = ast::Ident { name: Symbol::intern("len"), span };
+                        let value_span = value.span;
+                        self.synth_registered_method(value, value_span, name, &[], Vec::new(), span)
+                    }
                     _ => {
                         let shown = self.types.display(value.ty);
                         self.error(codes::E0900, positional[0].span, format!("`len` of a `{shown}` is not implemented yet"));
@@ -15807,6 +16150,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
         }
 
+        // `[CTL-1]` — a type that is `Iterable` rather than an iterator is
+        // borrowed for the loop and iterated through `iter()`: `for k in m:`.
+        let iterable = if self.lookup_method(referent, Symbol::intern("next")).is_none()
+            && self.lookup_method(referent, Symbol::intern("iter")).is_some()
+        {
+            let name = ast::Ident { name: Symbol::intern("iter"), span: iter.span };
+            let iterable = self.read_through(iterable);
+            self.synth_registered_method(iterable, iter.span, name, &[], Vec::new(), iter.span)
+        } else {
+            iterable
+        };
         // The iterator itself is a local, because `next` mutates it.
         self.scopes.push(HashMap::new());
         let it_local = self.declare(Some(Symbol::intern("__it")), iterable.ty, iter.span);
@@ -17122,6 +17476,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
             ast::ExprKind::Lit(lit) => self.synth_literal(lit, span),
 
+            // `[TYP-38]`, `[GRM-26]` — `{k: v, …}` and `{a, …}`.
+            ast::ExprKind::MapLit(entries) => self.synth_map_literal(entries, expected, span),
+            ast::ExprKind::SetLit(items) => self.synth_set_literal(items, expected, span),
+
             ast::ExprKind::Range { lo, hi, inclusive } => {
                 self.synth_range_value((lo.as_deref(), hi.as_deref(), *inclusive), expected, span)
             }
@@ -17246,6 +17604,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // element type and the rest are checked against it, which puts the
             // error on the element that disagrees rather than on the whole
             // literal.
+            ast::ExprKind::ArrayLit(items)
+                if expected.is_some_and(|want| self.collection_named(want) == Some("std.collections.Set")) =>
+            {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, "a list literal is not a `Set`")
+                        .help("write the set with braces: `{a, b}`")
+                        .note("`[…]` is always a list; `{…}` makes a `Set` or a `Map` [TYP-38]"),
+                );
+                let _ = items;
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
+            }
             ast::ExprKind::ArrayLit(items) => {
                 // `[TYP-38]` (0.9.9) — a list literal has the type its context
                 // expects: `[T; N]` or `Span[T]` (a fixed array, and a view of
@@ -17383,6 +17752,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     _ => None,
                 };
                 let Some(elem) = elem else {
+                    // `[TYP-20]` — `a[i]` on a type with an `index` method is
+                    // `*a.index(i)`, and `*a.index_mut(i)` where it is written.
+                    let method = if self.in_assignment_target { "index_mut" } else { "index" };
+                    if let [ast::TypeOrExpr::Expr(key)] = args.as_slice()
+                        && self.lookup_method(base.ty, Symbol::intern(method)).is_some()
+                    {
+                        let name = ast::Ident { name: Symbol::intern(method), span };
+                        let arg = ast::Arg { name: None, value: key.clone(), span: key.span };
+                        let call = self.synth_registered_method(base, base_ast.span, name, &[arg], Vec::new(), span);
+                        return self.read_through(call);
+                    }
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
                         self.error(codes::E2020, span, format!("cannot index `{shown}`"));
@@ -18011,6 +18391,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let value = self.synth_committed(callee);
             return self.call_value(value, args, span);
         };
+        // D-278 — `Self(…)` is the memberwise constructor of the type being
+        // declared (Part IV §8's constructors are written this way).
+        if let [single] = segments.as_slice()
+            && single.name.is("Self")
+            && let Some(owner) = self.self_ty
+        {
+            match *self.types.kind(owner) {
+                TyKind::Struct(id) => {
+                    let name = self.types.struct_def(id).name;
+                    return self.synth_struct_literal(id, name, args, span);
+                }
+                TyKind::Class(id) => {
+                    let name = self.types.class_def(id).name;
+                    return self.synth_class_constructor(id, name, args, &[], span);
+                }
+                _ => {}
+            }
+        }
         // `[MOD-3]` — `import a.b.c` binds `c` as a namespace, so `c.f(x)` is
         // a call into that module.
         let namespace = if segments.len() > 1 {
@@ -18931,8 +19329,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in &param.bounds {
+                let bound = &self.substitute_bound(*bound, &substitution);
                 if !self.implements(ty, *bound) {
                     let shown = self.types.display(ty);
+                    let bound = &self.interface_shown(*bound);
                     self.error(
                         codes::E2040,
                         span,
@@ -19163,8 +19563,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in &param.bounds {
+                let bound = &self.substitute_bound(*bound, &substitution);
                 if !self.implements(ty, *bound) {
                     let shown = self.types.display(ty);
+                    let bound = &self.interface_shown(*bound);
                     self.error(
                         codes::E2040,
                         span,
@@ -19573,6 +19975,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
     fn implements(&self, ty: Ty, interface: Symbol) -> bool {
+        // `[STD-12]` (ODR-032) — every `K: Eq + Hash` is `AsKey[K]`.
+        if let Some((generic, args)) = self.open_interface_origin.get(&interface)
+            && generic.as_str() == "std.collections.AsKey"
+            && args.as_slice() == [ty]
+            && self.is_own_key(ty)
+        {
+            return true;
+        }
         if let TyKind::Param { index, .. } = *self.types.kind(ty) {
             return self
                 .current_generics
@@ -20172,6 +20582,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             );
         }
+        // A built-in generic instance takes its extensions at first use, an
+        // associated function's as a method's (`[GRM-34]`).
+        self.extend_builtin_instance(owner);
         let Some(entry) = self.associated.get(&(owner, name.name)) else {
             let shown = self.types.display(owner);
             self.error(
@@ -21411,6 +21824,31 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && self.lookup_method(receiver.ty, name.name).is_none()
         {
             return self.clone_value(receiver);
+        }
+        // `[STD-12]` (ODR-032) — `is_key` and `to_key` of a key type used as
+        // its own `AsKey`. A type may also be another key's `AsKey` (`str`
+        // for `String`); then the key it is given, or the key wanted back,
+        // says which: its own type means its own.
+        if matches!(name.name.as_str(), "is_key" | "to_key")
+            && explicit.is_empty()
+            && !matches!(self.types.kind(receiver.ty), TyKind::Param { .. })
+            && self.is_own_key(receiver.ty)
+        {
+            let own = self.lookup_method(receiver.ty, name.name).is_none()
+                || match (name.name.as_str(), args) {
+                    ("is_key", [arg]) => {
+                        let quiet = self.sink.mark();
+                        let key = self.synth(&arg.value);
+                        let key = self.read_through(key);
+                        self.sink.rollback(quiet);
+                        key.ty == receiver.ty
+                    }
+                    ("to_key", []) => expected == Some(receiver.ty),
+                    _ => false,
+                };
+            if own {
+                return self.synth_own_key(receiver, name, args, span);
+            }
         }
         // `[TYP-36]`, `[ENM-3]` — `x.hash(h)` on a type whose `Hash` the
         // compiler provides.
@@ -24435,6 +24873,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.void_block(stmts, span)
     }
 
+    /// `[STD-12]` — a key type is its own `AsKey` when it is `Eq` and `Hash`.
+    fn is_own_key(&self, ty: Ty) -> bool {
+        self.implements(ty, Symbol::intern("std.core.Eq")) && self.implements(ty, Symbol::intern("std.collections.Hash"))
+    }
+
+    /// `k.is_key(other)` is `k == other`, and `k.to_key()` clones `k`.
+    fn synth_own_key(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let receiver = self.read_through(receiver);
+        let ty = receiver.ty;
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if name.name.is("is_key") {
+            if args.len() != 1 || args[0].name.is_some() {
+                self.error(codes::E2020, span, format!("`is_key` takes 1 argument, found {}", args.len()));
+                return error;
+            }
+            let other = self.check_expr(&args[0].value, ty);
+            return self.synth_eq_of(receiver, other, span);
+        }
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`to_key` takes 0 arguments, found {}", args.len()));
+            return error;
+        }
+        if !self.is_cloneable(ty) {
+            let shown = self.types.display(ty);
+            self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `to_key` needs"));
+            return error;
+        }
+        self.clone_value(receiver)
+    }
+
     /// The kinds whose `hash` `synth_hash_of` builds rather than calls.
     fn hash_provided(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
@@ -24463,6 +24931,182 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             },
             span,
         }
+    }
+
+    /// D-268 — whether comparing `ty` has to call a written `eq` somewhere
+    /// inside it, which the C comparison of an aggregate cannot do.
+    fn needs_written_eq(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Struct(_) | TyKind::Enum(_) if self.methods.contains_key(&(ty, Symbol::intern("eq"))) => true,
+            TyKind::Tuple(items) => items.clone().iter().any(|&item| self.needs_written_eq(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+                self.needs_written_eq(*elem, seen)
+            }
+            TyKind::Struct(id) => {
+                self.types.struct_def(*id).fields.clone().iter().any(|field| self.needs_written_eq(field.ty, seen))
+            }
+            TyKind::Enum(id) => self
+                .types
+                .enum_def(*id)
+                .variants
+                .clone()
+                .iter()
+                .any(|variant| variant.fields.iter().any(|field| self.needs_written_eq(field.ty, seen))),
+            _ => false,
+        }
+    }
+
+    /// `a == b` part by part (`[STR-5]`): a written `eq` is called, a type
+    /// with none inside compares as C does, a tuple or struct compares its
+    /// fields in order, an enum its variant and then the payload, and a
+    /// sequence goes to std's `eq_elements`, which compares element by
+    /// element through `T: Eq`.
+    fn synth_eq_of(&mut self, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+        let ty = lhs.ty;
+        let bool_ty = self.common.bool_;
+        if self.methods.contains_key(&(ty, Symbol::intern("eq"))) {
+            return self.call_operator("eq", lhs, rhs, span);
+        }
+        if !self.needs_written_eq(ty, &mut HashSet::new()) {
+            let kind = match self.c_comparable(ty) {
+                true => ExprKind::Binary { op: BinOp::Eq, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                false => ExprKind::Builtin { which: Builtin::ValueCompare { op: BinOp::Eq }, args: vec![lhs, rhs] },
+            };
+            return Expr { ty: bool_ty, kind, span };
+        }
+        if let TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
+            let view = self.types.intern(TyKind::Span { elem, mutable: false });
+            let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
+            self.extend_builtin_instance(view);
+            return self.call_operator("eq_elements", lhs, rhs, span);
+        }
+        // Each side is evaluated once and read part by part.
+        let (mut stmts, left) = self.hold(lhs, span);
+        let (right_stmts, right) = self.hold(rhs, span);
+        stmts.extend(right_stmts);
+        let truth = |value| Expr { ty: bool_ty, kind: ExprKind::Bool(value), span };
+        let all = |this: &mut Self, parts: Vec<(Expr, Expr)>| {
+            parts.into_iter().fold(truth(true), |acc, (a, b)| {
+                let equal = this.synth_eq_of(a, b, span);
+                Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(acc), rhs: Box::new(equal) }, span }
+            })
+        };
+        let value = match self.types.kind(ty).clone() {
+            TyKind::Tuple(items) => {
+                let parts = items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let field = |side: &Held| Expr { ty: item, kind: ExprKind::Field { base: Box::new(side.read(span)), index }, span };
+                        (field(&left), field(&right))
+                    })
+                    .collect();
+                all(self, parts)
+            }
+            TyKind::Struct(id) => {
+                let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
+                let parts = fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        let part = |side: &Held| Expr { ty: field, kind: ExprKind::Field { base: Box::new(side.read(span)), index }, span };
+                        (part(&left), part(&right))
+                    })
+                    .collect();
+                all(self, parts)
+            }
+            TyKind::Enum(id) => {
+                let variants = self.types.enum_def(id).variants.clone();
+                let arm = |kind, body| hir::MatchArm {
+                    pattern: hir::Pattern { ty, kind, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Expr(body),
+                    span,
+                };
+                let mut arms = Vec::new();
+                for (variant, definition) in variants.iter().enumerate() {
+                    let parts = definition
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| {
+                            let part = |side: &Held| Expr {
+                                ty: field.ty,
+                                kind: ExprKind::EnumField { base: Box::new(side.read(span)), variant, index },
+                                span,
+                            };
+                            (part(&left), part(&right))
+                        })
+                        .collect();
+                    let payload = all(self, parts);
+                    let same = hir::PatternKind::Variant { enum_id: id, variant, fields: Vec::new() };
+                    let inner = Expr {
+                        ty: bool_ty,
+                        kind: ExprKind::Match {
+                            scrutinee: Box::new(right.read(span)),
+                            arms: vec![arm(same, payload), arm(hir::PatternKind::Wild, truth(false))],
+                        },
+                        span,
+                    };
+                    arms.push(arm(hir::PatternKind::Variant { enum_id: id, variant, fields: Vec::new() }, inner));
+                }
+                Expr { ty: bool_ty, kind: ExprKind::Match { scrutinee: Box::new(left.read(span)), arms }, span }
+            }
+            _ => unreachable!("needs_written_eq admits only aggregates"),
+        };
+        Expr { ty: bool_ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// D-187 — C compares only scalars, pointers and unit-only enums; every
+    /// other comparison is a `ValueCompare` builtin.
+    fn c_comparable(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Struct(_)
+            | TyKind::Tuple(_)
+            | TyKind::Array { .. }
+            | TyKind::Str
+            | TyKind::Vec { .. }
+            | TyKind::Span { .. } => false,
+            TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
+            _ => true,
+        }
+    }
+
+    /// `*call` as an assignment target: the call's reference is held in a
+    /// local, and the target and a second read of it both go through it.
+    fn hold_called_place(&mut self, place: Expr, out: &mut Vec<Stmt>) -> (Expr, Option<Expr>) {
+        let Expr { ty, kind, span } = place;
+        match kind {
+            ExprKind::Deref(inner) if !is_place(&inner.kind) => {
+                let held = inner.ty;
+                let local = self.declare(None, held, span);
+                out.push(Stmt::Let { local, init: Some(*inner) });
+                let read = || Expr {
+                    ty,
+                    kind: ExprKind::Deref(Box::new(Expr { ty: held, kind: ExprKind::Local(local), span })),
+                    span,
+                };
+                (read(), Some(read()))
+            }
+            kind => (Expr { ty, kind, span }, None),
+        }
+    }
+
+    /// An operand evaluated once into a local — through a reference when it
+    /// is a place, by value otherwise — so its parts can be read many times.
+    fn hold(&mut self, value: Expr, span: Span) -> (Vec<Stmt>, Held) {
+        let ty = value.ty;
+        let by_ref = is_place(&value.kind);
+        let held = if by_ref { self.types.intern(TyKind::Ref { mutable: false, inner: ty }) } else { ty };
+        let local = self.declare(None, held, span);
+        let init = match by_ref {
+            true => Expr { ty: held, kind: ExprKind::Ref { place: Box::new(value), mutable: false }, span },
+            false => value,
+        };
+        (vec![Stmt::Let { local, init: Some(init) }], Held { local, ty, held, by_ref })
     }
 
     fn has_builtin_eq_hash(&self, ty: Ty) -> bool {
@@ -26769,6 +27413,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        if let Some(built) = self.construct_through_init(id, args, span) {
+            return built;
+        }
         // `[STR-1]` — the synthesised memberwise constructor "is `pub` iff all
         // fields are `pub` (a `pub(read)` field makes it private to the
         // declaring module, since construction is a write; `[MOD-7]`)".
@@ -26818,7 +27465,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             // One mistake in a default is one error, however
                             // many constructions evaluate it (`[DIA-14]`).
                             let quiet = (!self.reported_defaults.insert(default.span)).then(|| self.sink.mark());
-                            let value = self.check_field_default(&default, *field_ty, module);
+                            let value = self.check_field_default(&default, *field_ty, module, Some(id));
                             if let Some(mark) = quiet {
                                 self.sink.rollback(mark);
                             }
@@ -27095,13 +27742,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[STR-2]` — a field default, checked as its declaration reads: its
     /// names resolve in the declaring module, and the constructing
     /// function's locals are not in scope.
-    fn check_field_default(&mut self, default: &ast::Expr, ty: Ty, module: usize) -> Expr {
+    /// A generic struct's default names its parameters (D-267), which mean
+    /// the instance's arguments.
+    fn check_field_default(&mut self, default: &ast::Expr, ty: Ty, module: usize, owner: Option<StructId>) -> Expr {
         let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let caller = self.current_module;
         if module != usize::MAX {
             self.current_module = module;
         }
+        let bindings: HashMap<Symbol, Ty> = owner
+            .and_then(|id| self.types.struct_def(id).origin.clone())
+            .and_then(|(name, args)| self.generic_structs.get(&name).map(|decl| decl.params.iter().copied().zip(args).collect()))
+            .unwrap_or_default();
+        let outer = (!bindings.is_empty()).then(|| std::mem::replace(&mut self.type_params, bindings));
         let value = self.check_expr(default, ty);
+        if let Some(outer) = outer {
+            self.type_params = outer;
+        }
         self.current_module = caller;
         self.scopes = scopes;
         value
@@ -27114,6 +27771,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let entry = &self.methods[&(lhs.ty, name)];
         let def = entry.def;
         let receiver_mode = entry.receiver;
+        // A method a generic extension registered is checked once called.
+        if let Some(job) = self.deferred_methods.remove(&def) {
+            self.pending_methods.push(job);
+        }
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -27676,8 +28337,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
 
         let (lhs_ast, rhs_ast) = (lhs, rhs);
-        let mut lhs = self.synth(lhs);
-        let mut rhs = self.synth(rhs);
+        // `[TYP-23]` — in a comparison, `None` or `[]` beside a typed operand
+        // takes its type: `o == None`.
+        let open = |e: &ast::Expr| match &e.kind {
+            ast::ExprKind::ArrayLit(items) => items.is_empty(),
+            ast::ExprKind::Path { segments } => segments.len() == 1 && segments[0].name.is("None"),
+            _ => false,
+        };
+        let comparison = hir_op.is_comparison();
+        let (mut lhs, mut rhs) = if comparison && open(rhs_ast) && !open(lhs_ast) {
+            let lhs = self.synth(lhs_ast);
+            let rhs = self.check_expr(rhs_ast, lhs.ty);
+            (lhs, rhs)
+        } else if comparison && open(lhs_ast) && !open(rhs_ast) {
+            let rhs = self.synth(rhs_ast);
+            let lhs = self.check_expr(lhs_ast, rhs.ty);
+            (lhs, rhs)
+        } else {
+            (self.synth(lhs_ast), self.synth(rhs_ast))
+        };
         // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
         // returns it extended; `str + str` is `E2040`, whose help is an
         // f-string.
@@ -27778,6 +28456,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if self.methods.contains_key(&(lhs.ty, Symbol::intern(method))) {
                 return self.call_operator(method, lhs, rhs, span);
             }
+        }
+        // `[TYP-21]`, `[STR-5]` — `Eq.eq` gives both `==` and `!=`, and a type
+        // holding a component with a written `eq` compares through it.
+        if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne)
+            && lhs.ty == rhs.ty
+            && (self.methods.contains_key(&(lhs.ty, Symbol::intern("eq")))
+                || self.needs_written_eq(lhs.ty, &mut HashSet::new()))
+        {
+            let equal = self.synth_eq_of(lhs, rhs, span);
+            return match op {
+                ast::BinOp::Ne => {
+                    let bool_ty = self.common.bool_;
+                    Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(equal) }, span }
+                }
+                _ => equal,
+            };
         }
 
         // `[RNG-5]`/`[RNG-5a1]` — operators on range types. This runs before
@@ -27906,17 +28600,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // operands: text by bytes (`[TYP-37]`'s table), and `==`/`!=` field by
         // field for a type whose every component has `Eq` (`[STR-5]`).
         if hir_op.is_comparison() && !matches!(hir_op, BinOp::Is | BinOp::IsNot) {
-            let c_comparable = match self.types.kind(operand_ty) {
-                TyKind::Struct(_)
-                | TyKind::Tuple(_)
-                | TyKind::Array { .. }
-                | TyKind::Str
-                | TyKind::Vec { .. }
-                | TyKind::Span { .. } => false,
-                TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
-                _ => true,
-            };
-            if !c_comparable && operand_ty != self.common.error {
+            if !self.c_comparable(operand_ty) && operand_ty != self.common.error {
                 let text = self.is_text(operand_ty);
                 let equality = matches!(hir_op, BinOp::Eq | BinOp::Ne);
                 if text || (equality && self.has_implicit_eq(operand_ty)) {
@@ -27954,6 +28638,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 }
 
 /// `[TYP-21]` — the interface method each operator desugars to.
+/// An operand `hold` evaluated once; `read` names it again.
+struct Held {
+    local: LocalId,
+    ty: Ty,
+    held: Ty,
+    by_ref: bool,
+}
+
+impl Held {
+    fn read(&self, span: Span) -> Expr {
+        let local = Expr { ty: self.held, kind: ExprKind::Local(self.local), span };
+        match self.by_ref {
+            true => Expr { ty: self.ty, kind: ExprKind::Deref(Box::new(local)), span },
+            false => local,
+        }
+    }
+}
+
 fn operator_method(op: ast::BinOp) -> Option<&'static str> {
     Some(match op {
         ast::BinOp::Add => "add",
@@ -28827,7 +29529,10 @@ fn may_name(expr: &ast::Expr, names: &[Symbol]) -> bool {
         ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
             may_name(lhs, names) || may_name(rhs, names)
         }
-        ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => items.iter().any(|e| may_name(e, names)),
+        ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
+            items.iter().any(|e| may_name(e, names))
+        }
+        ast::ExprKind::MapLit(entries) => entries.iter().any(|(k, v)| may_name(k, names) || may_name(v, names)),
         ast::ExprKind::Call { callee, args } => {
             may_name(callee, names) || args.iter().any(|a| may_name(&a.value, names))
         }

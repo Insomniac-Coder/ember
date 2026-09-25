@@ -24,13 +24,16 @@ use std::collections::HashSet;
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Terminator};
 
+/// Each instance of a generic function is its own body; a binding its source
+/// never reads is reported once, at its declaration, not once per instance.
 pub fn check_all(bodies: &[Body], sink: &mut Sink) {
+    let mut reported = HashSet::new();
     for body in bodies {
-        check(body, sink);
+        check(body, sink, &mut reported);
     }
 }
 
-pub fn check(body: &Body, sink: &mut Sink) {
+fn check(body: &Body, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
     let mut read = HashSet::new();
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -112,7 +115,7 @@ pub fn check(body: &Body, sink: &mut Sink) {
         }
         let Some(name) = decl.name.as_deref() else { continue };
         // `[LNT-1]` — names beginning `_` are exempt.
-        if name.starts_with('_') || read.contains(&LocalId(index as u32)) {
+        if name.starts_with('_') || read.contains(&LocalId(index as u32)) || !reported.insert(decl.span) {
             continue;
         }
 

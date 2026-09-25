@@ -455,6 +455,17 @@ impl Printer {
                     p.expr(e);
                 }
             }),
+            ExprKind::MapLit(entries) => self.nest("Map", |p| {
+                for (k, v) in entries {
+                    p.expr(k);
+                    p.expr(v);
+                }
+            }),
+            ExprKind::SetLit(items) => self.nest("Set", |p| {
+                for e in items {
+                    p.expr(e);
+                }
+            }),
             ExprKind::Comprehension { kind, element, clauses } => self.nest(&format!("Comprehension {kind:?}"), |p| {
                 p.expr(element);
                 for clause in clauses {

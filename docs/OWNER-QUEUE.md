@@ -50,6 +50,11 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-036 | **CLOSED** — a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`): text keys are `String`, and text in a `{…}` literal with no context makes `String`s | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
+| ODR-035 | **CLOSED** — `union` is contextual: reserved (`E0005`) only where an item would begin `union` and a name, an identifier elsewhere, so `Set` can have its `union` method | Lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
+| ODR-034 | **CLOSED** — a `Map` prints `{'a': 1}` and an empty one `{}`, a `Set` `{1, 2}` and an empty one `set()`, strings by Python's `repr`; `==` compares as sets of entries; a duplicate literal key keeps its first position and its last value; `[a, b]` is never a `Set`; `sorted(m)` is the keys | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
+| ODR-033 | **CLOSED** — `DefaultHasher`'s values are the same on every target for one Ember version and may change between versions; making a `RandomState` is `Nondet`; a panicking `hash` or `eq` aborts; `Map`'s costs are amortised | Standard library / hashing | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
+| ODR-032 | **CLOSED** — `Map[K, V, H = DefaultHasher, A = Global]` and `Set[T, H, A]` get their full method lists; `AsKey[K]` (`is_key`, `to_key`) is what lookups take, and every `K: Eq + Hash` is `AsKey[K]`; owned iteration yields keys | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-031 | **CLOSED** — `Array`'s `sort_by`/`sort_by_key` are stable (`f` once per element), `windows(n)` yields shared overlapping views and panics on `0`, `drain(r)` returns an `Array` and takes any integer range | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
@@ -185,6 +190,214 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-036 — may a `Map` hold views, as an `Array` of static `str`s may? — **CLOSED**
+
+    ID:        ODR-036
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_13
+    Category:  STANDARD LIBRARY / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_12.md [TYP-15], [TYP-34], [STD-11], [TYP-38]
+
+    Question:  `[TYP-15]` lets a heap collection hold views whose every region is
+               `static`, so `["ann", "bob"]` is an `Array[str]`. Is `Map[str, V]`
+               allowed the same way, and what does `{"a": 1}` make with no
+               context?
+
+    Blocks implementation:            YES — `{"a": 1}` needs an answer, and `Map[str, V]` does not work
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**What building it showed.** `Map` is a library struct (ODR-032). A struct
+holding a view is itself a view (`[TYP-34]`), so a `Map[str, V]` would be a
+view: confined to locals and parameters (`[TYP-15]`), passed as a copy, and a
+method returning a view of it (`get`, `keys`, `items`) would point into the
+callee's copy. `Array` escapes this only by being compiler-known. And `entry(k)`
+would borrow `k`, which a generic signature cannot say for some `K` only.
+
+**Options.**
+- **(A) Allow it**, with the map a view. Every view-returning method breaks for
+  those instances, and a map of `str` cannot be a field.
+- **(B) Forbid views as keys, values and elements (`E3063`)**, with `String`
+  as the text key. Python programs use text keys as values anyway, and a
+  `{…}` literal with no context makes `String`s. Chosen.
+
+**Ruling.** (B). A `Map`'s keys and values and a `Set`'s elements are not view
+types: `Map[str, V]` is `E3063`, whose help names `String`. In a `{…}` literal
+with no expected type, a text key, value or element is a `String`.
+
+---
+
+## ODR-035 — how does `Set` have a method named `union`? — **CLOSED**
+
+    ID:        ODR-035
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_13
+    Category:  LEXICAL
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_12.md [LEX-15], [STD-16]
+
+    Question:  `[STD-16]` gives `Set` a `union` method, but `[LEX-15]` reserves
+               `union` for a future version, and a reserved word cannot name a
+               method: `pub fn union(self, …)` does not parse.
+
+    Blocks implementation:            YES — `Set.union` cannot be declared
+    Requires owner semantic decision:  no — the owner's standing rule (2026-09-08,
+               with `from`) decides it: a reserved word that collides with a name
+               the library must declare becomes contextual, never renamed and
+               never `r#`. ODR-030 did the same for `extend`.
+
+**Ruling.** `union` is contextual. It has no grammar yet, so it is reserved
+(`E0005`, naming the reservation) only where a `union` declaration would begin:
+an item starting with `union` and a name. Everywhere else it is an identifier,
+so `s.union(t)` and `fn union(self, …)` are ordinary.
+
+---
+
+## ODR-034 — how do `Map` and `Set` print, compare and read as literals? — **CLOSED**
+
+    ID:        ODR-034
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_13
+    Category:  STANDARD LIBRARY / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_12.md [TYP-39], [TYP-36], [STR-5], [TYP-38], [GRM-26]
+
+    Question:  `[TYP-39]` shows `{'a': 1}` and `{1, 2}` but not an empty `Set`, which
+               cannot print as `{}` (that reads back as a `Map`), nor how a string
+               is quoted when it holds a `'`. `[TYP-36]` says `Map` equality is "as
+               sets of entries". What does a literal with a repeated key make? Is
+               `[a, b]` in a `Set` position a `Set`? What does `sorted(m)` hold?
+
+    Blocks implementation:            YES — printing and literals cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Ruling.** Python's answers throughout, since `[TYP-39]` already cites `str()`:
+- A `Map` prints `{k: v, …}` in insertion order, keys and values by their
+  `Debug` text; an empty one prints `{}`. A `Set` prints `{a, …}`; an empty one
+  prints `set()`. A collection's `Debug` text is its `Display` text.
+- A string's `Debug` text is Python's `repr`: single quotes, or double quotes
+  when the text holds a `'` and no `"`; `\\`, the chosen quote, `\n`, `\r` and
+  `\t` are escaped, and any other control character is written `\xNN`.
+- `m1 == m2` holds when both have the same length and every key of one is in the
+  other with an equal value (`V: Eq`); order does not matter. `Set` likewise.
+- `Clone` copies every entry, in order (`K: Clone`, `V: Clone`); `Default` is
+  empty.
+- A literal with a repeated key keeps the key's first position and its last
+  value, as `dict` does, and is not diagnosed. `{1, 1}` is `{1}`.
+- `[a, b]` is always a list literal: in a `Set` position it is `E2020`, whose
+  help is `{a, b}`.
+- `sorted(m)` is `sorted` of the keys: an `Array[K]` of clones (`K: Ord + Clone`).
+  A comprehension over a `Map` iterates its keys, as `for` does.
+
+---
+
+## ODR-033 — what does `Map`'s hashing promise, and when is it `Nondet`? — **CLOSED**
+
+    ID:        ODR-033
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_13
+    Category:  STANDARD LIBRARY / HASHING
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_12.md [HASH-1], [HASH-2], [HASH-3], [DET-2], [STD-11]
+
+    Question:  Are `DefaultHasher`'s values fixed across implementations, versions
+               and word sizes? Which `Hasher` methods exist, and may users write a
+               `Hasher`? Is a function using `Map[K, V, RandomState]` `Nondet`, or
+               only one reading a hash? What happens when a user `hash` or `eq`
+               panics mid-insert? Is `Map`'s constant time amortised?
+
+    Blocks implementation:            YES — `Map` cannot be written without the cost and hasher contract
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Ruling.**
+- `Hasher` declares `write_bytes`, `write_u8`/`u16`/`u32`/`u64`,
+  `write_i8`/`i16`/`i32`/`i64`, `write_usize`, `write_isize` and
+  `finish(owned self) -> u64`. A user type may implement it; a `Map`'s `H` is
+  any `Hasher + Default`, and the map makes a fresh one for each hash.
+- `DefaultHasher` gives the same values for one Ember version on every target
+  (its state is 64 bits on 32-bit targets too), so a table built at compile
+  time is valid at run time. The values may change between versions; a program
+  must not depend on them.
+- Making a `RandomState`, directly or as a `Map`'s or `Set`'s hasher, is
+  `Nondet`; iterating such a map is not (`[STD-11]`).
+- A `hash` or `eq` that panics aborts the process (`[PAN-1]`), so no map is
+  seen half-changed. One that reaches the map again can do so only through a
+  `RefCell`, whose borrow panics.
+- Lookup, insertion and removal are expected constant time, amortised: a map
+  may grow, or close up removed entries, inside an insertion or a removal.
+
+---
+
+## ODR-032 — what are `Map`'s and `Set`'s parameters and methods? — **CLOSED**
+
+    ID:        ODR-032
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_13
+    Category:  STANDARD LIBRARY / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_12.md [STD-11], [STD-12], [STD-16], [STD-17], [ALC-1], [CTL-1]
+
+    Question:  `[STD-11]` declares `Map[K, V, H = DefaultHasher]`; `[ALC-1]` gives
+               `Map` and `Set` an allocator parameter without saying where. `[STD-16]`
+               names most methods without signatures (`get_mut`, `keys`, `retain`,
+               `entry`) and gives `Set` only `add`, `remove`, `in`, three set
+               operations and `is_subset`, with no return types. `[STD-12]` sketches
+               `AsKey[K]` by one method, and a lookup that converts a `str` to a
+               `String` would allocate on every call. What does owned iteration yield?
+
+    Blocks implementation:            YES — `Map` and `Set` cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options for `AsKey`.**
+- **(A) `to_key` only.** A lookup with a `str` would build a `String` to compare,
+  an allocation per lookup, which `[STD-12]`'s "allocates only when the key is
+  new" rules out.
+- **(B) `is_key(self, key: K) -> bool` beside `to_key(self) -> K`, with
+  `AsKey[K]: Hash`.** A lookup hashes `q` and compares with `is_key`; only a new
+  key is converted. Rust's `Borrow` does the same job through a borrowed form.
+  Chosen.
+
+**Ruling.**
+- `Map[K, V, H: Hasher + Default = DefaultHasher, A: Allocator = Global]` and
+  `Set[T, H: Hasher + Default = DefaultHasher, A: Allocator = Global]`: the hasher
+  first, as it is the one changed more often; `new_in(a)` as `Array.new_in`.
+- `AsKey[K]: Hash` in `std.collections` (not the prelude) has `is_key(self, key: K)
+  -> bool` and `to_key(self) -> K`. Every `K: Eq + Hash` is `AsKey[K]` (`is_key`
+  is `==`, `to_key` clones, so it needs `K: Clone`); std implements
+  `AsKey[String]` for `str`. A user may implement it; one whose `is_key` or
+  `hash` disagrees with `K`'s gives `[HASH-3]`'s wrong answers, never undefined
+  behaviour.
+- `Map`: `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
+  `reserve(n)`, `try_reserve(n)`, `clear`; taking `q: Q` with `Q: AsKey[K]`:
+  `get(q) -> Option[ref V]`, `get_mut(q) -> Option[ref mut V]`,
+  `get_or(q, default) -> V` (`V: Copy`), `contains_key(q) -> bool`,
+  `remove(q) -> Option[V]`, `m[q]`, `q in m` and `m[q] = v` (which converts `q`
+  with `to_key` only when the key is new); taking the key itself:
+  `insert(k, v) -> Option[V]` and `entry(k)`. `entry(k)` is a `MapEntry` with
+  `or_insert(v)`, `or_insert_with(f: fn() -> V)` and `or_default()` (`V: Default`),
+  each `-> ref mut V`. (Rust's `Entry::key` is left out: it would point into the
+  entry's own storage, which a view's result cannot.) `keys()`, `values()`,
+  `values_mut()` and `items()` are the view iterators `MapKeys`, `MapValues`,
+  `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
+  `(ref K, ref V)` in insertion order. `retain(keep: fn(ref K, ref V) -> bool)`;
+  `pop_item() -> Option[(K, V)]` removes the newest entry, as `dict.popitem`
+  does; `update(other)` inserts `other`'s entries in its order;
+  `into_items() -> Array[(K, V)]` consumes the map in order.
+- `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
+  `reserve(n)`, `try_reserve(n)`, `clear`; `add(x) -> bool` (whether it was new;
+  an element already there keeps its position); taking `q: AsKey[T]`:
+  `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
+  `retain(keep: fn(ref T) -> bool)`, `pop() -> Option[T]` (the newest), `iter()`
+  (a `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and
+  `symmetric_difference` of a borrowed `Set` return a new `Set` (`T: Clone`),
+  with this set's elements first in its order and then the other's; `is_subset`,
+  `is_superset`, `is_disjoint`; the operators `|`, `&`, `-` and `^`.
+- `for k in owned m` yields the keys, as `for k in m` does, dropping the values;
+  `into_items` gives both. `for x in owned s` yields the elements.
+- `m[k] op= v` on a missing key panics with `m[k]`'s message.
 
 ---
 

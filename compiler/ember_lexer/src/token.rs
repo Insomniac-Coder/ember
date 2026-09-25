@@ -235,11 +235,12 @@ keywords! { Kw,
 }
 
 // Reserved for future use: lexed as keywords, `E0005` if used (Part II §4).
-// Nine, not ten: `yield` moved into `Kw` under `[LEX-15b]` (errata ERR-025).
+// Eight: `yield` moved into `Kw` under `[LEX-15b]` (errata ERR-025), and
+// `union` became contextual under ODR-035.
 keywords! { Reserved,
     Actor => "actor", Async => "async", Await => "await", Macro => "macro",
     Move => "move", Trait => "trait",
-    Union => "union", Loop => "loop", Unless => "unless",
+    Loop => "loop", Unless => "unless",
 }
 
 impl Reserved {
@@ -254,7 +255,6 @@ impl Reserved {
             // `trait` is the alternative spelling of `interface`; `union`,
             // `loop` and `unless` have no dated plan beyond v2.
             Reserved::Trait
-            | Reserved::Union
             | Reserved::Loop
             | Reserved::Unless
             | Reserved::Move => "a later version",
@@ -280,8 +280,12 @@ impl Reserved {
 /// named `extend`, and Appendix E maps Python's `xs.extend(ys)` to itself. It
 /// is a keyword only where it begins an item, before the type it extends
 /// (ODR-030, 0.9.9_Hardened_11).
+///
+/// `union` is here because `Set` has a `union` method (`[STD-16]`). It is
+/// still reserved where a declaration would begin, an item starting `union`
+/// and a name (ODR-035, 0.9.9_Hardened_13).
 pub const CONTEXTUAL_KEYWORDS: &[&str] =
-    &["abstract", "final", "lazy", "test", "bench", "from", "gen", "extend"];
+    &["abstract", "final", "lazy", "test", "bench", "from", "gen", "extend", "union"];
 
 // ---------------------------------------------------------------------------
 // Punctuation
@@ -353,7 +357,7 @@ mod tests {
         assert_eq!(Kw::ALL.len(), 48);
         assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
         assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
-        assert_eq!(Reserved::ALL.len(), 9);
+        assert_eq!(Reserved::ALL.len(), 8);
         // `gen` is contextual: in neither table, a keyword only before `fn`.
         assert_eq!(Kw::from_str("gen"), None, "[LEX-15b]");
         assert_eq!(Reserved::from_str("gen"), None, "[LEX-15b]");

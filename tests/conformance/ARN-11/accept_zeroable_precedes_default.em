@@ -1,13 +1,11 @@
 #$ test: run-pass
 #$ rules: ARN-3, ARN-11, ARN-12, TST-23
-# A source `Default` implementation must not replace the built-in proof that
-# all-zero is valid. `[ARN-3]` makes Zeroable precedence observable semantics.
-
-from std.core import Default
-
-extend i32 implements Default:
-    fn default() -> i32:
-        return 77
+# `[ARN-3]` — `alloc_array` zeroes a `Zeroable` element type rather than
+# calling its `Default`. Until D-281, a source `extend i32 implements
+# Default` returning 77 made the precedence observable; `[TYP-36]` now gives
+# `i32` its `Default` in std, a second one is `E2041`, and every built-in
+# `Default` is zero. The non-zero case returns with `@derive(Zeroable)` on a
+# struct, which is not built yet.
 
 fn main():
     arena = Arena.with_capacity(16)
