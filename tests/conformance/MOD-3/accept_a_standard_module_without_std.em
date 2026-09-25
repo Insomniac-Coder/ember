@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: MOD-3
 #$ stdout:
-#$ 9
+#$ 3.0
 #$ 2 1
 # `[MOD-3]` — a standard module may be named without `std.`, as in Python:
 # `import math` is `import std.math`, and `from mem import swap` is
@@ -11,7 +11,7 @@ import math
 from mem import swap
 
 fn main():
-    println(math.max_i32(3, 9))
+    println(math.sqrt(9.0))
     a = 1
     b = 2
     swap(a, b)

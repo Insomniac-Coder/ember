@@ -288,6 +288,10 @@ struct GenericParam {
     /// argument takes, resolved where the declaration is, and in terms of the
     /// parameters before it.
     default: Option<Ty>,
+    /// `[IFC-4]` — a hidden parameter standing for `T.Name`: the associated
+    /// type `Name` of the parameter at this index. Each call fills it in from
+    /// what the argument's type says `Name` is (`type Real = f64`).
+    projection: Option<(u32, Symbol)>,
 }
 
 /// `[CLO-3]`, `[CLO-6]` — the signature a `fn(A) -> R` parameter may be called
@@ -630,6 +634,9 @@ struct InterfaceDef {
     /// instantiations reuse these declarations later.
     defaults: Vec<InterfaceDefault>,
     supertraits: Vec<Symbol>,
+    /// `[IFC-4]` — each associated type (`type Real: Float`) with the
+    /// interfaces its value must implement.
+    assoc: Vec<(Symbol, Vec<Symbol>)>,
     /// The written supertrait forms are retained for generic-interface
     /// materialization, where `Parent[T]` must resolve with the interface's
     /// own parameter bindings and declaration-module imports.
@@ -831,6 +838,9 @@ struct Checker<'a> {
     /// What each implementing type declared its associated types to be:
     /// `(the type, the name) -> the type it stands for`.
     assoc_values: HashMap<(Ty, Symbol), Ty>,
+    /// `[IFC-4]` — while a signature is read, the hidden parameter each
+    /// `T.Name` it mentions stands for.
+    projection_params: HashMap<(Symbol, Symbol), Ty>,
     /// Instantiations reached so far, so each is emitted once (`[MONO-1]`).
     instances: HashMap<Instance, DefId>,
     /// `[LT-1]` (ODR-024) — each instantiation's generic declaration, whose
@@ -1011,6 +1021,10 @@ struct Checker<'a> {
     /// `[TYP-34]` — each type written `@view`, with the attribute's span,
     /// judged once every type has its fields (D-300).
     pending_views: Vec<(Ty, Symbol, Span)>,
+    /// `[RNG-4]` — the interval of each prelude `min`, `max` and `clamp`,
+    /// by the call's span. They lower to inline code rather than a call, so
+    /// the interval is worked out where they are built (D-142).
+    picked_ranges: HashMap<Span, (Bound, Bound)>,
     /// D-280 — a generic method registered on an opaque owner (one whose
     /// arguments are the caller's own parameters) numbers its own parameters
     /// after them. Its signature's `generics` starts with one placeholder per
@@ -1121,6 +1135,7 @@ impl<'a> Checker<'a> {
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_values: HashMap::new(),
+            projection_params: HashMap::new(),
             instances: HashMap::new(),
             generic_of: HashMap::new(),
             generic_structs: HashMap::new(),
@@ -1172,6 +1187,7 @@ impl<'a> Checker<'a> {
             or_bindings: None,
             match_by_ref: false,
             pending_views: Vec::new(),
+            picked_ranges: HashMap::new(),
             generic_prefix: HashMap::new(),
             bounds_known: false,
             pending_struct_bounds: Vec::new(),
@@ -1806,7 +1822,7 @@ impl<'a> Checker<'a> {
                 }
             }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
-            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default });
+            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None });
         }
         declared
     }
@@ -1850,7 +1866,7 @@ impl<'a> Checker<'a> {
         let index = (index_base + generics.len()) as u32;
         let name = Symbol::intern(&format!("Callable{index}"));
         let param_ty = self.types.intern(TyKind::Param { index, name });
-        generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound), default: None });
+        generics.push(GenericParam { name, bounds: Vec::new(), callable: Some(bound), default: None, projection: None });
         param_ty
     }
 
@@ -3524,6 +3540,7 @@ impl<'a> Checker<'a> {
                 bounds: Vec::new(),
                 callable: None,
                 default: None,
+                projection: None,
             })
             .collect();
         generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
@@ -3895,7 +3912,16 @@ impl<'a> Checker<'a> {
                     let declared = decl.ty.as_ref().map(|t| self.resolve_type(t));
                     let value = match declared {
                         Some(ty) => self.check_expr(&decl.value, ty),
-                        None => self.synth_committed(&decl.value),
+                        // V.7 (ODR-037) — an untyped numeric literal stays
+                        // untyped: each use is that literal, and takes its type
+                        // as the literal would there.
+                        None => {
+                            let value = self.synth(&decl.value);
+                            match value.kind {
+                                ExprKind::Int(_) | ExprKind::Float(_) if self.types.is_untyped_literal(value.ty) => value,
+                                _ => self.commit(value),
+                            }
+                        }
                     };
                     if !matches!(
                         value.kind,
@@ -3991,6 +4017,16 @@ impl<'a> Checker<'a> {
                     // `[TYP-16]` — the parameters are in scope for the
                     // signature as well as for the body.
                     let mut generics = self.declare_generics(&decl.generics);
+                    let mentioned: Vec<&ast::TypeExpr> = decl
+                        .params
+                        .iter()
+                        .filter_map(|p| match &p.kind {
+                            ast::ParamKind::Named { ty, .. } => Some(ty),
+                            ast::ParamKind::Receiver { .. } => None,
+                        })
+                        .chain(decl.ret.as_ref())
+                        .collect();
+                    self.declare_projections(&mentioned, &mut generics, 0);
                     let params: Vec<(Symbol, Ty, Mode, Span)> = decl
                         .params
                         .iter()
@@ -4016,6 +4052,7 @@ impl<'a> Checker<'a> {
                     let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     self.lint_rule_3(&params, ret, &borrows, item.span);
                     self.type_params.clear();
+                    self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
                     self.signatures.push(Signature { params, ret, generics, borrows });
@@ -4341,6 +4378,8 @@ impl<'a> Checker<'a> {
         let Some(def) = self.interfaces.get(&interface) else { return };
         let required = def.methods.clone();
         let supertraits = def.supertraits.clone();
+        let assoc = def.assoc.clone();
+        let assoc_missing = assoc.iter().any(|(name, _)| !self.assoc_values.contains_key(&(ty, *name)));
 
         for (method, declaration, receiver, _) in required {
             let implementation = if receiver.is_some() {
@@ -4352,6 +4391,16 @@ impl<'a> Checker<'a> {
                 self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
             };
             let shown = self.types.display(ty);
+            // `[STD-20]` — `f32` and `f64` have their float methods built in
+            // (`sqrt` is C's `sqrt` or `sqrtf`), so an interface asking for
+            // one of them with the same shape finds it there.
+            if implementation.is_none()
+                && receiver.is_some()
+                && matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F64))
+                && self.builtin_float_method_fits(method, declaration)
+            {
+                continue;
+            }
             let Some((implementation, actual_receiver)) = implementation else {
                 self.error(
                     codes::E2040,
@@ -4360,7 +4409,7 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             };
-            if !self.implementation_signature_matches(
+            if !assoc_missing && !self.implementation_signature_matches(
                 ty, declaration, receiver, implementation, actual_receiver,
             ) {
                 self.error(
@@ -4372,8 +4421,37 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+        // `[IFC-4]` — each associated type is given, and meets its bounds.
+        for (name, bounds) in assoc {
+            let shown = self.types.display(ty);
+            let Some(&value) = self.assoc_values.get(&(ty, name)) else {
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}` implements `{interface}` but does not say what `{name}` is"),
+                    )
+                    .help(format!("add `type {name} = …` to the `extend` block")),
+                );
+                continue;
+            };
+            for bound in bounds {
+                if !self.implements(value, bound) {
+                    let value_shown = self.types.display(value);
+                    let bound_shown = self.interface_shown(bound);
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}`'s `{name}` is `{value_shown}`, which does not implement `{bound_shown}`"),
+                    );
+                }
+            }
+        }
+        // D-307 — a parent is met as any bound is: by a written
+        // `implements`, or by what the compiler provides (a struct's implicit
+        // `Eq`, `[STR-5]`).
         for parent in supertraits {
-            if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == parent) {
+            if self.implements(ty, parent) {
                 continue;
             }
             let shown = self.types.display(ty);
@@ -4383,6 +4461,25 @@ impl<'a> Checker<'a> {
                 format!("`{interface}` requires `{parent}`, which `{shown}` does not implement"),
             );
         }
+    }
+
+    /// Whether `f32`'s and `f64`'s built-in method `method` has the shape the
+    /// interface declares: its arity, and `Self` back (`bool` for the
+    /// `is_…` tests).
+    fn builtin_float_method_fits(&self, method: Symbol, declaration: DefId) -> bool {
+        let signature = &self.signatures[declaration.0 as usize];
+        let (predicate, arity) = match method.as_str() {
+            "abs" | "fract" => (false, 1),
+            name => match hir::FloatLib::named(name) {
+                Some((lib, arity)) => (lib.is_predicate(), arity),
+                None => return false,
+            },
+        };
+        let wanted = if predicate { self.common.bool_ } else { self.common.self_ty };
+        signature.generics.is_empty()
+            && signature.params.len() + 1 == arity
+            && signature.params.iter().all(|(_, ty, _, _)| *ty == self.common.self_ty)
+            && signature.ret == wanted
     }
 
     /// Interface conformance includes the complete callable contract, not
@@ -4796,6 +4893,15 @@ impl<'a> Checker<'a> {
         // `[IFC-4]` — the associated names were in scope while the
         // signatures were read, which is all the declaration needs them for;
         // an implementation records what each one stands for.
+        let mut assoc_bounds = Vec::new();
+        for member in &decl.members {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind
+                && alias.value.is_none()
+            {
+                let bounds = alias.bounds.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
+                assoc_bounds.push((alias.name.name, bounds));
+            }
+        }
         let _ = &assoc;
         self.interfaces.insert(
             name,
@@ -4804,6 +4910,7 @@ impl<'a> Checker<'a> {
                 methods,
                 defaults,
                 supertraits,
+                assoc: assoc_bounds,
                 supertrait_exprs: decl.supertraits.clone(),
                 declaring_module: self.current_module,
                 dyn_sized_defaults,
@@ -4943,6 +5050,7 @@ impl<'a> Checker<'a> {
                 methods,
                 defaults,
                 supertraits,
+                assoc: definition.assoc.clone(),
                 supertrait_exprs: Vec::new(),
                 declaring_module: definition.declaring_module,
                 dyn_sized_defaults,
@@ -5614,6 +5722,19 @@ impl<'a> Checker<'a> {
                 _ => Symbol::intern("<invalid interface>"),
             };
             let Some(name) = self.resolve_interface_use(entry) else { continue };
+            // `[STD-27]` — `Float` is `f32`'s and `f64`'s only: a literal must
+            // be able to become the type, which no other type can promise.
+            if name.is("std.math.Float")
+                && !matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F64))
+            {
+                let shown = self.types.display(ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2042, entry.span, format!("`{shown}` cannot implement `Float`"))
+                        .note("`Float` is implemented by `f32` and `f64` only [STD-27]")
+                        .help("write the generic code over your own interface, or convert to `f64`"),
+                );
+                continue;
+            }
             // Recorded under the name the interface is registered by, so that
             // a bound written `T: Ord` on an imported `Ord` matches the
             // implementation written `implements Ord` in another module.
@@ -5733,6 +5854,12 @@ impl<'a> Checker<'a> {
                     Some(len) => self.types.intern(TyKind::Array { elem, len }),
                     None => self.common.error,
                 }
+            }
+            // `[IFC-4]` — `T.Real`: an associated type of a type parameter.
+            ast::TypeKind::Path { segments, args }
+                if args.is_empty() && segments.len() == 2 && self.type_params.contains_key(&segments[0].name) =>
+            {
+                self.resolve_projection(segments[0], segments[1])
             }
             // `[MOD-3]` — `m.T` names the type `T` of the module `import` bound
             // to `m` (`import a.b.m`), with any arguments: `m.Pair[int]`.
@@ -6168,6 +6295,15 @@ impl<'a> Checker<'a> {
     /// Whether the generic parameter `index` is bounded by an interface
     /// whose last name is one of `names` (`Display` in any module's
     /// spelling, while the standard library does not declare it).
+    /// `[STD-27]` (ODR-037) — a type parameter bounded by `std.math.Float`:
+    /// the operators, literals and float methods apply to it as to `f32` and
+    /// `f64`.
+    fn float_param(&self, ty: Ty) -> bool {
+        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return false };
+        let float = Symbol::intern("std.math.Float");
+        self.current_generics.get(index as usize).is_some_and(|param| param.bounds.contains(&float))
+    }
+
     fn param_bound_named(&self, index: u32, names: &[&str]) -> bool {
         self.current_generics.get(index as usize).is_some_and(|param| {
             param.bounds.iter().any(|bound| names.contains(&bound.as_str().rsplit('.').next().unwrap_or_default()))
@@ -7010,7 +7146,7 @@ impl<'a> Checker<'a> {
         });
         let default = param.default.map(|default| self.substitute_ty(default, args));
         let bounds = param.bounds.iter().map(|&bound| self.substitute_bound(bound, args)).collect();
-        GenericParam { name: param.name, bounds, callable, default }
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -16045,12 +16181,65 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some((a, b))
     }
 
+    /// `[STD-20]`, `[STD-27]` — `x.sqrt()`, `y.atan2(x)`, `a.mul_add(b, c)`:
+    /// one C library function each; `abs` clears the sign, and `fract` is
+    /// `x - x.trunc()`, `x` evaluated once.
+    fn synth_float_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let ty = receiver.ty;
+        let method = name.name.as_str();
+        let (lib, arity) = match method {
+            "abs" | "fract" => (None, 1),
+            _ => match hir::FloatLib::named(method) {
+                Some((lib, arity)) => (Some(lib), arity),
+                None => unreachable!("the caller checked the name"),
+            },
+        };
+        if args.len() + 1 != arity || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {} argument(s), found {}", arity - 1, args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mut operands = vec![receiver];
+        for arg in args {
+            operands.push(self.check_expr(&arg.value, ty));
+        }
+        match (method, lib) {
+            ("abs", _) => Expr { ty, kind: ExprKind::Builtin { which: Builtin::FloatAbs, args: operands }, span },
+            ("fract", _) => {
+                let x = self.declare(None, ty, span);
+                let read = || Expr { ty, kind: ExprKind::Local(x), span };
+                let truncated = Expr {
+                    ty,
+                    kind: ExprKind::Builtin { which: Builtin::FloatLib(hir::FloatLib::Trunc), args: vec![read()] },
+                    span,
+                };
+                let value =
+                    Expr { ty, kind: ExprKind::Binary { op: BinOp::Sub, lhs: Box::new(read()), rhs: Box::new(truncated) }, span };
+                let init = operands.pop().expect("the receiver");
+                Expr {
+                    ty,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local: x, init: Some(init) }], span },
+                        value: Box::new(value),
+                    },
+                    span,
+                }
+            }
+            (_, Some(lib)) => {
+                let result = if lib.is_predicate() { self.common.bool_ } else { ty };
+                Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::FloatLib(lib), args: operands }, span }
+            }
+            (_, None) => unreachable!("every other name is a library function"),
+        }
+    }
+
     /// Whether `min`, `max` and `clamp` can order values of `ty` (`[TYP-37]`).
     fn totally_ordered(&self, ty: Ty) -> bool {
-        matches!(
-            self.types.kind(ty),
-            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool
-        )
+        match *self.types.kind(ty) {
+            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool => true,
+            // `[TYP-17]` — a parameter bounded by `Ord`, or `Float` (`[STD-27]`).
+            TyKind::Param { index, .. } => self.param_bound_named(index, &["Ord"]) || self.float_param(ty),
+            _ => false,
+        }
     }
 
     /// `[STD-10]` — `input(prompt="") -> String`: the prompt, then a line of
@@ -16167,6 +16356,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `{name}` needs"));
                     return Some(error);
                 }
+                let range = self.range_of(&a).zip(self.range_of(&b)).and_then(|(a, b)| min_max_interval(name == "min", a, b));
+                if let Some(range) = range {
+                    self.picked_ranges.insert(span, range);
+                }
                 if name == "min" { self.pick_less(a, b, span) } else { self.pick_greater(a, b, span) }
             }
             "clamp" => {
@@ -16180,6 +16373,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let shown = self.types.display(ty);
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `clamp` needs"));
                     return Some(error);
+                }
+                if let Some(range) = clamp_interval(self.range_of(&value), self.range_of(&lo), self.range_of(&hi)) {
+                    self.picked_ranges.insert(span, range);
                 }
                 // `[ERR-13]` — `lo > hi` is the caller's bug, and panics;
                 // otherwise `min(max(value, lo), hi)`.
@@ -17186,6 +17382,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     named.extend(over.iter().copied());
                 }
             }
+            // `[STD-27]` — a `Float` bound is met by a float: `sqrt(4)` is
+            // `sqrt(4.0)`.
+            if bounds.iter().any(|bound| bound.is("std.math.Float")) {
+                named.push(self.common.f64);
+            }
             let fits = |this: &Self, ty: Ty| if float { this.types.is_float(ty) } else { this.types.is_numeric(ty) };
             if let Some(ty) = named.into_iter().find(|&ty| fits(self, ty) && meets(self, ty)) {
                 return self.adopt_literal(value, ty);
@@ -17783,56 +17984,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // kept only where it provably fits the representation.
                 self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
             }
-            ExprKind::Call { callee, args, .. } => {
-                let name = self.function_name_for_def(*callee)?;
-                let (lo, hi) = self.math_range_call(name, args)?;
-                // `[RNG-4a]` applies to library calls as well as operators: a
-                // range fact is useful only when its endpoints are representable
-                // in the call's result type in every profile.
+            // The prelude's `min`, `max` and `clamp` (`picked_ranges`).
+            // `[RNG-4a]` applies to them as to operators: a fact is kept only
+            // where its endpoints fit the result type in every profile.
+            ExprKind::Block { .. } => {
+                let (lo, hi) = *self.picked_ranges.get(&expr.span)?;
                 self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
-            }
-            _ => None,
-        }
-    }
-
-    /// Recover the source-qualified name for a direct call. The HIR keeps the
-    /// resolved `DefId`, not the spelling used at the call site, so aliases and
-    /// namespace-qualified calls naturally share the same range transfer.
-    fn function_name_for_def(&self, def: DefId) -> Option<Symbol> {
-        self.fn_ids.iter().find_map(|(name, candidate)| (*candidate == def).then_some(*name))
-    }
-
-    /// Transfer `[RNG-4]` through the canonical scalar helpers in
-    /// `std.math`. These are ordinary library functions in HIR; recognizing
-    /// their specified interval behavior here is the compiler's range-analysis
-    /// implementation, not a second callable or ownership mechanism.
-    fn math_range_call(&self, name: Symbol, args: &[Expr]) -> Option<(Bound, Bound)> {
-        let arg = |index: usize| args.get(index).and_then(|value| self.range_of(value));
-        match name.as_str() {
-            "std.math.min_i32" | "std.math.min_f32" if args.len() == 2 => {
-                let a = arg(0)?;
-                let b = arg(1)?;
-                Some((bound_min(a.0, b.0)?, bound_min(a.1, b.1)?))
-            }
-            "std.math.max_i32" | "std.math.max_f32" if args.len() == 2 => {
-                let a = arg(0)?;
-                let b = arg(1)?;
-                Some((bound_max(a.0, b.0)?, bound_max(a.1, b.1)?))
-            }
-            "std.math.clamp_i32" | "std.math.clamp_f32" if args.len() == 3 => {
-                let lower = arg(1)?;
-                let upper = arg(2)?;
-                // `clamp` keeps its result between the supplied bounds even
-                // when the value being clamped has no interval fact. Require
-                // the bound intervals to establish `lo <= hi` on every
-                // execution; otherwise the v1 `min(max(v, lo), hi)` spelling
-                // has no such general result interval.
-                if lower.1.le(upper.0) {
-                    return Some((lower.0, upper.1));
-                }
-                let value = arg(0)?;
-                let raised = (bound_max(value.0, lower.0)?, bound_max(value.1, lower.1)?);
-                Some((bound_min(raised.0, upper.0)?, bound_min(raised.1, upper.1)?))
             }
             _ => None,
         }
@@ -17886,13 +18043,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn literal_fits(&self, expr: &Expr, expected: Ty) -> bool {
+        // `[STD-27]` — and a type parameter bounded by `Float`.
+        let float = self.types.is_float(expected) || self.float_param(expected);
         if self.types.is_float(expr.ty) {
             // A float literal takes a float type only.
-            return self.types.is_float(expected);
+            return float;
         }
         // `[LEX-16]` — an integer literal may also take a float type by
         // context, which is what makes `Vec3(1, 2, 3)` work.
-        self.types.is_integral(expected) || self.types.is_float(expected)
+        self.types.is_integral(expected) || float
     }
 
     fn adopt_literal(&mut self, expr: Expr, expected: Ty) -> Expr {
@@ -17980,15 +18139,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return self.read_local_expecting(local, span, expected);
                 }
                 // A `const` or `static` is substituted where its name appears.
-                if let Some(value) = self.constants.get(&self.resolve_name(name)) {
-                    let kind = match &value.kind {
-                        ExprKind::Int(v) => ExprKind::Int(*v),
-                        ExprKind::Float(v) => ExprKind::Float(*v),
-                        ExprKind::Bool(v) => ExprKind::Bool(*v),
-                        ExprKind::Str(s) => ExprKind::Str(s.clone()),
-                        _ => ExprKind::Error,
-                    };
-                    return Expr { ty: value.ty, kind, span };
+                let qualified = self.resolve_name(name);
+                if self.constants.contains_key(&qualified) {
+                    return self.constant_use(qualified, span);
                 }
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
@@ -18049,6 +18202,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
 
             ast::ExprKind::Field { base, name } => {
+                // `[GRM-24]` — `math.PI`: a constant reached through a module.
+                if let ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } = &base.kind
+                    && let Some(module) = self.namespace_named(base)
+                {
+                    let qualified = self.qualified_in_module(module, name.name);
+                    if self.constants.contains_key(&qualified) {
+                        if !self.item_accessible(module, qualified) {
+                            self.report_item_not_visible(module, qualified, name.span);
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        }
+                        return self.constant_use(qualified, span);
+                    }
+                }
                 let base = self.synth(base);
                 self.field_of(base, *name, span)
             }
@@ -19736,8 +19902,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let Some(expected) = expected {
             let mut hinted = solved.clone();
             if self.unify_generic_argument(ret, expected, &generics, &mut hinted, explicit.len()) {
-                for (slot, hint) in solved.iter_mut().zip(hinted) {
-                    if slot.is_none() {
+                for ((slot, hint), param) in solved.iter_mut().zip(hinted).zip(&generics) {
+                    // `[IFC-4]` — a `T.Real` is what `T` says, never a guess.
+                    if slot.is_none() && param.projection.is_none() {
                         *slot = hint;
                     }
                 }
@@ -19806,6 +19973,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
+        // `[IFC-4]` — `T.Real` is what `T`'s type says its `Real` is.
+        for index in 0..generics.len() {
+            let Some((base, name)) = generics[index].projection else { continue };
+            if solved[index].is_some() {
+                continue;
+            }
+            if let Some(base_ty) = solved.get(base as usize).copied().flatten() {
+                // A type with no `Real` misses `T`'s bound, which the bound
+                // check reports; `T.Real` itself says nothing more.
+                solved[index] = Some(self.project(base_ty, name).unwrap_or(self.common.error));
+            }
+        }
         // `[TYP-18]` — a parameter no argument mentions must be written out.
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
@@ -19828,6 +20007,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // `[TYP-17]` — every bound must actually be implemented.
         let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
+            if ty == self.common.error {
+                unmet = true;
+                continue;
+            }
             for bound in &param.bounds {
                 let bound = &self.substitute_bound(*bound, &substitution);
                 if !self.implements(ty, *bound) {
@@ -20474,11 +20657,83 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[IFC-4]` — replace every associated type in `ty` with what `owner`
     /// declared it to be. A name the owner never declared is left alone; the
     /// implementation check reports that separately.
+    /// `[IFC-4]` — for each `T.Name` a signature mentions, one hidden
+    /// parameter after the written ones, bounded as `Name` is declared
+    /// (`type Real: Float`).
+    fn declare_projections(&mut self, types: &[&ast::TypeExpr], generics: &mut Vec<GenericParam>, index_base: usize) {
+        let mut named = Vec::new();
+        for ty in types {
+            collect_projection_paths(ty, &mut named);
+        }
+        for (base, assoc) in named {
+            let Some(base_index) = generics.iter().position(|param| param.name == base.name && param.projection.is_none())
+            else {
+                continue;
+            };
+            if self.projection_params.contains_key(&(base.name, assoc.name)) {
+                continue;
+            }
+            let declared = generics[base_index].bounds.iter().find_map(|bound| {
+                self.interfaces
+                    .get(bound)
+                    .and_then(|def| def.assoc.iter().find(|(name, _)| *name == assoc.name).map(|(_, bounds)| bounds.clone()))
+            });
+            let Some(bounds) = declared else {
+                self.error(
+                    codes::E2040,
+                    assoc.span,
+                    format!("`{}` has no associated type `{}`; its bounds declare none", base.name, assoc.name),
+                );
+                let error = self.common.error;
+                self.projection_params.insert((base.name, assoc.name), error);
+                continue;
+            };
+            let name = Symbol::intern(&format!("{}.{}", base.name, assoc.name));
+            let index = (index_base + generics.len()) as u32;
+            let ty = self.types.intern(TyKind::Param { index, name });
+            generics.push(GenericParam {
+                name,
+                bounds,
+                callable: None,
+                default: None,
+                projection: Some(((index_base + base_index) as u32, assoc.name)),
+            });
+            self.projection_params.insert((base.name, assoc.name), ty);
+        }
+    }
+
+    /// `[IFC-4]` — `T.Name` where `T` is a type parameter: the hidden
+    /// parameter standing for it inside a generic body, or what `T`'s type
+    /// says `Name` is once `T` is known.
+    fn resolve_projection(&mut self, base: ast::Ident, assoc: ast::Ident) -> Ty {
+        if let Some(&ty) = self.projection_params.get(&(base.name, assoc.name)) {
+            return ty;
+        }
+        let base_ty = self.type_params[&base.name];
+        if let Some(ty) = self.project(base_ty, assoc.name) {
+            return ty;
+        }
+        let shown = self.types.display(base_ty);
+        self.error(codes::E2040, assoc.span, format!("`{shown}` has no associated type `{}`", assoc.name));
+        self.common.error
+    }
+
+    /// What `ty.name` is: the implementation's `type name = …`, or for a type
+    /// parameter the hidden parameter standing for it.
+    fn project(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
+        if let Some(&value) = self.assoc_values.get(&(ty, name)) {
+            return Some(value);
+        }
+        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
+        let (slot, param) =
+            self.current_generics.iter().enumerate().find(|(_, param)| param.projection == Some((index, name)))?;
+        let param_name = param.name;
+        Some(self.types.intern(TyKind::Param { index: slot as u32, name: param_name }))
+    }
+
     fn resolve_assoc(&mut self, ty: Ty, owner: Ty) -> Ty {
         match self.types.kind(ty).clone() {
-            TyKind::Assoc { name } => {
-                self.assoc_values.get(&(owner, name)).copied().unwrap_or(ty)
-            }
+            TyKind::Assoc { name } => self.project(owner, name).unwrap_or(ty),
             TyKind::Ref { mutable, inner } => {
                 let inner = self.resolve_assoc(inner, owner);
                 self.types.intern(TyKind::Ref { mutable, inner })
@@ -20529,10 +20784,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return true;
         }
         if let TyKind::Param { index, .. } = *self.types.kind(ty) {
-            return self
-                .current_generics
-                .get(index as usize)
-                .is_some_and(|param| param.bounds.contains(&interface));
+            // `[STD-27]` — `T: Float` provides `Copy`, `Clone`, `Eq`, `Ord`,
+            // `Default`, `Display` and `Debug` as the floats do.
+            let implied = self.float_param(ty)
+                && matches!(
+                    interface.as_str().rsplit('.').next().unwrap_or_default(),
+                    "Copy" | "Clone" | "Eq" | "Ord" | "Default" | "Display" | "Debug"
+                );
+            return implied
+                || self
+                    .current_generics
+                    .get(index as usize)
+                    .is_some_and(|param| param.bounds.contains(&interface));
         }
         // `[ENM-3]`, `[HASH-4]` — scalar/range/unit-enum equality and
         // hashing are compiler-known standard capabilities. They must satisfy
@@ -20727,6 +20990,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
     /// reached through a module, for positions where a type is named.
+    /// A `const` or `static`, substituted where it is named: an untyped one
+    /// is its literal, to take a type there (V.7).
+    fn constant_use(&self, qualified: Symbol, span: Span) -> Expr {
+        let value = &self.constants[&qualified];
+        let kind = match &value.kind {
+            ExprKind::Int(v) => ExprKind::Int(*v),
+            ExprKind::Float(v) => ExprKind::Float(*v),
+            ExprKind::Bool(v) => ExprKind::Bool(*v),
+            ExprKind::Str(s) => ExprKind::Str(s.clone()),
+            _ => ExprKind::Error,
+        };
+        Expr { ty: value.ty, kind, span }
+    }
+
     fn item_through_module(&self, expr: &ast::Expr) -> Option<Symbol> {
         let ast::ExprKind::Field { base, name } = &expr.kind else { return None };
         let module = self.namespace_named(base)?;
@@ -22441,6 +22718,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.synth_hash_of(receiver, recv.span, args, span);
         }
+        // `[STD-20]`, `[STD-27]` — a float's methods are the C library's
+        // functions (a `Float` parameter reaches them through its bound).
+        if matches!(self.types.kind(receiver.ty), TyKind::Float(_))
+            && explicit.is_empty()
+            && (hir::FloatLib::named(name.name.as_str()).is_some() || matches!(name.name.as_str(), "abs" | "fract"))
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_float_method(receiver, name, args, span);
+        }
         // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
         // which generic code bounded by `Ord` uses.
         if name.name.is("cmp")
@@ -23023,6 +23309,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
         let ret = self.types.substitute_self(ret, concrete);
+        // `[IFC-4]` — `Self.Real` of a type parameter is its hidden `T.Real`.
+        let ret = self.resolve_assoc(ret, concrete);
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {
@@ -28879,9 +29167,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn power(&mut self, base: Expr, exponent: Expr, exponent_ast: &ast::Expr, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let exponent = self.read_through(exponent);
-        let exponent = self.commit(exponent);
         let base = self.read_through(base);
-        let base = if self.types.is_untyped_literal(base.ty) && self.types.is_float(exponent.ty) {
+        // `[STD-27]` — a literal beside a `Float` parameter is one.
+        let exponent = if self.float_param(base.ty) && self.types.is_untyped_literal(exponent.ty) {
+            self.adopt_literal(exponent, base.ty)
+        } else {
+            self.commit(exponent)
+        };
+        let base = if self.types.is_untyped_literal(base.ty)
+            && (self.types.is_float(exponent.ty) || self.float_param(exponent.ty))
+        {
             self.coerce(base, exponent.ty)
         } else {
             self.commit(base)
@@ -28890,6 +29185,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return error;
         }
         let (ty, exponent_ty) = (base.ty, exponent.ty);
+        if self.float_param(ty) {
+            if exponent_ty != ty {
+                let shown = self.types.display(exponent_ty);
+                self.error(codes::E2020, exponent.span, format!("a `Float` `**` takes the same type as its exponent, not `{shown}`"));
+                return error;
+            }
+            return Expr { ty, kind: ExprKind::Builtin { which: Builtin::FloatPow, args: vec![base, exponent] }, span };
+        }
         if self.types.is_float(ty) {
             if !self.types.is_integral(exponent_ty) && !self.types.is_float(exponent_ty) {
                 let shown = self.types.display(exponent_ty);
@@ -29270,7 +29573,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.reject_integer_true_division(hir_op, operand_ty, span) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if !hir_op.is_comparison() && !self.types.is_numeric(operand_ty) && operand_ty != self.common.error {
+        if !hir_op.is_comparison()
+            && !self.types.is_numeric(operand_ty)
+            && !self.float_param(operand_ty)
+            && operand_ty != self.common.error
+        {
             let shown = self.types.display(operand_ty);
             self.error(
                 codes::E2020,
@@ -29587,6 +29894,40 @@ fn has_self_sized_bound(bounds: &[ast::Bound]) -> bool {
 
 /// Whether an expression names a location rather than a value — the test
 /// `[EXP-5]` applies to an assignment target and to a `mut` argument.
+/// `[IFC-4]` — every two-segment path with no arguments in a written type
+/// (`T.Real`), as a candidate associated type of a type parameter.
+fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(ast::Ident, ast::Ident)>) {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, args } => {
+            if let [base, assoc] = segments.as_slice()
+                && args.is_empty()
+            {
+                out.push((*base, *assoc));
+            }
+            for arg in args {
+                match arg {
+                    ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } => {
+                        collect_projection_paths(inner, out)
+                    }
+                    ast::GenericArg::Const(_) => {}
+                }
+            }
+        }
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => collect_projection_paths(inner, out),
+        ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
+            items.iter().for_each(|item| collect_projection_paths(item, out))
+        }
+        ast::TypeKind::Fn { params, ret, .. } => {
+            params.iter().for_each(|param| collect_projection_paths(&param.ty, out));
+            if let Some(ret) = ret {
+                collect_projection_paths(ret, out);
+            }
+        }
+        ast::TypeKind::Array { elem, .. } => collect_projection_paths(elem, out),
+        _ => {}
+    }
+}
+
 /// Where `@view` is written, for its diagnostics.
 fn view_span(attrs: &[ast::Attribute]) -> Span {
     attrs
@@ -30140,6 +30481,31 @@ fn remainder_interval(a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bo
 /// Interval endpoint operations used by the range-preserving scalar helpers.
 /// Mixed integer/float endpoints are never a valid range fact, so fail closed
 /// rather than manufacturing a conversion at analysis time.
+/// `[RNG-4]` — the interval of `min(a, b)` (`less`) or `max(a, b)`.
+fn min_max_interval(less: bool, a: (Bound, Bound), b: (Bound, Bound)) -> Option<(Bound, Bound)> {
+    if less {
+        Some((bound_min(a.0, b.0)?, bound_min(a.1, b.1)?))
+    } else {
+        Some((bound_max(a.0, b.0)?, bound_max(a.1, b.1)?))
+    }
+}
+
+/// `[RNG-4]` — the interval of `clamp(value, lo, hi)`: between the bounds
+/// whatever the value when the bounds are known to be in order (a `lo > hi`
+/// panics, `[ERR-13]`), otherwise `min(max(value, lo), hi)`'s.
+fn clamp_interval(
+    value: Option<(Bound, Bound)>,
+    lower: Option<(Bound, Bound)>,
+    upper: Option<(Bound, Bound)>,
+) -> Option<(Bound, Bound)> {
+    let (lower, upper) = (lower?, upper?);
+    if lower.1.le(upper.0) {
+        return Some((lower.0, upper.1));
+    }
+    let raised = min_max_interval(false, value?, lower)?;
+    min_max_interval(true, raised, upper)
+}
+
 fn bound_min(a: Bound, b: Bound) -> Option<Bound> {
     match (a, b) {
         (Bound::Int(a), Bound::Int(b)) => Some(Bound::Int(a.min(b))),

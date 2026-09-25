@@ -549,6 +549,109 @@ pub enum PatternKind {
     Error,
 }
 
+/// `[STD-20]`, `[STD-27]` — the float methods that are one C library function
+/// each: the `f64` one by `c_name`, the `f32` one with an `f` after it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FloatLib {
+    Sqrt,
+    Cbrt,
+    Exp,
+    Exp2,
+    Ln,
+    Log2,
+    Log10,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Sinh,
+    Cosh,
+    Tanh,
+    Floor,
+    Ceil,
+    Trunc,
+    /// Half to even, as Python's `round`: C's `nearbyint` in the default
+    /// rounding mode.
+    Round,
+    /// C's `round`.
+    RoundHalfAway,
+    Atan2,
+    Hypot,
+    Pow,
+    Copysign,
+    /// C's `fma`: one rounding (`[STD-3]`).
+    MulAdd,
+    /// C's classification macros, the same name for both widths; `bool`.
+    IsNan,
+    IsFinite,
+    IsInfinite,
+}
+
+impl FloatLib {
+    /// The method, as Ember writes it, and the function's arity with the
+    /// receiver.
+    pub const ALL: [(FloatLib, &'static str, usize); 29] = [
+        (FloatLib::Sqrt, "sqrt", 1),
+        (FloatLib::Cbrt, "cbrt", 1),
+        (FloatLib::Exp, "exp", 1),
+        (FloatLib::Exp2, "exp2", 1),
+        (FloatLib::Ln, "ln", 1),
+        (FloatLib::Log2, "log2", 1),
+        (FloatLib::Log10, "log10", 1),
+        (FloatLib::Sin, "sin", 1),
+        (FloatLib::Cos, "cos", 1),
+        (FloatLib::Tan, "tan", 1),
+        (FloatLib::Asin, "asin", 1),
+        (FloatLib::Acos, "acos", 1),
+        (FloatLib::Atan, "atan", 1),
+        (FloatLib::Sinh, "sinh", 1),
+        (FloatLib::Cosh, "cosh", 1),
+        (FloatLib::Tanh, "tanh", 1),
+        (FloatLib::Floor, "floor", 1),
+        (FloatLib::Ceil, "ceil", 1),
+        (FloatLib::Trunc, "trunc", 1),
+        (FloatLib::Round, "round", 1),
+        (FloatLib::RoundHalfAway, "round_half_away", 1),
+        (FloatLib::Atan2, "atan2", 2),
+        (FloatLib::Hypot, "hypot", 2),
+        (FloatLib::Pow, "pow", 2),
+        (FloatLib::Copysign, "copysign", 2),
+        (FloatLib::MulAdd, "mul_add", 3),
+        (FloatLib::IsNan, "is_nan", 1),
+        (FloatLib::IsFinite, "is_finite", 1),
+        (FloatLib::IsInfinite, "is_infinite", 1),
+    ];
+
+    pub fn named(method: &str) -> Option<(FloatLib, usize)> {
+        FloatLib::ALL.iter().find(|(_, name, _)| *name == method).map(|&(f, _, arity)| (f, arity))
+    }
+
+    pub fn method(self) -> &'static str {
+        FloatLib::ALL.iter().find(|(f, _, _)| *f == self).map_or("?", |(_, name, _)| name)
+    }
+
+    /// The `f64` function's C name.
+    pub fn c_name(self) -> &'static str {
+        match self {
+            FloatLib::Ln => "log",
+            FloatLib::Round => "nearbyint",
+            FloatLib::RoundHalfAway => "round",
+            FloatLib::MulAdd => "fma",
+            FloatLib::IsNan => "isnan",
+            FloatLib::IsFinite => "isfinite",
+            FloatLib::IsInfinite => "isinf",
+            other => other.method(),
+        }
+    }
+
+    /// A classification macro: one name for both widths, and an `int`.
+    pub fn is_predicate(self) -> bool {
+        matches!(self, FloatLib::IsNan | FloatLib::IsFinite | FloatLib::IsInfinite)
+    }
+}
+
 /// Functions the compiler provides itself in Phase 0, before the standard
 /// library is written in Ember. Each lowers to one `ember_rt` call.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -572,6 +675,9 @@ pub enum Builtin {
     FloatAbs,
     /// `[TYP-30]` — a float `**`: C's `pow` or `powf`.
     FloatPow,
+    /// `[STD-20]`, `[STD-27]` — a float method that is one C library
+    /// function: the receiver, then the method's arguments.
+    FloatLib(FloatLib),
     /// `[STD-26]` — how many values `range(start, stop, step)` has, and the
     /// `k`th of them; a zero step panics.
     RangeCount,
@@ -961,6 +1067,7 @@ impl Builtin {
             Builtin::TotalLess => "cmp",
             Builtin::FloatAbs => "abs",
             Builtin::FloatPow => "pow",
+            Builtin::FloatLib(f) => f.method(),
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
             Builtin::StrStartsWith => "starts_with",

@@ -50,6 +50,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-038 | **CLOSED** — ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`, `f64` for an `f64`); `T.Name` names a type parameter's associated type | Standard library / math; interfaces | — | Owner ruling 2026-09-25, 0.9.9_Hardened_15 |
+| ODR-037 | **CLOSED** — `std.math.Float` (only `f32` and `f64`, `E2042`) is the bound of `[STD-21]`'s generic functions: it provides the operators, typed literals and the float methods; `PI`, `TAU` and `E` are untyped constants | Standard library / math | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_14 |
 | ODR-036 | **CLOSED** — a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`): text keys are `String`, and text in a `{…}` literal with no context makes `String`s | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-035 | **CLOSED** — `union` is contextual: reserved (`E0005`) only where an item would begin `union` and a name, an identifier elsewhere, so `Set` can have its `union` method | Lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-034 | **CLOSED** — a `Map` prints `{'a': 1}` and an empty one `{}`, a `Set` `{1, 2}` and an empty one `set()`, strings by Python's `repr`; `==` compares as sets of entries; a duplicate literal key keeps its first position and its last value; `[a, b]` is never a `Set`; `sorted(m)` is the keys | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
@@ -190,6 +192,90 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-038 — may `std.math`'s functions take any number type? — **CLOSED**
+
+    ID:        ODR-038
+    Status:    CLOSED — ruled by the owner 2026-09-25; incorporated in
+               0.9.9_Hardened_15
+    Category:  STANDARD LIBRARY / MATH; INTERFACES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_14.md [STD-21], [STD-27], [IFC-4]
+
+    Question:  ODR-037 made the maths functions generic over `f32` and `f64`
+               only. The owner asked for them to take any number type, as
+               C++'s do. What does an integer give back, and how does a
+               function's first line say a type that depends on its input?
+
+**Options put to the owner.**
+- **(1)** `std.math` names the C functions itself: needs calling C from
+  Ember (`[FFI-10]`), not built. Declined for now.
+- **(2)** A `Number` interface every number type implements in `std.math`,
+  stating the decimal type its answers come back as (`type Real`), and a
+  way to name that type in a signature (`T.Real`). An integer answers in
+  `f64`, which holds every 32-bit integer exactly; `f32` stays `f32`.
+  **Chosen by the owner.**
+- **(3)** Every answer an `f64`, as Python's: rejected by the owner, since
+  an `f32` would come back an `f64`.
+- Dropping `[TYP-17]`'s bounded generics for C++-style checking at each use
+  was weighed and kept out (errors inside the library, no contract in a
+  function's first line).
+
+**Ruling.** (2), recorded in `[IFC-4]` (bounded associated types, `T.Name`)
+and `[STD-27]`/`[STD-21]` (`Number`, `Float` membership written in
+`std.math`). A negative square root stays `nan`, as C's.
+
+---
+
+## ODR-037 — what is `[STD-21]`'s "generic over `f32` and `f64`" generic over? — **CLOSED**
+
+    ID:        ODR-037
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_14
+    Category:  STANDARD LIBRARY / MATH
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_13.md [STD-21], [STD-20], [TYP-17], V.7
+
+    Question:  `[STD-21]` makes `std.math`'s functions generic over `f32` and
+               `f64` but names no bound, and `[TYP-17]` allows a generic body
+               only what its bounds provide. What bound, what may its body do
+               (operators, a literal like `3.0`, `sqrt`), and what type are
+               `PI`, `TAU` and `E`?
+
+    Blocks implementation:            YES — none of `[STD-21]` can be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**What building it showed.** `std.math` held per-type copies (`min_f32`,
+`clamp_i32`, `lerp_f32`) from before generics. The operator interfaces of Part
+IV §8 (`Add[Output = T]`, …) do not tell a float from an integer, give no
+`sqrt`, and leave `3.0` in a generic body with no type. An unannotated `const PI
+= 3.14…` became `f64`, so `x: f32 = PI` was a type error.
+
+**Options.**
+- **(A) A `Float` interface** that `f32` and `f64` implement, whose bound
+  provides the operators, typed literals and the float functions as methods,
+  with untyped constants. Swift's `BinaryFloatingPoint` with its literal
+  protocol is the precedent. Chosen.
+- **(B) One function per type** (`sqrt_f32`, `sqrt_f64`): what `std.math` had;
+  `[STD-21]` says generic.
+- **(C) Operator-interface bounds only**: admits integers, no `sqrt`, and a
+  literal needs a conversion call.
+- **(D) `T.from_f64(3.0)` for literals**: correct and verbose; Python code
+  writes `3.0`.
+- **(E) Typed constants per type** (`f32.PI`, `f64.PI`): `math.PI` in `f32`
+  code would need a cast; Python's `math.pi` is one name.
+
+**Ruling.** (A), recorded as `[STD-27]`. `Float` is implemented by `f32` and
+`f64` only (`E2042` elsewhere): a literal must be able to become `T`, which no
+program type can promise. `T: Float` provides `Copy`, `Eq`, `Ord`, `Default`,
+the arithmetic operators on two `T`s, untyped literals adopting `T`, and
+`[STD-20]`'s float methods and `[STD-21]`'s functions as methods; the free
+functions are those methods. The platform's transcendental functions stay
+`[DET-2]`'s `Nondet` ones; `std.math.det` is `[DET-4]`'s. V.7: a `const` with no
+written type and an untyped numeric literal as its value is untyped, each use
+taking its type as the literal would, `f64` (or `int`) by default.
 
 ---
 

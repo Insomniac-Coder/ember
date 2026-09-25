@@ -719,3 +719,13 @@ The next number is ODR-027.
   with type parameters of their own are checked once with every parameter opaque. An instance
   over a type parameter is one per slot, so `fn f[U](…, g: fn(…) -> U) -> Option[U]` returns an
   `Option[U]` of its own `U` (D-306, present before the 0.9.9 work).
+* **2026-09-25 — `std.math` takes any number type (ODR-037, ODR-038; Hardened_14, _15).**
+  `math.sqrt`, `sin`, `pow`, `hypot`, `lerp`, `smoothstep` and the rest take any number type: an
+  integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f32`'s an `f32`, an `f64`'s an `f64`.
+  `std.math.Number` and `std.math.Float` are declared in `std/src/math.em`, every membership
+  written there as an `extend … implements` block. `T.Real` names a type parameter's associated type
+  (`[IFC-4]`). The float methods of `[STD-20]` exist (`x.sqrt()`, `round` half to even,
+  `mul_add`, `is_nan`, …); `PI`, `TAU`, `E` and any `const` written without a type and with a
+  literal value are untyped constants; `math.PI` resolves through the module. The per-type
+  `min_i32`/`clamp_f32`/`lerp_f32` are gone: the prelude's `min`, `max`, `clamp` replace them and
+  carry `[RNG-4]`'s intervals. D-307: a struct's implicit `Eq` meets `interface Ord: Eq`.

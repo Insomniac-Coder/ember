@@ -254,6 +254,14 @@ ODRS = [
     ('ODR-036', 'a `Map`\'s keys and values and a `Set`\'s elements are not views (`E3063`); text in a `{…}` '
                 'literal with no context is `String` (Hardened_13)',
      '`[STD-11]`, `[TYP-38]`'),
+    ('ODR-037', '`std.math.Float`, implemented by `f32` and `f64` only (`E2042`), is the bound of the generic '
+                'float functions and provides their operators, typed literals and methods; `PI`, `TAU` and '
+                '`E` are untyped constants (Hardened_14)',
+     '`[STD-21]`, `[STD-27]`, V.7'),
+    ('ODR-038', 'ruled by the owner: `std.math`\'s functions take any number type through `std.math.Number`, '
+                'answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type '
+                'parameter\'s associated type (Hardened_15)',
+     '`[IFC-4]`, `[STD-21]`, `[STD-27]`'),
 ]
 
 H5_HEAD = """
@@ -263,7 +271,8 @@ Each ambiguity found while implementing 0.9.9 is an owner decision request (`doc
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
 Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
-Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036.
+Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+Hardened_14 adds ODR-037; Hardened_15 adds ODR-038.
 
 | ODR | Ruling | Rules |
 |---|---|---|

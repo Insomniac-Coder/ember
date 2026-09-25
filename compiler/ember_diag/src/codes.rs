@@ -178,6 +178,7 @@ codes! {
     E2030 = (Error, 2030, Types, "[TYP-34]", "`@view` on a type that is not a view");
     E2040 = (Error, 2040, Types, "[TYP-17]", "unsatisfied interface bound");
     E2041 = (Error, 2041, Types, "[TYP-19]", "overlapping `extend` implementations");
+    E2042 = (Error, 2042, Types, "[STD-27]", "`Float` is implemented only by `f32` and `f64`");
     E2050 = (Error, 2050, Types, "[TYP-22]", "interface is not `dyn`-compatible");
     E2060 = (Error, 2060, Types, "[TYP-23]", "cannot infer type");
     E2061 = (Error, 2061, Types, "[TYP-23]", "lambda parameter types cannot be inferred here");

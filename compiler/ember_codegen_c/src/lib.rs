@@ -4240,6 +4240,16 @@ impl Emitter<'_> {
                         };
                         return format!("{function}({}, {})", rendered[0], rendered[1]);
                     }
+                    // `[STD-27]` — `sqrt` or `sqrtf`; a classification macro
+                    // is one name, and its `int` is made a `bool`.
+                    Builtin::FloatLib(f) => {
+                        let call = |suffix: &str| format!("{}{suffix}({})", f.c_name(), rendered.join(", "));
+                        return match (f.is_predicate(), self.types.kind(*arg_ty)) {
+                            (true, _) => format!("({} != 0)", call("")),
+                            (false, TyKind::Float(FloatTy::F64)) => call(""),
+                            (false, _) => call("f"),
+                        };
+                    }
                     // D-187 — the checker sent here only text (all six
                     // comparisons, by bytes) and `==`/`!=` on aggregates.
                     Builtin::ValueCompare { op } => {

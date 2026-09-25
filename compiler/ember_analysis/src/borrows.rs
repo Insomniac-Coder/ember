@@ -2569,6 +2569,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::TotalLess
             | Builtin::FloatAbs
             | Builtin::FloatPow
+            | Builtin::FloatLib(_)
             | Builtin::RangeCount
             | Builtin::RangeNth
             | Builtin::SizeOf

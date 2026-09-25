@@ -10725,9 +10725,9 @@ the running narrative behind it.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_13.md`,
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_15.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
-  sources are `tasks/spec-0.9.9/parts/`; `parts-h13/` is frozen.
+  sources are `tasks/spec-0.9.9/parts/`; `parts-h15/` is frozen.
 * **Next numbers:** ODR-037, D-307.
 * **Last phase table given to the owner (2026-09-25):**
 
@@ -10956,16 +10956,41 @@ parameter's slot is part of an instance's name (`U0`, `U1`). The per-type
 methods of generic types with type parameters of their own are now checked
 opaquely too.
 
-**Immediate next task (owner asked, 2026-09-25):** `std/src/math.em` generic.
-Step 1: drop `min_i32`/`max_i32`/`clamp_i32` and the `_f32` copies; the prelude
-`min`/`max`/`clamp` (compiler-built, any `Ord` type, floats by totalOrder) take
-over, with D-142's `[RNG-4]` transfer moved onto them (they lower to inline
-code, not a call: record the interval where they are built); update the four
-tests that import the copies. Step 2: an ODR (ODR-037) for the bound `[STD-21]`
-needs, "generic over `f32` and `f64`", which the spec does not name: a `Float`
-interface both implement, its operators, how a literal like `3.0` is typed in
-a generic body, and the C math calls (`sqrtf`/`sqrt`); then write
-`[STD-21]`'s functions once each. Then D-284, `for k in owned m`, D-305.
+**Then: `std.math` takes any number type (ODR-037, then ODR-038 ruled by the
+owner; Hardened_14 and _15).** Read `std/src/math.em`'s header first: it says
+how the file fits together, in the owner's words' terms. The pieces:
+
+* `Number` (every number type but `i128`/`u128`, D-272) and `Float` (`f32`,
+  `f64`) are declared in `std/src/math.em`, and every membership is an
+  `extend … implements` block there. Nothing about which types are numbers is
+  hard-coded in the compiler any more. The owner found the hidden version
+  unreadable; keep it that way.
+* `T.Real` (`[IFC-4]`): a hidden parameter per `T.Name` a signature mentions
+  (`declare_projections`, `GenericParam.projection`, `projection_params`),
+  bounded by the associated type's declared bounds (`InterfaceDef.assoc`),
+  resolved in bodies by `resolve_projection`/`project`, filled at each call
+  from the argument type's `type Real = …` after the other inference and
+  never guessed from the expected type. Free functions only so far.
+* `f32` and `f64`'s float methods are built in (`hir::FloatLib`, one C
+  function each, `synth_float_method`); `builtin_float_method_fits` lets them
+  satisfy `Float` (or any interface asking for them). A `Float` bound gives
+  a generic body the operators and typed literals (`float_param`).
+* Conformance now checks associated types (stated, bounds met) and meets a
+  parent interface through `implements` (D-307).
+
+**How to talk to the owner about code** (2026-09-25, see the memory file
+`feedback_explain_code_answer_the_literal_question`): answer the exact
+question in one plain sentence; no tables of every line, no layered
+explanations. Show real output when it helps. Ask before touching a file for
+a demonstration.
+
+**Immediate next task:** the rest of `std.math`, in this order: `[STD-20]`'s
+float constants (`f64.INF`, `NAN`, `EPSILON`, `MIN`, `MAX`: an associated
+constant on a scalar type, not built) and the integer methods; `math.fma`;
+the operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`,
+…), which `[TYP-17]`'s own example needs and the vector types need; then the
+vector, matrix and geometry types, `KahanSum`, `std.math.det` (`[DET-4]`),
+`NonZero[T]`. Then D-284, `for k in owned m`, D-305.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):

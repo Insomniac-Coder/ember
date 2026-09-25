@@ -4,8 +4,8 @@
 ## `std.math` is `math.em` under **its** `src/`, not `std/math.em` under this
 ## one — which is what makes a `std` shipped beside the compiler resolvable.
 
-from std.math import clamp_i32
+from std.math import lerp
 
 fn main():
-    println(clamp_i32(200, 0, 100))
-#$ stdout: 100
+    println(lerp(0.0, 100.0, 0.5))
+#$ stdout: 50.0
