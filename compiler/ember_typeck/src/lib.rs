@@ -33,6 +33,7 @@ use ember_types::{
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
 /// module's path is empty.
+#[derive(Clone)]
 pub struct LoadedModule {
     pub path: Vec<String>,
     pub module: ast::Module,
@@ -107,6 +108,10 @@ pub fn check(
     lint_return_intersection: bool,
     debug_assertions: bool,
 ) -> CheckOutput {
+    // A blanket implementation's parameters move onto its methods first, so
+    // every later pass sees one shape (`desugar_blanket_extensions`).
+    let desugared = desugar_blanket_extensions(modules);
+    let modules: &[LoadedModule] = desugared.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
@@ -434,6 +439,24 @@ const BUILTIN_GENERICS: [&str; 5] = ["Array", "Span", "MutSpan", "Option", "Resu
 /// than the type's declaration, so each materialization matches its concrete
 /// arguments against this target before registering the extension's methods
 /// and interface implementations.
+/// `[TYP-19]` — a blanket implementation: `extend[K, V, H, Q: AsKey[K]]
+/// Map[K, V, H] implements Index[Q]` makes every `Map[K, V, H]` implement
+/// `Index[Q]` for each `Q` its bounds admit. Its methods are generic over
+/// `Q` (`desugar_blanket_extensions`); this is the implementation's record,
+/// over the extension's parameters and then the blanket's.
+#[derive(Clone)]
+struct BlanketImpl {
+    params: Vec<GenericParam>,
+    target: Ty,
+    /// Each interface it implements: its name and arguments.
+    interfaces: Vec<(Symbol, Vec<Ty>)>,
+    /// Its `type Name = …`.
+    assoc: Vec<(Symbol, Ty)>,
+    /// How many of `params`, at the end, are the blanket's own.
+    free: usize,
+    span: Span,
+}
+
 #[derive(Clone)]
 struct GenericExtension {
     params: Vec<GenericParam>,
@@ -881,6 +904,8 @@ struct Checker<'a> {
     generic_classes: HashMap<Symbol, GenericClass>,
     /// Extensions whose target is a generic struct, enum or class recipe.
     generic_extensions: HashMap<Symbol, Vec<GenericExtension>>,
+    /// `[TYP-19]` — the blanket implementations.
+    blankets: Vec<BlanketImpl>,
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
@@ -1171,6 +1196,7 @@ impl<'a> Checker<'a> {
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
             generic_extensions: HashMap::new(),
+            blankets: Vec::new(),
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
@@ -1864,6 +1890,27 @@ impl<'a> Checker<'a> {
                     None => {}
                 }
             }
+            // `[IFC-3]` — a bound brings its parents: `T: IndexMut[int]` is
+            // an `Index[int]` too, and `Output = f32` binds the parent's
+            // `Output`.
+            let mut at = 0;
+            while at < bounds.len() {
+                let parents = self.interfaces.get(&bounds[at]).map(|def| def.supertraits.clone()).unwrap_or_default();
+                for parent in parents {
+                    if !bounds.contains(&parent) {
+                        bounds.push(parent);
+                    }
+                    for (instance, name, value) in bindings.clone() {
+                        if instance == bounds[at]
+                            && self.interfaces.get(&parent).is_some_and(|def| def.assoc.iter().any(|(assoc, _)| *assoc == name))
+                            && !bindings.iter().any(|&(known, assoc, _)| known == parent && assoc == name)
+                        {
+                            bindings.push((parent, name, value));
+                        }
+                    }
+                }
+                at += 1;
+            }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
             declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, bindings });
         }
@@ -2243,6 +2290,7 @@ impl<'a> Checker<'a> {
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
+                    "Index", "IndexMut", "IndexSet",
                 ],
             ),
             ("std.collections", &["Hash", "Map", "Set"]),
@@ -3117,6 +3165,24 @@ impl<'a> Checker<'a> {
                     assoc.push((alias.name.name, self.resolve_type(value)));
                 }
             }
+            if !decl.blanket.is_empty() {
+                // The blanket's parameters follow the extension's, as its
+                // methods declare them.
+                self.record_blanket(decl, params.clone(), item.span);
+                self.type_params.clear();
+                self.generic_extensions.entry(name).or_default().push(GenericExtension {
+                    params,
+                    target_args,
+                    methods,
+                    interface: None,
+                    interfaces: Vec::new(),
+                    implements: Vec::new(),
+                    assoc: Vec::new(),
+                    span: item.span,
+                    declaring_module: self.current_module,
+                });
+                continue;
+            }
             self.type_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
@@ -3136,6 +3202,167 @@ impl<'a> Checker<'a> {
                     declaring_module: self.current_module,
                 });
         }
+    }
+
+    /// `[TYP-19]` — record a blanket implementation. `params` are the
+    /// extension's own, already declared (none for a non-generic target);
+    /// the blanket's follow them.
+    fn record_blanket(&mut self, decl: &ast::ExtendDecl, params: Vec<GenericParam>, span: Span) {
+        let mut all = params;
+        let blanket = self.declare_generics_from(&decl.blanket, all.len());
+        let free = blanket.len();
+        all.extend(blanket);
+        let target = self.resolve_type(&decl.target);
+        if target == self.common.error {
+            return;
+        }
+        let mut interfaces = Vec::new();
+        for entry in &decl.implements {
+            let Some(instance) = self.resolve_interface_use_for(entry, target) else { continue };
+            let found = match self.open_interface_origin.get(&instance) {
+                Some((origin, args)) => (*origin, args.clone()),
+                None => (instance, Vec::new()),
+            };
+            interfaces.push(found);
+        }
+        let mut assoc = Vec::new();
+        for member in &decl.members {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind
+                && let Some(value) = &alias.value
+            {
+                assoc.push((alias.name.name, self.resolve_type(value)));
+            }
+        }
+        self.blankets.push(BlanketImpl { params: all, target, interfaces, assoc, free, span });
+    }
+
+    /// `[TYP-19]` — whether a blanket implementation gives `ty` the
+    /// interface instance `interface` (`Map[String, int]`, `Index[str]`):
+    /// its target and interface take `ty` and the instance's arguments, and
+    /// every bound holds. If it does, it is recorded as a written
+    /// implementation is, with its associated types.
+    fn apply_blanket(&mut self, ty: Ty, interface: Symbol) -> bool {
+        let (origin, args) = match self.open_interface_origin.get(&interface) {
+            Some((origin, args)) => (*origin, args.clone()),
+            None => (interface, Vec::new()),
+        };
+        for index in 0..self.blankets.len() {
+            let blanket = self.blankets[index].clone();
+            let mut bindings = vec![None; blanket.params.len()];
+            if !self.match_generic_extension_type(blanket.target, ty, &mut bindings) {
+                continue;
+            }
+            let Some((_, patterns)) =
+                blanket.interfaces.iter().find(|(named, patterns)| *named == origin && patterns.len() == args.len())
+            else {
+                continue;
+            };
+            if !patterns.iter().zip(&args).all(|(&pattern, &arg)| self.match_generic_extension_type(pattern, arg, &mut bindings)) {
+                continue;
+            }
+            let Some(full) = bindings.into_iter().collect::<Option<Vec<Ty>>>() else { continue };
+            let mut holds = true;
+            for (param, &arg) in blanket.params.iter().zip(&full) {
+                for &bound in &param.bounds {
+                    let bound = self.substitute_bound(bound, &full);
+                    if !self.implements(arg, bound) {
+                        holds = false;
+                    }
+                }
+            }
+            if !holds {
+                continue;
+            }
+            self.implemented.push((ty, interface, blanket.span));
+            for &(name, value) in &blanket.assoc {
+                if self.interface_has_assoc(interface, name) {
+                    let value = self.substitute_ty(value, &full);
+                    self.instance_assoc.insert((ty, interface, name), value);
+                }
+            }
+            self.check_blanket_instance(ty, interface, &blanket, &full);
+            return true;
+        }
+        false
+    }
+
+    /// `[IFC-4]` — a blanket implementation, as it is for one argument, is
+    /// checked as a written one is: each associated type the interface
+    /// declares is given, and each method, with the blanket's parameters
+    /// substituted, has the interface's signature.
+    fn check_blanket_instance(&mut self, ty: Ty, interface: Symbol, blanket: &BlanketImpl, full: &[Ty]) {
+        let shown = self.types.display(ty);
+        let named = self.interface_shown(interface);
+        let declared = self.interfaces.get(&interface).map(|def| (def.methods.clone(), def.assoc.clone()));
+        let Some((methods, assoc)) = declared else { return };
+        let mut assoc_missing = false;
+        for (name, _) in assoc {
+            if !blanket.assoc.iter().any(|&(given, _)| given == name) {
+                self.error(codes::E2040, blanket.span, format!("`{shown}` implements `{named}` but does not say what `{name}` is"));
+                assoc_missing = true;
+            }
+        }
+        // A method's signature names the missing type; saying so once is enough.
+        if assoc_missing {
+            return;
+        }
+        let free = &full[full.len() - blanket.free..];
+        for (method, declaration, receiver, has_default) in methods {
+            let Some(entry) = self.methods.get(&(ty, method)).copied() else {
+                if !has_default {
+                    self.error(codes::E2040, blanket.span, format!("`{shown}` implements `{named}` but does not define `{method}`"));
+                }
+                continue;
+            };
+            let actual = self.signatures[entry.def.0 as usize].clone();
+            // A method with generics of its own besides the blanket's is not
+            // compared here.
+            if actual.generics.len() != free.len() {
+                continue;
+            }
+            let expected = self.signatures[declaration.0 as usize].clone();
+            let saved_instance = self.assoc_instance.replace(interface);
+            let mut expected_params = Vec::new();
+            for &(_, param, mode, _) in &expected.params {
+                let param = self.types.substitute_self(param, ty);
+                expected_params.push((self.resolve_assoc(param, ty), mode));
+            }
+            let expected_ret = self.types.substitute_self(expected.ret, ty);
+            let expected_ret = self.resolve_assoc(expected_ret, ty);
+            self.assoc_instance = saved_instance;
+            let actual_params: Vec<(Ty, Mode)> =
+                actual.params.iter().skip(1).map(|&(_, param, mode, _)| (self.substitute_ty(param, free), mode)).collect();
+            let actual_ret = self.substitute_ty(actual.ret, free);
+            if receiver != Some(entry.receiver) || actual_params != expected_params || actual_ret != expected_ret {
+                self.error(codes::E2040, blanket.span, format!("`{shown}.{method}` does not match the signature required by `{named}`"));
+            }
+        }
+    }
+
+    /// `[TYP-17]` — a bound's check at a call: a written implementation, or
+    /// a blanket one (recorded then).
+    fn implements_or_blanket(&mut self, ty: Ty, interface: Symbol) -> bool {
+        // A built-in instance takes its extensions, and so their
+        // implementations, when first used (`Array[f32]`'s `Index[int]`).
+        self.extend_builtin_instance(ty);
+        self.implements(ty, interface) || self.apply_blanket(ty, interface)
+    }
+
+    /// `[TYP-40]` — whether `ty` implements some instance of the interface
+    /// `origin` (`std.core.Index`), written or through a blanket
+    /// implementation.
+    fn implements_origin(&mut self, ty: Ty, origin: &str) -> bool {
+        self.extend_builtin_instance(ty);
+        let origin_of = |this: &Self, name: Symbol| this.open_interface_origin.get(&name).map_or(name, |(origin, _)| *origin);
+        if self.implemented.iter().any(|&(t, name, _)| t == ty && origin_of(self, name).as_str() == origin) {
+            return true;
+        }
+        let wanted = Symbol::intern(origin);
+        self.blankets.iter().any(|blanket| {
+            let mut bindings = vec![None; blanket.params.len()];
+            blanket.interfaces.iter().any(|(named, _)| *named == wanted)
+                && self.match_generic_extension_type(blanket.target, ty, &mut bindings)
+        })
     }
 
     fn is_generic_extension(&self, decl: &ast::ExtendDecl) -> bool {
@@ -3504,7 +3731,7 @@ impl<'a> Checker<'a> {
             let value = self.substitute_ty(value, &args);
             self.assoc_values.insert((ty, name), value);
             for &(implemented, interface, _) in implementations {
-                if self.interfaces.get(&interface).is_some_and(|def| def.assoc.iter().any(|(assoc, _)| *assoc == name)) {
+                if self.interface_has_assoc(interface, name) {
                     self.instance_assoc.insert((implemented, interface, name), value);
                 }
             }
@@ -4423,6 +4650,15 @@ impl<'a> Checker<'a> {
                     // D-313 — a generic interface's implementation is of one
                     // instance (`Mul[Vec4]`), and its methods are that
                     // instance's, so another instance's may share their names.
+                    // `[TYP-19]` — a blanket implementation's methods are the
+                    // type's, generic over the blanket's parameters.
+                    if !decl.blanket.is_empty() {
+                        self.type_params.clear();
+                        self.record_blanket(decl, Vec::new(), item.span);
+                        self.type_params.clear();
+                        self.collect_members(ty, &decl.members, None, true, item.span, item_index);
+                        continue;
+                    }
                     let interfaces = self.block_interfaces_of(&decl.implements, ty);
                     let interface = interfaces.first().copied().or_else(|| {
                         decl.implements.first().and_then(interface_name).map(|name| self.resolve_name(name))
@@ -4470,6 +4706,32 @@ impl<'a> Checker<'a> {
     }
 
     /// What `ty`'s implementation of `interface` says `name` is.
+    /// `[IFC-4]` — the associated types an interface declares and those it
+    /// inherits from its parents (`IndexMut`'s `Output` is `Index`'s), each
+    /// with its bounds.
+    fn interface_assoc(&self, interface: Symbol) -> Vec<(Symbol, Vec<Symbol>)> {
+        let mut found = Vec::new();
+        let mut pending = vec![interface];
+        let mut seen = HashSet::new();
+        while let Some(interface) = pending.pop() {
+            if !seen.insert(interface) {
+                continue;
+            }
+            let Some(def) = self.interfaces.get(&interface) else { continue };
+            for (name, bounds) in &def.assoc {
+                if !found.iter().any(|(known, _)| known == name) {
+                    found.push((*name, bounds.clone()));
+                }
+            }
+            pending.extend(def.supertraits.iter().copied());
+        }
+        found
+    }
+
+    fn interface_has_assoc(&self, interface: Symbol, name: Symbol) -> bool {
+        self.interface_assoc(interface).iter().any(|(assoc, _)| *assoc == name)
+    }
+
     fn implementation_assoc(&self, ty: Ty, interface: Symbol, name: Symbol) -> Option<Ty> {
         self.instance_assoc.get(&(ty, interface, name)).or_else(|| self.assoc_values.get(&(ty, name))).copied()
     }
@@ -4504,6 +4766,11 @@ impl<'a> Checker<'a> {
             // ODR-040 — a number's operators are built in, and are the
             // methods of the operator interfaces it implements.
             if implementation.is_none() && receiver.is_some() && self.builtin_operator_method_fits(ty, method, declaration, receiver) {
+                continue;
+            }
+            // `[STD-17]` — an `Array`'s and a view's indexing is built in, and
+            // is its `Index.index` and `IndexMut.index_mut`.
+            if implementation.is_none() && self.builtin_index_method_fits(ty, method, declaration, receiver) {
                 continue;
             }
             let Some((implementation, actual_receiver)) = implementation else {
@@ -4590,6 +4857,31 @@ impl<'a> Checker<'a> {
             && signature.params.len() == operands
             && signature.params.iter().all(|(_, param, _, _)| self.types.substitute_self(*param, ty) == ty)
             && ret == if assign { self.common.void } else { ty }
+    }
+
+    /// `[STD-17]` — whether the built-in indexing of an `Array`, a `Span` or
+    /// a `MutSpan` has the shape `Index.index` or `IndexMut.index_mut`
+    /// declares: an `int` index, and a reference to an element.
+    fn builtin_index_method_fits(&mut self, ty: Ty, method: Symbol, declaration: DefId, receiver: Option<Mode>) -> bool {
+        let (elem, writable) = match *self.types.kind(ty) {
+            TyKind::Vec { elem } => (elem, true),
+            TyKind::Span { elem, mutable } => (elem, mutable),
+            _ => return false,
+        };
+        let (wanted_receiver, mutable) = match method.as_str() {
+            "index" => (Mode::Borrow, false),
+            "index_mut" if writable => (Mode::Mut, true),
+            _ => return false,
+        };
+        let signature = self.signatures[declaration.0 as usize].clone();
+        let ret = self.types.substitute_self(signature.ret, ty);
+        let ret = self.resolve_assoc(ret, ty);
+        let wanted = self.types.intern(TyKind::Ref { mutable, inner: elem });
+        let int = self.common.i64;
+        signature.generics.is_empty()
+            && receiver == Some(wanted_receiver)
+            && matches!(signature.params.as_slice(), [(_, index, _, _)] if *index == int)
+            && ret == wanted
     }
 
     /// Whether `f32`'s and `f64`'s built-in method `method` has the shape the
@@ -4944,6 +5236,16 @@ impl<'a> Checker<'a> {
         let saved_assoc = std::mem::take(&mut self.assoc_scope);
         for name in &assoc {
             self.assoc_scope.insert(*name);
+        }
+        // `IndexMut[Idx]: Index[Idx]` — a parent's associated types are the
+        // child's too: `index_mut` returns `ref mut Output`.
+        for parent in &decl.supertraits {
+            let ast::TypeKind::Path { segments, .. } = &parent.kind else { continue };
+            let [segment] = segments.as_slice() else { continue };
+            let parent = self.resolve_name(segment.name);
+            for (name, _) in self.interface_assoc(parent) {
+                self.assoc_scope.insert(name);
+            }
         }
         let mut methods = Vec::new();
         let mut defaults = Vec::new();
@@ -5620,7 +5922,7 @@ impl<'a> Checker<'a> {
             let interfaces: Vec<Symbol> =
                 if self.block_interfaces.is_empty() { from_interface.into_iter().collect() } else { self.block_interfaces.clone() };
             for interface in interfaces {
-                if self.interfaces.get(&interface).is_some_and(|def| def.assoc.iter().any(|(name, _)| *name == alias.name.name)) {
+                if self.interface_has_assoc(interface, alias.name.name) {
                     self.instance_assoc.insert((ty, interface, alias.name.name), value);
                 }
             }
@@ -7452,7 +7754,7 @@ impl<'a> Checker<'a> {
     fn bound_bindings(&mut self, bound: &ast::TypeExpr, instance: Symbol) -> Vec<(Symbol, Symbol, Ty)> {
         let ast::TypeKind::Path { args, .. } = &bound.kind else { return Vec::new() };
         let declared: Vec<Symbol> =
-            self.interfaces.get(&instance).map(|def| def.assoc.iter().map(|(name, _)| *name).collect()).unwrap_or_default();
+            self.interface_assoc(instance).into_iter().map(|(name, _)| name).collect();
         let mut bindings = Vec::new();
         for arg in args {
             let ast::GenericArg::Assoc { name, ty } = arg else { continue };
@@ -7506,7 +7808,7 @@ impl<'a> Checker<'a> {
         for (param, &arg) in params.iter().zip(args) {
             for &bound in &param.bounds {
                 let bound = self.substitute_bound(bound, args);
-                if !self.implements(arg, bound) {
+                if !self.implements_or_blanket(arg, bound) {
                     let shown = self.types.display(arg);
                     let interface = self.interface_shown(bound);
                     let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
@@ -11827,7 +12129,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         self.fix_open_map(local, key, value, stmt.span);
                         return;
                     }
-                    if self.lookup_method(probe.ty, Symbol::intern("index_set")).is_some() {
+                    if let TyKind::Param { index: slot, name: param } = *self.types.kind(probe.ty)
+                        && self.has_operator_method(probe.ty, "index_set")
+                    {
+                        let receiver = self.synth(base);
+                        let receiver = self.read_through(receiver);
+                        let name = ast::Ident { name: Symbol::intern("index_set"), span: target.span };
+                        let call_args = [
+                            ast::Arg { name: None, value: key.clone(), span: key.span },
+                            ast::Arg { name: None, value: value.clone(), span: value.span },
+                        ];
+                        let call = self.synth_bound_method(slot, param, receiver, name, &call_args, Vec::new(), stmt.span);
+                        out.push(Stmt::Expr(call));
+                        return;
+                    }
+                    if self.lookup_method(probe.ty, Symbol::intern("index_set")).is_some()
+                        && self.implements_origin(probe.ty, "std.core.IndexSet")
+                    {
                         let receiver = self.synth(base);
                         let receiver = self.read_through(receiver);
                         let name = ast::Ident { name: Symbol::intern("index_set"), span: target.span };
@@ -16681,7 +16999,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.assoc_instance = saved_instance;
         // `T: Add` says nothing of `Output`: the result is a `T.Output`,
         // which only a signature naming it can hold.
-        if let TyKind::Assoc { name: assoc } = *self.types.kind(ret) {
+        let unbound = match *self.types.kind(ret) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => ret,
+        };
+        if let TyKind::Assoc { name: assoc } = *self.types.kind(unbound) {
             let shown = self.types.display(concrete);
             let interface = self.interface_shown(bound);
             let interface = interface.rsplit_once('.').map_or(interface.as_str(), |(_, short)| short).to_string();
@@ -19213,12 +19535,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     _ => None,
                 };
                 let Some(elem) = elem else {
+                    // `[TYP-17]` — `c[i]` on a type parameter is its bound's
+                    // `Index.index`, read through.
+                    if let TyKind::Param { index: slot, name: param } = *self.types.kind(base.ty)
+                        && let [ast::TypeOrExpr::Expr(key)] = args.as_slice()
+                    {
+                        let name = ast::Ident { name: Symbol::intern("index"), span };
+                        let arg = ast::Arg { name: None, value: key.clone(), span: key.span };
+                        let call = self.synth_bound_method(slot, param, base, name, &[arg], Vec::new(), span);
+                        return self.read_through(call);
+                    }
                     // `[TYP-20]` — `a[i]` on a type with an `index` method is
                     // `*a.index(i)`; where the place is written it becomes
                     // `*a.index_mut(i)` (`index_place_for_write`).
                     let method = "index";
                     if let [ast::TypeOrExpr::Expr(key)] = args.as_slice()
                         && self.lookup_method(base.ty, Symbol::intern(method)).is_some()
+                        && self.implements_origin(base.ty, "std.core.Index")
                     {
                         let name = ast::Ident { name: Symbol::intern(method), span };
                         let arg = ast::Arg { name: None, value: key.clone(), span: key.span };
@@ -19227,7 +19560,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
-                        self.error(codes::E2020, span, format!("cannot index `{shown}`"));
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
+                                .note("a type is indexed by implementing `Index` [TYP-21]"),
+                        );
                     }
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
@@ -20866,7 +21202,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             for bound in &param.bounds {
                 let bound = &self.substitute_bound(*bound, &substitution);
-                if !self.implements(ty, *bound) {
+                if !self.implements_or_blanket(ty, *bound) {
                     let shown = self.types.display(ty);
                     let bound = &self.interface_shown(*bound);
                     self.error(
@@ -21148,7 +21484,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in &param.bounds {
                 let bound = &self.substitute_bound(*bound, &substitution);
-                if !self.implements(ty, *bound) {
+                if !self.implements_or_blanket(ty, *bound) {
                     let shown = self.types.display(ty);
                     let bound = &self.interface_shown(*bound);
                     self.error(
@@ -21535,7 +21871,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let declared = generics[base_index].bounds.iter().find_map(|bound| {
                 self.interfaces
                     .get(bound)
-                    .and_then(|def| def.assoc.iter().find(|(name, _)| *name == assoc.name).map(|(_, bounds)| bounds.clone()))
+                    .map(|_| self.interface_assoc(*bound))
+                    .and_then(|found| found.into_iter().find(|(name, _)| *name == assoc.name).map(|(_, bounds)| bounds))
             });
             let Some(bounds) = declared else {
                 self.error(
@@ -26972,8 +27309,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ExprKind::Call { callee, args, .. } = &call.kind else { return call };
         let Some(ExprKind::Ref { place, mutable: false }) = args.first().map(|arg| &arg.kind) else { return call };
         let owner = place.ty;
+        if let TyKind::Param { index, .. } = *self.types.kind(owner) {
+            return self.bound_index_call_for_write(call, index);
+        }
         let generic = self.generic_of.get(callee).copied().unwrap_or(*callee);
         if self.methods.get(&(owner, Symbol::intern("index"))).map(|entry| entry.def) != Some(generic) {
+            return call;
+        }
+        // `[TYP-21]` — written in place through `IndexMut`.
+        if !self.implements_origin(owner, "std.core.IndexMut") {
             return call;
         }
         let Some(entry) = self.methods.get(&(owner, Symbol::intern("index_mut"))).map(|entry| entry.def) else {
@@ -27000,6 +27344,38 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args.insert(0, receiver);
         let ty = self.signatures[callee_mut.0 as usize].ret;
         Expr { ty, kind: ExprKind::Call { callee: callee_mut, args, arg_eval_order, latebound }, span }
+    }
+
+    /// `[TYP-17]` — `c[i]` written, on a type parameter: its bound's
+    /// `IndexMut.index_mut`, the receiver passed `mut`. Without such a bound
+    /// the call stays `index`, and the write is refused as one through a
+    /// shared reference.
+    fn bound_index_call_for_write(&mut self, call: Expr, index: u32) -> Expr {
+        let name = Symbol::intern("index_mut");
+        let bounds = self.current_generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+        let found = bounds.iter().find_map(|&bound| {
+            let def = self.interfaces.get(&bound)?;
+            def.methods
+                .iter()
+                .find(|(method, _, receiver, _)| *method == name && receiver.is_some())
+                .and_then(|&(_, declaration, receiver, _)| Some((bound, declaration, receiver?)))
+        });
+        let Some((bound, declaration, receiver_mode)) = found else { return call };
+        let Expr { span, kind, .. } = call;
+        let ExprKind::Call { mut args, arg_eval_order, latebound, .. } = kind else { unreachable!("matched by the caller") };
+        let receiver = args.remove(0);
+        let receiver_span = receiver.span;
+        let ExprKind::Ref { place, .. } = receiver.kind else { unreachable!("matched by the caller") };
+        let concrete = place.ty;
+        let receiver = self.pass_receiver(*place, receiver_mode, receiver_span);
+        args.insert(0, receiver);
+        self.bound_calls.insert(span, bound);
+        let ret = self.signatures[declaration.0 as usize].ret;
+        let ret = self.types.substitute_self(ret, concrete);
+        let saved_instance = self.assoc_instance.replace(bound);
+        let ret = self.resolve_assoc(ret, concrete);
+        self.assoc_instance = saved_instance;
+        Expr { ty: ret, kind: ExprKind::Call { callee: declaration, args, arg_eval_order, latebound }, span }
     }
 
     /// `[EXP-2]` — a place evaluated once: each index that computes
@@ -30802,6 +31178,99 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let ty = if hir_op.is_comparison() { self.common.bool_ } else { operand_ty };
         Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
+    }
+}
+
+/// `[TYP-19]` — a blanket implementation: an extension parameter that only
+/// its implemented interfaces name (`Q` in `extend[K, V, H, Q: AsKey[K]]
+/// Map[K, V, H] implements Index[Q]`) makes the type implement the interface
+/// for every `Q` its bounds admit. Each of the block's methods takes those
+/// parameters as its own first generic parameters (`fn index[Q: AsKey[K]](self,
+/// q: Q)`), and the extension keeps them in `blanket` for the implementation's
+/// record. `None` when no module has one.
+fn desugar_blanket_extensions(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
+    let has_one = modules.iter().any(|loaded| {
+        loaded.module.items.iter().any(|item| matches!(&item.kind, ast::ItemKind::Extend(decl) if !blanket_params(decl).is_empty()))
+    });
+    if !has_one {
+        return None;
+    }
+    let mut out = modules.to_vec();
+    for loaded in &mut out {
+        for item in &mut loaded.module.items {
+            let ast::ItemKind::Extend(decl) = &mut item.kind else { continue };
+            let free = blanket_params(decl);
+            if free.is_empty() {
+                continue;
+            }
+            let (blanket, kept): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut decl.generics).into_iter().partition(|param| free.contains(&param.name.name));
+            decl.generics = kept;
+            for member in &mut decl.members {
+                if let ast::MemberKind::Fn(function) = &mut member.kind {
+                    let mut generics = blanket.clone();
+                    generics.append(&mut function.generics);
+                    function.generics = generics;
+                    // An implementation's methods are its interfaces', seen
+                    // wherever the type is.
+                    member.vis.kind = ast::VisKind::Public;
+                }
+            }
+            decl.blanket = blanket;
+        }
+    }
+    Some(out)
+}
+
+/// The parameters of an `extend` that its target does not name and its
+/// interfaces do.
+fn blanket_params(decl: &ast::ExtendDecl) -> Vec<Symbol> {
+    if decl.implements.is_empty() || decl.generics.is_empty() {
+        return Vec::new();
+    }
+    let mut in_target = HashSet::new();
+    type_names(&decl.target, &mut in_target);
+    let mut in_interfaces = HashSet::new();
+    for interface in &decl.implements {
+        type_names(interface, &mut in_interfaces);
+    }
+    decl.generics
+        .iter()
+        .map(|param| param.name.name)
+        .filter(|name| !in_target.contains(name) && in_interfaces.contains(name))
+        .collect()
+}
+
+/// Every one-segment name a type expression mentions.
+fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, args } => {
+            if let [single] = segments.as_slice() {
+                out.insert(single.name);
+            }
+            for arg in args {
+                match arg {
+                    ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } => type_names(inner, out),
+                    ast::GenericArg::Const(_) => {}
+                }
+            }
+        }
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => type_names(inner, out),
+        ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
+            for item in items {
+                type_names(item, out);
+            }
+        }
+        ast::TypeKind::Fn { params, ret, .. } => {
+            for param in params {
+                type_names(&param.ty, out);
+            }
+            if let Some(ret) = ret {
+                type_names(ret, out);
+            }
+        }
+        ast::TypeKind::Array { elem, .. } => type_names(elem, out),
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
     }
 }
 

@@ -132,6 +132,31 @@ pub interface ShlAssign[Rhs = Self]:
 pub interface ShrAssign[Rhs = Self]:
     fn shr_assign(mut self, rhs: Rhs)
 
+## `a[i]` reads through `Index.index`, and is written in place through
+## `IndexMut.index_mut`; `a[i] = v` calls `IndexSet.index_set` where the type
+## has it, which is how a `Map` inserts (`[STD-17]`).
+pub interface Index[Idx]:
+    type Output
+    fn index(self, i: Idx) -> ref Output
+
+pub interface IndexMut[Idx]: Index[Idx]:
+    fn index_mut(mut self, i: Idx) -> ref mut Output
+
+pub interface IndexSet[Idx, V]:
+    fn index_set(mut self, i: Idx, owned v: V)
+
+## An `Array` and a `MutSpan` are read and written in place, and a `Span` read,
+## by their built-in indexing, which is their `Index` and `IndexMut`
+## (`[STD-17]`; an `Array` needs no `IndexSet`).
+extend[T] Array[T] implements Index[int], IndexMut[int]:
+    type Output = T
+
+extend[T] Span[T] implements Index[int]:
+    type Output = T
+
+extend[T] MutSpan[T] implements Index[int], IndexMut[int]:
+    type Output = T
+
 ## Part IV §8's canonical associated-type iterator contract. Named standard
 ## iterators, including the Arena-backed collection and Span iterators,
 ## implement this interface rather than introducing a second iterator

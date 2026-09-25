@@ -386,46 +386,6 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     pub fn contains[Q: AsKey[K] + Hash](self, q: Q) -> bool:
         return self.find(q, self.hash_of(q)).is_some()
 
-    ## `m[q]` (`[TYP-20]`, `[STD-16]`): the value, or a panic naming the key.
-    pub fn index[Q: AsKey[K] + Hash + Debug](self, q: Q) -> ref V:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slots[at]]:
-                    Some(e):
-                        return ref e.value
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                panic(f"key not found: {q!r}; use .get(k) for an Option")
-
-    ## `m[q] op= v` (`[STD-17]`): the key must be there.
-    pub fn index_mut[Q: AsKey[K] + Hash + Debug](mut self, q: Q) -> ref mut V:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slots[at]]:
-                    Some(ref mut e):
-                        return ref mut e.value
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                panic(f"key not found: {q!r}; use .get(k) for an Option")
-
-    ## `m[q] = v` (`[STD-17]`): replaces, or inserts `q.to_key()` when the
-    ## key is new (`[STD-12]`).
-    pub fn index_set[Q: AsKey[K] + Hash](mut self, q: Q, owned v: V):
-        hash = self.hash_of(q)
-        match self.find(q, hash):
-            Some(at):
-                match self.entries[self.slots[at]]:
-                    Some(ref mut e):
-                        e.value = v
-                        return
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                pass
-        self.push_new(hash, q.to_key(), v)
-
     pub fn remove[Q: AsKey[K] + Hash](mut self, q: Q) -> Option[V]:
         match self.find(q, self.hash_of(q)):
             Some(at):
@@ -506,6 +466,52 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
                 None:
                     pass
         return out
+
+## `m[q]`, `m[q] op= v` and `m[q] = v` (`[STD-12]`, `[STD-17]`): a map is
+## indexed by anything that is its key, `Q: AsKey[K]`, each such `Q` giving it
+## an implementation (a blanket one, `[TYP-19]`).
+extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, V, H] implements Index[Q], IndexMut[Q]:
+    type Output = V
+
+    ## The value, or a panic naming the key.
+    fn index(self, q: Q) -> ref V:
+        match self.find(q, self.hash_of(q)):
+            Some(at):
+                match self.entries[self.slots[at]]:
+                    Some(e):
+                        return ref e.value
+                    None:
+                        panic("a listed entry was removed")
+            None:
+                panic(f"key not found: {q!r}; use .get(k) for an Option")
+
+    ## `m[q] op= v`: the key must be there.
+    fn index_mut(mut self, q: Q) -> ref mut V:
+        match self.find(q, self.hash_of(q)):
+            Some(at):
+                match self.entries[self.slots[at]]:
+                    Some(ref mut e):
+                        return ref mut e.value
+                    None:
+                        panic("a listed entry was removed")
+            None:
+                panic(f"key not found: {q!r}; use .get(k) for an Option")
+
+extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash] Map[K, V, H] implements IndexSet[Q, V]:
+    ## Replaces, or inserts `q.to_key()` when the key is new (`[STD-12]`).
+    fn index_set(mut self, q: Q, owned v: V):
+        hash = self.hash_of(q)
+        match self.find(q, hash):
+            Some(at):
+                match self.entries[self.slots[at]]:
+                    Some(ref mut e):
+                        e.value = v
+                        return
+                    None:
+                        panic("a listed entry was removed")
+            None:
+                pass
+        self.push_new(hash, q.to_key(), v)
 
 extend[K: Eq + Hash, V: Copy, H: Hasher + Default] Map[K, V, H]:
     pub fn get_or[Q: AsKey[K] + Hash](self, q: Q, default: V) -> V:

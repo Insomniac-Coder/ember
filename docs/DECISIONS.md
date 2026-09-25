@@ -1674,3 +1674,37 @@ with a type that standard C does not have.
   (`compare_decimal_magnitude`). The runtime's routines were checked outside
   the suite against a Python model on 590,474 values, every `f16` through
   print and parse, and the midpoint cases.
+
+## ADR-051 — blanket implementations: generic methods, and implementations registered on demand
+
+**Decided 2026-09-26, with ODR-042 and D-321.** ODR-042 says what an `extend`
+parameter that only the implemented interfaces name means; this is how the
+checker carries it.
+
+- **The methods are generic over the blanket's parameters.** Before any
+  collection, `desugar_blanket_extensions` moves such a parameter from the
+  `extend` onto each method of the block, as its first generic parameters,
+  and keeps it in the new `ast::ExtendDecl::blanket` (the parser leaves that
+  empty). `Map`'s `index` then has the shape it had as an inherent method,
+  `fn index[Q: AsKey[K] + Hash + Debug](self, q: Q) -> ref V`, and a call
+  infers `Q` as any generic call does. The rewrite works on a copy of the
+  modules and changes no item's or member's position.
+- **The implementation is a record, registered when first needed.** A type
+  implements a blanket's interface for infinitely many arguments, so nothing
+  is registered per instance. `BlanketImpl` keeps the parameters, the target
+  and the interfaces as patterns; when a bound check needs `Map[String, int]:
+  Index[str]` (`implements_or_blanket`), `apply_blanket` matches the target
+  and the interface's arguments, checks every bound with the arguments
+  substituted, and records the implementation and its associated types as a
+  written one's, checking the methods then (`check_blanket_instance`, which
+  reports at the `extend`). `implements` itself stays a read-only query.
+- **Nominal indexing** asks whether a type implements some instance of
+  `Index` (`implements_origin`), which a blanket record answers by its target
+  alone.
+- **A bound brings its parents** when the parameter is declared: each bound's
+  supertraits are added, and a binding is copied to the parent that declares
+  its associated type.
+- **Not done:** `[TYP-19]`'s overlap check (`E2041`) does not yet compare a
+  blanket implementation with a written one, and a blanket method with
+  generics of its own besides the blanket's is not compared with the
+  interface.

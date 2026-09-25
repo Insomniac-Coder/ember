@@ -275,6 +275,10 @@ ODRS = [
     ('ODR-041', '`f16` is a `Number` whose `Real` is `f32`; every float type, `f16` included, has `INF`, `NAN`, '
                 '`EPSILON`, `MAX` and `MIN` (Hardened_18)',
      '`[STD-20]`, `[STD-21]`, `[STD-27]`'),
+    ('ODR-042', 'an `extend` parameter that only the implemented interfaces name makes a blanket implementation; a '
+                'bound brings its parents; indexing is only through `Index`, `IndexMut` and `IndexSet`, which `Array` '
+                'and the views implement through their built-in indexing and `Map` for every `Q: AsKey[K]` (Hardened_19)',
+     '`[GRM-34]`, `[IFC-3]`, `[TYP-21]`, `[STD-17]`'),
 ]
 
 H5_HEAD = """
@@ -286,7 +290,7 @@ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Harde
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
-Hardened_18 adds ODR-041.
+Hardened_18 adds ODR-041; Hardened_19 adds ODR-042.
 
 | ODR | Ruling | Rules |
 |---|---|---|

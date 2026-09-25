@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-042 | **CLOSED** — an `extend` parameter only the interfaces name makes a blanket implementation (`Map` implements `Index[Q]` for every `Q: AsKey[K]`); a bound brings its parents; indexing is only through `Index`/`IndexMut`/`IndexSet`, which `Array` and the views implement through their built-in indexing | Language / interfaces / standard library | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_19 |
 | ODR-041 | **CLOSED** — `f16` is a `Number` whose `Real` is `f32`, which holds it exactly; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_18 |
 | ODR-040 | **CLOSED** — the operator interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg`, `not` (a method name after `fn` and `.`) and each with `_assign`; every number type implements the interface of each operator it has, written in `std.core`; one `type Output` serves every interface of an `extend` block; `Output = T` only in a bound | Language / interfaces / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_17 |
 | ODR-039 | **CLOSED** — `[STD-20]`'s integer methods: `checked_`/`wrapping_`/`saturating_`/`overflowing_` for `add`, `sub`, `mul`, `floordiv`, `rem`, `pow`, `neg` (and the shifts, not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_16 |
@@ -195,6 +196,67 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-042 — blanket implementations, a bound's parents, and what `Index` the collections implement — **CLOSED**
+
+    ID:        ODR-042
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_19
+    Category:  LANGUAGE / INTERFACES / STANDARD LIBRARY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_18.md [GRM-34], [IFC-3], [TYP-17],
+               [TYP-21], [STD-12], [STD-17]
+
+    Question:  `[STD-12]` says `m[k]` takes any key `Q: AsKey[K]`, and
+               `[TYP-21]` says `a[i]` is `Index.index`: so a `Map[K, V]`
+               implements `Index[Q]` for every such `Q`. How is that written?
+               `[GRM-34]` lets an `extend`'s parameters scope over the block,
+               and says nothing of one its target does not name. Second:
+               `IndexMut[Idx]: Index[Idx]` — does a bound `T: IndexMut[int]`
+               let a generic body read `t[i]`, which is `Index`'s? `[IFC-3]`
+               says only that an implementer of the child implements the
+               parent. Third: `[STD-17]` says an `Array` "does not need"
+               `IndexSet`, implying it implements `Index` and `IndexMut`; with
+               which index type, and do views?
+
+    Blocks implementation:            YES — `Map`'s indexing cannot go through `Index` without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **A parameter the target does not name.** (a) A blanket implementation:
+  `extend[K: Eq + Hash, V, Q: AsKey[K]] Map[K, V] implements Index[Q]` makes
+  every `Map[K, V]` implement `Index[Q]` for each `Q` its bounds admit, and
+  each method of the block is generic over `Q`. It is how Rust writes the
+  same thing, and it needs nothing new in the grammar. (b) `E2020`: every
+  parameter must appear in the target; then `Map` cannot implement `Index`
+  for `[STD-12]`'s lookups, and `m[q]` needs an exception to `[TYP-40]`.
+  **(a)**. `[TYP-19]`'s rule on overlapping implementations covers blanket
+  ones as it covers any.
+- **A bound's parents.** (i) A bound brings its parents: `T: IndexMut[int]`
+  provides `Index[int]`'s methods, and `Output = f32` binds the parent's
+  `Output`; since `[IFC-3]` makes every implementer of the child implement
+  the parent, nothing is assumed that a type does not have. (ii) A program
+  writes `T: Index[int] + IndexMut[int]`. **(i)**, as Rust does.
+- **The collections.** `Array` and `MutSpan` implement `Index[int]` and
+  `IndexMut[int]`, and `Span` `Index[int]`, through their built-in indexing
+  (`int` is the index type, `[TYP-31]`); `Map` implements `Index[Q]`,
+  `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]`.
+
+**Ruling.**
+- An `extend` parameter that its target does not name and an implemented
+  interface does makes a blanket implementation: the type implements that
+  interface for each argument the parameter's bounds admit, and each method
+  of the block is generic over the parameter. It is checked, for each
+  argument it is used with, as a written implementation is.
+- A bound brings its parents, with the bindings it names that a parent
+  declares.
+- A type is indexed only through `Index`, `IndexMut` and `IndexSet`
+  (`[TYP-40]`): a method named `index` is not enough.
+- `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`, `Span`
+  `Index[int]`, each through its built-in indexing; `Map` implements
+  `Index[Q]`, `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]`.
 
 ---
 

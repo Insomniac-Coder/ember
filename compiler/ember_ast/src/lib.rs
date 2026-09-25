@@ -333,6 +333,12 @@ pub struct ExtendDecl {
     pub implements: Vec<TypeExpr>,
     pub where_clause: Vec<Bound>,
     pub members: Vec<Member>,
+    /// A blanket implementation's parameters: those of `generics` that only
+    /// the implemented interfaces name (`Q` in `extend[K, V, Q: AsKey[K]]
+    /// Map[K, V] implements Index[Q]`). The parser leaves this empty; the
+    /// checker moves them here and onto each method as its own generic
+    /// parameters.
+    pub blanket: Vec<GenericParam>,
 }
 
 #[derive(Clone, Debug)]

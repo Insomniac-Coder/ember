@@ -790,7 +790,7 @@ impl Parser<'_> {
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
         let members = self.parse_type_body();
-        ExtendDecl { generics, target, implements, where_clause, members }
+        ExtendDecl { generics, target, implements, where_clause, members, blanket: Vec::new() }
     }
 
     fn parse_const(&mut self) -> ConstDecl {

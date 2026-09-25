@@ -759,3 +759,11 @@ The next number is ODR-027.
   `f16` has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN`, and is a `std.math` number answering in `f32`
   (`math.sqrt(x)` of an `f16` is an `f32`). A float range type is no `Hash` (D-318), so
   `R.checked(x)`'s `Result` has its methods again.
+* **2026-09-26 — indexing through `Index`, `IndexMut` and `IndexSet` (ODR-042; Hardened_19; ADR-051).**
+  `std.core` declares the three and the prelude exports them. `a[i]` needs an `Index`
+  implementation (a method named `index` no longer does, D-320), `a[i] op= v` an `IndexMut` one,
+  and `a[i] = v` calls `IndexSet.index_set` where the type has it. An `extend` parameter only the
+  interfaces name makes a blanket implementation (D-321): `Map[K, V]` implements `Index[Q]`,
+  `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]`. `Array` and `MutSpan` implement
+  `Index[int]` and `IndexMut[int]`, `Span` `Index[int]`, so generic code bounded by them takes
+  both, and a bound brings its parents (`C: IndexMut[int]` reads `c[i]` too).

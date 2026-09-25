@@ -10726,15 +10726,16 @@ the running narrative behind it.
     _15), `17fb89e`, `c9e2322` (`docs/AUTOPILOT.md`).
   * The unattended session of 2026-09-26, below: D-272 first, then
     `69fff89` (D-308 to D-312), `8ebe762` (A2, ODR-039), `fa3c7a8` (MSVC's
-    infinity and NaN constants), `1c63f12` (A3, ODR-040; CI green), then
-    D-316 (`f16`, ODR-041) and D-318.
+    infinity and NaN constants), `1c63f12` (A3, ODR-040; CI green),
+    `9298803` (D-316 `f16`, ODR-041, and D-318; CI green), then A3's indexing
+    (ODR-042, D-320, D-321).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_18.md`
-  (ODR-041), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h18/` is frozen.
-* **Next numbers:** ODR-042, D-320, ADR-051.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_19.md`
+  (ODR-042), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h19/` is frozen.
+* **Next numbers:** ODR-043, D-322, ADR-052.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10857,10 +10858,21 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     unless 0), D-317 (a generic extension's `type Name = …`,
     `record_extension_assoc`). `not` is a method name after `fn` and `.`
     (`expect_member_name` in `ember_parser`).
-  * **Not done yet:** `Index`, `IndexMut` and `IndexSet` are not declared in
-    std; `a[i]` still finds a method named `index`, `index_mut` or
-    `index_set` by its name, and a type parameter cannot be indexed through a
-    bound.
+  * **Then indexing (ODR-042, Hardened_19, ADR-051).** `std.core` declares
+    `Index`, `IndexMut` and `IndexSet`; `a[i]` needs an `Index`
+    implementation (D-320, `implements_origin`), a write in place `IndexMut`
+    (`index_call_for_write`), `a[i] = v` `IndexSet` where the type has it. A
+    type parameter is indexed through its bounds (`synth_bound_method`,
+    `bound_index_call_for_write`), and a bound brings its parents
+    (`declare_generics_from`). An `extend` parameter only the interfaces name
+    is a blanket implementation (D-321): `desugar_blanket_extensions` moves
+    it onto the methods, `BlanketImpl` records it, `apply_blanket` registers
+    an instance when a bound check needs one (`implements_or_blanket`) and
+    `check_blanket_instance` checks it. `Map`'s indexing is its blanket
+    implementations in `std/src/collections.em`; `Array`, `Span` and
+    `MutSpan` implement `Index[int]` (and `IndexMut`) through the built-in
+    indexing (`builtin_index_method_fits`). Not done: `[TYP-19]`'s overlap
+    check for blanket implementations.
 * **Then D-316, fixed: `f16` works** (ADR-050; ODR-041, Hardened_18). It was
   integer arithmetic on the truncated value (`-1.5` printed `65535.0`). An
   `f16` is its bits in a `uint16_t`; the runtime's `ember_f16_to_f64` and
@@ -11119,8 +11131,7 @@ in `docs/AUTOPILOT.md` §2):
    `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, the bit operators and the `…Assign`
    forms), with a bound's associated-type binding (`Add[Output = T]`) and every number type
    meeting them. `[TYP-17]`'s own `sum[T: Add[Output = T] + Default]` example must run.~~ Done
-   2026-09-26 (ODR-040, Hardened_17), but for `Index`, `IndexMut` and `IndexSet`, which are
-   next (D-316, `f16`, was fixed first).
+   2026-09-26 (ODR-040, Hardened_17; indexing ODR-042, Hardened_19).
 4. The rest of `[STD-21]`: `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`,
    `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize`,
    `normalize_or_zero` and the operators; `KahanSum`; `std.math.det` (`[DET-4]`: the same bits on
