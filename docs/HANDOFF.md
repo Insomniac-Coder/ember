@@ -10763,11 +10763,14 @@ the running narrative behind it.
   WK CLS`, 68), P4 1332 (`EFF CT RFL DRV`, 35), P5 3353 (`FFI`, 86), P6 3095
   (`THR JOB PAR SOA SIMD ECS`, 49), 7a 2785 (`CORO DET HR BUD MONO`, 94). P7
   is excluded. By rule count the same table gives 52%. The script is
-  `rule_sizes.py` in the session scratchpad; rebuild it from this list.
+  `tasks/impl-0.9.9/rule_sizes.py` (pass the seven percentages).
   "Phase estimates against 0.9.9" further down gives the method; its table is
   current.
 
 **The owner's standing instructions (all still in force)**
+
+`docs/AUTOPILOT.md` gathers these and the rest of the owner's rules for unattended work (a
+cloud session through the night); read it first. The list below is the short form.
 
 * Implement Ember 0.9.9 in the compiler until done, or until the owner says
   stop.
@@ -10993,13 +10996,44 @@ question in one plain sentence; no tables of every line, no layered
 explanations. Show real output when it helps. Ask before touching a file for
 a demonstration.
 
-**Immediate next task:** the rest of `std.math`, in this order: `[STD-20]`'s
-float constants (`f64.INF`, `NAN`, `EPSILON`, `MIN`, `MAX`: an associated
-constant on a scalar type, not built) and the integer methods; `math.fma`;
-the operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`,
-…), which `[TYP-17]`'s own example needs and the vector types need; then the
-vector, matrix and geometry types, `KahanSum`, `std.math.det` (`[DET-4]`),
-`NonZero[T]`. Then D-284, `for k in owned m`, D-305.
+**Immediate next task, and the order after it** (the owner, 2026-09-25; the same list is
+in `docs/AUTOPILOT.md` §2):
+
+**A. Finish `std.math`, where it was left on 2026-09-25** (`std/src/math.em`, ODR-038):
+
+1. D-272, so `i128` and `u128` reach C; then add both to `Number` in `std/src/math.em`.
+2. `[STD-20]`: the float constants (`f64.INF`, `NAN`, `EPSILON`, `MIN`, `MAX`: an associated
+   constant on a scalar type, not built yet) and the integer methods (`abs`, `pow`, `signum`,
+   `div_trunc`, `rem_trunc`, `checked_*`, `wrapping_*`, `saturating_*`, `overflowing_*`,
+   `count_ones`, `leading_zeros`, `trailing_zeros`, `is_power_of_two`, `next_power_of_two`, `MIN`,
+   `MAX`); `math.fma` (`[STD-3]`).
+3. The operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`, likewise `Sub`,
+   `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, the bit operators and the `…Assign`
+   forms), with a bound's associated-type binding (`Add[Output = T]`) and every number type
+   meeting them. `[TYP-17]`'s own `sum[T: Add[Output = T] + Default]` example must run.
+4. The rest of `[STD-21]`: `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`,
+   `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize`,
+   `normalize_or_zero` and the operators; `KahanSum`; `std.math.det` (`[DET-4]`: the same bits on
+   every target, so its own implementations, not the platform's); `NonZero[T]` (`[STD-4]`,
+   needs the `Option` niche).
+
+**B. Then back to the language, where it stood before the maths:**
+
+1. D-284 (a generic body is region-checked again per instance), `for k in owned m` (owned
+   `Map`/`Set` iteration), D-305 (a user type named like a prelude type loses to it).
+2. The other open defects in `docs/DEFECTS.md`: D-270, D-273, D-218 (needs `[EXC-18]`), D-220,
+   D-202 (needs per-field access words, M2), D-201 (`String` and `Array[u8]` are one type), D-198.
+3. The coroutine transform, generator expressions and adapters with `[CTL-3b]` fusion.
+4. Owned callables: `DEVIATIONS.md` D6 (`once fn` parameter types) and `[CLO-3]` owned callable
+   values.
+5. Declare `Display`, `Debug` and `Copy` in std (needs `Formatter`, `FmtError`, user-written
+   `Display`); the table answers them today.
+6. The remaining "not yet probed" rows in `docs/AUDIT-0.9.9.md`.
+7. Then the phases themselves, lowest completion first where one blocks nothing else: Phase 3
+   (objects, M2), Phase 4 (effects, comptime, derives), Phase 5 (C FFI, starting with calling a C
+   function from Ember, `[FFI-10]`), Phase 6, Phase 7a. The handoff's phase table and the 0.9.8
+   plan's exit criteria (Part XXI of `Ember_v0.9.8_Hardened_3.md`) say what each still needs.
+
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
@@ -11090,13 +11124,11 @@ unless named otherwise):
    literals (done); then phase 2 of the plan, two read-only reviewers. After that:
    the coroutine transform, generator expressions and adapters with
    `[CTL-3b]` fusion.
-2. **Open defects:** D-218 (needs [EXC-18]), D-220 and D-235.
+2. **Open defects:** see the order above (D-235 is fixed).
 3. **Owned callables:** DEVIATIONS D6 (`once fn` parameter types) and
    [CLO-3] owned callable values.
-4. **Generic methods of a generic type** that have type parameters of their
-   own are still validated per concrete owner only. `check_opaque_methods`
-   skips them, because the owner's and the method's parameter indices would
-   collide.
+4. **Generic methods of a generic type** with type parameters of their own
+   are now checked opaquely too (D-280, done).
 5. **The table stands in for three declarations.** `Display`, `Debug` and
    `Copy` are answered from the table while std does not declare them.
    Declaring them needs `Formatter` and `FmtError`, and user-written
