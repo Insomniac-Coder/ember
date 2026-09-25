@@ -49,9 +49,34 @@ extern "C" {
 #define EMBER_INLINE __attribute__((always_inline)) inline
 #endif
 
-#define EMBER_INF_F64 (1.0 / 0.0)
-#define EMBER_NAN_F32 (0.0f / 0.0f)
-#define EMBER_NAN_F64 (0.0 / 0.0)
+/* Infinity and NaN in the emitted C, built from their IEEE bits: MSVC
+ * refuses a constant division by zero (C2124), and its `NAN` sets the sign
+ * bit, so the bits are what make every compiler agree. The NaN is the quiet
+ * one with a clear sign bit, as Rust's and C's `nan("")` on x86-64. */
+static inline double ember_inf_f64(void) {
+    uint64_t bits = UINT64_C(0x7FF0000000000000);
+    double value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+static inline double ember_nan_f64(void) {
+    uint64_t bits = UINT64_C(0x7FF8000000000000);
+    double value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+static inline float ember_nan_f32(void) {
+    uint32_t bits = UINT32_C(0x7FC00000);
+    float value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+#define EMBER_INF_F64 (ember_inf_f64())
+#define EMBER_NAN_F32 (ember_nan_f32())
+#define EMBER_NAN_F64 (ember_nan_f64())
 
 /* -- str ------------------------------------------------------------------ */
 
