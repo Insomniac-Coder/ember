@@ -1640,3 +1640,37 @@ operator.
 - **A generic extension's associated types** are resolved over the
   extension's parameters when it is collected and substituted when it is
   applied to an instance (D-317), the way its methods are.
+
+## ADR-050 — `f16` in C: its bits in a `uint16_t`, every operation in `double`
+
+**Decided 2026-09-26, with D-316.** IV.2 makes `f16` IEEE binary16 and
+`[TYP-9]` asks for IEEE arithmetic; nothing says how the C backend computes
+with a type that standard C does not have.
+
+- **Storage is the bits.** An `f16` is a `uint16_t` holding its binary16
+  encoding, so it has its layout (`[RNG-8]`, `[TYP-11]`) on every compiler.
+  C's `_Float16` is not on MSVC, and where it exists its arithmetic may be
+  done in `float` or emulated differently per compiler.
+- **Every operation widens to `double` and rounds back once**
+  (`ember_f16_to_f64`, exact; `ember_f64_to_f16`, ties to even, from the
+  bits). For `+ - * /` this is binary16's correctly rounded result, since
+  binary64 has more than twice binary16's precision plus two bits (rounding
+  twice cannot then differ from rounding once); `//` and `%` of two `f16`s
+  are exact in `double`, so they too round once. `**` is `pow` in `double`,
+  rounded once. A comparison compares the widened values, so `-0.0 == 0.0`
+  and NaN equals nothing; sorting uses totalOrder on the bits
+  (`ember_total_lt_f16`). `-x` and `abs` touch only the sign bit.
+- **Conversions** go through `double`: exact from `f16`; to `f16` one
+  rounding, since an integer too large for a `double`'s precision is far past
+  `f16`'s largest value (it is infinity whatever the first rounding did). An
+  `f16` to an integer saturates, NaN to 0 (`[TYP-6]`).
+- **Constants** are encoded by the compiler (`ember_types::f16_bits`, the same
+  algorithm as the runtime's, checked against every `f16` and its midpoints).
+- **Text.** Printing is the fewest digits (at most five) that read back as the
+  same `f16`. `parse[f16]()` rounds the text to `double` and then to `f16`;
+  that can differ from rounding once only when the `double` lands exactly on a
+  midpoint between two `f16`s, and then the text is compared, digit by digit,
+  with the midpoint's exact expansion to settle it
+  (`compare_decimal_magnitude`). The runtime's routines were checked outside
+  the suite against a Python model on 590,474 values, every `f16` through
+  print and parse, and the midpoint cases.

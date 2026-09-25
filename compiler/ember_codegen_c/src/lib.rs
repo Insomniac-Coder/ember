@@ -489,6 +489,7 @@ impl Emitter<'_> {
         }
         match self.types.kind(ty) {
             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64(*(const double*)a, *(const double*)b)"),
+            TyKind::Float(FloatTy::F16) => format!("{RT}total_lt_f16(*(const uint16_t*)a, *(const uint16_t*)b)"),
             TyKind::Float(_) => format!("{RT}total_lt_f32(*(const float*)a, *(const float*)b)"),
             TyKind::Str => format!("{RT}str_cmp(*(const {RT}str*)a, *(const {RT}str*)b) < 0"),
             TyKind::Vec { .. } => format!(
@@ -689,6 +690,10 @@ impl Emitter<'_> {
         }
         if let Some(suffix) = self.wide_int(ty) {
             return format!("{RT}{suffix}_eq({a}, {b})");
+        }
+        // D-316 — IEEE equality: `-0.0 == 0.0`, and NaN equals nothing.
+        if self.half(ty) {
+            return format!("({RT}f16_to_f64({a}) == {RT}f16_to_f64({b}))");
         }
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Vec { .. } => {}
@@ -2848,6 +2853,31 @@ impl Emitter<'_> {
     /// `NaN < lo ? lo : NaN` is `NaN`.
     fn range_clamp(&self, id: ember_types::RangeId, value: &str) -> String {
         let def = self.types.range_def(id);
+        // D-316 — an `f16` range clamps in `double` between `f16` endpoints,
+        // so the result is exactly one: `hi` of a half-open range is the
+        // greatest `f16` below its bound.
+        if self.half(def.repr) {
+            let endpoint = |bound: ember_types::Bound| match bound {
+                ember_types::Bound::Float(v) => v,
+                ember_types::Bound::Int(v) => v as f64,
+            };
+            let lo = ember_types::f16_value(ember_types::f16_bits(endpoint(def.lo)));
+            let bound = endpoint(def.hi);
+            let mut hi_bits = ember_types::f16_bits(bound);
+            if !def.inclusive && ember_types::f16_value(hi_bits) >= bound {
+                hi_bits = match hi_bits {
+                    0x0000 | 0x8000 => 0x8001,
+                    bits if bits & 0x8000 == 0 => bits - 1,
+                    bits => bits + 1,
+                };
+            }
+            let hi = ember_types::f16_value(hi_bits);
+            return format!(
+                "{RT}f64_to_f16(fmin(fmax({RT}f16_to_f64({value}), {}), {}))",
+                render_float(lo, false),
+                render_float(hi, false)
+            );
+        }
         let is_float = matches!(self.types.kind(def.repr), TyKind::Float(_));
         let lo = self.bound_literal(def.lo, def.repr);
         let hi = if def.inclusive {
@@ -3808,6 +3838,55 @@ impl Emitter<'_> {
         format!("{RT}{suffix}_{name}({a}, {})", self.wide_operand(rhs, body, wide))
     }
 
+    /// D-316 — whether `ty` is `f16`, which C carries as its bits in a
+    /// `uint16_t` and which every operation widens to `double`.
+    fn half(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Float(FloatTy::F16))
+    }
+
+    fn half_operands(&self, lhs: &Operand, rhs: &Operand, body: &Body) -> bool {
+        [lhs, rhs].into_iter().any(|operand| self.operand_type(operand, body).is_some_and(|ty| self.half(ty)))
+    }
+
+    /// An `f16` operand as a `double`, exactly: a constant as its value.
+    fn half_operand(&self, operand: &Operand, body: &Body) -> String {
+        match operand {
+            Operand::Const(Const::Float { value, .. }) => {
+                render_float(ember_types::f16_value(ember_types::f16_bits(*value)), false)
+            }
+            _ => format!("{RT}f16_to_f64({})", self.operand(operand, body)),
+        }
+    }
+
+    /// D-316 — a numeric cast to or from `f16`, through `double`: exact
+    /// from `f16`, and rounded once to it (an integer too large for a
+    /// `double`'s precision is far past `f16`'s largest value, so its own
+    /// rounding changes nothing). A float to an integer saturates
+    /// (`[TYP-6]`).
+    fn half_cast(&self, operand: &Operand, from: Ty, to: Ty, body: &Body) -> String {
+        let value = self.operand(operand, body);
+        if self.half(from) && self.half(to) {
+            return value;
+        }
+        let double = if self.half(from) {
+            format!("{RT}f16_to_f64({value})")
+        } else if let Some(suffix) = self.wide_int(from) {
+            format!("{RT}{suffix}_to_f64({value})")
+        } else {
+            format!("((double)({value}))")
+        };
+        if self.half(to) {
+            return format!("{RT}f64_to_f16({double})");
+        }
+        if let Some(suffix) = self.wide_int(to) {
+            return format!("{RT}ftoi_{suffix}({double})");
+        }
+        if self.types.is_integral(to) {
+            return format!("{RT}ftoi_{}({double})", self.checked_suffix(to));
+        }
+        format!("(({}){double})", self.c_type(to))
+    }
+
     /// A numeric cast to or from a 128-bit type (`[TYP-6]`): a float
     /// saturates toward zero, a narrower integer is extended, and a narrower
     /// target takes the low bits, as every integer cast does.
@@ -4192,6 +4271,7 @@ impl Emitter<'_> {
                         }
                         return match self.types.kind(*arg_ty) {
                             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64({a}, {b})"),
+                            TyKind::Float(FloatTy::F16) => format!("{RT}total_lt_f16({a}, {b})"),
                             TyKind::Float(_) => format!("{RT}total_lt_f32({a}, {b})"),
                             TyKind::Str => format!("({RT}str_cmp({a}, {b}) < 0)"),
                             _ => format!("(({a}) < ({b}))"),
@@ -4257,7 +4337,9 @@ impl Emitter<'_> {
                             }
                             ParseKind::I128 => format!("{RT}parse_i128_status({})", rendered[0]),
                             ParseKind::U128 => format!("{RT}parse_u128_status({})", rendered[0]),
-                            ParseKind::F32 | ParseKind::F64 => format!("{RT}parse_float_status({})", rendered[0]),
+                            ParseKind::F16 | ParseKind::F32 | ParseKind::F64 => {
+                                format!("{RT}parse_float_status({})", rendered[0])
+                            }
                             ParseKind::Bool => format!("{RT}parse_bool_status({})", rendered[0]),
                             ParseKind::Char => format!("{RT}parse_char_status({})", rendered[0]),
                         };
@@ -4269,6 +4351,7 @@ impl Emitter<'_> {
                             ParseKind::Unsigned => format!("{RT}parse_unsigned_value({})", rendered[0]),
                             ParseKind::I128 => format!("{RT}parse_i128_value({})", rendered[0]),
                             ParseKind::U128 => format!("{RT}parse_u128_value({})", rendered[0]),
+                            ParseKind::F16 => format!("{RT}parse_f16_value({})", rendered[0]),
                             ParseKind::F32 => format!("{RT}parse_f32_value({})", rendered[0]),
                             ParseKind::F64 => format!("{RT}parse_f64_value({})", rendered[0]),
                             ParseKind::Bool => format!("(({}).len == 4)", rendered[0]),
@@ -4401,6 +4484,15 @@ impl Emitter<'_> {
                     }
                     Builtin::StrContainsChar => {
                         return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::FloatAbs if self.half(*arg_ty) => {
+                        return format!("((uint16_t)({} & 0x7FFFu))", rendered[0]);
+                    }
+                    Builtin::FloatPow if self.half(*arg_ty) => {
+                        return format!(
+                            "{RT}f64_to_f16(pow({RT}f16_to_f64({}), {RT}f16_to_f64({})))",
+                            rendered[0], rendered[1]
+                        );
                     }
                     Builtin::FloatAbs => {
                         let function = match self.types.kind(*arg_ty) {
@@ -4855,6 +4947,7 @@ impl Emitter<'_> {
             TyKind::Int(_) => "i64",
             TyKind::Uint(_) => "u64",
             TyKind::Float(FloatTy::F64) => "f64",
+            TyKind::Float(FloatTy::F16) => "f16",
             TyKind::Float(_) => "f32",
             TyKind::Str => "str",
             _ => "str",
@@ -5057,6 +5150,10 @@ impl Emitter<'_> {
                 };
                 format!("{value}{suffix}")
             }
+            // D-316 — an `f16` is its bits, rounded once from the value.
+            Const::Float { value, ty } if self.half(*ty) => {
+                format!("((uint16_t)0x{:04X}u)", ember_types::f16_bits(*value))
+            }
             Const::Float { value, ty } => {
                 let is_f32 = matches!(self.types.kind(*ty), TyKind::Float(FloatTy::F32));
                 render_float(*value, is_f32)
@@ -5085,6 +5182,21 @@ impl Emitter<'_> {
     fn rvalue(&self, rvalue: &Rvalue, body: &Body, target: Ty) -> String {
         match rvalue {
             Rvalue::Use(o) => self.operand(o, body),
+            // D-316 — an `f16` operation happens in `double` and rounds back
+            // once; a comparison compares the widened values. `/` goes
+            // through `fdiv`, since a zero divisor may be a constant (D-253).
+            Rvalue::BinaryOp { op, lhs, rhs } if self.half_operands(lhs, rhs, body) => {
+                use ember_mir::BinOp as B;
+                let (a, b) = (self.half_operand(lhs, body), self.half_operand(rhs, body));
+                match op {
+                    B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge => format!("({a} {} {b})", op.c_operator()),
+                    B::Add | B::Sub | B::Mul => format!("{RT}f64_to_f16(({a} {} {b}))", op.c_operator()),
+                    B::Div => format!("{RT}f64_to_f16({RT}fdiv_f64({a}, {b}))"),
+                    B::FloorDiv => format!("{RT}f64_to_f16({RT}floordiv_f64({a}, {b}))"),
+                    B::FloorRem => format!("{RT}f64_to_f16({RT}floorrem_f64({a}, {b}))"),
+                    other => unreachable!("`{}` is not an `f16` operator", other.c_operator()),
+                }
+            }
             // D-272 — an operation on a 128-bit value is a runtime helper. A
             // shift's type is its shifted value's; only a 128-bit amount of
             // a narrower value needs converting (D-308).
@@ -5149,6 +5261,11 @@ impl Emitter<'_> {
                     self.operand(rhs, body)
                 )
             }
+            Rvalue::UnaryOp { op: ember_mir::UnOp::Neg, operand }
+                if self.operand_type(operand, body).is_some_and(|ty| self.half(ty)) =>
+            {
+                format!("((uint16_t)({} ^ 0x8000u))", self.operand(operand, body))
+            }
             Rvalue::UnaryOp { op, operand } => {
                 let wide = self.operand_type(operand, body).and_then(|ty| self.wide_int(ty));
                 // A negated integer constant is one constant, the least
@@ -5173,6 +5290,12 @@ impl Emitter<'_> {
                 }
             }
             Rvalue::Cast { kind, operand, to } => {
+                if matches!(kind, CastKind::Widen | CastKind::Numeric)
+                    && let Some(from) = self.operand_type(operand, body)
+                    && (self.half(from) || self.half(*to))
+                {
+                    return self.half_cast(operand, from, *to, body);
+                }
                 if matches!(kind, CastKind::Widen | CastKind::Numeric)
                     && let Some(from) = self.operand_type(operand, body)
                     && (self.wide_int(from).is_some() || self.wide_int(*to).is_some())

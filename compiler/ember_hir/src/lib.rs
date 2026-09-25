@@ -403,6 +403,9 @@ pub enum ParseKind {
     /// D-272 — `i128` and `u128`, whose bounds no 64-bit argument carries.
     I128,
     U128,
+    /// D-316 — rounded once from the text, as the runtime's
+    /// `ember_parse_f16_value` does.
+    F16,
     F32,
     F64,
     Bool,

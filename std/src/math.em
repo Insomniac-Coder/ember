@@ -8,7 +8,7 @@
 ## - `Number` is every number type. Each `extend … implements Number` block adds
 ##   one type and says which decimal type its answers come back as (`type Real`)
 ##   and how to turn it into that type (`to_real`). Integers answer in `f64`, so
-##   `sqrt(9)` is `3.0`; `f32` answers in `f32`, and `f64` in `f64`.
+##   `sqrt(9)` is `3.0`; `f16` and `f32` answer in `f32`, and `f64` in `f64`.
 ## - Each function turns its number into that decimal type and uses the `Float`
 ##   method: `sqrt(x)` is `x.to_real().sqrt()`, and its answer's type is
 ##   `T.Real`, the `Real` of whatever type `x` is.
@@ -121,6 +121,13 @@ extend usize implements Number:
     type Real = f64
     fn to_real(self) -> f64:
         return self as f64
+
+## `f16` is not a `Float` (C has no maths functions for it); its answers come
+## back as `f32`, which holds every `f16` exactly (ODR-041).
+extend f16 implements Number:
+    type Real = f32
+    fn to_real(self) -> f32:
+        return self as f32
 
 extend f32 implements Number:
     type Real = f32

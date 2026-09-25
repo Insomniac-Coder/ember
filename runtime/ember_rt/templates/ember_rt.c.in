@@ -1320,8 +1320,66 @@ static int32_t total_key_f32(float v) {
     return bits ^ (int32_t)((uint32_t)(bits >> 31) >> 1);
 }
 
+static int32_t total_key_f16(uint16_t h) {
+    int32_t bits = (int32_t)h - ((h & 0x8000u) != 0 ? 65536 : 0);
+    return bits < 0 ? bits ^ 0x7FFF : bits;
+}
+
 bool ember_total_lt_f64(double a, double b) { return total_key_f64(a) < total_key_f64(b); }
 bool ember_total_lt_f32(float a, float b) { return total_key_f32(a) < total_key_f32(b); }
+bool ember_total_lt_f16(uint16_t a, uint16_t b) { return total_key_f16(a) < total_key_f16(b); }
+
+/* D-316: rounding a `double` to the nearest `f16`, ties to even, from its
+ * bits. The value is `significand * 2^(e - 52)`; the `f16` quantum is
+ * `2^(e - 10)` for a normal result and `2^-24` for a subnormal one, and the
+ * bits below it are rounded away. */
+uint16_t ember_f64_to_f16(double v) {
+    uint64_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    uint16_t sign = (uint16_t)((bits >> 48) & 0x8000u);
+    int32_t biased = (int32_t)((bits >> 52) & 0x7FFu);
+    uint64_t mantissa = bits & UINT64_C(0x000FFFFFFFFFFFFF);
+    if (biased == 0x7FF) {
+        if (mantissa == 0) {
+            return (uint16_t)(sign | 0x7C00u);
+        }
+        return (uint16_t)(sign | 0x7E00u | (uint16_t)((mantissa >> 42) & 0x3FFu));
+    }
+    if (biased == 0) {
+        /* Zero, or a `double` subnormal: far below half the least `f16`. */
+        return sign;
+    }
+    int32_t e = biased - 1023;
+    if (e > 15) {
+        return (uint16_t)(sign | 0x7C00u);
+    }
+    uint64_t significand = mantissa | (UINT64_C(1) << 52);
+    int32_t quantum = e >= -14 ? e - 10 : -24;
+    int32_t shift = quantum - (e - 52);
+    if (shift >= 54) {
+        /* Below half the least subnormal, 2^-25. */
+        return sign;
+    }
+    uint64_t q = significand >> shift;
+    uint64_t rest = significand & ((UINT64_C(1) << shift) - 1);
+    uint64_t half = UINT64_C(1) << (shift - 1);
+    if (rest > half || (rest == half && (q & 1) != 0)) {
+        ++q;
+    }
+    if (e < -14) {
+        /* A subnormal; a carry into bit 10 is the least normal, as it should be. */
+        return (uint16_t)(sign | (uint16_t)q);
+    }
+    int32_t exponent = e + 15;
+    if (q == (UINT64_C(1) << 11)) {
+        q >>= 1;
+        ++exponent;
+    }
+    if (exponent >= 31) {
+        return (uint16_t)(sign | 0x7C00u);
+    }
+    return (uint16_t)(sign | (uint16_t)(exponent << 10) | (uint16_t)(q & 0x3FFu));
+}
 
 size_t ember_range_count_i64(int64_t start, int64_t stop, int64_t step) {
     /* The distance, exact in 64 unsigned bits: `stop - start` or its negation. */
@@ -4748,6 +4806,129 @@ float ember_parse_f32_value(ember_str s) {
     return value;
 }
 
+/* The significant digits of a decimal number one at a time, and the power of
+ * ten of the first: over "-0.0125e3" it yields 1, 2, 5, and its exponent is
+ * 1. The text is in the grammar `ember_parse_float_status` checks, or
+ * `printf`'s `%e`. */
+typedef struct {
+    const unsigned char* s;
+    size_t at;
+    size_t end;
+    long exponent;
+} decimal_digits;
+
+static decimal_digits decimal_digits_of(const unsigned char* s, size_t n) {
+    size_t i = (n > 0 && (s[0] == '-' || s[0] == '+')) ? 1 : 0;
+    size_t start = i;
+    while (i < n && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.')) {
+        ++i;
+    }
+    size_t end = i;
+    long written = 0;
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        bool negative = i < n && s[i] == '-';
+        if (i < n && (s[i] == '-' || s[i] == '+')) {
+            ++i;
+        }
+        for (; i < n && s[i] >= '0' && s[i] <= '9'; ++i) {
+            if (written < 100000000L) {
+                written = written * 10 + (long)(s[i] - '0');
+            }
+        }
+        if (negative) {
+            written = -written;
+        }
+    }
+    size_t point = end;
+    for (size_t k = start; k < end; ++k) {
+        if (s[k] == '.') {
+            point = k;
+            break;
+        }
+    }
+    size_t first = start;
+    while (first < end && (s[first] == '0' || s[first] == '.')) {
+        ++first;
+    }
+    long power = first < point ? (long)(point - first) - 1 : -(long)(first - point);
+    decimal_digits digits = { s, first, end, power + written };
+    return digits;
+}
+
+/* The next digit, or -1 when there are no more. */
+static int next_decimal_digit(decimal_digits* d) {
+    while (d->at < d->end && d->s[d->at] == '.') {
+        ++d->at;
+    }
+    return d->at < d->end ? (int)(d->s[d->at++] - '0') : -1;
+}
+
+/* How the magnitude of the decimal text `s` compares with `|x|`, exactly:
+ * -1, 0 or 1. `x` is finite and not zero. */
+static int compare_decimal_magnitude(ember_str s, double x) {
+    char exact[96];
+    snprintf(exact, sizeof exact, "%.60e", fabs(x));
+    decimal_digits a = decimal_digits_of(s.ptr, s.len);
+    decimal_digits b = decimal_digits_of((const unsigned char*)exact, strlen(exact));
+    if (a.exponent != b.exponent) {
+        return a.exponent < b.exponent ? -1 : 1;
+    }
+    for (;;) {
+        int da = next_decimal_digit(&a);
+        int db = next_decimal_digit(&b);
+        if (da < 0 && db < 0) {
+            return 0;
+        }
+        if (da < 0) {
+            da = 0;
+        }
+        if (db < 0) {
+            db = 0;
+        }
+        if (da != db) {
+            return da < db ? -1 : 1;
+        }
+    }
+}
+
+/* D-316: the `f16` nearest the text. Rounding to `double` first and then to
+ * `f16` rounds twice, which can differ from rounding once only when the
+ * `double` is exactly halfway between two `f16`s (the text may be just past
+ * the midpoint); then the text itself says which side it is on. */
+/* An `f16`'s value as a rounding step: the infinity stands one step past the
+ * largest finite `f16`, at 2^16. */
+static double f16_step_value(uint16_t h, double sign) {
+    return (h & 0x7FFFu) == 0x7C00u ? copysign(65536.0, sign) : ember_f16_to_f64(h);
+}
+
+uint16_t ember_parse_f16_value(ember_str s) {
+    double x = ember_parse_f64_value(s);
+    uint16_t h = ember_f64_to_f16(x);
+    if (!isfinite(x) || x == 0.0 || fabs(x) > 65536.0) {
+        return h;
+    }
+    double v = f16_step_value(h, x);
+    if (v == x) {
+        return h;
+    }
+    /* The other `f16` around `x`, one step further from zero or nearer to
+     * it. */
+    bool up = fabs(v) < fabs(x);
+    uint16_t other = up ? (uint16_t)(h + 1) : (uint16_t)(h - 1);
+    double w = f16_step_value(other, x);
+    if ((v + w) / 2.0 != x) {
+        return h;
+    }
+    int side = compare_decimal_magnitude(s, x);
+    if (side == 0) {
+        return h;
+    }
+    uint16_t smaller = up ? h : other;
+    uint16_t larger = up ? other : h;
+    return side > 0 ? larger : smaller;
+}
+
 uint8_t ember_parse_bool_status(ember_str s) {
     if (s.len == 0) {
         return 1;
@@ -4881,14 +5062,29 @@ void ember_panic_unwrap(const char* what, ember_loc loc) {
  * prints 10.0 as "1e+01". Every precision is tried and the shortest result
  * kept, which picks "10" here and still picks "1e+20" over twenty-one
  * digits. */
+/* Whether `text` reads back as `v` at the float type `width` bits wide. For
+ * `f16` the text goes through `double`: a text this short cannot land on an
+ * `f16` midpoint without being it, so rounding twice changes nothing. */
+static bool reads_back(const char* text, double v, int width) {
+    switch (width) {
+    case 16:
+        return ember_f64_to_f16(strtod(text, NULL)) == ember_f64_to_f16(v);
+    case 32:
+        return strtof(text, NULL) == (float)v;
+    default:
+        return strtod(text, NULL) == v;
+    }
+}
+
 /* `[STD-20]` (0.9.9): a float's text is Python's `repr`. The digits are the
  * fewest that read back as the same value; they are written in fixed notation
  * when the decimal exponent is in [-4, 16), with `.0` on an integral value
  * (`1.0`, `0.0001`), and in exponent notation otherwise, with a sign and at
  * least two exponent digits (`1e+300`, `1e-05`, `1.5e+16`). NaN and the
- * infinities are `nan`, `inf` and `-inf`. `max_digits` is 17 for f64 and 9
- * for f32, the counts that always round-trip. */
-static void write_repr(double v, bool single, int max_digits, char* out, size_t cap) {
+ * infinities are `nan`, `inf` and `-inf`. At most 17 digits for `f64`, 9 for
+ * `f32` and 5 for `f16` (D-316), the counts that always round-trip. */
+static void write_repr(double v, int width, char* out, size_t cap) {
+    int max_digits = width == 16 ? 5 : width == 32 ? 9 : 17;
     if (isnan(v)) {
         snprintf(out, cap, "nan");
         return;
@@ -4900,8 +5096,7 @@ static void write_repr(double v, bool single, int max_digits, char* out, size_t 
     char scientific[40];
     for (int digits = 1; digits <= max_digits; ++digits) {
         snprintf(scientific, sizeof scientific, "%.*e", digits - 1, v);
-        bool same = single ? strtof(scientific, NULL) == (float)v : strtod(scientific, NULL) == v;
-        if (same) {
+        if (reads_back(scientific, v, width)) {
             break;
         }
     }
@@ -4970,11 +5165,15 @@ static void write_repr(double v, bool single, int max_digits, char* out, size_t 
 }
 
 static void write_shortest_f64(double v, char* buffer, size_t cap) {
-    write_repr(v, false, 17, buffer, cap);
+    write_repr(v, 64, buffer, cap);
 }
 
 static void write_shortest_f32(float v, char* buffer, size_t cap) {
-    write_repr((double)v, true, 9, buffer, cap);
+    write_repr((double)v, 32, buffer, cap);
+}
+
+static void write_shortest_f16(uint16_t v, char* buffer, size_t cap) {
+    write_repr(ember_f16_to_f64(v), 16, buffer, cap);
 }
 
 /* Encode one Unicode scalar value as UTF-8. Returns the byte count. */
@@ -5344,6 +5543,12 @@ static void print_u128_to(FILE* out, ember_u128 v) {
     fwrite(text, 1, integer_text(text, false, ember_u128_hi(v), ember_u128_lo(v)), out);
 }
 
+static void print_f16_to(FILE* out, uint16_t v) {
+    char buffer[32];
+    write_shortest_f16(v, buffer, sizeof buffer);
+    fputs(buffer, out);
+}
+
 static void print_f32_to(FILE* out, float v) {
     char buffer[32];
     write_shortest_f32(v, buffer, sizeof buffer);
@@ -5381,6 +5586,7 @@ EMBER_PRINTERS(i64, int64_t)
 EMBER_PRINTERS(u64, uint64_t)
 EMBER_PRINTERS(i128, ember_i128)
 EMBER_PRINTERS(u128, ember_u128)
+EMBER_PRINTERS(f16, uint16_t)
 EMBER_PRINTERS(f32, float)
 EMBER_PRINTERS(f64, double)
 EMBER_PRINTERS(bool, bool)
@@ -5443,6 +5649,12 @@ void ember_fmt_f64(ember_vec* out, double value) {
 void ember_fmt_f32(ember_vec* out, float value) {
     char buffer[32];
     write_shortest_f32(value, buffer, sizeof buffer);
+    ember_vec_extend(out, buffer, strlen(buffer));
+}
+
+void ember_fmt_f16(ember_vec* out, uint16_t value) {
+    char buffer[32];
+    write_shortest_f16(value, buffer, sizeof buffer);
     ember_vec_extend(out, buffer, strlen(buffer));
 }
 
@@ -5541,7 +5753,7 @@ static void sign_prefix(char* prefix, bool negative, const ember_fmt_spec* spec)
     prefix[at] = '\0';
 }
 
-static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_spec spec);
+static void fmt_spec_float(ember_vec* out, double value, int width, ember_fmt_spec spec);
 
 /* `snprintf` of one precision and one double into a buffer of the size it
  * needs, which the caller frees. */
@@ -5557,7 +5769,7 @@ static void fmt_spec_integer(ember_vec* out, bool negative, uint64_t hi, uint64_
     char kind = spec.kind == 0 || spec.kind == '?' ? 'd' : spec.kind;
     if (strchr("eEfFgG%", kind)) {
         double value = ember_u128_to_f64(ember_u128_make(hi, lo));
-        fmt_spec_float(out, negative ? -value : value, false, spec);
+        fmt_spec_float(out, negative ? -value : value, 64, spec);
         return;
     }
     unsigned base = kind == 'x' || kind == 'X' ? 16 : kind == 'b' ? 2 : kind == 'o' ? 8 : 10;
@@ -5597,7 +5809,7 @@ void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec) 
     fmt_spec_integer(out, false, ember_u128_hi(value), ember_u128_lo(value), spec);
 }
 
-static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_spec spec) {
+static void fmt_spec_float(ember_vec* out, double value, int width, ember_fmt_spec spec) {
     bool negative = signbit(value) && !isnan(value);
     double magnitude = fabs(value);
     char prefix[4];
@@ -5617,11 +5829,11 @@ static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_
     char* printed = NULL;
     if (kind == 0 && spec.precision < 0) {
         char repr[64];
-        write_repr(magnitude, single, single ? 9 : 17, repr, sizeof repr);
+        write_repr(magnitude, width, repr, sizeof repr);
         ember_vec_extend(&text, repr, strlen(repr));
     } else if (kind == '?') {
         char repr[64];
-        write_repr(magnitude, single, single ? 9 : 17, repr, sizeof repr);
+        write_repr(magnitude, width, repr, sizeof repr);
         ember_vec_extend(&text, repr, strlen(repr));
     } else if (kind == 0) {
         /* A precision and no type is `g` with at least one digit after the
@@ -5683,11 +5895,15 @@ static void fmt_spec_float(ember_vec* out, double value, bool single, ember_fmt_
 }
 
 void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec) {
-    fmt_spec_float(out, value, false, spec);
+    fmt_spec_float(out, value, 64, spec);
 }
 
 void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec) {
-    fmt_spec_float(out, (double)value, true, spec);
+    fmt_spec_float(out, (double)value, 32, spec);
+}
+
+void ember_fmt_spec_f16(ember_vec* out, uint16_t value, ember_fmt_spec spec) {
+    fmt_spec_float(out, ember_f16_to_f64(value), 16, spec);
 }
 
 /* Python's `repr` of text: single quotes unless the text holds one and no

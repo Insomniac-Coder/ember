@@ -10726,14 +10726,15 @@ the running narrative behind it.
     _15), `17fb89e`, `c9e2322` (`docs/AUTOPILOT.md`).
   * The unattended session of 2026-09-26, below: D-272 first, then
     `69fff89` (D-308 to D-312), `8ebe762` (A2, ODR-039), `fa3c7a8` (MSVC's
-    infinity and NaN constants), then A3 (ODR-040).
+    infinity and NaN constants), `1c63f12` (A3, ODR-040; CI green), then
+    D-316 (`f16`, ODR-041) and D-318.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_17.md`
-  (ODR-040), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h17/` is frozen.
-* **Next numbers:** ODR-041, D-318, ADR-050.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_18.md`
+  (ODR-041), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h18/` is frozen.
+* **Next numbers:** ODR-042, D-320, ADR-051.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10860,9 +10861,21 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     std; `a[i]` still finds a method named `index`, `index_mut` or
     `index_set` by its name, and a type parameter cannot be indexed through a
     bound.
-* **Found: D-316, open.** `f16` arithmetic is integer arithmetic on the
-  truncated value (`-1.5` prints `65535.0`), and `f16` is not a `Number`.
-  Fix it before A4.
+* **Then D-316, fixed: `f16` works** (ADR-050; ODR-041, Hardened_18). It was
+  integer arithmetic on the truncated value (`-1.5` printed `65535.0`). An
+  `f16` is its bits in a `uint16_t`; the runtime's `ember_f16_to_f64` and
+  `ember_f64_to_f16` (ties to even) carry every operation through `double`,
+  rounded back once (the backend's `half`, `half_operand`, `half_cast`); a
+  constant is `ember_types::f16_bits`. Printing is the fewest digits (five at
+  most), `parse[f16]()` settles a `double` that lands on a midpoint from the
+  text, sorting is totalOrder. `f16` has the float constants and is a
+  `Number` answering in `f32` (ODR-041); `f16` ranges clamp.
+  * D-318, found on the way and fixed: a float range type counted as `Hash`,
+    so `R.checked(x).is_ok()` did not compile.
+  * D-319, found and **open**: a float literal is rounded twice (decimal to
+    `f64`, then to `f32` or `f16`); it shows only with seventeen or more
+    digits just past a midpoint. The fix carries the literal's text, or its
+    roundings made by the lexer, to where it takes its type.
 
 **The owner's standing instructions (all still in force)**
 
@@ -11107,7 +11120,7 @@ in `docs/AUTOPILOT.md` §2):
    forms), with a bound's associated-type binding (`Add[Output = T]`) and every number type
    meeting them. `[TYP-17]`'s own `sum[T: Add[Output = T] + Default]` example must run.~~ Done
    2026-09-26 (ODR-040, Hardened_17), but for `Index`, `IndexMut` and `IndexSet`, which are
-   next, after D-316 (`f16` arithmetic).
+   next (D-316, `f16`, was fixed first).
 4. The rest of `[STD-21]`: `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`,
    `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize`,
    `normalize_or_zero` and the operators; `KahanSum`; `std.math.det` (`[DET-4]`: the same bits on

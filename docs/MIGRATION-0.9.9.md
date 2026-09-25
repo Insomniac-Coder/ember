@@ -753,3 +753,9 @@ The next number is ODR-027.
   so a `Set`'s `add` is not its `+`, and `Set` implements `BitOr`, `BitAnd`, `Sub` and `BitXor`.
   `-x` on an unsigned value panics unless `x` is 0 (D-314). A generic extension may state an
   associated type (D-317). `not` is a method name after `fn` and `.`.
+* **2026-09-26 — `f16` works (D-316, ADR-050; ODR-041, Hardened_18).** `f16` arithmetic, comparisons,
+  casts, printing, formatting, `parse`, sorting, `min`/`max`/`abs`/`clamp` and `f16` ranges are
+  IEEE binary16, each operation rounded once (they were integer operations on the truncated value).
+  `f16` has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN`, and is a `std.math` number answering in `f32`
+  (`math.sqrt(x)` of an `f16` is an `f32`). A float range type is no `Hash` (D-318), so
+  `R.checked(x)`'s `Result` has its methods again.

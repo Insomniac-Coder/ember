@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-041 | **CLOSED** — `f16` is a `Number` whose `Real` is `f32`, which holds it exactly; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_18 |
 | ODR-040 | **CLOSED** — the operator interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg`, `not` (a method name after `fn` and `.`) and each with `_assign`; every number type implements the interface of each operator it has, written in `std.core`; one `type Output` serves every interface of an `extend` block; `Output = T` only in a bound | Language / interfaces / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_17 |
 | ODR-039 | **CLOSED** — `[STD-20]`'s integer methods: `checked_`/`wrapping_`/`saturating_`/`overflowing_` for `add`, `sub`, `mul`, `floordiv`, `rem`, `pow`, `neg` (and the shifts, not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_16 |
 | ODR-038 | **CLOSED** — ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`, `f64` for an `f64`); `T.Name` names a type parameter's associated type | Standard library / math; interfaces | — | Owner ruling 2026-09-25, 0.9.9_Hardened_15 |
@@ -194,6 +195,50 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-041 — `f16` in `std.math`: which `Real`, and which constants? — **CLOSED**
+
+    ID:        ODR-041
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_18
+    Category:  STANDARD LIBRARY / NUMBERS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_17.md [STD-20], [STD-21], [STD-27]; ODR-038
+
+    Question:  `[STD-27]` says `std.math.Number` is every number type and names
+               each one's `Real`: `f64` for every integer type, itself for `f32`
+               and `f64`. `f16` is a number type (IV.2) and is not named, and it
+               cannot be its own `Real`: `Real: Float`, and `Float` is `f32` and
+               `f64` only (ODR-037). Which is it? And `[STD-20]` lists `INF`,
+               `NAN`, `EPSILON`, `MAX` and `MIN` beside the float methods, which
+               only `f32` and `f64` have: does `f16` have the constants?
+
+    Blocks implementation:            YES — `math.sqrt` of an `f16` has no type without it (D-316)
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **`f16`'s `Real`.** (a) `f32`: the narrowest `Float` that holds every `f16`
+  exactly, as an `f32` answers in `f32`; half-precision maths is done in single
+  precision on the hardware that has `f16` (GPU shading languages, ARM's FP16
+  arithmetic), and an `f32` answer keeps thirteen more bits than an `f16`
+  could. (b) `f64`, as an integer answers: twice the width an `f32` gets, for
+  a type chosen for being small. (c) `f16` itself, by making it a `Float`:
+  C has no maths functions for it, and ODR-037's `Float` would have to change.
+  **(a)**.
+- **The constants.** (i) Every float type has them, as ODR-039 said "a
+  float's": `f16.MAX` is 65504 and `f16.EPSILON` 2^-10. (ii) Only `f32` and
+  `f64`, with the methods: a program would spell `65504.0` itself. **(i)**:
+  they are values of the type, not maths, and cost nothing to provide.
+
+**Ruling.**
+- `f16` implements `Number` with `type Real = f32`, and `to_real` is `x as
+  f32`, exact: `math.sqrt` of an `f16` is an `f32`.
+- Every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and
+  `MIN`: for `f16`, `EPSILON` is 2^-10 (0.0009765625) and `MAX` 65504. `f16`
+  has no float methods, as it is no `Float`; `abs(x)`, `min`, `max` and
+  `clamp` take it, as they take every number.
 
 ---
 

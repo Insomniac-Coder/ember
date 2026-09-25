@@ -1901,10 +1901,129 @@ pub fn int_max(table: &TypeTable, ty: Ty) -> Option<u128> {
     }
 }
 
+/// D-316, `[TYP-9]` — the `f16` nearest `value`, ties to even, as its bits:
+/// what the runtime's `ember_f64_to_f16` computes, for a constant. Past the
+/// largest finite `f16` it is the infinity of `value`'s sign; NaN is a quiet
+/// NaN.
+pub fn f16_bits(value: f64) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 48) & 0x8000) as u16;
+    let biased = ((bits >> 52) & 0x7FF) as i32;
+    let mantissa = bits & 0x000F_FFFF_FFFF_FFFF;
+    if biased == 0x7FF {
+        if mantissa == 0 {
+            return sign | 0x7C00;
+        }
+        return sign | 0x7E00 | ((mantissa >> 42) & 0x3FF) as u16;
+    }
+    if biased == 0 {
+        // Zero, or a subnormal `f64`: far below half the least `f16`.
+        return sign;
+    }
+    let e = biased - 1023;
+    if e > 15 {
+        return sign | 0x7C00;
+    }
+    // The value is `significand * 2^(e - 52)`; the `f16` quantum is
+    // `2^(e - 10)` for a normal result and `2^-24` for a subnormal one.
+    let significand = mantissa | (1 << 52);
+    let quantum = if e >= -14 { e - 10 } else { -24 };
+    let shift = quantum - (e - 52);
+    if shift >= 54 {
+        // Below half the least subnormal, 2^-25.
+        return sign;
+    }
+    let mut q = significand >> shift;
+    let rest = significand & ((1u64 << shift) - 1);
+    let half = 1u64 << (shift - 1);
+    if rest > half || (rest == half && q & 1 == 1) {
+        q += 1;
+    }
+    if e < -14 {
+        // A subnormal; a carry into bit 10 is the least normal, as it should be.
+        return sign | q as u16;
+    }
+    let mut exponent = e + 15;
+    if q == 1 << 11 {
+        q >>= 1;
+        exponent += 1;
+    }
+    if exponent >= 31 {
+        return sign | 0x7C00;
+    }
+    sign | ((exponent as u16) << 10) | (q & 0x3FF) as u16
+}
+
+/// D-316 — the value of the `f16` whose bits are `bits`, exactly.
+pub fn f16_value(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = i32::from((bits >> 10) & 0x1F);
+    let mantissa = f64::from(bits & 0x3FF);
+    match exponent {
+        0x1F if mantissa == 0.0 => sign * f64::INFINITY,
+        0x1F => f64::NAN,
+        0 => sign * mantissa / 16_777_216.0,
+        _ => sign * (1024.0 + mantissa) * 2f64.powi(exponent - 25),
+    }
+}
+
+/// D-316 — the fewest digits that read back as the `f16` whose bits are
+/// `bits` (five at most), as W2015 names the value a literal becomes.
+pub fn f16_text(bits: u16) -> String {
+    let value = f16_value(bits);
+    for digits in 1..=5 {
+        let text = format!("{value:.*e}", digits - 1);
+        if let Ok(back) = text.parse::<f64>()
+            && f16_bits(back) == bits
+        {
+            return back.to_string();
+        }
+    }
+    value.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ember_span::Span;
+
+    #[test]
+    fn f16_text_is_the_fewest_digits_that_read_back() {
+        assert_eq!(f16_text(f16_bits(0.123456)), "0.1235");
+        assert_eq!(f16_text(f16_bits(0.1)), "0.1");
+        assert_eq!(f16_text(0x7BFF), "65500");
+        assert_eq!(f16_text(0x3C01), "1.001");
+        for bits in 0..0x7C00u16 {
+            let back: f64 = f16_text(bits).parse().unwrap();
+            assert_eq!(f16_bits(back), bits, "{bits:#06x}");
+        }
+    }
+
+    #[test]
+    fn f16_bits_rounds_to_nearest_even() {
+        // Every `f16` is its own nearest.
+        for bits in 0..=u16::MAX {
+            let value = f16_value(bits);
+            if value.is_nan() {
+                assert_eq!(f16_bits(value) & 0x7C00, 0x7C00);
+                continue;
+            }
+            assert_eq!(f16_bits(value), bits, "{bits:#06x}");
+        }
+        // Halfway between two `f16`s goes to the even one; just past it, up.
+        assert_eq!(f16_bits(1.0 + f64::powi(2.0, -11)), 0x3C00);
+        assert_eq!(f16_bits(1.0 + 3.0 * f64::powi(2.0, -11)), 0x3C02);
+        assert_eq!(f16_bits(f64::from_bits((1.0 + f64::powi(2.0, -11)).to_bits() + 1)), 0x3C01);
+        // The largest finite `f16` is 65504; 65520 is halfway to 2^16 and
+        // rounds to infinity; half the least subnormal rounds to zero.
+        assert_eq!(f16_bits(65519.0), 0x7BFF);
+        assert_eq!(f16_bits(65520.0), 0x7C00);
+        assert_eq!(f16_bits(-1e300), 0xFC00);
+        assert_eq!(f16_bits(f64::powi(2.0, -25)), 0x0000);
+        assert_eq!(f16_bits(f64::powi(2.0, -25) * 1.0000001), 0x0001);
+        assert_eq!(f16_bits(0.1), 0x2E66);
+        assert_eq!(f16_bits(-0.0), 0x8000);
+    }
 
     fn field(name: &str, ty: Ty) -> FieldDef {
         FieldDef {

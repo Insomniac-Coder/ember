@@ -350,6 +350,37 @@ EMBER_CHECKED_FLOOR(isize, ptrdiff_t, INT64_MIN)
 EMBER_FLOAT_FLOOR(f32, float, fmodf, floorf, copysignf)
 EMBER_FLOAT_FLOOR(f64, double, fmod, floor, copysign)
 
+/* D-316, [TYP-9]: `f16` is IEEE binary16, carried as its bits in a
+ * `uint16_t`. An operation widens its operands to `double`, which holds every
+ * `f16` exactly, operates there and rounds back once, ties to even. For
+ * `+ - * /` that is binary16's correctly rounded result: binary64 has more
+ * than twice binary16's precision plus two bits, so rounding twice cannot
+ * differ from rounding once. `//` and `%` are exact in `double` for `f16`
+ * operands, so they too round once. */
+static inline double ember_f16_to_f64(uint16_t h) {
+    uint64_t sign = (uint64_t)(h & 0x8000u) << 48;
+    uint32_t exponent = (uint32_t)(h >> 10) & 0x1Fu;
+    uint64_t mantissa = (uint64_t)(h & 0x3FFu);
+    uint64_t bits;
+    if (exponent == 0x1Fu) {
+        /* The infinities, and NaN with its payload and quiet bit. */
+        bits = sign | UINT64_C(0x7FF0000000000000) | (mantissa << 42);
+    } else if (exponent != 0) {
+        bits = sign | ((uint64_t)(exponent + 1008u) << 52) | (mantissa << 42);
+    } else {
+        /* Zero or a subnormal: the mantissa counts 2^-24s, exactly. */
+        double magnitude = (double)mantissa / 16777216.0;
+        return sign != 0 ? -magnitude : magnitude;
+    }
+    double value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+/* The `f16` nearest `v`, ties to even; past the largest finite `f16` the
+ * infinity of its sign, and NaN a quiet NaN. */
+uint16_t ember_f64_to_f16(double v);
+
 /* Float `/` by a divisor the generated C would spell as a constant zero.
  * [TYP-29] gives it IEEE's result (inf, -inf or NaN), but MSVC refuses a
  * division by a constant zero (C2124), so here the zero is a parameter. */
@@ -993,6 +1024,7 @@ void ember_fmt_spec_i128(ember_vec* out, ember_i128 value, ember_fmt_spec spec);
 void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec);
 void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec);
 void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec);
+void ember_fmt_spec_f16(ember_vec* out, uint16_t value, ember_fmt_spec spec);
 void ember_fmt_spec_str(ember_vec* out, ember_str value, ember_fmt_spec spec);
 void ember_fmt_spec_bool(ember_vec* out, bool value, ember_fmt_spec spec);
 void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec);
@@ -1049,6 +1081,7 @@ ember_u128 ember_parse_u128_value(ember_str s);
 uint8_t ember_parse_float_status(ember_str s);
 double ember_parse_f64_value(ember_str s);
 float ember_parse_f32_value(ember_str s);
+uint16_t ember_parse_f16_value(ember_str s);
 uint8_t ember_parse_bool_status(ember_str s);
 uint8_t ember_parse_char_status(ember_str s);
 ember_vec ember_str_to_lower(ember_str s);
@@ -1057,6 +1090,7 @@ ember_vec ember_str_to_lower(ember_str s);
  * use for floats: -NaN < -inf < ... < -0.0 < +0.0 < ... < +inf < +NaN. */
 bool ember_total_lt_f64(double a, double b);
 bool ember_total_lt_f32(float a, float b);
+bool ember_total_lt_f16(uint16_t a, uint16_t b);
 
 /* `[STD-26]`: Python's `range(start, stop, step)` as a count and the value at
  * each index. The caller has already refused a zero step (it panics with the
@@ -1082,6 +1116,7 @@ void ember_fmt_i128(ember_vec* out, ember_i128 value);
 void ember_fmt_u128(ember_vec* out, ember_u128 value);
 void ember_fmt_f64(ember_vec* out, double value);
 void ember_fmt_f32(ember_vec* out, float value);
+void ember_fmt_f16(ember_vec* out, uint16_t value);
 void ember_fmt_bool(ember_vec* out, bool value);
 void ember_fmt_char(ember_vec* out, uint32_t value);
 void ember_fmt_str(ember_vec* out, ember_str value);
@@ -1125,6 +1160,8 @@ void ember_print_i128(ember_i128 v);
 void ember_println_i128(ember_i128 v);
 void ember_print_u128(ember_u128 v);
 void ember_println_u128(ember_u128 v);
+void ember_print_f16(uint16_t v);
+void ember_println_f16(uint16_t v);
 void ember_print_f32(float v);
 void ember_println_f32(float v);
 void ember_print_f64(double v);
@@ -1144,6 +1181,8 @@ void ember_eprint_i128(ember_i128 v);
 void ember_eprintln_i128(ember_i128 v);
 void ember_eprint_u128(ember_u128 v);
 void ember_eprintln_u128(ember_u128 v);
+void ember_eprint_f16(uint16_t v);
+void ember_eprintln_f16(uint16_t v);
 void ember_eprint_f32(float v);
 void ember_eprintln_f32(float v);
 void ember_eprint_f64(double v);

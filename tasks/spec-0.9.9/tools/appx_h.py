@@ -272,6 +272,9 @@ ODRS = [
                 'interface; one `type Output` serves every interface of an `extend` block; a binding is written '
                 'only in a bound (Hardened_17)',
      '`[TYP-21]`, `[IFC-4]`, `[LEX-15]`'),
+    ('ODR-041', '`f16` is a `Number` whose `Real` is `f32`; every float type, `f16` included, has `INF`, `NAN`, '
+                '`EPSILON`, `MAX` and `MIN` (Hardened_18)',
+     '`[STD-20]`, `[STD-21]`, `[STD-27]`'),
 ]
 
 H5_HEAD = """
@@ -282,7 +285,8 @@ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021
 Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
-Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040.
+Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
+Hardened_18 adds ODR-041.
 
 | ODR | Ruling | Rules |
 |---|---|---|

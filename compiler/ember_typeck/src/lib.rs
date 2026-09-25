@@ -12861,6 +12861,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let max = if bits >= 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
                 (hir::ParseKind::Unsigned, vec![bound(u64_ty, max)])
             }
+            TyKind::Float(ember_types::FloatTy::F16) => (hir::ParseKind::F16, Vec::new()),
             TyKind::Float(ember_types::FloatTy::F32) => (hir::ParseKind::F32, Vec::new()),
             TyKind::Float(_) => (hir::ParseKind::F64, Vec::new()),
             TyKind::Bool => (hir::ParseKind::Bool, Vec::new()),
@@ -16986,6 +16987,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let float = |value: f64| Expr { ty, kind: ExprKind::Float(value), span };
         let single = matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32));
         match (self.types.kind(ty), name.as_str()) {
+            // D-316 — `f16`'s: EPSILON is 2^-10, MAX 65504.
+            (TyKind::Float(ember_types::FloatTy::F16), constant) => Some(float(match constant {
+                "INF" => f64::INFINITY,
+                "NAN" => f64::NAN,
+                "EPSILON" => 0.000_976_562_5,
+                "MAX" => 65_504.0,
+                "MIN" => -65_504.0,
+                _ => return None,
+            })),
             (TyKind::Int(_) | TyKind::Uint(_), "MAX") => Some(int(int_max(self.types, ty)?)),
             (TyKind::Int(_), "MIN") => {
                 let magnitude = ember_types::signed_min_magnitude(self.types, ty)?;
@@ -18114,7 +18124,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let rounded = if ty == self.common.f32 {
             format!("{}", *value as f32)
         } else {
-            format!("{} digits", kept)
+            ember_types::f16_text(ember_types::f16_bits(*value))
         };
         self.sink.emit(
             Diagnostic::warning(
@@ -26544,7 +26554,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let hash = Symbol::intern("std.collections.Hash");
         match self.types.kind(ty) {
-            TyKind::Void | TyKind::Range(_) => true,
+            TyKind::Void => true,
+            // D-318 — as its representation: not a float range.
+            TyKind::Range(id) => self.hashes(self.types.range_def(*id).repr, seen),
             TyKind::Tuple(items) => items.clone().iter().all(|&item| self.hashes(item, seen)),
             TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
                 self.hashes(*elem, seen)
@@ -27041,7 +27053,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn has_builtin_eq_hash(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Str => true,
-            TyKind::Range(_) => true,
+            // D-318 — a range type hashes as its representation does, so a
+            // float range does not (`[TYP-36]`); its `Eq` is the implicit one.
+            TyKind::Range(id) => self.has_builtin_eq_hash(self.types.range_def(*id).repr),
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => false,
         }
