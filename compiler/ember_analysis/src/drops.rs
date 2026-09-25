@@ -804,6 +804,36 @@ fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
 /// raw pointer is `unsafe` territory and is left to `[UNS-*]`: this answers
 /// which one the first `Deref` in the chain goes through, walking the type
 /// alongside the projections the way `place_ty` in `verify.rs` does.
+/// Whether a place reaches a field of a class object through its handle.
+fn through_class_field(place: &Place, body: &Body, types: &TypeTable) -> bool {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Field(_), TyKind::Class(_)) => return true,
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant else { continue };
+                let fields = &types.enum_def(*id).variants[v].fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+                variant = None;
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                let fields = &types.struct_def(*id).fields;
+                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
     let mut ty = body.local(place.local).ty;
     let mut variant = None;
@@ -873,6 +903,18 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
     let mut errors = 0;
     let mut report = |place: &Place, span: Span| {
         if drop_self_local == Some(place.local) {
+            return;
+        }
+        // `[EXP-6]` — the object still holds the field, and every alias of
+        // the handle can still reach it: moving it out is `E3012` (D-302).
+        if through_class_field(place, body, types) {
+            sink.emit_classified(
+                Diagnostic::error(codes::E3012, span, "cannot move out of a class field")
+                    .primary_label("moved out here")
+                    .note("the object keeps the field, and every handle to it can still reach it [EXP-6]")
+                    .help("clone it, or leave a value in its place with `mem.take` or `mem.replace`"),
+            );
+            errors += 1;
             return;
         }
         // Only ownership moves are rejected: a move of a value that owns

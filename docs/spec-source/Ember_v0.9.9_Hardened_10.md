@@ -1,7 +1,7 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.9_Hardened_7
-**Supersedes:** 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+**Version:** 0.9.9_Hardened_10
+**Supersedes:** 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
 the single specification of Ember; the earlier files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
 profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance

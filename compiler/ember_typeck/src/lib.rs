@@ -189,6 +189,7 @@ pub fn check(
         checker.current_module = index;
         checker.collect(&loaded.module);
     }
+    checker.check_view_attributes();
     // `[CLS-4]` depends on the completed openness of every nominal base, so
     // validate inheritance only after all modules have been collected.
     for (index, loaded) in modules.iter().enumerate() {
@@ -210,6 +211,15 @@ pub fn check(
     for id in class_ids {
         let span = checker.types.class_def(id).span;
         checker.validate_concrete_class_abstract_methods(id, span);
+    }
+    checker.bounds_known = true;
+    for (name, params, args, span) in std::mem::take(&mut checker.pending_struct_bounds) {
+        if !checker.struct_bounds_met(name, &params, &args, span) {
+            let stem: Vec<String> = args.iter().map(|&t| type_stem(&checker.types.symbol_name(t))).collect();
+            if let Some(&ty) = checker.named_types.get(&Symbol::intern(&format!("{name}_{}", stem.join("_")))) {
+                checker.unmet_instances.insert(ty);
+            }
+        }
     }
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
@@ -640,12 +650,24 @@ struct InterfaceDefault {
 
 /// `[TYP-23]` — a local declared from `None` or `[]`, waiting for a later
 /// use to say its type.
+/// What an open local was declared from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OpenKind {
+    /// `[]`.
+    Array,
+    /// `None`.
+    Option,
+    /// `{}` or `Map()`.
+    Map,
+    /// `Set()`.
+    Set,
+}
+
 struct OpenLocal {
     /// The declaration; the next pass looks the type up by it.
     declared: Span,
     name: Symbol,
-    /// Declared from `[]` rather than `None`.
-    array: bool,
+    kind: OpenKind,
     first_use: Option<Span>,
     fixed: Option<Ty>,
 }
@@ -986,6 +1008,17 @@ struct Checker<'a> {
     /// `[GRM-13]` — the pattern being checked matches a place that is not
     /// consumed, so a binding of a non-`Copy` type is a reference into it.
     match_by_ref: bool,
+    /// `[TYP-34]` — each type written `@view`, with the attribute's span,
+    /// judged once every type has its fields (D-300).
+    pending_views: Vec<(Ty, Symbol, Span)>,
+    /// `[TYP-17]` — set once every implementation is collected. Before
+    /// then a generic struct named with concrete arguments has its bounds
+    /// checked later, from `pending_struct_bounds` (D-301).
+    bounds_known: bool,
+    pending_struct_bounds: Vec<(Symbol, Vec<GenericParam>, Vec<Ty>, Span)>,
+    /// Instances found to miss a bound after they were made: their methods
+    /// are not checked, which would only repeat the error inside them.
+    unmet_instances: HashSet<Ty>,
     /// `[TYP-36]` — the structs and enums declared `@derive(Hash)`, by
     /// declaration name (a generic one's instances by their origin).
     hash_derived: HashSet<Symbol>,
@@ -1132,6 +1165,10 @@ impl<'a> Checker<'a> {
             callable_value_bindings: HashMap::new(),
             or_bindings: None,
             match_by_ref: false,
+            pending_views: Vec::new(),
+            bounds_known: false,
+            pending_struct_bounds: Vec::new(),
+            unmet_instances: HashSet::new(),
             hash_derived: HashSet::new(),
             open_interfaces: HashMap::new(),
             open_interface_origin: HashMap::new(),
@@ -2802,6 +2839,9 @@ impl<'a> Checker<'a> {
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
             let variants = self.collect_variants(decl);
+            // D-278 — `E[T]` in the type's own method signatures is `Self`.
+            let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
+            self.collecting_generic = Some((name, own));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -2829,6 +2869,7 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
+            self.collecting_generic = None;
             self.type_params.clear();
             let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
             if has_derive(&item.attrs, "Hash") {
@@ -2884,6 +2925,9 @@ impl<'a> Checker<'a> {
                     _ => None,
                 })
                 .collect();
+            // D-278 — `E[T]` in the type's own method signatures is `Self`.
+            let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
+            self.collecting_generic = Some((name, own));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -2916,6 +2960,7 @@ impl<'a> Checker<'a> {
                     _ => None,
                 })
                 .collect();
+            self.collecting_generic = None;
             self.type_params.clear();
             self.generic_classes.insert(
                 name,
@@ -3656,8 +3701,9 @@ impl<'a> Checker<'a> {
                         .filter(|f| self.types.is_view(f.ty))
                         .map(|f| (f.name, f.span))
                         .collect();
-                    if carries_a_borrow.is_empty() && has_attribute(&item.attrs, "view") {
-                        self.not_a_view(decl.name.name, &item.attrs);
+                    if has_attribute(&item.attrs, "view") {
+                        let ty = self.named_types[&self.qualified(decl.name.name)];
+                        self.pending_views.push((ty, decl.name.name, view_span(&item.attrs)));
                     }
                     if self.lint_return_intersection
                         && has_attribute(&item.attrs, "view")
@@ -4027,20 +4073,25 @@ impl<'a> Checker<'a> {
     /// there is nothing to check.
     fn check_enum_copy(&mut self, id: EnumId, attrs: &[ast::Attribute]) {
         self.check_enum_copy_requested(id, has_derive(attrs, "Copy"));
-        let def = self.types.enum_def(id);
-        let carries_a_borrow = def.variants.iter().flat_map(|v| v.fields.iter()).any(|f| self.types.is_view(f.ty));
-        if !carries_a_borrow && has_attribute(attrs, "view") {
-            let name = def.name;
-            self.not_a_view(name, attrs);
+        if has_attribute(attrs, "view") {
+            let name = self.types.enum_def(id).name;
+            let ty = self.types.intern(TyKind::Enum(id));
+            self.pending_views.push((ty, name, view_span(attrs)));
         }
     }
 
-    /// `[TYP-34]` — "`@view` on a type that is not a view is `E2030`."
-    fn not_a_view(&mut self, name: Symbol, attrs: &[ast::Attribute]) {
-        let span = attrs
-            .iter()
-            .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("view"))
-            .map_or(Span::DUMMY, |attr| attr.span);
+    /// `[TYP-34]` — "`@view` on a type that is not a view is `E2030`",
+    /// asked once every type has its fields, so a field whose type is
+    /// declared later counts.
+    fn check_view_attributes(&mut self) {
+        for (ty, name, span) in std::mem::take(&mut self.pending_views) {
+            if !self.types.is_view(ty) {
+                self.not_a_view(name, span);
+            }
+        }
+    }
+
+    fn not_a_view(&mut self, name: Symbol, span: Span) {
         self.sink.emit(
             Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which is not a view type"))
                 .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `str` or another view")
@@ -6969,6 +7020,29 @@ impl<'a> Checker<'a> {
         self.instantiate_interface(name, &definition, &substituted, Span::DUMMY).unwrap_or(bound)
     }
 
+    /// `[TYP-17]` — whether `name[args]` meets every bound its parameters
+    /// declare; each one missed is `E2040` at `span`.
+    fn struct_bounds_met(&mut self, name: Symbol, params: &[GenericParam], args: &[Ty], span: Span) -> bool {
+        let mut met = true;
+        for (param, &arg) in params.iter().zip(args) {
+            for &bound in &param.bounds {
+                let bound = self.substitute_bound(bound, args);
+                if !self.implements(arg, bound) {
+                    let shown = self.types.display(arg);
+                    let interface = self.interface_shown(bound);
+                    let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
+                    self.error(
+                        codes::E2040,
+                        span,
+                        format!("`{shown}` does not implement `{interface}`, which `{owner}`'s `{}` requires", param.name),
+                    );
+                    met = false;
+                }
+            }
+        }
+        met
+    }
+
     /// The type arguments with each omitted trailing one taken from its
     /// parameter's default, substituted with the arguments before it; `None`
     /// when an omitted parameter has no default.
@@ -7143,6 +7217,17 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[TYP-23]` — an open `Map` local fixed by a key and a value.
+    fn fix_open_map(&mut self, local: LocalId, key: &ast::Expr, value: &ast::Expr, span: Span) {
+        let key = self.collection_element_type(key);
+        let value = self.collection_element_type(value);
+        if key == self.common.error || value == self.common.error {
+            return;
+        }
+        let map = self.instantiate_named_generic("std.collections.Map", &[key, value], span);
+        self.fix_open_local(local, map, true);
+    }
+
     /// `[TYP-38]` (ODR-034) — a map literal is `Map[K, V]()` and one `insert`
     /// per entry, in order, so a repeated key keeps its first position and its
     /// last value. `K` and `V` come from the type expected, else from the
@@ -7152,6 +7237,20 @@ impl<'a> Checker<'a> {
             Some(ty) => ty,
             None => {
                 let Some((key, value)) = entries.first() else {
+                    // ODR-034 — `{}` is an empty `Map`; an empty set is `Set[T]()`.
+                    if let Some(want) = expected.filter(|&want| self.collection_named(want) == Some("std.collections.Set")) {
+                        let shown = self.types.display(want);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2020, span, "`{}` is an empty `Map`, not a `Set`")
+                                .help(format!("an empty set is `{shown}()`"))
+                                .note("`{a, b}` is a `Set`, and `{}` a `Map` [GRM-26]"),
+                        );
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
+                    // The annotation already failed and said so ([DIA-14]).
+                    if expected == Some(self.common.error) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     self.sink.emit(
                         Diagnostic::error(codes::E2060, span, "cannot tell what `{}` holds")
                             .help("give it a type: `m: Map[String, int] = {}`"),
@@ -7267,9 +7366,25 @@ impl<'a> Checker<'a> {
         // D-283 — a struct with an `init` takes `init`'s arguments, not its
         // fields: its parameters are written out or defaulted.
         if decl.methods.iter().any(|method| method.name.is("init") && method.receiver.is_some()) {
+            // `[TYP-23]` — the type expected says what `Map()` is.
+            if let Some(expected) = expected
+                && let TyKind::Struct(id) = *self.types.kind(expected)
+                && let Some((origin, hinted)) = self.types.struct_def(id).origin.clone()
+                && origin == name
+                && hinted.len() == solved.len()
+            {
+                for (slot, hint) in solved.iter_mut().zip(hinted) {
+                    if slot.is_none() {
+                        *slot = Some(hint);
+                    }
+                }
+            }
             self.fill_solved_defaults(&decl.generic_params, &mut solved);
             let Some(substitution) = solved.iter().copied().collect::<Option<Vec<Ty>>>() else {
-                self.error(codes::E2060, span, format!("cannot tell `{name}`'s type arguments here; write `{name}[...](...)`"));
+                // The annotation already failed and said so ([DIA-14]).
+                if expected != Some(self.common.error) {
+                    self.error(codes::E2060, span, format!("cannot tell `{name}`'s type arguments here; write `{name}[...](...)`"));
+                }
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             };
             let ty = self.instantiate_struct(name, decl, &substitution, span);
@@ -7421,6 +7536,18 @@ impl<'a> Checker<'a> {
                     .note("a view inside a map would make the map a view, confined to locals [TYP-15] (ODR-036)"),
             );
             return self.common.error;
+        }
+        // `[TYP-17]` — the arguments meet the declaration's bounds, reported
+        // where the type is named: `Set[f64]` misses `Hash`. Opaque
+        // arguments meet them by the enclosing declaration's own bounds.
+        if !decl.generic_params.iter().all(|param| param.bounds.is_empty())
+            && !args.iter().any(|&arg| self.types.is_generic(arg))
+        {
+            if !self.bounds_known {
+                self.pending_struct_bounds.push((name, decl.generic_params.clone(), args.to_vec(), span));
+            } else if !self.struct_bounds_met(name, &decl.generic_params, args, span) {
+                return self.common.error;
+            }
         }
         let stem: Vec<String> =
             args.iter().map(|&t| type_stem(&self.types.symbol_name(t))).collect();
@@ -8993,6 +9120,9 @@ impl<'a> Checker<'a> {
             // checked with their owner's parameters bound to the concrete
             // arguments and `self` bound to the instantiation.
             while let Some(job) = self.pending_methods.pop() {
+                if self.unmet_instances.contains(&job.owner) {
+                    continue;
+                }
                 let (module_index, item_index, member_index) = job.source;
                 let item = &modules[module_index].module.items[item_index];
                 let Some(member) = item_members(item).and_then(|members| members.get(member_index))
@@ -9478,12 +9608,96 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// A field handed to its `clone` method: borrowed where the receiver
     /// is passed by address (`[BRW-8]`).
     /// `[OWN-8]` — whether a value of this type can be cloned: a `Copy`
-    /// value (a class handle retains), a type with a `clone` method, or an
-    /// `Array`/`String` whose elements can be.
+    /// value (a class handle retains), a type with a `clone` method, an
+    /// `Array`/`String` whose elements can be, or a tuple, `Option` or
+    /// `Result` whose parts can be.
     fn is_cloneable(&self, ty: Ty) -> bool {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || matches!(*self.types.kind(ty), TyKind::Vec { elem } if self.is_cloneable(elem))
+            || (self.clones_by_parts(ty)
+                && match self.types.kind(ty) {
+                    TyKind::Tuple(items) => items.iter().all(|&item| self.is_cloneable(item)),
+                    TyKind::Enum(id) => self
+                        .types
+                        .enum_def(*id)
+                        .variants
+                        .iter()
+                        .all(|variant| variant.fields.iter().all(|field| self.is_cloneable(field.ty))),
+                    _ => false,
+                })
+    }
+
+    /// `[STR-5]` — the types the compiler makes rather than declares, whose
+    /// `Clone` it builds part by part at the clone (D-303): tuples and the
+    /// `Option`s and `Result`s.
+    fn clones_by_parts(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Tuple(_) => true,
+            TyKind::Enum(id) => {
+                let name = self.types.enum_def(*id).name;
+                name.as_str().starts_with("Option_") || name.as_str().starts_with("Result_")
+            }
+            _ => false,
+        }
+    }
+
+    /// D-303 — a tuple, `Option` or `Result` cloned part by part, each part
+    /// as `clone_value` clones it. A plain place is read again for each part
+    /// (a generated `clone` body declares no locals of its own); any other
+    /// value is held once.
+    fn clone_by_parts(&mut self, value: Expr) -> Expr {
+        let (ty, span) = (value.ty, value.span);
+        let (stmts, held, place) = match copy_place(&value) {
+            Some(_) => (Vec::new(), None, Some(value)),
+            None => {
+                let (stmts, held) = self.hold(value, span);
+                (stmts, Some(held), None)
+            }
+        };
+        let read = |held: &Option<Held>, place: &Option<Expr>| match (held, place) {
+            (Some(held), _) => held.read(span),
+            (None, Some(place)) => copy_place(place).expect("a plain place copies"),
+            (None, None) => unreachable!("one of the two is set"),
+        };
+        let result = match self.types.kind(ty).clone() {
+            TyKind::Tuple(items) => {
+                let mut parts = Vec::new();
+                for (index, item) in items.into_iter().enumerate() {
+                    let part = Expr { ty: item, kind: ExprKind::Field { base: Box::new(read(&held, &place)), index }, span };
+                    parts.push(self.clone_value(part));
+                }
+                Expr { ty, kind: ExprKind::TupleLit(parts), span }
+            }
+            TyKind::Enum(id) => {
+                let variants = self.types.enum_def(id).variants.clone();
+                let mut arms = Vec::new();
+                for (variant, definition) in variants.iter().enumerate() {
+                    let mut fields = Vec::new();
+                    for (index, field) in definition.fields.iter().enumerate() {
+                        let part = Expr {
+                            ty: field.ty,
+                            kind: ExprKind::EnumField { base: Box::new(read(&held, &place)), variant, index },
+                            span,
+                        };
+                        fields.push(self.clone_value(part));
+                    }
+                    arms.push(hir::MatchArm {
+                        pattern: hir::Pattern {
+                            ty,
+                            kind: hir::PatternKind::Variant { enum_id: id, variant, fields: Vec::new() },
+                            span,
+                        },
+                        guard: None,
+                        body: hir::MatchArmBody::Expr(Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant, fields }, span }),
+                        span,
+                    });
+                }
+                Expr { ty, kind: ExprKind::Match { scrutinee: Box::new(read(&held, &place)), arms }, span }
+            }
+            _ => unreachable!("clones_by_parts admits tuples and enums"),
+        };
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(result) }, span }
     }
 
     /// A clone of `value`, whose type `is_cloneable`.
@@ -9504,6 +9718,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 },
                 span,
             };
+        }
+        if self.clones_by_parts(ty) {
+            return self.clone_by_parts(value);
         }
         let TyKind::Vec { elem } = *self.types.kind(ty) else {
             unreachable!("clone_value of a type is_cloneable refused")
@@ -11108,6 +11325,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     let probe = self.synth(base);
                     let probe = self.read_through(probe);
                     self.sink.rollback(quiet);
+                    // `[TYP-23]` — `m[k] = v` says what an open `m = {}` holds.
+                    if let ExprKind::Local(local) = probe.kind
+                        && self.open.locals.get(&local).is_some_and(|open| open.kind == OpenKind::Map)
+                    {
+                        self.fix_open_map(local, key, value, stmt.span);
+                        return;
+                    }
                     if self.lookup_method(probe.ty, Symbol::intern("index_set")).is_some() {
                         let receiver = self.synth(base);
                         let receiver = self.read_through(receiver);
@@ -11125,6 +11349,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.in_assignment_target = true;
                 let place = self.synth(target);
                 self.in_assignment_target = previous_target;
+                let place = self.index_place_for_write(place);
                 // Only a place can be assigned; anything else would write a
                 // temporary and drop it, silently (a slice, `xs.as_span()`).
                 if !is_place(&place.kind) && place.ty != self.common.error {
@@ -11222,10 +11447,40 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
                     return;
                 }
-                // A place reached through a call — `m[k]` through `index_mut`
-                // (`[STD-17]`) — is evaluated once: `op=` reads and writes
-                // through the one reference.
-                let (place, mut reread) = self.hold_called_place(place, out);
+                // `[EXP-2]` — `a[i] op= x` evaluates `x`, then the place once,
+                // then reads, operates and writes. A place whose path computes
+                // something (`m[k]` through `index_mut` (`[STD-17]`), an index
+                // that is not a local or a literal) is held once (D-296); a
+                // plain place is read again.
+                let holds = op.is_some() && computes_in_path(&place);
+                let operand = match op {
+                    Some(ast::BinOp::Pow) => {
+                        let exponent = self.synth(value);
+                        let exponent = self.read_through(exponent);
+                        Some(self.commit(exponent))
+                    }
+                    Some(_) => Some(self.check_expr(value, place_ty)),
+                    None => None,
+                };
+                let operand = match operand {
+                    Some(x)
+                        if holds
+                            && !matches!(
+                                x.kind,
+                                ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Local(_)
+                            ) =>
+                    {
+                        Some(self.hold_value(x, out))
+                    }
+                    other => other,
+                };
+                let (place, mut reread) = if holds {
+                    let place = self.hoist_place(place, out);
+                    let reread = copy_place(&place);
+                    (place, reread)
+                } else {
+                    (place, None)
+                };
                 let value = match op {
                     // `a op= b` is `a = a op b` when no `AddAssign` exists
                     // (`[TYP-21]`); Phase 0 has scalars only, so it always is.
@@ -11234,12 +11489,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             Some(read) => read,
                             None => self.synth(target),
                         };
-                        let exponent = self.synth(value);
+                        let exponent = operand.expect("`**=` synthesised its exponent");
                         let raised = self.power(base, exponent, value, stmt.span);
                         self.coerce(raised, place_ty)
                     }
                     Some(bin) => {
-                        let rhs = self.check_expr(value, place_ty);
+                        let rhs = operand.expect("`op=` checked its operand");
                         let lhs = match reread.take() {
                             Some(read) => read,
                             None => self.synth(target),
@@ -11700,9 +11955,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::ExprKind::Owned(inner) => (inner.as_ref(), true),
             _ => (scrutinee, false),
         };
-        let scrutinee = self.synth_committed(scrutinee);
+        let mut scrutinee = self.synth_committed(scrutinee);
         let scrutinee_ty = scrutinee.ty;
-        let by_ref = !consumed && is_place(&scrutinee.kind);
+        // D-302 — not through a class handle's field: a reference into it
+        // would need a read access the handle's other aliases respect
+        // (`[EXC-1]`), which is not built (D-202).
+        let by_ref = !consumed && is_place(&scrutinee.kind) && !self.through_class_field(&scrutinee);
+        let mut written = false;
 
         let mut checked: Vec<hir::MatchArm> = Vec::new();
         let mut result_ty = expected;
@@ -11722,6 +11981,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let outer = std::mem::replace(&mut self.match_by_ref, by_ref);
             let pattern = self.check_pattern(&arm.pattern, scrutinee_ty);
             self.match_by_ref = outer;
+            // D-295 — `ref mut x` in a pattern borrows the matched place
+            // mutably: the same write as `ref mut e`, checked once.
+            if by_ref && !written && binds_mut_ref(&pattern) {
+                written = true;
+                scrutinee = self.index_place_for_write(scrutinee);
+                let at = scrutinee.span;
+                self.reject_readonly_write(&scrutinee, at);
+                if !self.reject_write_through_shared_ref(&scrutinee, at) {
+                    self.reject_borrowed_parameter_write(&scrutinee, at, true);
+                }
+            }
             let guard = arm.guard.as_ref().map(|g| {
                 has_guard = true;
                 let bool_ty = self.common.bool_;
@@ -14062,9 +14332,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[TYP-23]` — declare `name` from `None` or `[]`: with the type an
     /// earlier pass found, or open. Returns whether it declared.
     fn declare_open(&mut self, name: Symbol, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) -> bool {
-        let array = match &value.kind {
-            ast::ExprKind::ArrayLit(items) if items.is_empty() => true,
-            ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None") => false,
+        let kind = match &value.kind {
+            ast::ExprKind::ArrayLit(items) if items.is_empty() => OpenKind::Array,
+            ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None") => OpenKind::Option,
+            ast::ExprKind::MapLit(entries) if entries.is_empty() => OpenKind::Map,
+            // `Map()` and `Set()` with no type arguments (`[TYP-23]`).
+            ast::ExprKind::Call { callee, args } if args.is_empty() => match &callee.kind {
+                ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                    match self.resolve_name(segments[0].name).as_str() {
+                        "std.collections.Map" => OpenKind::Map,
+                        "std.collections.Set" => OpenKind::Set,
+                        _ => return false,
+                    }
+                }
+                _ => return false,
+            },
             _ => return false,
         };
         if let Some(&ty) = self.open.resolved.get(&span) {
@@ -14077,7 +14359,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return false;
         }
         let local = self.declare(Some(name), self.common.error, span);
-        self.open.locals.insert(local, OpenLocal { declared: span, name, array, first_use: None, fixed: None });
+        self.open.locals.insert(local, OpenLocal { declared: span, name, kind, first_use: None, fixed: None });
         out.push(Stmt::Let { local, init: None });
         true
     }
@@ -14096,20 +14378,24 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         } else {
             ty
         };
-        let fixed = if open.array {
-            match *self.types.kind(ty) {
+        let fixed = match open.kind {
+            OpenKind::Array => match *self.types.kind(ty) {
                 TyKind::Vec { .. } => ty,
                 TyKind::Span { elem, .. } | TyKind::Array { elem, .. } if !assigned => {
                     self.types.intern(TyKind::Vec { elem })
                 }
                 _ => return,
+            },
+            OpenKind::Map | OpenKind::Set => {
+                let wanted = if open.kind == OpenKind::Map { "std.collections.Map" } else { "std.collections.Set" };
+                if self.collection_named(ty) != Some(wanted) {
+                    return;
+                }
+                ty
             }
-        } else if self.is_option(ty) {
-            ty
-        } else if assigned {
-            self.option_of(ty)
-        } else {
-            return;
+            OpenKind::Option if self.is_option(ty) => ty,
+            OpenKind::Option if assigned => self.option_of(ty),
+            OpenKind::Option => return,
         };
         if let Some(open) = self.open.locals.get_mut(&local) {
             open.fixed = Some(fixed);
@@ -14120,10 +14406,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// first use".
     fn report_open_local(&mut self, open: &OpenLocal) {
         let name = open.name;
-        let (message, annotated) = if open.array {
-            (format!("cannot infer the element type of `{name}`"), format!("{name}: Array[int] = []"))
-        } else {
-            (format!("cannot tell which `Option` `{name}` is"), format!("{name}: Option[int] = None"))
+        let (message, annotated) = match open.kind {
+            OpenKind::Array => (format!("cannot infer the element type of `{name}`"), format!("{name}: Array[int] = []")),
+            OpenKind::Option => (format!("cannot tell which `Option` `{name}` is"), format!("{name}: Option[int] = None")),
+            OpenKind::Map => (format!("cannot tell what `{name}` holds"), format!("{name}: Map[String, int] = {{}}")),
+            OpenKind::Set => (format!("cannot tell what `{name}` holds"), format!("{name}: Set[int] = Set[int]()")),
         };
         let diagnostic = match open.first_use {
             Some(first) => Diagnostic::error(codes::E2060, first, message)
@@ -14912,9 +15199,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// `a == b` for two values of one type, as the operator writes it: a
     /// scalar compared in C, text and `[STR-5]` aggregates through
-    /// `ValueCompare`. `None` when the type has no `Eq`.
-    fn equality(&self, a: Expr, b: Expr, span: Span) -> Option<Expr> {
+    /// `ValueCompare`, and a type holding a written `eq` through
+    /// `synth_eq_of`. `None` when the type has no `Eq`.
+    fn equality(&mut self, a: Expr, b: Expr, span: Span) -> Option<Expr> {
         let ty = a.ty;
+        if self.written_eq_applies(ty) {
+            return Some(self.synth_eq_of(a, b, span));
+        }
         let scalar = match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. } => false,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
@@ -16764,6 +17055,46 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         );
     }
 
+    /// `[TYP-23]` — an untyped literal passed for a type parameter still
+    /// open takes its default type, unless that misses one of the
+    /// parameter's bounds and a type a bound names meets them all: `1 in s`
+    /// on a `Set[i32]` (`Q: AsKey[i32]`) looks up an `i32` (D-298).
+    fn literal_for_bounds(&mut self, value: Expr, param_ty: Ty, generics: &[GenericParam], solved: &[Option<Ty>]) -> Expr {
+        let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return self.commit(value) };
+        let index = index as usize;
+        let Some(param) = generics.get(index).filter(|_| solved.get(index) == Some(&None)) else {
+            return self.commit(value);
+        };
+        let bounds = param.bounds.clone();
+        let float = self.types.is_float(value.ty);
+        let default = if float { self.common.f64 } else { self.common.i64 };
+        let error = self.common.error;
+        let meets = |this: &mut Self, ty: Ty| {
+            let mut args: Vec<Ty> = solved.iter().map(|slot| slot.unwrap_or(error)).collect();
+            args[index] = ty;
+            bounds.iter().all(|&bound| {
+                let bound = this.substitute_bound(bound, &args);
+                this.implements(ty, bound)
+            })
+        };
+        if !meets(self, default) {
+            let mut named = Vec::new();
+            for &bound in &bounds {
+                let mut args: Vec<Ty> = solved.iter().map(|slot| slot.unwrap_or(error)).collect();
+                args[index] = error;
+                let bound = self.substitute_bound(bound, &args);
+                if let Some((_, over)) = self.open_interface_origin.get(&bound) {
+                    named.extend(over.iter().copied());
+                }
+            }
+            let fits = |this: &Self, ty: Ty| if float { this.types.is_float(ty) } else { this.types.is_numeric(ty) };
+            if let Some(ty) = named.into_iter().find(|&ty| fits(self, ty) && meets(self, ty)) {
+                return self.adopt_literal(value, ty);
+            }
+        }
+        self.commit(value)
+    }
+
     fn commit(&mut self, expr: Expr) -> Expr {
         if !self.types.is_untyped_literal(expr.ty) {
             return expr;
@@ -17802,8 +18133,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 };
                 let Some(elem) = elem else {
                     // `[TYP-20]` — `a[i]` on a type with an `index` method is
-                    // `*a.index(i)`, and `*a.index_mut(i)` where it is written.
-                    let method = if self.in_assignment_target { "index_mut" } else { "index" };
+                    // `*a.index(i)`; where the place is written it becomes
+                    // `*a.index_mut(i)` (`index_place_for_write`).
+                    let method = "index";
                     if let [ast::TypeOrExpr::Expr(key)] = args.as_slice()
                         && self.lookup_method(base.ty, Symbol::intern(method)).is_some()
                     {
@@ -17955,8 +18287,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if self.enum_named(recv).is_some() =>
             {
-                self.reject_method_type_args(name.name, generic_args, span);
                 let id = self.enum_named(recv).expect("just checked");
+                if let Some(ty) = self.enum_associated(id, name.name) {
+                    return self.synth_associated_call(ty, *name, generic_args, args, span);
+                }
+                self.reject_method_type_args(name.name, generic_args, span);
                 self.synth_variant(id, *name, args, span)
             }
 
@@ -18205,6 +18540,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                let inner = if *mutable { self.index_place_for_write(inner) } else { inner };
                 // `[MOD-7]` — "taking `ref mut h.value`" is a write.
                 if *mutable {
                     self.reject_readonly_write(&inner, place.span);
@@ -18339,6 +18675,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // parses as a call on a field access.
         if let ast::ExprKind::Field { base, name } = &callee.kind {
             if let Some(id) = self.enum_named(base) {
+                if let Some(ty) = self.enum_associated(id, name.name) {
+                    return self.synth_associated_call(ty, *name, &[], args, span);
+                }
                 return self.synth_variant(id, *name, args, span);
             }
             // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
@@ -19250,6 +19589,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
+            // `[TYP-23]` — a parameter type no type parameter reaches is
+            // known already: the argument is checked against it, so `[]`,
+            // `None` and `{}` take their type from it (D-297). Quietly: the
+            // check below reports; a failure here ends the call instead.
+            if !self.types.is_generic(param_ty) {
+                let quiet = self.sink.mark();
+                let value = self.check_argument(&arg.value, param_ty, declared[index].2);
+                if value.ty != self.common.error {
+                    self.sink.rollback(quiet);
+                }
+                checked_args[index] = Some(value);
+                continue;
+            }
             let value = self.synth(&arg.value);
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
@@ -19293,7 +19645,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         for (index, param_ty, value) in deferred_literals {
-            let value = self.commit(value);
+            let value = self.literal_for_bounds(value, param_ty, &generics, &solved);
             let mut trial = solved.clone();
             if self.unify_generic_argument(param_ty, value.ty, &generics, &mut trial, explicit.len()) {
                 for (slot, fixed) in solved.iter_mut().zip(trial) {
@@ -19525,13 +19877,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             solved[slot] = Some(*ty);
         }
         let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
+        // `[TYP-23]` — as for a generic function, an untyped literal waits
+        // for the typed arguments.
+        let mut deferred_literals = Vec::new();
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(index) = slots[arg_index] else { continue };
             let param_ty = declared[index].1;
             if matches!(arg.value.kind, ast::ExprKind::Lambda(_)) {
                 continue;
             }
-            let value = self.synth_committed(&arg.value);
+            // `[TYP-23]` — a parameter type no type parameter reaches is
+            // known already: the argument is checked against it, so `[]`,
+            // `None` and `{}` take their type from it (D-297). Quietly: the
+            // check below reports; a failure here ends the call instead.
+            if !self.types.is_generic(param_ty) {
+                let quiet = self.sink.mark();
+                let value = self.check_argument(&arg.value, param_ty, declared[index].2);
+                if value.ty != self.common.error {
+                    self.sink.rollback(quiet);
+                }
+                checked_args[index] = Some(value);
+                continue;
+            }
+            let value = self.synth(&arg.value);
+            if self.types.is_untyped_literal(value.ty) {
+                deferred_literals.push((index, param_ty, value));
+                continue;
+            }
+            let value = self.commit(value);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -19554,6 +19927,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
             checked_args[index] = Some(value);
+        }
+        for (index, param_ty, value) in deferred_literals {
+            let value = self.literal_for_bounds(value, param_ty, &generics, &solved);
+            let mut trial = solved.clone();
+            if self.unify_generic_argument(param_ty, value.ty, &generics, &mut trial, explicit.len()) {
+                for (slot, fixed) in solved.iter_mut().zip(trial) {
+                    if slot.is_none() {
+                        *slot = fixed;
+                    }
+                }
+            }
+            checked_args[index] = Some(value);
+        }
+        // One error per cascade ([DIA-14]).
+        if checked_args.iter().flatten().any(|arg| arg.ty == self.common.error) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(index) = slots[arg_index] else { continue };
@@ -20582,7 +20971,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return None;
                 }
                 let name = self.resolve_name(segments[0].name);
-                if !self.generic_structs.contains_key(&name) {
+                if !self.generic_structs.contains_key(&name) && !self.generic_classes.contains_key(&name) {
                     return None;
                 }
                 Some(self.type_from_expr(expr))
@@ -21414,6 +21803,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.builtin_enum(name, &[(Symbol::intern("OutOfRange"), vec![])])
     }
 
+    /// D-304 — `Shape.unit()` names an associated function of the enum
+    /// when no variant has the name; the enum's type then, for the call.
+    fn enum_associated(&mut self, id: EnumId, name: Symbol) -> Option<Ty> {
+        let ty = self.types.intern(TyKind::Enum(id));
+        (self.types.enum_def(id).variant(name).is_none() && self.associated.contains_key(&(ty, name))).then_some(ty)
+    }
+
     /// `[ENM-1]` — a variant constructor, positional or by name. A unit
     /// variant is the same thing with no arguments.
     fn synth_variant(
@@ -21615,12 +22011,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if receiver.ty == self.common.error {
             // `[TYP-23]` — `xs.push(v)` says what an open `xs = []` holds.
             if let ExprKind::Local(local) = receiver.kind
-                && self.open.locals.get(&local).is_some_and(|open| open.array)
+                && self.open.locals.get(&local).is_some_and(|open| open.kind == OpenKind::Array)
                 && let ("push" | "append", [item]) | ("insert", [_, item]) = (name.name.as_str(), args)
             {
                 let item = self.synth_committed(&item.value);
                 let array = self.types.intern(TyKind::Vec { elem: item.ty });
                 self.fix_open_local(local, array, true);
+            }
+            // `m.insert(k, v)` and `s.add(x)` say what an open `Map()` or
+            // `Set()` holds.
+            if let ExprKind::Local(local) = receiver.kind
+                && let Some(kind) = self.open.locals.get(&local).map(|open| open.kind)
+            {
+                match (kind, name.name.as_str(), args) {
+                    (OpenKind::Map, "insert", [key, value]) => self.fix_open_map(local, &key.value, &value.value, span),
+                    (OpenKind::Set, "add", [item]) => {
+                        let element = self.collection_element_type(&item.value);
+                        let set = self.instantiate_named_generic("std.collections.Set", &[element], span);
+                        self.fix_open_local(local, set, true);
+                    }
+                    _ => {}
+                }
             }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
@@ -21872,6 +22283,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && self.types.is_copy(receiver.ty)
             && self.lookup_method(receiver.ty, name.name).is_none()
         {
+            return self.clone_value(receiver);
+        }
+        // D-303 — a tuple, `Option` or `Result` clones part by part.
+        let referent = match *self.types.kind(receiver.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => receiver.ty,
+        };
+        if name.name.is("clone")
+            && explicit.is_empty()
+            && args.is_empty()
+            && self.clones_by_parts(referent)
+            && self.is_cloneable(referent)
+            && self.lookup_method(referent, name.name).is_none()
+        {
+            let receiver = self.read_through(receiver);
             return self.clone_value(receiver);
         }
         // `[STD-12]` (ODR-032) — `is_key` and `to_key` of a key type used as
@@ -24982,6 +25408,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// D-268 — `ty == ty` goes through `synth_eq_of`: the type has a written
+    /// `eq`, or holds one and has `Eq` as a whole. A type holding one next to
+    /// a part without `Eq` has none (`[STR-5]`), which the caller reports.
+    fn written_eq_applies(&self, ty: Ty) -> bool {
+        self.methods.contains_key(&(ty, Symbol::intern("eq")))
+            || (self.needs_written_eq(ty, &mut HashSet::new()) && self.has_implicit_eq(ty))
+    }
+
     /// D-268 — whether comparing `ty` has to call a written `eq` somewhere
     /// inside it, which the C comparison of an aggregate cannot do.
     fn needs_written_eq(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
@@ -25124,24 +25558,104 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    /// `*call` as an assignment target: the call's reference is held in a
-    /// local, and the target and a second read of it both go through it.
-    fn hold_called_place(&mut self, place: Expr, out: &mut Vec<Stmt>) -> (Expr, Option<Expr>) {
-        let Expr { ty, kind, span } = place;
-        match kind {
-            ExprKind::Deref(inner) if !is_place(&inner.kind) => {
-                let held = inner.ty;
-                let local = self.declare(None, held, span);
-                out.push(Stmt::Let { local, init: Some(*inner) });
-                let read = || Expr {
-                    ty,
-                    kind: ExprKind::Deref(Box::new(Expr { ty: held, kind: ExprKind::Local(local), span })),
-                    span,
-                };
-                (read(), Some(read()))
+    /// Whether a place is reached through a class handle's field (`h.f`,
+    /// `h.f[i]`).
+    fn through_class_field(&self, place: &Expr) -> bool {
+        match &place.kind {
+            ExprKind::Field { base, .. } => {
+                matches!(self.types.kind(base.ty), TyKind::Class(_)) || self.through_class_field(base)
             }
-            kind => (Expr { ty, kind, span }, None),
+            ExprKind::EnumField { base, .. } | ExprKind::Index { base, .. } => self.through_class_field(base),
+            ExprKind::Deref(inner) => self.through_class_field(inner),
+            _ => false,
         }
+    }
+
+    /// `[STD-17]` — `a[i]` is read through `index`; where the place is written
+    /// (an assignment target, a `mut self` receiver, `ref mut a[i]`) the call
+    /// becomes `index_mut`, with the same type arguments. Its receiver is
+    /// then written too, and is passed as a `mut` receiver, which repeats this
+    /// down a chain (`m[a][b] = v`) and checks it as any write.
+    fn index_place_for_write(&mut self, place: Expr) -> Expr {
+        let Expr { ty, kind, span } = place;
+        let kind = match kind {
+            ExprKind::Field { base, index } => ExprKind::Field { base: Box::new(self.index_place_for_write(*base)), index },
+            ExprKind::EnumField { base, variant, index } => {
+                ExprKind::EnumField { base: Box::new(self.index_place_for_write(*base)), variant, index }
+            }
+            ExprKind::Index { base, index } => ExprKind::Index { base: Box::new(self.index_place_for_write(*base)), index },
+            ExprKind::Deref(inner) => ExprKind::Deref(Box::new(self.index_call_for_write(*inner))),
+            other => other,
+        };
+        Expr { ty, kind, span }
+    }
+
+    fn index_call_for_write(&mut self, call: Expr) -> Expr {
+        let ExprKind::Call { callee, args, .. } = &call.kind else { return call };
+        let Some(ExprKind::Ref { place, mutable: false }) = args.first().map(|arg| &arg.kind) else { return call };
+        let owner = place.ty;
+        let generic = self.generic_of.get(callee).copied().unwrap_or(*callee);
+        if self.methods.get(&(owner, Symbol::intern("index"))).map(|entry| entry.def) != Some(generic) {
+            return call;
+        }
+        let Some(entry) = self.methods.get(&(owner, Symbol::intern("index_mut"))).map(|entry| entry.def) else {
+            return call;
+        };
+        let callee_mut = if generic == *callee {
+            entry
+        } else {
+            let Some(type_args) = self.instances.iter().find(|(_, def)| **def == *callee).map(|(key, _)| key.args.clone())
+            else {
+                return call;
+            };
+            self.instantiate_method(entry, &type_args, Symbol::intern("index_mut"), call.span)
+        };
+        if let Some(job) = self.deferred_methods.remove(&entry) {
+            self.pending_methods.push(job);
+        }
+        let Expr { span, kind, .. } = call;
+        let ExprKind::Call { mut args, arg_eval_order, latebound, .. } = kind else { unreachable!("matched above") };
+        let receiver = args.remove(0);
+        let receiver_span = receiver.span;
+        let ExprKind::Ref { place, .. } = receiver.kind else { unreachable!("matched above") };
+        let receiver = self.pass_receiver(*place, Mode::Mut, receiver_span);
+        args.insert(0, receiver);
+        let ty = self.signatures[callee_mut.0 as usize].ret;
+        Expr { ty, kind: ExprKind::Call { callee: callee_mut, args, arg_eval_order, latebound }, span }
+    }
+
+    /// `[EXP-2]` — a place evaluated once: each index that computes
+    /// something and each reference a call returned is held in a local, so
+    /// the target and a second read of it (`copy_place`) name the same place.
+    fn hoist_place(&mut self, place: Expr, out: &mut Vec<Stmt>) -> Expr {
+        let Expr { ty, kind, span } = place;
+        let kind = match kind {
+            ExprKind::Field { base, index } => ExprKind::Field { base: Box::new(self.hoist_place(*base, out)), index },
+            ExprKind::EnumField { base, variant, index } => {
+                ExprKind::EnumField { base: Box::new(self.hoist_place(*base, out)), variant, index }
+            }
+            ExprKind::Index { base, index } => {
+                let base = self.hoist_place(*base, out);
+                let index = match index.kind {
+                    ExprKind::Local(_) | ExprKind::Int(_) => *index,
+                    _ => self.hold_value(*index, out),
+                };
+                ExprKind::Index { base: Box::new(base), index: Box::new(index) }
+            }
+            // The reference a call returned, held.
+            ExprKind::Deref(inner) if !is_place(&inner.kind) => ExprKind::Deref(Box::new(self.hold_value(*inner, out))),
+            ExprKind::Deref(inner) => ExprKind::Deref(Box::new(self.hoist_place(*inner, out))),
+            kind => kind,
+        };
+        Expr { ty, kind, span }
+    }
+
+    /// A value evaluated once into a fresh local, read back as that local.
+    fn hold_value(&mut self, value: Expr, out: &mut Vec<Stmt>) -> Expr {
+        let (ty, span) = (value.ty, value.span);
+        let local = self.declare(None, ty, span);
+        out.push(Stmt::Let { local, init: Some(value) });
+        Expr { ty, kind: ExprKind::Local(local), span }
     }
 
     /// An operand evaluated once into a local — through a reference when it
@@ -27073,6 +27587,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if mode != Mode::Mut {
             return receiver;
         }
+        let receiver = self.index_place_for_write(receiver);
         // `[EXC-1]` — a class-valued field receiver is a long-term mutable
         // access at the call boundary, just like passing a scalar class field
         // to a `mut` parameter. The direct method body still opens the access
@@ -28525,11 +29040,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         // `[TYP-21]`, `[STR-5]` — `Eq.eq` gives both `==` and `!=`, and a type
         // holding a component with a written `eq` compares through it.
-        if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne)
-            && lhs.ty == rhs.ty
-            && (self.methods.contains_key(&(lhs.ty, Symbol::intern("eq")))
-                || self.needs_written_eq(lhs.ty, &mut HashSet::new()))
-        {
+        if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne) && lhs.ty == rhs.ty && self.written_eq_applies(lhs.ty) {
             let equal = self.synth_eq_of(lhs, rhs, span);
             return match op {
                 ast::BinOp::Ne => {
@@ -28969,6 +29480,60 @@ fn has_self_sized_bound(bounds: &[ast::Bound]) -> bool {
 
 /// Whether an expression names a location rather than a value — the test
 /// `[EXP-5]` applies to an assignment target and to a `mut` argument.
+/// Where `@view` is written, for its diagnostics.
+fn view_span(attrs: &[ast::Attribute]) -> Span {
+    attrs
+        .iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("view"))
+        .map_or(Span::DUMMY, |attr| attr.span)
+}
+
+/// `[EXP-2]` — whether naming a place computes something that must happen
+/// once: a call returning the reference (`m[k]`), or an index that is not a
+/// local or a literal.
+fn computes_in_path(place: &Expr) -> bool {
+    match &place.kind {
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => computes_in_path(base),
+        ExprKind::Index { base, index } => {
+            !matches!(index.kind, ExprKind::Local(_) | ExprKind::Int(_)) || computes_in_path(base)
+        }
+        ExprKind::Deref(inner) => !is_place(&inner.kind) || computes_in_path(inner),
+        _ => false,
+    }
+}
+
+/// A second copy of a place made only of locals, literals and projections,
+/// as `hoist_place` leaves one; `None` for anything else.
+fn copy_place(place: &Expr) -> Option<Expr> {
+    let kind = match &place.kind {
+        ExprKind::Local(local) => ExprKind::Local(*local),
+        ExprKind::Int(value) => ExprKind::Int(*value),
+        ExprKind::Field { base, index } => ExprKind::Field { base: Box::new(copy_place(base)?), index: *index },
+        ExprKind::EnumField { base, variant, index } => {
+            ExprKind::EnumField { base: Box::new(copy_place(base)?), variant: *variant, index: *index }
+        }
+        ExprKind::Index { base, index } => {
+            ExprKind::Index { base: Box::new(copy_place(base)?), index: Box::new(copy_place(index)?) }
+        }
+        ExprKind::Deref(inner) => ExprKind::Deref(Box::new(copy_place(inner)?)),
+        _ => return None,
+    };
+    Some(Expr { ty: place.ty, kind, span: place.span })
+}
+
+/// Whether a pattern binds a `ref mut` local anywhere inside it.
+fn binds_mut_ref(pattern: &hir::Pattern) -> bool {
+    match &pattern.kind {
+        hir::PatternKind::Bind { by_ref, sub, .. } => {
+            *by_ref == Some(true) || sub.as_deref().is_some_and(binds_mut_ref)
+        }
+        hir::PatternKind::Variant { fields, .. } | hir::PatternKind::Fields(fields) | hir::PatternKind::Or(fields) => {
+            fields.iter().any(binds_mut_ref)
+        }
+        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Error => false,
+    }
+}
+
 fn is_place(kind: &ExprKind) -> bool {
     match kind {
         ExprKind::Local(_) | ExprKind::Index { .. } => true,

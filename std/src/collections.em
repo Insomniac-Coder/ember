@@ -268,11 +268,15 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
         self.used = 0
         self.shift = 64
 
+    ## Room for `n` more entries. A rebuild leaves at least half the usable
+    ## room free, so at a steady load near the limit removed places are
+    ## dropped only after as many operations again: insertion stays expected
+    ## constant time, amortised (`[STD-11]`, ODR-033).
     pub fn reserve(mut self, n: int):
         if (self.used + n) * 8 <= self.slots.len() * 7:
             return
         size = 8
-        while size * 7 < (self.live + n) * 8:
+        while size * 7 < (self.live + n) * 16:
             size = size * 2
         self.rebuild(size)
 
@@ -566,8 +570,10 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
             Some(at):
                 i = self.map.slots[at]
             None:
-                i = self.map.entries.len()
+                # `push_new` may close up removed entries first, so the new
+                # entry's place is read after it.
                 self.map.push_new(self.hash, self.key, v)
+                i = self.map.entries.len() - 1
         match self.map.entries[i]:
             Some(ref mut e):
                 return ref mut e.value
@@ -593,8 +599,8 @@ extend[K: Eq + Hash, V: Default, H: Hasher + Default] MapEntry[K, V, H]:
             Some(at):
                 i = self.map.slots[at]
             None:
-                i = self.map.entries.len()
                 self.map.push_new(self.hash, self.key, V.default())
+                i = self.map.entries.len() - 1
         match self.map.entries[i]:
             Some(ref mut e):
                 return ref mut e.value

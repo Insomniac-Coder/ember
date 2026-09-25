@@ -703,3 +703,13 @@ The next number is ODR-027.
   where they are written, as a call's: `println(xs, xs.pop())` is `E3021`, and printing a moved
   value is `E3050` as borrowing one is (D-286); the `[EXC-3]` elision now lets its closing access
   follow plain statements, which the copied arguments add.
+* **2026-09-25 — the phase-2 reviewers' findings (D-287 to D-305).** The library reviewer's six
+  (D-287 to D-292) and the compiler reviewer's seventeen, all verified. Behaviour a program can
+  see: moving out of a class field is `E3012`, and a `match` on one binds by move, so
+  `match h.f.clone():` is the way to read an `Option` field (D-302); `.clone()` exists on tuples,
+  `Option` and `Result` (D-303); `a[i] op= x` evaluates `x`, then the place once (D-296); a
+  `for` loop keeps the temporary it iterates alive to its end (D-299); `ref mut` pattern
+  bindings are writes (D-295); scans call a written `eq` (D-294); a generic struct's bounds are
+  checked where it is named (D-301); `@view` does not depend on declaration order (D-300); an
+  enum's associated functions can be called (D-304). Open: D-305. Every Hardened_8 to 13 header
+  now names its own hardening; the cut writes it (`appx_h.py`'s `write_header`).

@@ -296,6 +296,28 @@ def rule_diff(old_folder, new_folder):
     return '\n'.join(rows)
 
 
+def header_lines(n):
+    """The front matter's Version and Supersedes lines for 0.9.9_Hardened_<n>."""
+    earlier = ', '.join(f'0.9.9_Hardened_{k}' for k in range(n - 1, 0, -1))
+    return (f'**Version:** 0.9.9_Hardened_{n}',
+            f'**Supersedes:** {earlier}, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 '
+            '(adopted). This document is')
+
+
+def write_header():
+    """The header names the newest hardening in ODRS. It was written by hand, and every cut from
+    Hardened_8 to Hardened_13 went out still calling itself Hardened_7; now each cut writes it."""
+    latest = max(int(n) for _, text, _ in ODRS for n in re.findall(r'\(Hardened_([0-9]+)\)', text))
+    front = os.path.join(HERE, '..', 'parts', 'p00-front.md')
+    text = open(front, encoding='utf-8').read()
+    version, supersedes = header_lines(latest)
+    text, a = re.subn(r'^\*\*Version:\*\* .*$', version, text, count=1, flags=re.M)
+    text, b = re.subn(r'^\*\*Supersedes:\*\* .* This document is$', supersedes, text, count=1, flags=re.M)
+    assert a == 1 and b == 1, (a, b)
+    open(front, 'w', encoding='utf-8', newline='\n').write(text)
+    return latest
+
+
 def main():
     old = open(OLD, encoding='utf-8').read()
     oldids = set(re.findall(r'`\[([A-Z][A-Z0-9]*(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]`', old))
@@ -319,8 +341,9 @@ def main():
     h4 = h1_to_h2()
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n')
+    latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
-          'H1->H2 rows', h4.count('\n') + 1)
+          'H1->H2 rows', h4.count('\n') + 1, 'header Hardened_%d' % latest)
     return gone
 
 if __name__ == '__main__':

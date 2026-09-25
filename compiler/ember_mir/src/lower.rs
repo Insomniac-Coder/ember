@@ -598,6 +598,18 @@ impl<'a> Builder<'a> {
     fn lower_stmt(&mut self, stmt: &'a hir::Stmt) {
         let temps = self.statement_temps.len();
         self.lower_stmt_inner(stmt);
+        // `[EXP-4]` — a temporary made by a `for` iterable lives to the end of
+        // the loop: the hidden iterator's temporaries end with the loop's
+        // block, before the iterator, which may borrow them (D-299).
+        if let hir::Stmt::Let { local, .. } = stmt
+            && self.function.locals[local.0 as usize].for_iterator
+        {
+            let held: Vec<LocalId> = self.statement_temps.drain(temps..).collect();
+            let iterator = self.local_map[local.0 as usize];
+            let at = self.owned.iter().rposition(|&owned| owned == iterator).unwrap_or(self.owned.len());
+            self.owned.splice(at..at, held);
+            return;
+        }
         // `[EXP-4]`, `[DRP-3]` — the statement is over, so its temporaries are.
         self.emit_statement_temps(temps);
     }

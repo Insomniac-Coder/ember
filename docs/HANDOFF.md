@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 21:00 IST
+#### Start here after a context reset — state at 2026-09-25 late evening IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10719,19 +10719,21 @@ the running narrative behind it.
   * `e2bcfb3`: the rest of `[STD-15]` (ODR-031, Hardened_12; D-256 to D-258).
   * `b748723`: what `Map` needs first (D-259 to D-274); CI green.
   * `08693bf`: `Map`/`Set` (ODR-032 to ODR-036, Hardened_13); CI green.
-  * The D-263/D-279/D-282/D-286 commit, the newest.
+  * `94c21ac`: D-263, D-279, D-282, D-286.
+  * The reviewer-fixes commit (D-287 to D-305, and every Hardened_8 to 13
+    header naming itself), the newest.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_13.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h13/` is frozen.
-* **Next numbers:** ODR-037, D-287.
+* **Next numbers:** ODR-037, D-306.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
   |---|---:|
-  | P1 | 93 |
+  | P1 | 94 |
   | P2 | 85 |
   | P3 | 47 |
   | P4 | 10 |
@@ -10742,7 +10744,9 @@ the running narrative behind it.
   | P8 | 13 |
   | Overall | 51 |
 
-  Given 2026-09-25 evening, after `08693bf`. P1 rose (88 to 93) for the
+  Given 2026-09-25 late evening, after the reviewer fixes: P1 93 to 94 for
+  `[EXP-2]`, `[EXP-4]`, `[TYP-34]` and `[EXP-6]`'s `E3012` made to hold.
+  Before that, after `08693bf`, P1 rose (88 to 93) for the
   `Map`/`Set` work's Part II–VI rules: `[HASH-1]`–`[HASH-4]`, `[TYP-17]`
   generic bounds, `[TYP-21]`, `[TYP-23]`, `[TYP-36]`'s `Default`, `[TYP-38]`,
   `[TYP-39]`, `[GRM-26]`, `[LEX-15]`, `[STR-2]`, `[STR-5]`, `[STR-6]` (part),
@@ -10917,10 +10921,50 @@ D-282 (`@borrows(self)`), D-286 (`println` arguments evaluated where written,
 statements). Phase 2 of the Map/Set plan (two read-only reviewers, owner-
 approved) was launched and its findings are being verified.
 
-**Immediate next task:** verify and fix the reviewers' findings; then D-280
-(a method's own type parameters renumbered from 0 collide with the caller's
-in a generic type's opaque check: keep the ranges apart and offset inference;
-repro in the ledger row) and D-284; then `for k in owned m`.
+**Then (2026-09-25 late evening): the phase-2 reviewers' findings, all
+verified and fixed.** The library reviewer's six are D-287 to D-292; the
+compiler reviewer's seventeen (C1 to C17; C4, C7, C9, C10 and C16 were already
+fixed by D-289 to D-292) are D-293 to D-302 and D-304. Found on the way: D-303
+(`clone` on tuples, `Option`, `Result`), D-305 (open: a user type named like a
+prelude type, `Cell`, loses to it in type position), and that H8 to H13 all
+called themselves Hardened_7 in their header: `tools/appx_h.py` now writes the
+`**Version:**` and `**Supersedes:**` lines from the ODR table at every cut
+(`write_header`), and the frozen H8 to H12 were corrected in place. Where the
+new code lives:
+
+* `written_eq_applies` (D-293/D-294): the one test for "`==` goes through
+  `synth_eq_of`"; `equality` (the scans) uses it too.
+* `binds_mut_ref` (D-295) in `check_match_scoped`.
+* `computes_in_path`, `hoist_place`, `hold_value`, `copy_place` (D-296):
+  `op=` evaluates the operand, then the place once. They replace
+  `hold_called_place`.
+* The known-parameter-type branch and `literal_for_bounds` (D-297/D-298) in
+  both `synth_generic_call` and `synth_generic_method_call`.
+* `lower_stmt` in `ember_mir/src/lower.rs` (D-299): a `for` iterator's
+  temporaries join the loop block's `owned`.
+* `pending_views`/`check_view_attributes` (D-300); `bounds_known`,
+  `pending_struct_bounds`, `struct_bounds_met`, `unmet_instances` (D-301).
+* `through_class_field` in `ember_analysis/src/drops.rs` (`E3012`, with the
+  page `docs/errors/E3012.md`) and in the checker (a class field is matched by
+  move) (D-302).
+* `clones_by_parts`/`clone_by_parts` (D-303); `enum_associated` and
+  `collecting_generic` in the enum and class collectors (D-304).
+
+**Immediate next task:** D-280 (a method's own type parameters renumbered
+from 0 collide with the caller's in a generic type's opaque check: keep the
+ranges apart and offset inference; repro in the ledger row) and D-284; then
+`for k in owned m`; then D-305. The D-280 plan: in `register_recipe_method`,
+number the method's own parameters from `base` = 1 + the highest `Param`
+index in the owner's arguments (0 for a concrete owner, so nothing changes
+there), and record the caller's parameters as a `generic_prefix` on the
+`Signature` (empty at every other construction site). In
+`synth_generic_method_call`, `solved` starts as the prefix (fixed) followed by
+the method's own slots; explicit type arguments land at `base`; `callable_hint`
+and `unify_generic_argument` take `base` so they index `generics[index -
+base]`; `instantiate_method` substitutes with the whole vector. Then
+`Map.rebuild` can go back to `retain(fn(e) => e.is_some())`, and the generic
+methods of generic types skipped by `check_opaque_methods` may become
+checkable.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
