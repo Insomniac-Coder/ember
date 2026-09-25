@@ -2139,7 +2139,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     };
     let exe = layout.bin.join(exe_name);
 
-    let toolchain = Toolchain::detect(options.cc.as_deref()).map_err(|e| e.to_string())?;
+    // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251).
+    let requested = options
+        .cc
+        .clone()
+        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+    let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
     // The runtime is compiled once per toolchain and profile, then linked as

@@ -608,3 +608,18 @@ The next number is ODR-027.
   (ADR-046); MSVC still compiles it with each program. Found on the way: D-251. MSVC detection
   never succeeds (a quoting defect), and nothing reads CI's `EMBER_CC`, so every build so far, in
   CI and here, has used clang.
+* **2026-09-25 — MSVC works (D-251 to D-254).** Once found, MSVC is the default on Windows
+  (`[MAN-1]`'s `auto`). It showed three things clang had let through:
+  * A panic in a `debug` build opened the C runtime's "abort() has been called" window and waited
+    for a click (D-252). The first parallel run opened one per panicking test, on the owner's
+    screen.
+  * A float division by a literal zero, and a struct cast in class vtable adapters, did not
+    compile (D-253).
+  * The runtime named `max_align_t`, which MSVC's C mode does not declare.
+
+  Fixed: every panic ends in `runtime_abort`, which switches off both of the C runtime's reports,
+  and MSVC's `debug` links the release C runtime. The driver reads `EMBER_CC`, and `--cc` accepts
+  `clang-cl` and `auto`. MSVC's environment is cached and its runtime object reused (ADR-046), so
+  a hello build takes 0.21 s. The full suite passes under MSVC (39 s), clang-cl (51 s) and clang
+  (55 s). D-254: the speedups' long per-case folder names had pushed CI's longest paths past
+  Windows' 260 characters.

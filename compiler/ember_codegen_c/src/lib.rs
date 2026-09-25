@@ -1818,11 +1818,22 @@ impl Emitter<'_> {
                     .collect::<Vec<_>>();
                 let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
                 self.line(&format!("static {} {adapter}({params}) {{", self.c_type(signature.ret)));
+                // A cast only where the C types differ (the receiver's class):
+                // C has no cast to a struct type, even its own, and MSVC
+                // refuses one (D-253).
                 let args = implementation
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(index, ty)| format!("({})_{index}", self.c_type(*ty)))
+                    .map(|(index, ty)| {
+                        let c_type = self.c_type(*ty);
+                        let declared = signature.params.get(index).map(|declared| self.c_type(*declared));
+                        if declared.as_deref() == Some(c_type.as_str()) {
+                            format!("_{index}")
+                        } else {
+                            format!("({c_type})_{index}")
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 if self.is_void(signature.ret) {
@@ -4785,6 +4796,24 @@ impl Emitter<'_> {
                 };
                 format!(
                     "{RT}{stem}_{suffix}({}, {})",
+                    self.operand(lhs, body),
+                    self.operand(rhs, body)
+                )
+            }
+            // `[TYP-29]` gives a float division by zero IEEE's result, but
+            // MSVC refuses a division by a constant zero (C2124, D-253), so a
+            // literal zero divisor reaches the runtime's `fdiv` as a parameter.
+            Rvalue::BinaryOp {
+                op: ember_mir::BinOp::Div,
+                lhs,
+                rhs: rhs @ Operand::Const(ember_mir::Const::Float { value, .. }),
+            } if *value == 0.0 && self.types.is_float(target) => {
+                let suffix = match self.types.kind(target) {
+                    TyKind::Float(FloatTy::F32) => "f32",
+                    _ => "f64",
+                };
+                format!(
+                    "{RT}fdiv_{suffix}({}, {})",
                     self.operand(lhs, body),
                     self.operand(rhs, body)
                 )

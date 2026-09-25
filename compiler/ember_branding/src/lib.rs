@@ -113,6 +113,12 @@ pub fn cache_dir_var() -> String {
     format!("{}_CACHE", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// The environment variable that chooses the C compiler when `--cc` does not:
+/// `msvc`, `clang-cl`, `clang`, `gcc` or `auto`. CI's compiler matrix sets it.
+pub fn cc_var() -> String {
+    format!("{}_CC", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// Where `std`'s sources live, or `None` where they cannot be found.
 ///
 /// The order is: the environment variable; then `std/src` beside the running
@@ -159,6 +165,7 @@ mod tests {
     fn the_std_path_variable_is_derived_too() {
         assert_eq!(std_path_var(), "EMBER_STD");
         assert_eq!(cache_dir_var(), "EMBER_CACHE");
+        assert_eq!(cc_var(), "EMBER_CC");
     }
 
     #[test]

@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 06:00 IST
+#### Start here after a context reset — state at 2026-09-25 08:00 IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10707,14 +10707,21 @@ the running narrative behind it.
 
 **Where things stand**
 
-* **Last commits:** `f3a8d6c` (D-248/D-250), the handoff `770780b`, then
-  the test speedups (A/B/C, below), the newest. Check CI for it first (recipe
-  below). CI was green on every earlier push that day: `c2f0bd4`, `d0df020`,
-  `6df0fc4`, `37efa47`.
+* **Last commits, oldest first:**
+  * `f3a8d6c` (D-248/D-250) and the handoff `770780b`.
+  * `a32d0b7`: the test speedups A/B/C, below. Its Windows jobs failed
+    (D-254).
+  * `7767eee`, `de4ba76` and `f696557`: CI copies a failure into an
+    annotation, which can be read without signing in (recipe below).
+  * `4398dc0`: D-254's fix.
+  * The MSVC commit (D-251 to D-253), the newest.
+
+  Check CI for the newest first. CI was green on every push that day before
+  `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_11.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h11/` is frozen.
-* **Next numbers:** ODR-031, D-252.
+* **Next numbers:** ODR-031, D-255.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10792,29 +10799,44 @@ the running narrative behind it.
   `WK-7`) were reported by both runners, in order. Dropping the header hash
   failed the unit test.
 
-**Immediate next task: D-251 (`docs/DEFECTS.md`), found while doing C.** Every
-build so far, in CI and here, has used clang:
+**Done after the speedups: MSVC works (D-251 to D-254, `docs/DEFECTS.md`).**
 
-* **MSVC is never detected.** `capture_environment` in
-  `compiler/ember_build/src/lib.rs` passes
-  `call "<vcvars64.bat>" >nul 2>&1 && set` to `cmd /c` as one argument. Rust
-  quotes it with `\"`, and `cmd` does not understand that, so the batch file
-  never runs. VS 2022 BuildTools **is** installed here (MSVC 14.44, `cl.exe`
-  and `link.exe` present), yet `ember run --cc msvc` says "no C compiler
-  found". Passing the same command line verbatim works (`raw_arg`, from
-  `std::os::windows::process::CommandExt`); a Python check showed `INCLUDE`
-  set.
-* **Nothing reads `EMBER_CC`**, which CI sets per job. The tests call `ember`
-  without `--cc`.
-* **`clang-cl` is not a `--cc` value.** `[MAN-1]` lists
-  `auto | bundled | msvc | clang | gcc`, while Part XX §2 wants CI on
-  "windows-latest with MSVC + clang-cl". Probably an ODR (ODR-031).
-* **Fixing detection makes MSVC the default here** (`[MAN-1]`: auto prefers
-  MSVC on Windows). The emitted C has never been compiled by MSVC, so expect
-  failures in the suite. Then give C an MSVC path (`cl /c`, `/Fo`; mind `/GL`
-  and `/Zi`), or the local suite loses C's gain.
-* gcc is not installed here. Only CI's ubuntu job can test it, once
-  `EMBER_CC` is read.
+* **D-251.** MSVC was never found: `cmd /c` could not read the `\"` quoting
+  Rust gave the `vcvars64.bat` command line, and nothing read CI's `EMBER_CC`.
+  So every build, here and in CI, had been clang.
+  * `capture_environment` now uses `raw_arg`, and MSVC (VS 2022 BuildTools
+    here) is the default on Windows, as `[MAN-1]`'s `auto` says.
+  * The driver reads `EMBER_CC` (`ember_branding::cc_var()`) when `--cc` is
+    not given.
+  * `--cc` accepts `clang-cl` (MSVC's environment and flags, clang's front
+    end, which ignores `/GL`) and `auto`.
+* **D-252.** A panic in an MSVC `debug` build opened the debug C runtime's
+  "abort() has been called" window and waited for a click. The first parallel
+  run flooded the owner's screen with them.
+  * Every panic now ends in the runtime's `runtime_abort`, which switches off
+    `_WRITE_ABORT_MSG` and `_CALL_REPORTFAULT`.
+  * MSVC `debug` links the release C runtime (`/MD`).
+  * `annotations.py` sets `SEM_NOGPFAULTERRORBOX` for the programs it runs.
+* **D-253.** MSVC rejected the emitted C in three places, which are now fixed:
+  * A float `/` by a literal zero now goes through the runtime's
+    `ember_fdiv_*`.
+  * Class vtable adapters no longer cast struct arguments.
+  * The runtime's `max_align_t` is now the union `arena_max_align`.
+* **D-254.** The speedups' per-case folder names pushed CI's longest paths
+  past Windows' 260 characters. The folders are now named by a 16-hex hash.
+* **Speed** (ADR-046): MSVC's environment is cached in
+  `<cache>/msvc/<key>.env`, and `debug`/`release` reuse a `/Z7` runtime
+  object. A hello build takes 0.21 s.
+* **Measured here:**
+
+  | Run | MSVC | clang-cl | clang |
+  |---|---:|---:|---:|
+  | Full suite | 39 s | 51 s | 55 s |
+
+  The quick check under MSVC takes 18 s. gcc runs only in CI (it is not
+  installed here).
+
+**Immediate next task:** the backlog below, from item 1.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
@@ -10895,7 +10917,7 @@ unless named otherwise):
   `callable_declarations` declares a generic extension's members as
   `generic:<target>@<span start>`.
 
-**Backlog after D-251, in order:**
+**Backlog, in order:**
 
 1. **The rest of [STD-15].**
    * `sort_by` and `sort_by_key`: the runtime's `ember_vec_sort` takes a
@@ -10946,8 +10968,15 @@ unless named otherwise):
 * **Old builds.** To check behaviour at an older commit, use a scratch
   worktree (`git worktree add --detach <dir> <sha>`) and build it there. Do
   not stash while a suite runs.
-* **Every build is clang** until D-251 is fixed. MSVC detection always
-  fails, and CI's `EMBER_CC` is read by nothing.
+* **MSVC is the default compiler here.** Select another with
+  `EMBER_CC=clang`, `clang-cl`, `msvc` or `auto`. After touching code
+  generation or the runtime, run the suite under MSVC and clang at least.
+* **No windows on the owner's screen.** After any change to the toolchain,
+  the runtime or the C runtime flags, run ONE panicking program first, alone:
+  it must exit with status 3 and open no window. Only then run a batch. A
+  watchdog that closes any test program that opens a window:
+  `Get-Process | ? { $_.MainWindowHandle -ne 0 -and $_.Path -like "*ember-tests*" } | Stop-Process -Force`
+  in a PowerShell loop.
 * **The runtime object cache** is `%LOCALAPPDATA%\ember\cache\runtime`; set
   `EMBER_CACHE` to move it. Its key covers the runtime's source and headers, so
   an edit to the runtime needs no manual clean.
@@ -10979,6 +11008,16 @@ unless named otherwise):
   ```
   curl -s "https://api.github.com/repos/Insomniac-Coder/ember/actions/runs?head_sha=<full sha>"
   ```
+
+* **Why a CI job failed.** Its log needs a signed-in viewer, but on a failure
+  the job copies cargo's `failures:` block (or the end of the output) into an
+  annotation. Take the job's id from the run's `jobs_url`, then:
+
+  ```
+  curl -s "https://api.github.com/repos/Insomniac-Coder/ember/check-runs/<job id>/annotations"
+  ```
+
+  The message encodes newlines as `%0A`.
 
 * **A new hardening** (an ODR): in `tasks/spec-0.9.9`, with
   `PYTHONIOENCODING=utf-8`:

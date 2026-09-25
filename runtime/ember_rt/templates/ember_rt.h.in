@@ -324,6 +324,12 @@ EMBER_CHECKED_FLOOR(isize, ptrdiff_t, INT64_MIN)
 EMBER_FLOAT_FLOOR(f32, float, fmodf, floorf, copysignf)
 EMBER_FLOAT_FLOOR(f64, double, fmod, floor, copysign)
 
+/* Float `/` by a divisor the generated C would spell as a constant zero.
+ * [TYP-29] gives it IEEE's result (inf, -inf or NaN), but MSVC refuses a
+ * division by a constant zero (C2124), so here the zero is a parameter. */
+static inline float ember_fdiv_f32(float a, float b) { return a / b; }
+static inline double ember_fdiv_f64(double a, double b) { return a / b; }
+
 /* [TYP-6] (0.9.9): `x as T` from a float to an integer rounds toward zero and
  * saturates at T's bounds; NaN becomes 0. C's conversion is undefined outside
  * T's range, so the bounds are tested first. Every integer bound below is

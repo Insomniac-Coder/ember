@@ -1506,10 +1506,17 @@ object (`ember_build::runtime_object`).
 - **Side by side.** The object is compiled under `<key>.o.tmp<pid>` and renamed
   into place, as the interface cache has done since D-189. A rename lost to
   another build keeps that build's identical object.
-- **MSVC** still compiles the runtime with each program. A `/GL` (shipping)
-  object needs `/LTCG` at link, and `/Zi` ties an object to its PDB. No build
-  had ever used MSVC when this was written (D-251: its detection always
-  failed), so an MSVC object could not be verified.
+- **MSVC** (added with D-251's fix, when MSVC first ran). `debug` and
+  `release` reuse a runtime object compiled with `/Z7`, which keeps the debug
+  information inside the object; `/Zi` would tie a shared object to a PDB
+  beside it. `shipping` compiles the runtime with the program, because `/GL`
+  optimises the two together at link time.
+- **MSVC's environment** is cached too: `<cache>/msvc/<key>.env` holds what
+  `vcvars64.bat` set, meaning the variables it changed, plus always `INCLUDE`,
+  `LIB`, `LIBPATH` and `PATH`. Its key covers the batch file and the toolset
+  version file beside it. A cached `INCLUDE` folder that no longer exists
+  means running the batch file again. Running it had cost 1.2 s on every
+  build: a hello build went from 1.6 s to 0.21 s.
 - **Fallback.** When the cache directory cannot be created, the build compiles
   the source with the program, as before.
 - **Not done.** Nothing prunes old objects (each runtime edit leaves up to

@@ -47,9 +47,9 @@ impl Profile {
 pub enum Toolchain {
     Msvc {
         cl: PathBuf,
-        /// The environment `vcvars64.bat` sets. `cl.exe` cannot find its own
-        /// headers or libraries without `INCLUDE` and `LIB`, and there is no
-        /// flag that substitutes for them.
+        /// What `vcvars64.bat` sets, applied over the inherited environment.
+        /// `cl.exe` cannot find its own headers or libraries without `INCLUDE`
+        /// and `LIB`, and there is no flag that substitutes for them.
         env: BTreeMap<String, String>,
     },
     Clang(PathBuf),
@@ -69,14 +69,15 @@ impl Toolchain {
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
+            Some("clang-cl") => Self::find_clang_cl().ok_or(BuildError::NoToolchain("clang-cl")),
             Some("clang") => Self::find_on_path("clang")
                 .map(Toolchain::Clang)
                 .ok_or(BuildError::NoToolchain("clang")),
             Some("gcc") => Self::find_on_path("gcc")
                 .map(Toolchain::Gcc)
                 .ok_or(BuildError::NoToolchain("gcc")),
-            Some(other) => Err(BuildError::UnknownToolchain(other.to_string())),
-            None => Self::find_msvc()
+            Some(other) if other != "auto" => Err(BuildError::UnknownToolchain(other.to_string())),
+            _ => Self::find_msvc()
                 .or_else(|| Self::find_on_path("clang").map(Toolchain::Clang))
                 .or_else(|| Self::find_on_path("gcc").map(Toolchain::Gcc))
                 .ok_or(BuildError::NoToolchain("any")),
@@ -100,9 +101,9 @@ impl Toolchain {
             return Some(PathBuf::from(exe));
         }
         // The LLVM installer does not add itself to PATH on Windows.
-        if cfg!(windows) && name == "clang" {
+        if cfg!(windows) && name.starts_with("clang") {
             for root in ["C:\\Program Files\\LLVM", "C:\\Program Files (x86)\\LLVM"] {
-                let candidate = Path::new(root).join("bin").join("clang.exe");
+                let candidate = Path::new(root).join("bin").join(&exe);
                 if candidate.is_file() {
                     return Some(candidate);
                 }
@@ -116,10 +117,23 @@ impl Toolchain {
             return None;
         }
         let vcvars = Self::find_vcvars()?;
-        let env = capture_environment(&vcvars)?;
+        let env = msvc_environment(&vcvars)?;
         // With the captured environment, `cl` resolves through its own PATH.
         Some(Toolchain::Msvc {
             cl: PathBuf::from("cl.exe"),
+            env,
+        })
+    }
+
+    /// clang's MSVC-compatible driver: MSVC's environment and flags, clang's
+    /// front end. It ignores `/GL`, so `shipping` gets no link-time code
+    /// generation from it.
+    fn find_clang_cl() -> Option<Toolchain> {
+        let Toolchain::Msvc { env, .. } = Self::find_msvc()? else {
+            return None;
+        };
+        Some(Toolchain::Msvc {
+            cl: Self::find_on_path("clang-cl")?,
             env,
         })
     }
@@ -146,13 +160,72 @@ impl Toolchain {
     }
 }
 
-/// Run `vcvars64.bat` and read back the environment it set.
+/// What `vcvars64.bat` sets, read from the global cache when the batch file
+/// has been run before: running it costs over a second, on every build. The
+/// key covers the batch file and the toolset version it selects, so an update
+/// to either runs it again, and so does a cached `INCLUDE` folder that is gone.
+fn msvc_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
+    let mut key = blake3::Hasher::new();
+    key.update(vcvars.to_string_lossy().as_bytes());
+    for file in [vcvars.to_path_buf(), vcvars.with_file_name("Microsoft.VCToolsVersion.default.txt")] {
+        if let Ok(meta) = file.metadata() {
+            key.update(&meta.len().to_le_bytes());
+            key.update(&modified_nanos(&meta).to_le_bytes());
+        }
+    }
+    let file = cache_root().join("msvc").join(format!("{}.env", key.finalize().to_hex()));
+    if let Some(env) = read_environment(&file) {
+        return Some(env);
+    }
+    let env = capture_environment(vcvars)?;
+    let text: String = env.iter().map(|(name, value)| format!("{name}={value}\n")).collect();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        let temp = file.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&temp, text).is_ok() && std::fs::rename(&temp, &file).is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+    }
+    Some(env)
+}
+
+/// A cached environment, if every `INCLUDE` folder it names still exists.
+fn read_environment(file: &Path) -> Option<BTreeMap<String, String>> {
+    let env: BTreeMap<String, String> = std::fs::read_to_string(file)
+        .ok()?
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    let include = env.iter().find(|(name, _)| name.eq_ignore_ascii_case("INCLUDE"))?.1;
+    include
+        .split(';')
+        .filter(|dir| !dir.is_empty())
+        .all(|dir| Path::new(dir).is_dir())
+        .then_some(env)
+}
+
+fn modified_nanos(meta: &std::fs::Metadata) -> u128 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos())
+}
+
+/// Run `vcvars64.bat` and read back what it set: the variables it changed,
+/// and always the four a compile needs. The rest is inherited at each build,
+/// so the cache keeps no copy of this process's other variables.
 fn capture_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
-    let output = Command::new("cmd")
-        .arg("/c")
-        .arg(format!("call \"{}\" >nul 2>&1 && set", vcvars.display()))
-        .output()
-        .ok()?;
+    let line = format!("/c call \"{}\" >nul 2>&1 && set", vcvars.display());
+    let mut command = Command::new("cmd");
+    // D-251 — passed as written. `arg` would escape the quotes around the
+    // path as `\"`, which `cmd` does not read, so the batch file never ran and
+    // MSVC was never found.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::raw_arg(&mut command, &line);
+    #[cfg(not(windows))]
+    command.arg(&line);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -165,7 +238,15 @@ fn capture_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
     }
     // If INCLUDE is missing the batch file did not really run, and cl.exe
     // would fail later with a confusing "cannot open stdio.h".
-    env.contains_key("INCLUDE").then_some(env)
+    if !env.contains_key("INCLUDE") {
+        return None;
+    }
+    let needed = ["INCLUDE", "LIB", "LIBPATH", "PATH"];
+    env.retain(|name, value| {
+        needed.iter().any(|n| n.eq_ignore_ascii_case(name))
+            || std::env::var(name.as_str()).ok().as_deref() != Some(value.as_str())
+    });
+    Some(env)
 }
 
 #[derive(Debug)]
@@ -243,33 +324,10 @@ pub struct LinkRequest<'a> {
 /// the runtime, so separate compilation buys nothing yet; `[BLD-4]`'s
 /// Ninja-driven incremental build arrives with the module system.
 pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<(), BuildError> {
-    let mut command = match toolchain {
-        Toolchain::Msvc { cl, env } => {
-            let mut c = Command::new(cl);
-            c.env_clear();
-            for (key, value) in env {
-                c.env(key, value);
-            }
-            c
-        }
-        Toolchain::Clang(path) => Command::new(path),
-        Toolchain::Gcc(path) => Command::new(path),
-    };
-
+    let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.arg("/nologo").arg("/std:c11").arg("/W3");
-            match request.profile {
-                Profile::Debug => {
-                    command.arg("/Od").arg("/Zi").arg("/MDd");
-                }
-                Profile::Release => {
-                    command.arg("/O2").arg("/MD");
-                }
-                Profile::Shipping => {
-                    command.arg("/O2").arg("/GL").arg("/MD");
-                }
-            }
+            command.args(msvc_flags(request.profile));
             for dir in request.include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -298,6 +356,31 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
         }
     }
     run(command)
+}
+
+/// The C compiler, with MSVC's environment over the inherited one.
+fn compiler_command(toolchain: &Toolchain) -> Command {
+    match toolchain {
+        Toolchain::Msvc { cl, env } => {
+            let mut command = Command::new(cl);
+            command.envs(env);
+            command
+        }
+        Toolchain::Clang(path) | Toolchain::Gcc(path) => Command::new(path),
+    }
+}
+
+/// cl's flags for a profile. The release C runtime in every profile, as clang
+/// builds and Rust's use: the debug one (`/MDd`) reports a failed check or an
+/// abort() in a window that waits for a click, which stops any unattended run,
+/// and it needs Visual Studio's own DLLs to start at all (D-252).
+fn msvc_flags(profile: Profile) -> Vec<&'static str> {
+    let optimisation: &[&str] = match profile {
+        Profile::Debug => &["/Od", "/Zi", "/MD"],
+        Profile::Release => &["/O2", "/MD"],
+        Profile::Shipping => &["/O2", "/GL", "/MD"],
+    };
+    ["/nologo", "/std:c11", "/W3"].iter().chain(optimisation).copied().collect()
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and
@@ -349,15 +432,15 @@ pub fn cache_root() -> PathBuf {
 /// The runtime compiled once per toolchain and profile into `cache`, to be
 /// linked into every program instead of recompiled with each (about 145 ms
 /// of every clang build). The object's name is a hash of everything that
-/// shapes it: the compile command, the source, the headers in
-/// `include_dirs` and the compiler's file on disk. It is compiled under a
-/// temporary name and renamed into place, so a build running alongside sees
-/// the whole object or none.
+/// shapes it: the compile command (with MSVC's environment), the source, the
+/// headers in `include_dirs` and the compiler's file on disk. It is compiled
+/// under a temporary name and renamed into place, so a build running
+/// alongside sees the whole object or none.
 ///
-/// `None` means: compile `source` with the program. That is MSVC's path
-/// (a `/GL` shipping object needs `/LTCG` at link, and no build had ever
-/// used MSVC when this was written, D-251, so an MSVC object could not be
-/// verified), and the fallback when `cache` cannot be created.
+/// `None` means: compile `source` with the program. That is MSVC's
+/// `shipping` path (`/GL` compiles for link-time code generation, which wants
+/// the program and the runtime compiled together), and the fallback when
+/// `cache` cannot be created.
 pub fn runtime_object(
     toolchain: &Toolchain,
     source: &Path,
@@ -365,14 +448,27 @@ pub fn runtime_object(
     profile: Profile,
     cache: &Path,
 ) -> Result<Option<PathBuf>, BuildError> {
-    let (Toolchain::Clang(compiler) | Toolchain::Gcc(compiler)) = toolchain else {
-        return Ok(None);
+    let mut command = compiler_command(toolchain);
+    let extension = match toolchain {
+        Toolchain::Msvc { .. } if profile == Profile::Shipping => return Ok(None),
+        Toolchain::Msvc { .. } => {
+            // `/Z7` keeps the debug information inside the object; `/Zi`
+            // would tie a shared object to a PDB file beside it.
+            let flags = msvc_flags(profile).into_iter().map(|f| if f == "/Zi" { "/Z7" } else { f });
+            command.args(flags).arg("/c");
+            for dir in include_dirs {
+                command.arg(format!("/I{}", dir.display()));
+            }
+            "obj"
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            command.args(gnu_flags(profile)).arg("-c");
+            for dir in include_dirs {
+                command.arg("-I").arg(dir);
+            }
+            "o"
+        }
     };
-    let mut command = Command::new(compiler);
-    command.args(gnu_flags(profile)).arg("-c");
-    for dir in include_dirs {
-        command.arg("-I").arg(dir);
-    }
     command.arg(source);
 
     let mut key = blake3::Hasher::new();
@@ -396,12 +492,11 @@ pub fn runtime_object(
         }
     }
     // An upgraded compiler, or another one first on PATH, is a new key.
-    if let Some(file) = compiler_file(compiler) {
+    if let Some(file) = compiler_file(toolchain) {
         part(file.to_string_lossy().as_bytes());
         if let Ok(meta) = file.metadata() {
-            let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
             part(&meta.len().to_le_bytes());
-            part(&modified.map_or(0, |since| since.as_nanos()).to_le_bytes());
+            part(&modified_nanos(&meta).to_le_bytes());
         }
     }
 
@@ -409,12 +504,16 @@ pub fn runtime_object(
     if std::fs::create_dir_all(&dir).is_err() {
         return Ok(None);
     }
-    let object = dir.join(format!("{}.o", key.finalize().to_hex()));
+    let name = key.finalize().to_hex();
+    let object = dir.join(format!("{name}.{extension}"));
     if object.is_file() {
         return Ok(Some(object));
     }
-    let temp = object.with_extension(format!("o.tmp{}", std::process::id()));
-    command.arg("-o").arg(&temp);
+    let temp = dir.join(format!("{name}.tmp{}.{extension}", std::process::id()));
+    match toolchain {
+        Toolchain::Msvc { .. } => command.arg(format!("/Fo{}", temp.display())),
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => command.arg("-o").arg(&temp),
+    };
     if let Err(error) = run(command) {
         let _ = std::fs::remove_file(&temp);
         return Err(error);
@@ -430,12 +529,22 @@ pub fn runtime_object(
     Ok(Some(object))
 }
 
-/// The compiler's file on disk, found as `Command` finds a bare name.
-fn compiler_file(program: &Path) -> Option<PathBuf> {
+/// The compiler's file on disk, found as `Command` finds a bare name: on
+/// MSVC's `PATH` for `cl.exe`, else on this process's.
+fn compiler_file(toolchain: &Toolchain) -> Option<PathBuf> {
+    let (program, search) = match toolchain {
+        Toolchain::Msvc { cl, env } => (
+            cl,
+            env.iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+                .map(|(_, value)| std::ffi::OsString::from(value)),
+        ),
+        Toolchain::Clang(path) | Toolchain::Gcc(path) => (path, None),
+    };
     if program.components().count() > 1 {
-        return Some(program.to_path_buf());
+        return Some(program.clone());
     }
-    std::env::split_paths(&std::env::var_os("PATH")?)
+    std::env::split_paths(&search.or_else(|| std::env::var_os("PATH"))?)
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
 }
@@ -477,6 +586,24 @@ mod tests {
         let second = build().expect("the object is built");
         assert_ne!(second, first, "a changed header kept the old object");
         assert!(second.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A cached MSVC environment is used only while its `INCLUDE` folders
+    /// exist; otherwise `vcvars64.bat` runs again.
+    #[test]
+    fn a_cached_msvc_environment_needs_its_include_folders() {
+        let dir = std::env::temp_dir().join(format!("msvc-environment-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("include")).expect("the test directory is creatable");
+        let file = dir.join("environment");
+        let include = dir.join("include").display().to_string();
+        std::fs::write(&file, format!("INCLUDE={include};\nLIB=libs\n")).expect("the file is writable");
+        let env = read_environment(&file).expect("a cached environment whose folders exist");
+        assert_eq!(env.get("LIB").map(String::as_str), Some("libs"));
+        let gone = dir.join("gone").display().to_string();
+        std::fs::write(&file, format!("INCLUDE={include};{gone}\n")).expect("the file is writable");
+        assert!(read_environment(&file).is_none(), "a missing INCLUDE folder must mean running vcvars64.bat again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

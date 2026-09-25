@@ -70,9 +70,22 @@ static bool debug_objects_enabled(void) {
     return (g_config.flags & EMBER_RT_DEBUG_OBJECTS) != 0;
 }
 
+/* `[PAN-1]` — how a panic, or any fatal runtime error, ends: `abort()`, with
+ * the message already on standard error. On Windows the C runtime adds reports
+ * of its own that wait for a click: the debug runtime's "abort() has been
+ * called" window (`_WRITE_ABORT_MSG`; one per panicking test flooded the
+ * screen, D-252) and the Windows Error Reporting dialog (`_CALL_REPORTFAULT`).
+ * Both are switched off; abort() then ends the process with status 3. */
+static EMBER_NORETURN void runtime_abort(void) {
+#if defined(_WIN32)
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+    abort();
+}
+
 static void debug_allocation_failure(void) {
     fputs("ember runtime: unable to allocate leak-check metadata\n", stderr);
-    abort();
+    runtime_abort();
 }
 
 static void debug_track_object(ember_obj_header* object) {
@@ -930,6 +943,16 @@ typedef struct ember_arena_state {
 
 #define EMBER_ARENA_GROWTH_CHUNK ((size_t)1024 * (size_t)1024)
 
+/* The strictest fundamental alignment, which is what C11's max_align_t
+ * describes. Spelled out because MSVC's C mode does not declare max_align_t
+ * (D-251); on the other compilers the two agree. */
+typedef union arena_max_align {
+    long long integer;
+    long double floating;
+    void* pointer;
+    void (*function)(void);
+} arena_max_align;
+
 static bool arena_power_of_two(size_t value) {
     return value != 0 && (value & (value - 1)) == 0;
 }
@@ -951,7 +974,7 @@ void* ember_arena_new(size_t initial_capacity) {
     arena->first = NULL;
     arena->current = NULL;
     if (initial_capacity != 0) {
-        size_t align = _Alignof(max_align_t);
+        size_t align = _Alignof(arena_max_align);
         arena->first = arena_chunk_new(initial_capacity, align);
         arena->current = arena->first;
     }
@@ -991,7 +1014,7 @@ static void* arena_alloc_raw(void* opaque, size_t size, size_t align) {
     }
 
     size_t capacity = size > EMBER_ARENA_GROWTH_CHUNK ? size : EMBER_ARENA_GROWTH_CHUNK;
-    size_t chunk_align = align > _Alignof(max_align_t) ? align : _Alignof(max_align_t);
+    size_t chunk_align = align > _Alignof(arena_max_align) ? align : _Alignof(arena_max_align);
     ember_arena_chunk* fresh = arena_chunk_new(capacity, chunk_align);
     if (arena->first == NULL) {
         arena->first = fresh;
@@ -4789,15 +4812,7 @@ static EMBER_NORETURN void panic_with(const char* msg, size_t len, ember_loc loc
         g_config.on_panic(msg, len);
     }
     fflush(stderr);
-#if defined(_WIN32)
-    /* `abort()` still terminates with the `[PAN-1]` status, but the UCRT's
-     * default `_CALL_REPORTFAULT` behavior opens a Windows Error Reporting
-     * dialog. That leaves non-interactive conformance runners waiting after
-     * the process has already panicked. Ember prints its own diagnostic above,
-     * so disable only the OS report hook before terminating. */
-    _set_abort_behavior(0, _CALL_REPORTFAULT);
-#endif
-    abort();
+    runtime_abort();
 }
 
 void ember_panic(const char* msg, size_t len, ember_loc loc) { panic_with(msg, len, loc); }

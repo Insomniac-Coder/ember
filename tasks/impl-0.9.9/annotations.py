@@ -10,6 +10,7 @@ core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
+import hashlib
 import json
 import os
 import re
@@ -22,12 +23,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
 OUT = os.path.join(tempfile.gettempdir(), 'ember-annotations')
 
+if os.name == 'nt':
+    # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
+    # crashes ends instead of opening a Windows Error Reporting window and waiting (D-252).
+    import ctypes
+    ctypes.windll.kernel32.SetErrorMode(0x0002)
+
 
 def out_dir(path):
-    """`ember run`'s output folder for one file: files run side by side, and rule directories
-    share file names."""
-    relative = os.path.splitext(os.path.relpath(path, ROOT))[0]
-    return os.path.join(OUT, relative.replace(os.sep, '__').replace('/', '__'))
+    """`ember run`'s output folder for one file, named by a hash of its path: files run side by
+    side, rule directories share file names, and Windows' linker cannot write a path over 260
+    characters (D-254)."""
+    relative = os.path.relpath(path, ROOT)
+    return os.path.join(OUT, hashlib.blake2b(relative.encode('utf-8'), digest_size=8).hexdigest())
 
 
 def expected_stdin(text):
