@@ -279,6 +279,18 @@ ODRS = [
                 'bound brings its parents; indexing is only through `Index`, `IndexMut` and `IndexSet`, which `Array` '
                 'and the views implement through their built-in indexing and `Map` for every `Q: AsKey[K]` (Hardened_19)',
      '`[GRM-34]`, `[IFC-3]`, `[TYP-21]`, `[STD-17]`'),
+    ('ODR-043', '`std.math` has the module table\'s vectors, matrices, `Quat`, `Transform` and shapes, with public '
+                'components, the operators and the methods graphics libraries agree on: matrices column-major, '
+                'projections right-handed with depth in `[0, 1]`, a ray\'s intersections the least `t ≥ 0`; '
+                '`KahanSum` is an `f64` accumulator with Neumaier\'s correction (Hardened_20)',
+     '`[STD-21]`, `[STD-28]`, `[STD-5]`, `[STD-3]`'),
+    ('ODR-044', 'the `FP_CONTRACT` pragma is emitted where the compiler implements it: clang\'s spelling, MSVC\'s own; '
+                'gcc, which warns about it, has `-ffp-contract=off` alone (Hardened_20)',
+     '`[CG-C-11]`, `[CG-C-1]`'),
+    ('ODR-045', 'a type\'s `const` is named `T.NAME` (`Self.NAME` inside it) and is private unless `pub`; constants '
+                'name one another in any order, a cycle is `E6001` and a panic while evaluating one `E6004` '
+                '(Hardened_20)',
+     '`[CT-1]`, `[CT-7]`, `[MOD-2]`'),
 ]
 
 H5_HEAD = """
@@ -290,7 +302,7 @@ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Harde
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
-Hardened_18 adds ODR-041; Hardened_19 adds ODR-042.
+Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045.
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -10727,15 +10727,22 @@ the running narrative behind it.
   * The unattended session of 2026-09-26, below: D-272 first, then
     `69fff89` (D-308 to D-312), `8ebe762` (A2, ODR-039), `fa3c7a8` (MSVC's
     infinity and NaN constants), `1c63f12` (A3, ODR-040; CI green),
-    `9298803` (D-316 `f16`, ODR-041, and D-318; CI green), then A3's indexing
-    (ODR-042, D-320, D-321).
+    `9298803` (D-316 `f16`, ODR-041, and D-318; CI green), `89fb9ca` (A3's
+    indexing, ODR-042, D-320, D-321; CI green), then A4's first part
+    (`std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_19.md`
-  (ODR-042), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h19/` is frozen.
-* **Next numbers:** ODR-043, D-322, ADR-052.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_20.md`
+  (ODR-043 to ODR-045), pinned in `docs/spec-source/development-target.json`.
+  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h20/` is
+  frozen.
+* **Next numbers:** ODR-046, D-327, ADR-054.
+* **Next task:** the rest of A4: `std.math.det` (`[DET-4]`: `sin`, `cos`,
+  `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt` for `f32` and `f64`, the same
+  bits on every target, in Ember or the runtime's C with no platform `libm`
+  call), then `NonZero[T]` (`[STD-4]`, which needs `Option`'s niche). Then
+  AUTOPILOT's B list.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10888,6 +10895,35 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     `f64`, then to `f32` or `f16`); it shows only with seventeen or more
     digits just past a midpoint. The fix carries the literal's text, or its
     roundings made by the lexer, to where it takes its type.
+* **Then A4's first part: `std.math`'s vectors, matrices, rotations, shapes
+  and `KahanSum`** (ODR-043, `[STD-28]`; Hardened_20). All Ember, in
+  `std/src/math.em`; the vectors are written by `tools/gen_math_vectors.py`
+  (each type's struct, methods and three operator blocks: vector and vector,
+  vector and scalar, scalar and vector), which CI checks. Matrix products are
+  `mul_add` chains (`[STD-3]`); a ray from inside a box or ball meets it at 0.
+  What they needed of the compiler:
+  * **Constants (D-323, ODR-045, ADR-052).** A non-literal `const` (item or
+    type member) is recorded as `PendingConst` and evaluated at first use or
+    in `settle_consts` (after `check_derived_hashes`): `expr_const` checks it
+    in its module (`E2130` for a type that is not `Copy` or needs drop,
+    `E1010` past `is_const_expr`), and `const_eval::fold`
+    (`compiler/ember_typeck/src/const_eval.rs`) reduces the HIR to a `Folded`
+    value; `E6004` for a panic, `E6001` for a cycle. A type's constant is
+    found in the `Field` arm (`T.NAME`, `Self.NAME`), with `E1052` for a
+    private one from another module; a module's in the `[GRM-24]` path.
+  * **`is` (D-322).** `option_test` for `x is None`; `referent` and
+    `the_reference` compare two references before `read_through`; `E2150`
+    for any other value.
+  * **A number on the left (ADR-053).** `number_with_operator_for` in
+    `synth_binary`; a sibling instance's method is not a candidate in
+    `check_implementation_of`.
+  * **D-325, `[CG-C-11]` (ODR-044).** `FP_STRICT` (codegen) and the top of
+    `ember_rt.c.in` turn contraction off; `gnu_flags` adds `-ffp-contract=off
+    -fno-fast-math`, `msvc_flags` `/fp:precise`. `ember_build`'s
+    `the_c_compiler_never_fuses_a_multiply_and_an_add` is the test.
+  * **W2015 (D-324, D-326)** shows the kept value, walks into a minus and
+    arithmetic, and does not repeat a warning the sink holds.
+  * New error pages: `E2150`, `E6001`, `E6004`.
 
 **The owner's standing instructions (all still in force)**
 
@@ -11316,6 +11352,8 @@ unless named otherwise):
   * `generate_runtime.py --check` (after editing
     `runtime/ember_rt/templates/*.in`, run it without `--check` first)
   * `test_runtime_generation.py`
+  * `gen_math_vectors.py --check` (after editing the vector generator, run
+    it without `--check` first; CI runs it too)
   * `hardening_check.py`
   * `unicode_case.py --check`
   * `split_spec.py --check docs/spec-source/ember-spec.md docs/spec`

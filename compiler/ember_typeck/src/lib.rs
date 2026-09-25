@@ -14,6 +14,7 @@
 
 mod usefulness;
 mod name_suggestions;
+mod const_eval;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -231,6 +232,9 @@ pub fn check(
     // and can run before a later module's extension has been collected.
     checker.check_implementations();
     checker.check_derived_hashes();
+    // V.7 — every constant expression, now that every type it can name is
+    // known.
+    checker.settle_consts();
     // `[TYP-17]` — each generic type's methods, and each generic extension's,
     // are checked once with the parameters opaque, as a generic function's
     // body is (D-248).
@@ -434,11 +438,50 @@ struct GenericClass {
 /// `[GRM-34]` — the built-in generic types an `extend[...]` may name.
 const BUILTIN_GENERICS: [&str; 5] = ["Array", "Span", "MutSpan", "Option", "Result"];
 
-/// An `extend[P] T[...P...]` recipe, for a generic struct, enum or class
-/// `T` (`[GRM-34]`). The extension's binders belong to the extension rather
-/// than the type's declaration, so each materialization matches its concrete
-/// arguments against this target before registering the extension's methods
-/// and interface implementations.
+/// V.7 — a `const` that is not a bare literal: a constant expression
+/// (`Vec2(0, 0)`), evaluated where it is declared (`[CT-1]`) into `folded`,
+/// the literals each use is. A type's `const`s are all kept so (`Vec2.ZERO`).
+/// An untyped numeric literal (ODR-037) has no `folded`: each use checks
+/// `value` again, in `module`, and it takes its type there. `ok` is false
+/// once its declaration was refused, so a use says nothing more. `public` is
+/// whether a type's `const` is `pub` (`[MOD-2]`).
+#[derive(Clone)]
+struct ExprConst {
+    value: ast::Expr,
+    module: usize,
+    ok: bool,
+    public: bool,
+    folded: Option<const_eval::Folded>,
+}
+
+/// V.7 — where a `const` that is not a bare literal stands: declared and not
+/// yet evaluated, being evaluated (so a use of it now is a cycle), or done.
+#[derive(Clone)]
+enum ConstState {
+    Pending(PendingConst),
+    Evaluating,
+    Done(ExprConst),
+}
+
+/// A `const` as declared. It is evaluated at its first use, or when
+/// collection ends (`settle_consts`), in its declaring module and, for a
+/// type's, with `Self` that type: so constants may name each other in any
+/// order.
+#[derive(Clone)]
+struct PendingConst {
+    decl: ast::ConstDecl,
+    module: usize,
+    owner: Option<Ty>,
+    public: bool,
+}
+
+/// Which map a `const` is in.
+#[derive(Clone, Copy)]
+enum ConstKey {
+    Item(Symbol),
+    Assoc(Ty, Symbol),
+}
+
 /// `[TYP-19]` — a blanket implementation: `extend[K, V, H, Q: AsKey[K]]
 /// Map[K, V, H] implements Index[Q]` makes every `Map[K, V, H]` implement
 /// `Index[Q]` for each `Q` its bounds admit. Its methods are generic over
@@ -457,6 +500,11 @@ struct BlanketImpl {
     span: Span,
 }
 
+/// An `extend[P] T[...P...]` recipe, for a generic struct, enum or class
+/// `T` (`[GRM-34]`). The extension's binders belong to the extension rather
+/// than the type's declaration, so each materialization matches its concrete
+/// arguments against this target before registering the extension's methods
+/// and interface implementations.
 #[derive(Clone)]
 struct GenericExtension {
     params: Vec<GenericParam>,
@@ -906,6 +954,12 @@ struct Checker<'a> {
     generic_extensions: HashMap<Symbol, Vec<GenericExtension>>,
     /// `[TYP-19]` — the blanket implementations.
     blankets: Vec<BlanketImpl>,
+    /// V.7 — `const`s whose value is a constant expression, by qualified
+    /// name, and those a type declares (`Vec2.ZERO`), by type and name; and
+    /// every one of them in declaration order, for `settle_consts`.
+    expr_consts: HashMap<Symbol, ConstState>,
+    assoc_consts: HashMap<(Ty, Symbol), ConstState>,
+    const_order: Vec<(ConstKey, Span)>,
     /// `(instance, index in generic_extensions)` for each extension an
     /// instance has been given, so none is registered twice.
     applied_extensions: HashSet<(Ty, usize)>,
@@ -1197,6 +1251,9 @@ impl<'a> Checker<'a> {
             generic_classes: HashMap::new(),
             generic_extensions: HashMap::new(),
             blankets: Vec::new(),
+            expr_consts: HashMap::new(),
+            assoc_consts: HashMap::new(),
+            const_order: Vec::new(),
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
@@ -3204,6 +3261,214 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// V.3, V.7 — the `const`s a type's body or `extend` block declares:
+    /// `const ZERO: Vec2 = Vec2(0, 0)` is `Vec2.ZERO`.
+    fn collect_assoc_consts(&mut self, owner: Ty, members: &[ast::Member]) {
+        for member in members {
+            let ast::MemberKind::Const(decl) = &member.kind else { continue };
+            if self.assoc_consts.contains_key(&(owner, decl.name.name)) {
+                let shown = self.types.display(owner);
+                self.error(codes::E1030, decl.name.span, format!("`{shown}` already has a `const` named `{}`", decl.name.name));
+                continue;
+            }
+            let pending = PendingConst {
+                decl: decl.clone(),
+                module: self.current_module,
+                owner: Some(owner),
+                public: member.vis.kind != ast::VisKind::Private,
+            };
+            self.assoc_consts.insert((owner, decl.name.name), ConstState::Pending(pending));
+            self.const_order.push((ConstKey::Assoc(owner, decl.name.name), decl.name.span));
+        }
+    }
+
+    /// V.7 — the `const` `key`, evaluated if it was not yet. `None` when
+    /// its value depends on itself, which is reported here, at `span`.
+    fn settle_const(&mut self, key: ConstKey, span: Span) -> Option<ExprConst> {
+        let state = match key {
+            ConstKey::Item(name) => self.expr_consts.get_mut(&name),
+            ConstKey::Assoc(owner, name) => self.assoc_consts.get_mut(&(owner, name)),
+        }?;
+        let pending = match std::mem::replace(state, ConstState::Evaluating) {
+            ConstState::Done(entry) => {
+                *state = ConstState::Done(entry.clone());
+                return Some(entry);
+            }
+            ConstState::Pending(pending) => pending,
+            ConstState::Evaluating => {
+                let name = match key {
+                    ConstKey::Item(name) | ConstKey::Assoc(_, name) => name,
+                };
+                let shown = name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string();
+                self.sink.emit(
+                    Diagnostic::error(codes::E6001, span, format!("the value of `{shown}` depends on itself"))
+                        .note("working it out would never end: a `const` is evaluated while compiling [CT-1]"),
+                );
+                return None;
+            }
+        };
+        // As the declaration reads: its module, no locals, and `Self` its
+        // type.
+        let module = std::mem::replace(&mut self.current_module, pending.module);
+        let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let type_params = std::mem::take(&mut self.type_params);
+        let self_ty = std::mem::replace(&mut self.self_ty, pending.owner);
+        let mut entry = self.expr_const(&pending.decl);
+        self.current_module = module;
+        self.scopes = scopes;
+        self.type_params = type_params;
+        self.self_ty = self_ty;
+        entry.public = pending.public;
+        let state = match key {
+            ConstKey::Item(name) => self.expr_consts.get_mut(&name),
+            ConstKey::Assoc(owner, name) => self.assoc_consts.get_mut(&(owner, name)),
+        }
+        .expect("still declared");
+        *state = ConstState::Done(entry.clone());
+        Some(entry)
+    }
+
+    /// V.7 — every `const` evaluated, used or not, so each declaration's
+    /// errors are reported.
+    fn settle_consts(&mut self) {
+        for (key, span) in self.const_order.clone() {
+            let _ = self.settle_const(key, span);
+        }
+    }
+
+    /// V.7 — a constant expression, checked once where it is declared. Its
+    /// type is `T` in `const NAME: T = e`, else `e`'s own; an untyped numeric
+    /// literal stays untyped (ODR-037). `T` is `Copy` and owns no heap memory
+    /// (`E2130`).
+    fn expr_const(&mut self, decl: &ast::ConstDecl) -> ExprConst {
+        let module = self.current_module;
+        let value = &decl.value;
+        let refused = || ExprConst { value: value.clone(), module, ok: false, public: true, folded: None };
+        let before = self.sink.error_count();
+        let (ty, ty_span) = match &decl.ty {
+            Some(declared) => (self.resolve_type(declared), declared.span),
+            None => {
+                let checked = self.synth_in_module(value, module);
+                let ty = if self.types.is_untyped_literal(checked.ty) { checked.ty } else { self.commit(checked).ty };
+                (ty, value.span)
+            }
+        };
+        if self.sink.error_count() != before || ty == self.common.error {
+            return refused();
+        }
+        if !self.types.is_copy(ty) || self.types.needs_drop(ty) {
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E2130, ty_span, format!("a `const` cannot hold a `{shown}`"))
+                    .help(format!("declare `static {}: {shown} = …`: one value, at one address", decl.name.name))
+                    .note("a `const` is copied into each use, so it is `Copy` and owns no heap memory [V.7]"),
+            );
+            return refused();
+        }
+        if !self.is_const_expr(value) {
+            self.error(
+                codes::E1010,
+                value.span,
+                "a `const` is a literal, another constant, or a construction or arithmetic of them in this phase",
+            );
+            return refused();
+        }
+        if self.types.is_untyped_literal(ty) {
+            return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None };
+        }
+        let checked = self.check_field_default(value, ty, module, None);
+        if self.sink.error_count() != before {
+            return refused();
+        }
+        // `[CT-1]` — the value, worked out now: an overflow is an error here,
+        // not a panic at every use.
+        match const_eval::fold(self.types, &checked) {
+            Ok(folded) => ExprConst { value: value.clone(), module, ok: true, public: true, folded: Some(folded) },
+            Err(const_eval::Failure::Panic(span, message)) => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E6004, span, format!("evaluating `{}` panics: {message}", decl.name.name))
+                        .primary_label(message)
+                        .note("a `const` is evaluated while compiling, so its panic is an error here [CT-1]"),
+                );
+                refused()
+            }
+            Err(const_eval::Failure::Unsupported(span)) => {
+                self.error(
+                    codes::E1010,
+                    span,
+                    "a `const` is a literal, another constant, or a construction or arithmetic of them in this phase",
+                );
+                refused()
+            }
+        }
+    }
+
+    /// V.7 — a constant, inlined where it is named. Its declaration's check
+    /// said all there is to say about it (a warning included), so this one
+    /// says nothing.
+    fn expr_const_use(&mut self, entry: ExprConst, span: Span) -> Expr {
+        if !entry.ok {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mut value = match &entry.folded {
+            Some(folded) => folded.to_expr(span),
+            None => {
+                let mark = self.sink.mark();
+                let value = self.synth_in_module(&entry.value, entry.module);
+                self.sink.rollback(mark);
+                value
+            }
+        };
+        value.span = span;
+        value
+    }
+
+    /// `e` synthesised as its declaration reads: in the declaring module,
+    /// with no locals in scope.
+    fn synth_in_module(&mut self, value: &ast::Expr, module: usize) -> Expr {
+        let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let caller = std::mem::replace(&mut self.current_module, module);
+        let value = self.synth(value);
+        self.current_module = caller;
+        self.scopes = scopes;
+        value
+    }
+
+    /// V.7 — whether an expression is known at compile time in this phase:
+    /// literals, other constants, and tuples, arrays, constructions and
+    /// arithmetic of those.
+    fn is_const_expr(&self, expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Lit(_) => true,
+            ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => self.is_const_expr(inner),
+            ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
+                self.is_const_expr(lhs) && self.is_const_expr(rhs)
+            }
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => items.iter().all(|item| self.is_const_expr(item)),
+            ast::ExprKind::Path { segments } => match segments.as_slice() {
+                [single] => {
+                    let name = self.resolve_name(single.name);
+                    self.constants.contains_key(&name) || self.expr_consts.contains_key(&name)
+                }
+                _ => false,
+            },
+            // `T.NAME`, `i64.MAX`, `Color.Red`, `math.PI`.
+            ast::ExprKind::Field { base, .. } => matches!(&base.kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. }),
+            // A construction: the callee names a struct.
+            ast::ExprKind::Call { callee, args } => {
+                let names_struct = match &callee.kind {
+                    ast::ExprKind::Path { segments } if segments.len() == 1 => self
+                        .named_types
+                        .get(&self.resolve_name(segments[0].name))
+                        .is_some_and(|&ty| matches!(self.types.kind(ty), TyKind::Struct(_))),
+                    _ => false,
+                };
+                names_struct && args.iter().all(|arg| self.is_const_expr(&arg.value))
+            }
+            _ => false,
+        }
+    }
+
     /// `[TYP-19]` — record a blanket implementation. `params` are the
     /// extension's own, already declared (none for a non-generic target);
     /// the blanket's follow them.
@@ -4221,6 +4486,25 @@ impl<'a> Checker<'a> {
                 // wherever it is used. Part XX.1 limits v1 to a literal until
                 // comptime evaluation exists.
                 ast::ItemKind::Const(decl) => {
+                    // V.7 — a constant expression that is not a literal
+                    // (`Vec2(0, 0)`) is kept as written and inlined at each
+                    // use.
+                    if !is_literal_expr(&decl.value) {
+                        let const_name = self.qualified(decl.name.name);
+                        if self.constants.contains_key(&const_name) || self.expr_consts.contains_key(&const_name) {
+                            self.error(
+                                codes::E1030,
+                                decl.name.span,
+                                format!("`{}` is already declared in this module", decl.name.name),
+                            );
+                            continue;
+                        }
+                        let pending =
+                            PendingConst { decl: decl.clone(), module: self.current_module, owner: None, public: true };
+                        self.expr_consts.insert(const_name, ConstState::Pending(pending));
+                        self.const_order.push((ConstKey::Item(const_name), decl.name.span));
+                        continue;
+                    }
                     let declared = decl.ty.as_ref().map(|t| self.resolve_type(t));
                     let value = match declared {
                         Some(ty) => self.check_expr(&decl.value, ty),
@@ -4580,6 +4864,7 @@ impl<'a> Checker<'a> {
                     );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
                     self.collect_derived_clone(ty, &item.attrs, item.span);
+                    self.collect_assoc_consts(ty, &decl.members);
                 }
                 ast::ItemKind::Class(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
@@ -4673,6 +4958,7 @@ impl<'a> Checker<'a> {
                         item_index,
                     );
                     self.block_interfaces = saved_block;
+                    self.collect_assoc_consts(ty, &decl.members);
                     // Inherent `extend` blocks can add class virtual methods
                     // after the class header.  Keep them in source/module
                     // order for `[DSP-2]`; interface extensions are excluded
@@ -4744,10 +5030,21 @@ impl<'a> Checker<'a> {
         let assoc_missing = assoc.iter().any(|(name, _)| self.implementation_assoc(ty, interface, *name).is_none());
 
         for (method, declaration, receiver, _) in required {
+            // A method of another instance of this interface (`f32`'s
+            // `Mul[Vec3]` beside its built-in `Mul[f32]`) is not this one's.
+            let origin_of = |this: &Self, name: Symbol| this.open_interface_origin.get(&name).map_or(name, |(origin, _)| *origin);
             let implementation = if receiver.is_some() {
                 self.interface_methods
                     .get(&(ty, interface, method))
-                    .or_else(|| self.methods.get(&(ty, method)))
+                    .or_else(|| {
+                        self.methods.get(&(ty, method)).filter(|entry| {
+                            entry.from_interface.is_none_or(|from| {
+                                from == interface
+                                    || from == origin_of(self, interface)
+                                    || origin_of(self, from) != origin_of(self, interface)
+                            })
+                        })
+                    })
                     .map(|entry| (entry.def, Some(entry.receiver)))
             } else {
                 self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
@@ -11513,6 +11810,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// value*, and a reference reaching one of them unread is a pointer in the
     /// emitted C. `println(f(ref n))` printed a `ref i32` as if it were a
     /// string until this existed.
+    /// `[EXP-9]` — the type `expr` refers to, when it is a reference or a
+    /// reference read through (a `ref` local or parameter).
+    fn referent(&self, expr: &Expr) -> Option<Ty> {
+        let reference = match &expr.kind {
+            ExprKind::Deref(inner) => inner.ty,
+            _ => expr.ty,
+        };
+        match *self.types.kind(reference) {
+            TyKind::Ref { inner, .. } => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// The reference under `expr`, which `referent` accepted.
+    fn the_reference(expr: Expr) -> Expr {
+        match expr.kind {
+            ExprKind::Deref(inner) => *inner,
+            _ => expr,
+        }
+    }
+
     fn read_through(&mut self, expr: Expr) -> Expr {
         if self.ref_guard_inner(expr.ty).is_some() {
             return self.read_guard_through(expr);
@@ -18436,17 +18754,39 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         } else {
             return;
         };
+        // D-326 — the literals of an `f32` expression receive `f32` too:
+        // `-0.1234567891234`, `(0.1234567891234 * 2.0)`. Each is warned once,
+        // however many of these checks reach it: a warning a speculative check
+        // made and took back is made again.
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { op: ast::UnOp::Neg, operand: inner } => {
+                return self.warn_if_literal_loses_precision(inner, ty);
+            }
+            ast::ExprKind::Binary {
+                op: ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::FloorDiv | ast::BinOp::Rem,
+                lhs,
+                rhs,
+            } => {
+                self.warn_if_literal_loses_precision(lhs, ty);
+                return self.warn_if_literal_loses_precision(rhs, ty);
+            }
+            _ => {}
+        }
         let ast::ExprKind::Lit(ast::Literal::Float { value, suffix: None, digits }) = &expr.kind
         else {
             return;
         };
-        if *digits <= kept {
+        let warned = |d: &Diagnostic| d.code == Some(codes::W2015) && d.primary.span == expr.span;
+        if *digits <= kept || self.sink.diagnostics().iter().any(warned) {
             return;
         }
+        // What the type keeps, in full: `0.1` at `f32` is 0.10000000149011612.
+        // Its own shortest text would read back as the literal (`0.1`) and
+        // show no loss (D-324).
         let rounded = if ty == self.common.f32 {
-            format!("{}", *value as f32)
+            format!("{}", f64::from(*value as f32))
         } else {
-            ember_types::f16_text(ember_types::f16_bits(*value))
+            format!("{}", ember_types::f16_value(ember_types::f16_bits(*value)))
         };
         self.sink.emit(
             Diagnostic::warning(
@@ -19267,6 +19607,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if self.constants.contains_key(&qualified) {
                     return self.constant_use(qualified, span);
                 }
+                if self.expr_consts.contains_key(&qualified) {
+                    return match self.settle_const(ConstKey::Item(qualified), span) {
+                        Some(entry) => self.expr_const_use(entry, span),
+                        None => Expr { ty: self.common.error, kind: ExprKind::Error, span },
+                    };
+                }
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
                 if name.is("None") {
@@ -19340,17 +19686,51 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E1010, name.span, format!("`{shown}` has no constant `{}`", name.name));
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares.
+                if let ast::ExprKind::Path { segments } = &base.kind
+                    && let [segment] = segments.as_slice()
+                    && self.lookup(segment.name).is_none()
+                {
+                    let owner = if segment.name.is("Self") {
+                        self.self_ty
+                    } else {
+                        self.named_types.get(&self.resolve_name(segment.name)).copied()
+                    };
+                    if let Some(owner) = owner
+                        && self.assoc_consts.contains_key(&(owner, name.name))
+                    {
+                        let Some(entry) = self.settle_const(ConstKey::Assoc(owner, name.name), span) else {
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        };
+                        if !entry.public && entry.module != self.current_module {
+                            let shown = self.types.display(owner);
+                            self.sink.emit(
+                                Diagnostic::error(codes::E1052, name.span, format!("`{}` is private to `{shown}`'s module", name.name))
+                                    .help(format!("declare it `pub const {}: …` to use it anywhere", name.name))
+                                    .note("a member is private unless it says otherwise [MOD-2]"),
+                            );
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        }
+                        return self.expr_const_use(entry, span);
+                    }
+                }
                 // `[GRM-24]` — `math.PI`: a constant reached through a module.
                 if let ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } = &base.kind
                     && let Some(module) = self.namespace_named(base)
                 {
                     let qualified = self.qualified_in_module(module, name.name);
-                    if self.constants.contains_key(&qualified) {
+                    if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified) {
                         if !self.item_accessible(module, qualified) {
                             self.report_item_not_visible(module, qualified, name.span);
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                         }
-                        return self.constant_use(qualified, span);
+                        if self.constants.contains_key(&qualified) {
+                            return self.constant_use(qualified, span);
+                        }
+                        return match self.settle_const(ConstKey::Item(qualified), span) {
+                            Some(entry) => self.expr_const_use(entry, span),
+                            None => Expr { ty: self.common.error, kind: ExprKind::Error, span },
+                        };
                     }
                 }
                 let base = self.synth(base);
@@ -30084,6 +30464,53 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         value
     }
 
+    /// `[EXP-9]` — whether an `Option` is `None` (or, `present`, is not): a
+    /// match on its variant.
+    fn option_test(&mut self, option: Expr, present: bool, span: Span) -> Expr {
+        let bool_ty = self.common.bool_;
+        let TyKind::Enum(enum_id) = *self.types.kind(option.ty) else { unreachable!("checked to be an Option") };
+        let option_ty = option.ty;
+        let arm = |kind, value: bool| hir::MatchArm {
+            pattern: hir::Pattern { ty: option_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(Expr { ty: bool_ty, kind: ExprKind::Bool(value), span }),
+            span,
+        };
+        // `None` is the option's first variant.
+        let none = hir::PatternKind::Variant { enum_id, variant: 0, fields: Vec::new() };
+        Expr {
+            ty: bool_ty,
+            kind: ExprKind::Match {
+                scrutinee: Box::new(option),
+                arms: vec![arm(none, !present), arm(hir::PatternKind::Wild, present)],
+            },
+            span,
+        }
+    }
+
+    /// `[TYP-21]` — the number type whose operator `method` takes a `rhs`
+    /// (`f32: Mul[Vec3]`): `number` itself, or for an untyped literal the
+    /// first type it can become that has one.
+    fn number_with_operator_for(&self, number: Ty, method: &str, rhs: Ty) -> Option<Ty> {
+        let name = Symbol::intern(method);
+        let candidates: Vec<Ty> = match self.types.kind(number) {
+            TyKind::FloatLit => vec![self.common.f64, self.common.f32, self.common.f16],
+            TyKind::IntLit => vec![
+                self.common.i64, self.common.i32, self.common.i16, self.common.i8, self.common.i128, self.common.isize,
+                self.common.u64, self.common.u32, self.common.u16, self.common.u8, self.common.u128, self.common.usize,
+                self.common.f64, self.common.f32, self.common.f16,
+            ],
+            _ => vec![number],
+        };
+        candidates.into_iter().find(|&candidate| {
+            self.interface_methods.keys().any(|&(owner, instance, method_name)| {
+                owner == candidate
+                    && method_name == name
+                    && self.open_interface_origin.get(&instance).is_some_and(|(_, args)| args.first() == Some(&rhs))
+            })
+        })
+    }
+
     /// `[TYP-21]` — whether `ty` has the operator `a op= b` needs: its
     /// `…Assign` method or the operator's own, declared for the type or, on a
     /// type parameter, by one of its bounds.
@@ -30905,6 +31332,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
+        // `[EXP-9]` (D-322) — `a is b` on two references compares where they
+        // point: the same place or not. A reference names its place's value
+        // (`synth` reads through it), so the reference is under that read. A
+        // reference to a class handle compares the handles, below.
+        if matches!(op, ast::BinOp::Is | ast::BinOp::IsNot)
+            && let Some(left) = self.referent(&lhs)
+            && let Some(right) = self.referent(&rhs)
+            && !matches!(self.types.kind(left), TyKind::Class(_) | TyKind::ClassInterface(_))
+        {
+            let lhs = Self::the_reference(lhs);
+            let rhs = Self::the_reference(rhs);
+            if left != right {
+                let shown_left = self.types.display(lhs.ty);
+                let shown_right = self.types.display(rhs.ty);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2020,
+                        span,
+                        format!("`{}` compares references to one type, found `{shown_left}` and `{shown_right}`", op.as_str()),
+                    )
+                    .note("two references are the same when they point at the same place [EXP-9]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return Expr {
+                ty: self.common.bool_,
+                kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                span,
+            };
+        }
         // `[TYP-14]` — an operand wants a value. This is before the operator
         // method lookup on purpose: `ref Vec3 + Vec3` should find `Vec3`'s
         // `add`, not fail to find one on a reference.
@@ -30926,6 +31383,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // upcast; unrelated types are rejected rather than compared through
         // an unsafe C pointer conversion.
         if matches!(op, ast::BinOp::Is | ast::BinOp::IsNot) {
+            // `[EXP-9]` (D-322) — `x is None` and `x is not None` test an
+            // `Option` for absence and presence.
+            let present = op == ast::BinOp::IsNot;
+            let names_none = |e: &ast::Expr| {
+                matches!(&e.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None"))
+            };
+            if self.is_option(lhs.ty) && names_none(rhs_ast) {
+                return self.option_test(lhs, present, span);
+            }
+            if self.is_option(rhs.ty) && names_none(lhs_ast) {
+                return self.option_test(rhs, present, span);
+            }
+            // Any other operand that is not a handle (two references were
+            // compared above) is `E2150`.
+            let handle = |this: &Self, ty: Ty| {
+                matches!(this.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) || ty == this.common.error
+            };
+            if !handle(self, lhs.ty) || !handle(self, rhs.ty) {
+                let shown = if handle(self, lhs.ty) { self.types.display(rhs.ty) } else { self.types.display(lhs.ty) };
+                self.sink.emit(
+                    Diagnostic::error(codes::E2150, span, format!("`{}` needs class handles, and `{shown}` is not one", op.as_str()))
+                        .help("compare values with `==`; `x is None` tests an `Option`")
+                        .note("`is` compares identity, which only class handles and references have [EXP-9]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let compatible = match (self.types.kind(lhs.ty), self.types.kind(rhs.ty)) {
                 (TyKind::Class(left), TyKind::Class(right)) if left == right => true,
                 (TyKind::Class(left), TyKind::Class(right))
@@ -30976,10 +31459,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
         }
+        // `[TYP-21]` — a number on the left of a program's type: `2.0 * v` is
+        // the number type's `Mul[Vec3]`, where std or the program implements
+        // it; a literal takes the number type that does.
+        if self.types.is_numeric(lhs.ty)
+            && !self.types.is_numeric(rhs.ty)
+            && rhs.ty != self.common.error
+            && let Some(method) = operator_method(op)
+            && operator_interface(method).is_some()
+            && let Some(number) = self.number_with_operator_for(lhs.ty, method, rhs.ty)
+        {
+            if self.types.is_untyped_literal(lhs.ty) {
+                lhs = self.adopt_literal(lhs, number);
+            }
+            return self.call_operator(method, lhs, rhs, span);
+        }
         // `[TYP-21]` — an operator on a non-scalar is an interface method
         // call. `a + b` on a `Vec3` is `a.add(b)`, with both sides passed in
         // the modes the interface declared.
-        if let Some(method) = operator_method(op) {
+        // Between two numbers the operators are the built-in ones, whatever
+        // other instances a number type implements (`f32: Mul[Vec3]`).
+        if let Some(method) = operator_method(op)
+            && !(self.types.is_numeric(lhs.ty) && self.types.is_numeric(rhs.ty))
+        {
             let found = match operator_interface(method) {
                 Some(_) => self.operator_implemented(lhs.ty, method),
                 None => self.methods.contains_key(&(lhs.ty, Symbol::intern(method))),
@@ -31178,6 +31680,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         let ty = if hir_op.is_comparison() { self.common.bool_ } else { operand_ty };
         Expr { ty, kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
+    }
+}
+
+/// Whether a `const`'s value is a bare literal, as the literal constants are
+/// kept (a minus included).
+fn is_literal_expr(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        ast::ExprKind::Lit(_) => true,
+        ast::ExprKind::Paren(inner) => is_literal_expr(inner),
+        ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => matches!(operand.kind, ast::ExprKind::Lit(_)),
+        _ => false,
     }
 }
 

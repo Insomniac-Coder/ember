@@ -50,6 +50,9 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-045 | **CLOSED** — a type's `const` is named `T.NAME` (`Self.NAME` inside it) and is private to its module unless `pub`; constants name one another in any order, one whose value depends on itself is `E6001`, and a panic while one is evaluated is `E6004` | Language / declarations | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
+| ODR-044 | **CLOSED** — `[CG-C-11]`'s pragma is emitted where the compiler implements it (clang's `#pragma STDC FP_CONTRACT OFF`, MSVC's `#pragma fp_contract(off)`); gcc, which does not and warns about it, has `-ffp-contract=off` alone | Implementation / C backend | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
+| ODR-043 | **CLOSED** — `std.math` has the module table's vectors, matrices, `Quat`, `Transform` and shapes, with public components, the operators and the methods graphics libraries agree on (`[STD-28]`); `KahanSum` is an `f64` accumulator with Neumaier's correction | Standard library / math | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
 | ODR-042 | **CLOSED** — an `extend` parameter only the interfaces name makes a blanket implementation (`Map` implements `Index[Q]` for every `Q: AsKey[K]`); a bound brings its parents; indexing is only through `Index`/`IndexMut`/`IndexSet`, which `Array` and the views implement through their built-in indexing | Language / interfaces / standard library | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_19 |
 | ODR-041 | **CLOSED** — `f16` is a `Number` whose `Real` is `f32`, which holds it exactly; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_18 |
 | ODR-040 | **CLOSED** — the operator interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg`, `not` (a method name after `fn` and `.`) and each with `_assign`; every number type implements the interface of each operator it has, written in `std.core`; one `type Output` serves every interface of an `extend` block; `Output = T` only in a bound | Language / interfaces / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_17 |
@@ -196,6 +199,183 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-045 — a type's constants, and the order of constants — **CLOSED**
+
+    ID:        ODR-045
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_20
+    Category:  LANGUAGE / DECLARATIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_19.md V.3, V.7, [CT-1], [CT-3], [CT-7],
+               [MOD-2]
+
+    Question:  V.3's example declares `const ZERO: Vec2 = Vec2(0, 0)` in the
+               body of `struct Vec2`, and no rule says how such a constant is
+               named or who may name it. And `[CT-1]` evaluates a `const`'s
+               initialiser while compiling without saying in what order, or
+               what a constant whose value needs itself is.
+
+    Blocks implementation:            YES — `std.math`'s `Vec2.ZERO` (ODR-043)
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Naming.** (a) Through the type, `Vec2.ZERO`, and `Self.ZERO` inside it,
+  as an associated function is named. (b) Bare `ZERO` inside the type: it
+  would shadow a module's constant of the same name. **(a)**.
+- **Visibility.** (i) Private to its module unless `pub`, as a field or a
+  method (`[MOD-2]`). (ii) Always public. **(i)**.
+- **Order.** (1) Any order: a constant is evaluated when first needed, and
+  one whose value depends on itself can never be worked out, which is
+  `[CT-3]`'s `E6001` (evaluation that does not end). (2) Declaration order,
+  with a later constant unknown. **(1)**: items are order-independent
+  everywhere else (a function calls one declared below it).
+- **A panic.** A `const` is evaluated while compiling, so a panic there is
+  `E6004` (`[CT-7]`'s code for a `comptime:` block), at the declaration.
+
+**Ruling.** A `const` in the body of a `struct`, `enum`, `class` or `extend`
+block belongs to the type: it is named `T.NAME`, or `Self.NAME` inside the
+type, and is private to its module unless `pub`. Constants may name one
+another in any order; one whose value depends on itself is `E6001`, and a
+panic while one is evaluated is `E6004`. V.7 says so.
+
+---
+
+## ODR-044 — `[CG-C-11]`'s pragma under gcc — **CLOSED**
+
+    ID:        ODR-044
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_20
+    Category:  IMPLEMENTATION / C BACKEND
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_19.md [CG-C-11], [CG-C-1], [CG-C-2]
+
+    Question:  `[CG-C-11]` says every translation unit begins with `#pragma
+               STDC FP_CONTRACT OFF`. gcc does not implement that pragma and
+               warns about it (`-Wunknown-pragmas`, part of `-Wall`), while
+               `[CG-C-1]` requires C that compiles without warnings under
+               `-std=c11 -Wall -Wextra` (GCC) and `[CG-C-2]` makes a warning a
+               compiler defect. Which gives way?
+
+    Blocks implementation:            YES — D-325's fix cannot meet both
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- (a) Emit the pragma for every compiler and pass gcc `-Wno-unknown-pragmas`:
+  a real unknown pragma elsewhere would then go unreported.
+- (b) Emit each compiler's own spelling behind a preprocessor test: clang's
+  (and clang-cl's) `#pragma STDC FP_CONTRACT OFF`, MSVC's `#pragma
+  fp_contract(off)`, and nothing for gcc, whose documented control is the
+  flag `-ffp-contract=off`, which `[CG-C-11]` passes anyway. What the rule is
+  for, no contraction on any compiler, holds either way.
+
+**Ruling.** (b). The pragma is emitted where the compiler implements it; gcc
+has the flag alone. `[CG-C-11]` says so.
+
+---
+
+## ODR-043 — `std.math`'s vectors, matrices, rotations and shapes, and `KahanSum` — **CLOSED**
+
+    ID:        ODR-043
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_20
+    Category:  STANDARD LIBRARY / MATH
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_19.md [STD-21], [STD-5], [STD-3], XV's
+               module table, I.5, V.3, XII.1
+
+    Question:  `[STD-21]` lists `Vec2`, `Vec3`, `Vec4` (of `f32`, `@layout(c)`),
+               `IVec2/3/4`, `Mat3`, `Mat4` (column-major), `Quat`, `Transform`,
+               `Aabb`, `Ray`, `Plane`, `Frustum`, "with `dot`, `cross`,
+               `length`, `normalize` … and the arithmetic operators"; the
+               module table lists `UVec2/3/4`, `Mat2` and `Sphere` as well.
+               Which types are there, what are their fields, and what else
+               do they offer? `[STD-5]` names `math.KahanSum` "compensated
+               summation" and no more.
+
+    Blocks implementation:            YES — none of the types can be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Which types.** (a) The module table's list, the fuller one: `UVec`,
+  `Mat2` and `Sphere` too. (b) `[STD-21]`'s sentence only. **(a)**; the
+  sentence is brought into line with the table.
+- **The API.** (A) The shape a game or graphics programmer already knows
+  from glam, GLSL and DirectXMath, in Ember's names: public components, the
+  operators, and the handful of methods each type is used for. (B) Only
+  what the rule names (`dot`, `cross`, `length`, `normalize`): then a
+  program cannot build a rotation, invert a matrix or test a ray without
+  writing them itself. **(A)**, kept to what those libraries agree on.
+- **Matrix fields.** (i) The columns as `x_axis`, `y_axis`, `z_axis` and
+  `w_axis` (glam's names: the basis vectors, and a transform's translation
+  in `w_axis`). (ii) An array of columns: indexing a column would be a
+  bounds-checked `[Vec4; 4]`. **(i)**.
+- **Projection and handedness.** Right-handed, with depth in `[0, 1]` (as
+  Vulkan, Direct3D, Metal and WebGPU use); OpenGL's `[-1, 1]` is the one
+  conversion a program writes.
+- **`normalize` of a zero vector** panics (`[STD-21]`); `inverse` of a
+  singular matrix panics the same way, and `try_inverse` gives an `Option`.
+- **Products.** `[STD-3]` already says `std.math` computes matrix products
+  and transforms with fused multiply-adds; so the float vectors get the
+  component-wise `mul_add` that does it, as glam's do.
+- **A ray that starts inside.** (1) The least `t ≥ 0` at which the ray is
+  in the ball or box: 0. (2) Where it leaves. **(1)**, as *Real-Time
+  Collision Detection* has it, and the same for a box and a ball; a ray
+  that starts on a plane meets it at 0.
+- **`KahanSum`**: (1) an `f64` accumulator with Neumaier's correction (it
+  also compensates when an addend is larger than the running sum), (2) a
+  generic `KahanSum[T: Float]`. **(1)**: an `f32` sum wants an `f64`
+  accumulator anyway (`[STD-5]`'s `sum_f64`).
+
+**Ruling.**
+- `std.math` has `Vec2`, `Vec3`, `Vec4` (`f32` components `x`, `y`, `z`,
+  `w`), `IVec2/3/4` (`i32`), `UVec2/3/4` (`u32`), `Mat2`, `Mat3`, `Mat4`
+  (`f32`, column-major, columns `x_axis`, `y_axis`, `z_axis`, `w_axis`),
+  `Quat` (`x`, `y`, `z`, `w`, `w` the scalar part), `Transform`
+  (`translation`, `rotation`, `scale`), `Aabb` (`min`, `max`), `Sphere`
+  (`center`, `radius`), `Ray` (`origin`, `direction`), `Plane` (`normal`,
+  `d`: the points with `normal.dot(p) + d == 0`) and `Frustum` (six inward
+  `Plane`s: `left`, `right`, `bottom`, `top`, `near`, `far`). Each is
+  `@layout(c)` and `Copy`, with a public memberwise constructor.
+- Vectors: constants `ZERO`, `ONE` and the unit axes (`X`, `Y`, `Z`, `W`);
+  `splat`; component-wise `+`, `-`, `*`, `/` (`//` and `%` for the integer
+  ones) and the same with a scalar on either side; unary `-` (not `UVec`);
+  `min`, `max`, `abs` (not `UVec`) component-wise; `dot`; for the float
+  vectors `length`, `length_squared`, `distance`, `distance_squared`,
+  `normalize`, `normalize_or_zero`, `lerp` and `mul_add` (component-wise,
+  each rounded once); `Vec3.cross`; `extend` and `truncate` between sizes.
+- Matrices: `IDENTITY`, `ZERO`, `from_cols`, `from_diagonal`; `Mat * Mat`,
+  `Mat * Vec`, `Mat * f32` (either side), `+`, `-`, unary `-`; `transpose`,
+  `determinant`, `inverse`, `try_inverse`, `col`, `row`; `m * v` adds each
+  term after the first by a fused multiply-add (`[STD-3]`). `Mat2` and `Mat3`
+  have `from_angle` (a rotation in the plane); `Mat3` and `Mat4` have
+  `from_quat` and `from_scale`; `Mat4` has `from_translation`,
+  `from_rotation_x`/`y`/`z`, `from_scale_rotation_translation`,
+  `look_at_rh`, `perspective_rh`, `orthographic_rh`, `transform_point3`
+  (`w` = 1, divided by the result's `w`) and `transform_vector3` (`w` = 0).
+- `Quat`: `IDENTITY`, `from_axis_angle`, `from_rotation_x`/`y`/`z`;
+  `Quat * Quat` (the rotation of the right one, then the left one),
+  `Quat * Vec3` (the vector rotated); `length`, `normalize`, `conjugate`,
+  `inverse`, `dot`, `slerp`.
+- `Transform`: `IDENTITY`, `from_translation`, `from_rotation`,
+  `from_scale`; `transform_point` (scale, then rotate, then translate),
+  `transform_vector` (without the translation), `Transform * Transform` (the
+  right one, then the left one), `to_mat4`.
+- Shapes: `Aabb.from_center_half_extents`, `center`, `half_extents`,
+  `contains`, `intersects`, `union`, `expand`; `Sphere.contains`,
+  `intersects`, `intersects_aabb`; `Ray.at`, `intersect_plane`,
+  `intersect_sphere`, `intersect_aabb` (each the least `t ≥ 0` at which the
+  ray is on the plane or in the ball or box, 0 when it starts there, as an
+  `Option[f32]`); `Plane.from_point_normal`, `from_points`,
+  `signed_distance`, `normalize`; `Frustum.from_view_projection` (from a
+  `perspective_rh` or `orthographic_rh` projection times a view), with
+  `contains_point`, `intersects_sphere` and `intersects_aabb`.
+- `KahanSum` is an `f64` accumulator with Neumaier's correction: `KahanSum.new()`,
+  `add(x)`, `value()`, and `KahanSum.of(xs)` for a span of `f64`.
+- The spec states this as `[STD-28]`, which `[STD-21]` points to; `[STD-5]`
+  names `KahanSum`'s methods.
 
 ---
 

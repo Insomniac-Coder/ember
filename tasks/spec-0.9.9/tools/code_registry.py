@@ -21,6 +21,7 @@ OVERRIDE = {
     'E0108': ('attribute is not permitted on this statement', ['GRM-20']),
     'E2030': ('`@view` on a type that is not a view', ['TYP-34']),
     'E2130': ('a `const` of a type that owns heap memory; use a `static`', ['TYP-1']),
+    'E6001': ("comptime evaluation exceeded its limits, or a constant's value depends on itself", ['CT-3']),
     'E2131': ('array length must be a constant', ['CT-1']),
     'E2150': ('`is` on an operand that is neither a handle, a reference nor an `Option`', ['EXP-9']),
     'E2151': ('integer `**` with a constant negative exponent', ['TYP-30']),

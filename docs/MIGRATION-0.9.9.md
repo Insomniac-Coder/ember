@@ -767,3 +767,18 @@ The next number is ODR-027.
   `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]`. `Array` and `MutSpan` implement
   `Index[int]` and `IndexMut[int]`, `Span` `Index[int]`, so generic code bounded by them takes
   both, and a bound brings its parents (`C: IndexMut[int]` reads `c[i]` too).
+* **2026-09-26 — `std.math`'s vectors, matrices, rotations and shapes, and `KahanSum` (ODR-043 to
+  ODR-045; Hardened_20; ADR-052, ADR-053).** `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`,
+  `Quat`, `Transform`, `Aabb`, `Sphere`, `Ray`, `Plane` and `Frustum` are Ember in
+  `std/src/math.em` (`[STD-28]`): public components, the operators with a scalar on either side
+  (`2.0 * v` is `f32`'s `Mul[Vec3]`), matrix products by fused multiply-adds (`[STD-3]`),
+  right-handed projections with depth in `[0, 1]`. `math.KahanSum` is compensated summation. What
+  they needed of the language:
+  * **Constants** (D-323): a `const` is any constant expression, evaluated while compiling
+    (`E6004` for a panic there), in any order (`E6001` for a cycle); a type's `const` is
+    `Vec2.ZERO`, private unless `pub`; `E2130` for a type that owns heap memory.
+  * **`x is None`** (D-322): the option test works, `a is b` compares two references, and any
+    other `is` on a value is `E2150`.
+  * **Floating point** (D-325): the C compiler no longer fuses `a * b + c` (`[CG-C-11]`, ODR-044).
+  * **`W2015`** shows what the type keeps (D-324) and reaches a literal under a minus or inside
+    arithmetic (D-326).

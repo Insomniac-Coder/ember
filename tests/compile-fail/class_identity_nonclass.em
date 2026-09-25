@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ profiles: debug, release, shipping
-#$ error[E2020]: `is` requires related class handles, found `an integer` and `an integer`
+#$ error[E2150]: `is` needs class handles, and `an integer` is not one
 
 fn main():
     result = 1 is 1

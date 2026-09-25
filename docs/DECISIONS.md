@@ -1708,3 +1708,61 @@ checker carries it.
   blanket implementation with a written one, and a blanket method with
   generics of its own besides the blanket's is not compared with the
   interface.
+
+## ADR-052 — constants are evaluated while compiling, by folding the checked initialiser
+
+**Decided 2026-09-26, with ODR-045 and D-323.** V.7 and `[CT-1]` say a `const`
+is evaluated at compile time and inlined at each use; the compiler has no
+compile-time evaluator yet (Part XIV is Phase 4). This is how a constant
+expression is carried until it has one.
+
+- **The initialiser is checked once and folded.** `expr_const` checks the
+  value against the declared type in the declaring module (as a field default
+  is), then `const_eval::fold` reduces the checked HIR to a `Folded` value:
+  integers exact in their own width, floats rounded to their type after each
+  operation (an `f16` from `double`, as the runtime does), float `//` and `%`
+  by the runtime's own floor forms, shifts and floor division as the runtime
+  checks them. Each use is `Folded::to_expr`, the value's literals, so a use
+  costs nothing and cannot panic. An overflow, a division by zero or a shift
+  out of range is `E6004` at the declaration, with the message the program
+  would have panicked with.
+- **What this phase evaluates** is what `is_const_expr` admits: literals,
+  other constants, arithmetic, comparisons, `and`/`or`/`not`, tuples, arrays,
+  and struct and enum constructions. A call is `E1010`: evaluating one needs
+  the interpreter `[CT-1]` describes, and running it at each use instead
+  would turn its panic into a run-time one and its transcendental functions
+  into the platform's (`[CT-4]` wants `std.math.det`'s).
+- **Lazily, in any order.** A constant is recorded when collected
+  (`PendingConst`) and evaluated at its first use or when collection ends
+  (`settle_consts`), in its declaring module, with no locals, no type
+  parameters and `Self` its type. A use while it is being evaluated is a
+  cycle, `E6001`.
+- **Untyped literals stay untyped** (ODR-037): such a constant has no folded
+  value, and each use checks the literal again where it is used, with that
+  check's diagnostics dropped.
+- **Warnings once.** A literal's `W2015` is raised by the declaration's check;
+  `warn_if_literal_loses_precision` does not repeat a warning the sink already
+  holds for the same literal (D-326).
+
+## ADR-053 — a number on the left of a program's type, and sibling instances of one interface
+
+**Decided 2026-09-26, with ODR-043.** `[TYP-21]` makes `2.0 * v` the number
+type's `Mul[Vec3]`, which `std.math` implements (`extend f32 implements
+Mul[Vec3]`). Two things in the checker had to change for it.
+
+- **Dispatch.** In `synth_binary`, when the left operand is a number and the
+  right one is not, `number_with_operator_for` finds the number type whose
+  operator method takes the right operand's type: the left operand's own type,
+  or for an untyped literal the first of `i64`, `i32`, …, `f64`, `f32`, `f16`
+  that has one, which the literal adopts (`2 * m` is `i64`'s where `i64:
+  Mul[Money]`). Between two numbers the interface dispatch is skipped and the
+  built-in operator stays: `f32: Mul[Vec3]` must not make `k * 2.0` a call.
+- **Sibling instances.** A number type implements `Mul` (its own, `Rhs =
+  Self`) and `Mul[Vec3]`, `Mul[Mat3]`, … as separate instances of one generic
+  interface. `check_implementation_of` used to accept any method named `mul`
+  as the implementation of each, so `f32`'s own `Mul` was checked against
+  `Mul[Vec3]`'s method. A method recorded for another instance of the same
+  generic interface is no longer a candidate. One with no interface, one of
+  the same instance, one recorded under the bare origin (as a generic
+  extension records it) and one of an unrelated interface still are, as
+  before.

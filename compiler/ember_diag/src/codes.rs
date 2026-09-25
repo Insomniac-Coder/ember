@@ -336,8 +336,9 @@ codes! {
     E5065 = (Error, 5065, Ffi, "[SEL-2]", "`Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert");
 
     // --- comptime -------------------------------------------------------------
-    E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits");
+    E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits, or a constant's value depends on itself");
     E6002 = (Error, 6002, Comptime, "[CT-4]", "comptime evaluation is not deterministic");
+    E6004 = (Error, 6004, Comptime, "[CT-7]", "panic during compile-time evaluation");
     E6010 = (Error, 6010, Comptime, "[XVIII.5]", "operation is not supported at compile time");
 
     // --- concurrency ----------------------------------------------------------

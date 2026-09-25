@@ -95,6 +95,9 @@ jobs:
         run: python tools/generate_runtime.py --check
       - name: runtime generator regression
         run: python tools/test_runtime_generation.py
+      # `[STD-28]` — `std.math`'s vector types are written by a script.
+      - name: std.math's vectors match their generator
+        run: python tools/gen_math_vectors.py --check
 
       # `[TST-7]` — every fenced `ember` block in Parts I-XVII and Appendix A
       # passes `ember check --syntax-only`, against a recorded baseline of the

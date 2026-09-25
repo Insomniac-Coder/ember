@@ -439,24 +439,28 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
 /// builds and Rust's use: the debug one (`/MDd`) reports a failed check or an
 /// abort() in a window that waits for a click, which stops any unattended run,
 /// and it needs Visual Studio's own DLLs to start at all (D-252).
+/// `/fp:precise` with the source's `#pragma fp_contract(off)` is strict IEEE
+/// arithmetic (`[CG-C-11]`).
 fn msvc_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["/Od", "/Zi", "/MD"],
         Profile::Release => &["/O2", "/MD"],
         Profile::Shipping => &["/O2", "/GL", "/MD"],
     };
-    ["/nologo", "/std:c11", "/W3"].iter().chain(optimisation).copied().collect()
+    ["/nologo", "/std:c11", "/W3", "/fp:precise"].iter().chain(optimisation).copied().collect()
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and
-/// the runtime object's so the two always agree.
+/// the runtime object's so the two always agree. `-ffp-contract=off` and
+/// `-fno-fast-math` are strict IEEE arithmetic (`[CG-C-11]`, D-325): no
+/// `a * b + c` fused where the target has the instruction.
 fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["-O0", "-g"],
         Profile::Release => &["-O2"],
         Profile::Shipping => &["-O3"],
     };
-    ["-std=c11", "-Wall", "-Wextra"].iter().chain(optimisation).copied().collect()
+    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).copied().collect()
 }
 
 fn run(mut command: Command) -> Result<(), BuildError> {
@@ -720,6 +724,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(output.status.success() && stdout.trim() == "ok", "{stdout}");
+    }
+
+    /// `[CG-C-11]` (D-325) — with the build's flags, `a * b + c` stays two
+    /// roundings even where the target has a fused multiply-add: the C,
+    /// compiled for a processor with FMA, has no FMA instruction. A control
+    /// compile that allows contraction shows the check can see one.
+    #[test]
+    fn the_c_compiler_never_fuses_a_multiply_and_an_add() {
+        if !cfg!(target_arch = "x86_64") {
+            return;
+        }
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let (Toolchain::Clang(cc) | Toolchain::Gcc(cc)) = &toolchain else { return };
+        let dir = std::env::temp_dir().join(format!("fp-contract-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test directory is creatable");
+        let source = dir.join("fused.c");
+        std::fs::write(&source, "double fused(double a, double b, double c) { return a * b + c; }\n")
+            .expect("the source is writable");
+        let assembly = |extra: &[&str]| {
+            let output = dir.join("fused.s");
+            let mut command = Command::new(cc);
+            command.args(gnu_flags(Profile::Shipping)).args(extra).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
+            run(command).expect("the source compiles");
+            std::fs::read_to_string(&output).expect("the assembly is readable")
+        };
+        let control = assembly(&["-ffp-contract=fast"]);
+        let strict = assembly(&[]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(control.contains("vfmadd"), "the control compile did not fuse, so the check sees nothing:\n{control}");
+        assert!(!strict.contains("vfmadd"), "the build's flags let the C compiler fuse:\n{strict}");
     }
 
     #[test]
