@@ -687,6 +687,73 @@ static inline bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128
     return false;
 }
 
+/* -- bit counts ---------------------------------------------------------------
+ *
+ * [STD-20]: `count_ones`, `leading_zeros` and `trailing_zeros`, as an `int`.
+ * The compiler passes the value zero-extended from its own width, and that
+ * width, so a zero has as many leading and trailing zeros as its type has
+ * bits. GCC and Clang have one instruction for each; elsewhere a halving
+ * search, which compilers also turn into one. */
+
+static inline int64_t ember_count_ones(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
+    return (int64_t)__builtin_popcountll(x);
+#else
+    x = x - ((x >> 1) & 0x5555555555555555u);
+    x = (x & 0x3333333333333333u) + ((x >> 2) & 0x3333333333333333u);
+    x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0Fu;
+    return (int64_t)((x * 0x0101010101010101u) >> 56);
+#endif
+}
+
+static inline int64_t ember_leading_zeros(uint64_t x, int64_t width) {
+    int64_t n = 0;
+    if (x == 0) {
+        return width;
+    }
+#if defined(__GNUC__) || defined(__clang__)
+    n = (int64_t)__builtin_clzll(x);
+#else
+    if ((x >> 32) == 0) { n += 32; x <<= 32; }
+    if ((x >> 48) == 0) { n += 16; x <<= 16; }
+    if ((x >> 56) == 0) { n += 8; x <<= 8; }
+    if ((x >> 60) == 0) { n += 4; x <<= 4; }
+    if ((x >> 62) == 0) { n += 2; x <<= 2; }
+    if ((x >> 63) == 0) { n += 1; }
+#endif
+    return n - (64 - width);
+}
+
+static inline int64_t ember_trailing_zeros(uint64_t x, int64_t width) {
+    int64_t n = 0;
+    if (x == 0) {
+        return width;
+    }
+#if defined(__GNUC__) || defined(__clang__)
+    n = (int64_t)__builtin_ctzll(x);
+#else
+    if ((x & 0xFFFFFFFFu) == 0) { n += 32; x >>= 32; }
+    if ((x & 0xFFFFu) == 0) { n += 16; x >>= 16; }
+    if ((x & 0xFFu) == 0) { n += 8; x >>= 8; }
+    if ((x & 0xFu) == 0) { n += 4; x >>= 4; }
+    if ((x & 0x3u) == 0) { n += 2; x >>= 2; }
+    if ((x & 0x1u) == 0) { n += 1; }
+#endif
+    return n;
+}
+
+static inline int64_t ember_u128_count_ones(ember_u128 v) {
+    return ember_count_ones(ember_u128_hi(v)) + ember_count_ones(ember_u128_lo(v));
+}
+
+static inline int64_t ember_u128_leading_zeros(ember_u128 v) {
+    return ember_u128_hi(v) != 0 ? ember_leading_zeros(ember_u128_hi(v), 64) : 64 + ember_leading_zeros(ember_u128_lo(v), 64);
+}
+
+static inline int64_t ember_u128_trailing_zeros(ember_u128 v) {
+    return ember_u128_lo(v) != 0 ? ember_trailing_zeros(ember_u128_lo(v), 64) : 64 + ember_trailing_zeros(ember_u128_hi(v), 64);
+}
+
 /* -- memory ---------------------------------------------------------------- */
 
 /* [HEAP-1] Every heap type allocates through these. ember_alloc never returns

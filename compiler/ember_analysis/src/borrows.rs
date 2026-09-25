@@ -2570,6 +2570,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::FloatAbs
             | Builtin::FloatPow
             | Builtin::FloatLib(_)
+            | Builtin::IntBits(_)
             | Builtin::RangeCount
             | Builtin::RangeNth
             | Builtin::SizeOf

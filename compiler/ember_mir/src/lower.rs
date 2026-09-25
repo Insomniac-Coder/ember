@@ -1998,6 +1998,9 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
+            hir::ExprKind::Builtin { which: hir::Builtin::IntOverflowing(op), args } => {
+                self.lower_int_overflowing(place, *op, args, expr.span);
+            }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::ArraySplitAtMut { elem, pair },
                 args,
@@ -4770,6 +4773,126 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto(join_bb));
 
         self.current = join_bb;
+    }
+
+    /// `[STD-20]` (ODR-039) — `(result modulo 2^N, whether it wrapped)` of an
+    /// integer operation, computed as the checked operators compute it but
+    /// with no assertion on the flag. A zero divisor still panics
+    /// (`[TYP-8]`). A shift takes its amount modulo the width, as
+    /// `@overflow(wrap)` does, and its flag says the amount was outside
+    /// `0 ≤ n < width` (`[TYP-10]`); the amount may be any integer type.
+    fn lower_int_overflowing(&mut self, place: Place, op: hir::IntOp, args: &'a [hir::Expr], span: ember_span::Span) {
+        let ty = args[0].ty;
+        let bool_ty = self.bool_ty;
+        let value = self.temp(ty, span);
+        let flag = self.temp(bool_ty, span);
+        let lhs = self.lower_operand(&args[0]);
+        let signed = is_signed(self.types, ty) == Some(true);
+        match op {
+            hir::IntOp::Add | hir::IntOp::Sub | hir::IntOp::Mul | hir::IntOp::Neg => {
+                let (op, lhs, rhs) = match op {
+                    hir::IntOp::Add => (BinOp::Add, lhs, self.lower_operand(&args[1])),
+                    hir::IntOp::Sub => (BinOp::Sub, lhs, self.lower_operand(&args[1])),
+                    hir::IntOp::Mul => (BinOp::Mul, lhs, self.lower_operand(&args[1])),
+                    _ => (BinOp::Sub, Operand::Const(Const::Int { value: 0, ty }), lhs),
+                };
+                self.push(StmtKind::CheckedBinaryOp {
+                    dest: Place::local(value),
+                    overflow: Place::local(flag),
+                    op,
+                    lhs,
+                    rhs,
+                });
+            }
+            hir::IntOp::FloorDiv | hir::IntOp::Rem => {
+                let rhs = self.lower_operand(&args[1]);
+                let is_zero = self.temp(bool_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(is_zero),
+                    rvalue: Rvalue::BinaryOp {
+                        op: BinOp::Eq,
+                        lhs: rhs.clone(),
+                        rhs: Operand::Const(Const::Int { value: 0, ty }),
+                    },
+                });
+                let after_zero = self.new_block();
+                self.terminate(Terminator::Assert {
+                    cond: Operand::Copy(Place::local(is_zero)),
+                    expected: false,
+                    msg: AssertKind::DivisionByZero,
+                    next: after_zero,
+                    span,
+                });
+                self.current = after_zero;
+                let op = if op == hir::IntOp::FloorDiv { BinOp::FloorDiv } else { BinOp::FloorRem };
+                if signed {
+                    self.push(StmtKind::CheckedBinaryOp {
+                        dest: Place::local(value),
+                        overflow: Place::local(flag),
+                        op,
+                        lhs,
+                        rhs,
+                    });
+                } else {
+                    // Unsigned floor division cannot overflow.
+                    self.push(StmtKind::Assign { place: Place::local(value), rvalue: Rvalue::BinaryOp { op, lhs, rhs } });
+                    self.push(StmtKind::Assign { place: Place::local(flag), rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))) });
+                }
+            }
+            hir::IntOp::Shl | hir::IntOp::Shr => {
+                let width = bit_width(self.types, ty).unwrap_or(64);
+                let amount_ty = args[1].ty;
+                let amount = self.lower_operand(&args[1]);
+                self.push(StmtKind::Assign { place: Place::local(flag), rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))) });
+                let mut refusals = Vec::new();
+                if is_signed(self.types, amount_ty) == Some(true) {
+                    refusals.push((BinOp::Lt, 0u128));
+                }
+                if ember_types::int_max(self.types, amount_ty).is_some_and(|max| max >= width as u128) {
+                    refusals.push((BinOp::Ge, width as u128));
+                }
+                for (test, bound) in refusals {
+                    let outside = self.temp(bool_ty, span);
+                    self.push(StmtKind::Assign {
+                        place: Place::local(outside),
+                        rvalue: Rvalue::BinaryOp {
+                            op: test,
+                            lhs: amount.clone(),
+                            rhs: Operand::Const(Const::Int { value: bound, ty: amount_ty }),
+                        },
+                    });
+                    self.push(StmtKind::Assign {
+                        place: Place::local(flag),
+                        rvalue: Rvalue::BinaryOp {
+                            op: BinOp::BitOr,
+                            lhs: Operand::Copy(Place::local(flag)),
+                            rhs: Operand::Copy(Place::local(outside)),
+                        },
+                    });
+                }
+                let masked = self.temp(amount_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(masked),
+                    rvalue: Rvalue::BinaryOp {
+                        op: BinOp::BitAnd,
+                        lhs: amount,
+                        rhs: Operand::Const(Const::Int { value: (width - 1) as u128, ty: amount_ty }),
+                    },
+                });
+                let shift = if op == hir::IntOp::Shl { BinOp::Shl } else { BinOp::Shr };
+                self.push(StmtKind::Assign {
+                    place: Place::local(value),
+                    rvalue: Rvalue::BinaryOp { op: shift, lhs, rhs: Operand::Copy(Place::local(masked)) },
+                });
+            }
+        }
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Tuple,
+                operands: vec![Operand::Copy(Place::local(value)), Operand::Copy(Place::local(flag))],
+            },
+        });
     }
 
     /// A range endpoint as a MIR operand of the representation type.

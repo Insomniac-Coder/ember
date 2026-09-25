@@ -4388,6 +4388,9 @@ impl Emitter<'_> {
                     Builtin::Input => {
                         unreachable!("[STD-10] `input` is emitted with its location by the call terminator")
                     }
+                    Builtin::IntOverflowing(_) => {
+                        unreachable!("[STD-20] MIR computes `IntOverflowing` in place")
+                    }
                     Builtin::ArrayClone { elem } => {
                         return format!(
                             "{}(({}).ptr, ({}).len)",
@@ -4415,6 +4418,21 @@ impl Emitter<'_> {
                     }
                     // `[STD-27]` — `sqrt` or `sqrtf`; a classification macro
                     // is one name, and its `int` is made a `bool`.
+                    // `[STD-20]` — over the value's own width, zero-extended.
+                    Builtin::IntBits(bits) => {
+                        let x = &rendered[0];
+                        let method = bits.method();
+                        if let Some(suffix) = self.wide_int(*arg_ty) {
+                            let value = if suffix == "i128" { format!("{RT}i128_to_u128({x})") } else { x.clone() };
+                            return format!("{RT}u128_{method}({value})");
+                        }
+                        let width = ember_types::bit_width(self.types, *arg_ty).unwrap_or(64);
+                        let value = format!("(uint64_t)(uint{width}_t)({x})");
+                        return match bits {
+                            ember_mir::IntBits::CountOnes => format!("{RT}count_ones({value})"),
+                            _ => format!("{RT}{method}({value}, {width})"),
+                        };
+                    }
                     Builtin::FloatLib(f) => {
                         let call = |suffix: &str| format!("{}{suffix}({})", f.c_name(), rendered.join(", "));
                         return match (f.is_predicate(), self.types.kind(*arg_ty)) {

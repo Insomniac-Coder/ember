@@ -552,6 +552,78 @@ pub enum PatternKind {
     Error,
 }
 
+/// `[STD-20]` (ODR-039) — the integer operators the `checked_`,
+/// `wrapping_`, `saturating_` and `overflowing_` methods exist for, named as
+/// their operator interfaces' methods are (`floordiv` is `//`, `rem` is `%`).
+/// `pow` is built from `Mul`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum IntOp {
+    Add,
+    Sub,
+    Mul,
+    FloorDiv,
+    Rem,
+    Neg,
+    Shl,
+    Shr,
+}
+
+impl IntOp {
+    pub fn named(name: &str) -> Option<IntOp> {
+        Some(match name {
+            "add" => IntOp::Add,
+            "sub" => IntOp::Sub,
+            "mul" => IntOp::Mul,
+            "floordiv" => IntOp::FloorDiv,
+            "rem" => IntOp::Rem,
+            "neg" => IntOp::Neg,
+            "shl" => IntOp::Shl,
+            "shr" => IntOp::Shr,
+            _ => return None,
+        })
+    }
+
+    pub fn overflowing(self) -> &'static str {
+        match self {
+            IntOp::Add => "overflowing_add",
+            IntOp::Sub => "overflowing_sub",
+            IntOp::Mul => "overflowing_mul",
+            IntOp::FloorDiv => "overflowing_floordiv",
+            IntOp::Rem => "overflowing_rem",
+            IntOp::Neg => "overflowing_neg",
+            IntOp::Shl => "overflowing_shl",
+            IntOp::Shr => "overflowing_shr",
+        }
+    }
+}
+
+/// `[STD-20]` — an integer's bit counts.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum IntBits {
+    CountOnes,
+    LeadingZeros,
+    TrailingZeros,
+}
+
+impl IntBits {
+    pub fn named(name: &str) -> Option<IntBits> {
+        Some(match name {
+            "count_ones" => IntBits::CountOnes,
+            "leading_zeros" => IntBits::LeadingZeros,
+            "trailing_zeros" => IntBits::TrailingZeros,
+            _ => return None,
+        })
+    }
+
+    pub fn method(self) -> &'static str {
+        match self {
+            IntBits::CountOnes => "count_ones",
+            IntBits::LeadingZeros => "leading_zeros",
+            IntBits::TrailingZeros => "trailing_zeros",
+        }
+    }
+}
+
 /// `[STD-20]`, `[STD-27]` — the float methods that are one C library function
 /// each: the `f64` one by `c_name`, the `f32` one with an `f` after it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -681,6 +753,13 @@ pub enum Builtin {
     /// `[STD-20]`, `[STD-27]` — a float method that is one C library
     /// function: the receiver, then the method's arguments.
     FloatLib(FloatLib),
+    /// `[STD-20]` (ODR-039) — an integer operation as a `(T, bool)`: the
+    /// result modulo 2^N and whether it wrapped. A zero divisor still panics.
+    /// MIR computes it in place, as the checked operators do.
+    IntOverflowing(IntOp),
+    /// `[STD-20]` — a bit count of an integer over its type's width, as an
+    /// `int`.
+    IntBits(IntBits),
     /// `[STD-26]` — how many values `range(start, stop, step)` has, and the
     /// `k`th of them; a zero step panics.
     RangeCount,
@@ -1071,6 +1150,8 @@ impl Builtin {
             Builtin::FloatAbs => "abs",
             Builtin::FloatPow => "pow",
             Builtin::FloatLib(f) => f.method(),
+            Builtin::IntOverflowing(op) => op.overflowing(),
+            Builtin::IntBits(bits) => bits.method(),
             Builtin::RangeCount | Builtin::RangeNth => "range",
             Builtin::StrCharCount => "char_count",
             Builtin::StrStartsWith => "starts_with",

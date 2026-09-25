@@ -2539,6 +2539,7 @@ fn the_128_bit_programs_run_with_the_halves() {
         "tests/conformance/TXT-10/accept_parse_128_bit_integers",
         "tests/conformance/STD-26/accept_ranges_of_128_bit_integers",
         "tests/conformance/STD-11/accept_128_bit_keys",
+        "tests/conformance/STD-20/accept_integer_methods",
     ] {
         let relative = format!("{relative}.{SOURCE_EXT}");
         let native = ember(&["run", &relative, "--out-dir", &dir.join("native").to_string_lossy()], &root);

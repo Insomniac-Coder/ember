@@ -729,3 +729,15 @@ The next number is ODR-027.
   literal value are untyped constants; `math.PI` resolves through the module. The per-type
   `min_i32`/`clamp_f32`/`lerp_f32` are gone: the prelude's `min`, `max`, `clamp` replace them and
   carry `[RNG-4]`'s intervals. D-307: a struct's implicit `Eq` meets `interface Ord: Eq`.
+* **2026-09-26 — `i128` and `u128` reach C (D-272, ADR-048).** Both work on every compiler: C's
+  `__int128` with GCC and Clang, two 64-bit halves with MSVC and clang-cl, every operation a
+  runtime helper. `parse`, `len`, `get` and `drain` take them; they are `std.math` numbers.
+* **2026-09-26 — shifts and negative literals (D-308 to D-312).** A shift amount may be any
+  integer type, and a negative one panics (`[TYP-10]`). `-128` is an `i8` and `-1` no `u8`
+  (`[LEX-24]`); `-5 =>` is a pattern, and a pattern literal must fit the scrutinee's type.
+* **2026-09-26 — `[STD-20]`'s integer methods and the scalar constants (ODR-039; Hardened_16).**
+  Every integer type has `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of `add`,
+  `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (and of the shifts, but not saturating), `abs`,
+  `pow`, `signum`, `div_trunc`, `rem_trunc`, `count_ones`, `leading_zeros`, `trailing_zeros`,
+  `is_power_of_two`, `next_power_of_two`, and `T.MIN`/`T.MAX`; `f32`/`f64` have `INF`, `NAN`,
+  `EPSILON`, `MIN` (`-MAX`) and `MAX`. `math.fma` is a fused multiply-add (`[STD-3]`).

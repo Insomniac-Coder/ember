@@ -262,6 +262,10 @@ ODRS = [
                 'answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type '
                 'parameter\'s associated type (Hardened_15)',
      '`[IFC-4]`, `[STD-21]`, `[STD-27]`'),
+    ('ODR-039', '`[STD-20]`\'s integer methods: `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of '
+                '`add`, `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (the shifts too, but not saturating), '
+                'built into the integer types; bit counts are `int`s; a float\'s `MIN` is `-MAX` (Hardened_16)',
+     '`[STD-20]`'),
 ]
 
 H5_HEAD = """
@@ -272,7 +276,7 @@ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021
 Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
-Hardened_14 adds ODR-037; Hardened_15 adds ODR-038.
+Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039.
 
 | ODR | Ruling | Rules |
 |---|---|---|

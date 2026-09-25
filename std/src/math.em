@@ -200,6 +200,11 @@ pub fn pow[T: Number](x: T, e: T) -> T.Real:
 pub fn hypot[T: Number](x: T, y: T) -> T.Real:
     return x.to_real().hypot(y.to_real())
 
+## `a * b + c` rounded once, not twice: a fused multiply-add, the same on
+## every target (`[STD-3]`). It is `a.mul_add(b, c)`, C's `fma`.
+pub fn fma[T: Number](a: T, b: T, c: T) -> T.Real:
+    return a.to_real().mul_add(b.to_real(), c.to_real())
+
 ## `1 / sqrt(x)`.
 pub fn rsqrt[T: Number](x: T) -> T.Real:
     return 1.0 / x.to_real().sqrt()

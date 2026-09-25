@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-039 | **CLOSED** — `[STD-20]`'s integer methods: `checked_`/`wrapping_`/`saturating_`/`overflowing_` for `add`, `sub`, `mul`, `floordiv`, `rem`, `pow`, `neg` (and the shifts, not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` | Standard library / numbers | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_16 |
 | ODR-038 | **CLOSED** — ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`, `f64` for an `f64`); `T.Name` names a type parameter's associated type | Standard library / math; interfaces | — | Owner ruling 2026-09-25, 0.9.9_Hardened_15 |
 | ODR-037 | **CLOSED** — `std.math.Float` (only `f32` and `f64`, `E2042`) is the bound of `[STD-21]`'s generic functions: it provides the operators, typed literals and the float methods; `PI`, `TAU` and `E` are untyped constants | Standard library / math | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_14 |
 | ODR-036 | **CLOSED** — a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`): text keys are `String`, and text in a `{…}` literal with no context makes `String`s | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
@@ -192,6 +193,80 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-039 — what exactly are `[STD-20]`'s integer methods and constants? — **CLOSED**
+
+    ID:        ODR-039
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_16
+    Category:  STANDARD LIBRARY / NUMBERS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_15.md [STD-20], [TYP-10], [TYP-28], [TYP-30]
+
+    Question:  `[STD-20]` names `checked_*`, `wrapping_*`, `saturating_*` and
+               `overflowing_*` "for each arithmetic operator", the bit counts,
+               `MIN` and `MAX`, and a float's `INF`, `NAN`, `EPSILON`, `MIN`,
+               `MAX`. Which operators, with what names? What does each form
+               return, and do at a zero divisor, a shift amount out of range or
+               a negative exponent? What type is a bit count? Which value is a
+               float's `MIN`?
+
+    Blocks implementation:            YES — none of the methods can be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Names.** (A) The operators Part III gives integers, named as their
+  operator interfaces' methods (Part IV §8): `add`, `sub`, `mul`, `floordiv`
+  (`//`), `rem` (`%`), `pow` (`**`), `neg` (unary `-`). (B) Rust's names:
+  `checked_div` beside Ember's `//` would leave it unclear whether it floors or
+  truncates, and `/` on integers is `E2240`. (C) `add`/`sub`/`mul` only: the
+  rule says each operator. **(A)**, plus the shifts `shl`/`shr` in the
+  checked, wrapping and overflowing forms, since `[TYP-10]` already names
+  `wrapping_shl`. A shift has no saturating form: its amount, not its value,
+  goes out of range.
+- **Where they live.** (a) Built into every integer type, as the float
+  methods are (`[STD-27]`): each is one machine operation (the runtime's
+  checked arithmetic, one bit-count instruction). (b) An `Integer` interface
+  in `std` with default methods written in Ember over a few primitives: a
+  new interface the spec does not have, and generic integer code does not
+  need it yet. **(a)**; (b) stays open for when generic integer code does.
+- **A float's `MIN`.** (i) The least finite value, `-MAX`, as an integer's
+  `MIN` is its least value and as `min()` would find it. (ii) The smallest
+  positive normal value, as C's `DBL_MIN` and Python's `sys.float_info.min`:
+  the same name meaning a different kind of bound on the next line of the
+  table. **(i)**.
+- **Bit counts.** `int` (Ember's type for counts and sizes, `[TYP-31]`) or
+  `u32` (Rust's). **`int`**.
+
+**Ruling.**
+- For each of `add`, `sub`, `mul`, `floordiv`, `rem`, `pow`, `neg`:
+  `checked_OP -> Option[T]` is `None` wherever the operator would panic (a
+  result out of range, a zero divisor, a negative exponent);
+  `wrapping_OP -> T` is the result modulo 2^N; `saturating_OP -> T` is the
+  nearest of `MIN` and `MAX`; `overflowing_OP -> (T, bool)` is the wrapping
+  result and whether it wrapped. The wrapping, saturating and overflowing
+  forms still panic on a zero divisor and a negative exponent. `rem` (floor
+  modulo) never overflows, so its forms differ only at a zero divisor.
+- `checked_shl`/`shr` (`None` for an amount outside `0 ≤ n < width`),
+  `wrapping_shl`/`shr` (the amount modulo the width) and
+  `overflowing_shl`/`shr` (that shift, and whether the amount was outside).
+- An operator method's other operand has the receiver's type; a shift amount
+  and an exponent may be any integer type, as for `<<` and `**`.
+- `abs` (panics at a signed `MIN`, as `abs(x)`; an unsigned value is its
+  own), `pow(e)` (`x ** e`), `signum` (`-1`, `0` or `1`), `div_trunc` and
+  `rem_trunc` (C's truncating `/` and `%`, panicking as `//` and `%` do).
+- `count_ones`, `leading_zeros`, `trailing_zeros` are `int`s counted over
+  the type's width; `is_power_of_two` is a positive value with one bit set;
+  `next_power_of_two` is the least power of two at or above the value (`1`
+  at or below `1`) and overflows past `MAX` (`[TYP-8]`).
+- `T.MIN` and `T.MAX` for every integer type, named through the type or an
+  alias (`int.MAX`). A float's `INF`, `NAN`, `EPSILON` (the gap between 1.0
+  and the next value), `MAX` (the greatest finite value) and `MIN` (the least
+  finite value, `-MAX`).
+- They are built into the scalar types, like the float methods; a method of
+  the same name that a program declares for the type is the one called.
 
 ---
 

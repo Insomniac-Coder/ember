@@ -16319,6 +16319,310 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// `[STD-20]` (ODR-039) — the integer methods, built into every integer
+    /// type as the float ones are (`[STD-27]`): each is one operation. The
+    /// `checked_`, `wrapping_`, `saturating_` and `overflowing_` families are
+    /// built on `overflowing_OP`, the result modulo 2^N and whether it wrapped
+    /// (`Builtin::IntOverflowing`; for `pow`, a square-and-multiply loop of
+    /// it). The receiver is evaluated once, then the argument.
+    fn synth_int_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let ty = receiver.ty;
+        let method = name.name.as_str();
+        let Some(kind) = IntMethod::named(method) else { unreachable!("the caller checked the name") };
+        let arity = kind.arity();
+        if args.len() != arity || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {arity} argument(s), found {}", args.len()));
+            return error;
+        }
+        let (bool_ty, int_ty) = (self.common.bool_, self.common.i64);
+        let signed = matches!(self.types.kind(ty), TyKind::Int(_));
+        let x = self.declare(None, ty, span);
+        let mut stmts = vec![Stmt::Let { local: x, init: Some(receiver) }];
+        // The argument: the receiver's type, or any integer type for a shift
+        // amount (`[TYP-10]`) and an exponent (`[TYP-30]`).
+        let mut y = None;
+        if let Some(arg) = args.first() {
+            let value = if kind.takes_any_integer() {
+                let value = self.synth_committed(&arg.value);
+                if !self.types.is_integral(value.ty) {
+                    if value.ty != self.common.error {
+                        let shown = self.types.display(value.ty);
+                        self.error(codes::E2020, arg.value.span, format!("`{method}` takes an integer, not `{shown}`"));
+                    }
+                    return error;
+                }
+                value
+            } else {
+                self.check_expr(&arg.value, ty)
+            };
+            let local = self.declare(None, value.ty, span);
+            y = Some((local, value.ty));
+            stmts.push(Stmt::Let { local, init: Some(value) });
+        }
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let int = |value: u128, ty| Expr { ty, kind: ExprKind::Int(value), span };
+        let binary = |op, lhs: Expr, rhs: Expr, ty| Expr { ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let minus_one = || Expr { ty, kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(int(1, ty)) }, span };
+        let (top, least) = (int_max(self.types, ty).unwrap_or(0), ember_types::signed_min_magnitude(self.types, ty));
+        let max = || int(top, ty);
+        let min = || match least {
+            Some(magnitude) => Expr { ty, kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(int(magnitude, ty)) }, span },
+            None => int(0, ty),
+        };
+        let other = || {
+            let (id, ty) = y.expect("a method with an argument");
+            local(id, ty)
+        };
+        let below_zero = |value: Expr| {
+            let value_ty = value.ty;
+            binary(BinOp::Lt, value, int(0, value_ty), bool_ty)
+        };
+        let value = match kind {
+            IntMethod::Abs if signed => {
+                let negated = binary(BinOp::Sub, int(0, ty), local(x, ty), ty);
+                self.if_value(below_zero(local(x, ty)), negated, local(x, ty), ty, span)
+            }
+            IntMethod::Abs => local(x, ty),
+            IntMethod::Signum => {
+                let positive = binary(BinOp::Gt, local(x, ty), int(0, ty), bool_ty);
+                let rest = if signed {
+                    self.if_value(below_zero(local(x, ty)), minus_one(), int(0, ty), ty, span)
+                } else {
+                    int(0, ty)
+                };
+                self.if_value(positive, int(1, ty), rest, ty, span)
+            }
+            IntMethod::Pow => self.power(local(x, ty), other(), &args[0].value, span),
+            IntMethod::DivTrunc => binary(BinOp::Div, local(x, ty), other(), ty),
+            IntMethod::RemTrunc => binary(BinOp::Rem, local(x, ty), other(), ty),
+            IntMethod::Bits(bits) => {
+                Expr { ty: int_ty, kind: ExprKind::Builtin { which: Builtin::IntBits(bits), args: vec![local(x, ty)] }, span }
+            }
+            // Positive with one bit set; `x - 1` is formed only when `x > 0`.
+            IntMethod::IsPowerOfTwo => {
+                let positive = binary(BinOp::Gt, local(x, ty), int(0, ty), bool_ty);
+                let below = binary(BinOp::Sub, local(x, ty), int(1, ty), ty);
+                let single = binary(BinOp::Eq, binary(BinOp::BitAnd, local(x, ty), below, ty), int(0, ty), bool_ty);
+                binary(BinOp::And, positive, single, bool_ty)
+            }
+            // The least power of two at or above `x`: `1 << bits`, where
+            // `bits` is how many bits `x - 1` needs. Past `MAX` it overflows
+            // (`[TYP-8]`).
+            IntMethod::NextPowerOfTwo => {
+                let width = ember_types::bit_width(self.types, ty).unwrap_or(64);
+                let fits = width - u64::from(signed);
+                let bits = self.declare(None, int_ty, span);
+                let below = binary(BinOp::Sub, local(x, ty), int(1, ty), ty);
+                let zeros = Expr {
+                    ty: int_ty,
+                    kind: ExprKind::Builtin { which: Builtin::IntBits(hir::IntBits::LeadingZeros), args: vec![below] },
+                    span,
+                };
+                let message = Expr {
+                    ty: self.common.str_,
+                    kind: ExprKind::Str("integer overflow in `next_power_of_two`".to_string()),
+                    span,
+                };
+                let shifted = Expr {
+                    ty,
+                    kind: ExprKind::Block {
+                        block: Block {
+                            stmts: vec![
+                                Stmt::Let { local: bits, init: Some(binary(BinOp::Sub, int(u128::from(width), int_ty), zeros, int_ty)) },
+                                Stmt::Expr(Expr {
+                                    ty: self.common.void,
+                                    kind: ExprKind::Builtin {
+                                        which: Builtin::Assert,
+                                        args: vec![binary(BinOp::Lt, local(bits, int_ty), int(u128::from(fits), int_ty), bool_ty), message],
+                                    },
+                                    span,
+                                }),
+                            ],
+                            span,
+                        },
+                        value: Box::new(binary(BinOp::Shl, int(1, ty), local(bits, int_ty), ty)),
+                    },
+                    span,
+                };
+                let small = binary(BinOp::Le, local(x, ty), int(1, ty), bool_ty);
+                self.if_value(small, int(1, ty), shifted, ty, span)
+            }
+            IntMethod::Family(family, op) => {
+                let pair = self.types.intern(TyKind::Tuple(vec![ty, bool_ty]));
+                // `checked_` refuses a zero divisor and a negative exponent
+                // before computing; the others panic there, as the
+                // operators do.
+                let refusal = match (family, op) {
+                    (IntFamily::Checked, IntFamilyOp::Op(hir::IntOp::FloorDiv | hir::IntOp::Rem)) => {
+                        Some(binary(BinOp::Eq, other(), int(0, ty), bool_ty))
+                    }
+                    (IntFamily::Checked, IntFamilyOp::Pow) if matches!(self.types.kind(other().ty), TyKind::Int(_)) => Some(below_zero(other())),
+                    _ => None,
+                };
+                let computed = match op {
+                    IntFamilyOp::Op(op) => {
+                        let mut operands = vec![local(x, ty)];
+                        if op != hir::IntOp::Neg {
+                            operands.push(other());
+                        }
+                        Expr { ty: pair, kind: ExprKind::Builtin { which: Builtin::IntOverflowing(op), args: operands }, span }
+                    }
+                    IntFamilyOp::Pow => self.overflowing_power(local(x, ty), other(), method, family != IntFamily::Checked, span),
+                };
+                let t = self.declare(None, pair, span);
+                let part = |index| Expr { ty: if index == 0 { ty } else { bool_ty }, kind: ExprKind::Field { base: Box::new(local(t, pair)), index }, span };
+                let answer = match family {
+                    IntFamily::Overflowing => local(t, pair),
+                    IntFamily::Wrapping => part(0),
+                    IntFamily::Checked => {
+                        let option = self.option_of(ty);
+                        let TyKind::Enum(option_id) = *self.types.kind(option) else { return error };
+                        let none = || Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
+                        let some = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![part(0)] }, span };
+                        self.if_value(part(1), none(), some, option, span)
+                    }
+                    IntFamily::Saturating => {
+                        let bound = match op {
+                            IntFamilyOp::Op(hir::IntOp::Add) if signed => self.if_value(below_zero(other()), min(), max(), ty, span),
+                            IntFamilyOp::Op(hir::IntOp::Sub) if signed => self.if_value(below_zero(other()), max(), min(), ty, span),
+                            IntFamilyOp::Op(hir::IntOp::Sub | hir::IntOp::Neg) if !signed => min(),
+                            IntFamilyOp::Op(hir::IntOp::Mul) if signed => {
+                                let differ = binary(BinOp::Ne, below_zero(local(x, ty)), below_zero(other()), bool_ty);
+                                self.if_value(differ, min(), max(), ty, span)
+                            }
+                            IntFamilyOp::Pow if signed => {
+                                let odd = binary(BinOp::Eq, binary(BinOp::BitAnd, other(), int(1, other().ty), other().ty), int(1, other().ty), bool_ty);
+                                let negative = binary(BinOp::And, below_zero(local(x, ty)), odd, bool_ty);
+                                self.if_value(negative, min(), max(), ty, span)
+                            }
+                            _ => max(),
+                        };
+                        self.if_value(part(1), bound, part(0), ty, span)
+                    }
+                };
+                let answer_ty = answer.ty;
+                let whole = Expr {
+                    ty: answer_ty,
+                    kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Let { local: t, init: Some(computed) }], span }, value: Box::new(answer) },
+                    span,
+                };
+                match refusal {
+                    Some(refused) => {
+                        let option = answer_ty;
+                        let TyKind::Enum(option_id) = *self.types.kind(option) else { return error };
+                        let none = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
+                        self.if_value(refused, none, whole, option, span)
+                    }
+                    None => whole,
+                }
+            }
+        };
+        Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// `[STD-20]` — `x ** e` as `(result modulo 2^N, whether any step
+    /// wrapped)`: `**`'s square-and-multiply loop with `overflowing_mul`. A
+    /// squaring is done only while bits of `e` remain, so it wraps only when
+    /// the true power does. A negative exponent panics when `refuse_negative`
+    /// (`checked_pow` refuses it before).
+    fn overflowing_power(&mut self, base: Expr, exponent: Expr, method: &str, refuse_negative: bool, span: Span) -> Expr {
+        let (ty, exponent_ty, bool_ty) = (base.ty, exponent.ty, self.common.bool_);
+        let pair = self.types.intern(TyKind::Tuple(vec![ty, bool_ty]));
+        let (result, factor, left, over) = (
+            self.declare(None, ty, span),
+            self.declare(None, ty, span),
+            self.declare(None, exponent_ty, span),
+            self.declare(None, bool_ty, span),
+        );
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let int = |value: u128, ty| Expr { ty, kind: ExprKind::Int(value), span };
+        let binary = |op, lhs: Expr, rhs: Expr, ty| Expr { ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let mut stmts = vec![
+            Stmt::Let { local: result, init: Some(int(1, ty)) },
+            Stmt::Let { local: factor, init: Some(base) },
+            Stmt::Let { local: left, init: Some(exponent) },
+            Stmt::Let { local: over, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) },
+        ];
+        if refuse_negative && matches!(self.types.kind(exponent_ty), TyKind::Int(_)) {
+            let message = Expr { ty: self.common.str_, kind: ExprKind::Str(format!("`{method}` with a negative exponent")), span };
+            stmts.push(Stmt::Expr(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin {
+                    which: Builtin::Assert,
+                    args: vec![binary(BinOp::Ge, local(left, exponent_ty), int(0, exponent_ty), bool_ty), message],
+                },
+                span,
+            }));
+        }
+        // `target = target * by`, noting a wrap.
+        let multiply = |this: &mut Self, target, by| {
+            let step = this.declare(None, pair, span);
+            let product = Expr {
+                ty: pair,
+                kind: ExprKind::Builtin { which: Builtin::IntOverflowing(hir::IntOp::Mul), args: vec![local(target, ty), local(by, ty)] },
+                span,
+            };
+            let part = |index, part_ty| Expr { ty: part_ty, kind: ExprKind::Field { base: Box::new(local(step, pair)), index }, span };
+            vec![
+                Stmt::Let { local: step, init: Some(product) },
+                Stmt::Assign { place: local(target, ty), value: part(0, ty) },
+                Stmt::Assign { place: local(over, bool_ty), value: binary(BinOp::BitOr, local(over, bool_ty), part(1, bool_ty), bool_ty) },
+            ]
+        };
+        let positive = || binary(BinOp::Gt, local(left, exponent_ty), int(0, exponent_ty), bool_ty);
+        let odd = binary(
+            BinOp::Eq,
+            binary(BinOp::BitAnd, local(left, exponent_ty), int(1, exponent_ty), exponent_ty),
+            int(1, exponent_ty),
+            bool_ty,
+        );
+        let into_result = multiply(self, result, factor);
+        let squared = multiply(self, factor, factor);
+        let body = vec![
+            Stmt::If { cond: odd, then_block: Block { stmts: into_result, span }, else_block: None },
+            Stmt::Assign {
+                place: local(left, exponent_ty),
+                value: binary(BinOp::Shr, local(left, exponent_ty), int(1, exponent_ty), exponent_ty),
+            },
+            Stmt::If { cond: positive(), then_block: Block { stmts: squared, span }, else_block: None },
+        ];
+        stmts.push(Stmt::While { cond: positive(), body: Block { stmts: body, span }, else_block: None });
+        let value = Expr { ty: pair, kind: ExprKind::TupleLit(vec![local(result, ty), local(over, bool_ty)]), span };
+        Expr { ty: pair, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// `[STD-20]` (ODR-039) — `i64.MAX`, `u8.MIN`, `int.MAX`, `f64.INF`,
+    /// `f32.EPSILON`: a constant of a scalar type, named through the type.
+    /// `None` when the type has no constant of that name.
+    fn scalar_constant(&mut self, ty: Ty, name: Symbol, span: Span) -> Option<Expr> {
+        let int = |value: u128| Expr { ty, kind: ExprKind::Int(value), span };
+        let float = |value: f64| Expr { ty, kind: ExprKind::Float(value), span };
+        let single = matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32));
+        match (self.types.kind(ty), name.as_str()) {
+            (TyKind::Int(_) | TyKind::Uint(_), "MAX") => Some(int(int_max(self.types, ty)?)),
+            (TyKind::Int(_), "MIN") => {
+                let magnitude = ember_types::signed_min_magnitude(self.types, ty)?;
+                Some(Expr { ty, kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(int(magnitude)) }, span })
+            }
+            (TyKind::Uint(_), "MIN") => Some(int(0)),
+            (TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F64), constant) => Some(float(match (constant, single) {
+                ("INF", _) => f64::INFINITY,
+                ("NAN", _) => f64::NAN,
+                ("EPSILON", true) => f64::from(f32::EPSILON),
+                ("EPSILON", false) => f64::EPSILON,
+                ("MAX", true) => f64::from(f32::MAX),
+                ("MAX", false) => f64::MAX,
+                // The least finite value, as an integer's `MIN` is its least
+                // value (ODR-039).
+                ("MIN", true) => f64::from(f32::MIN),
+                ("MIN", false) => f64::MIN,
+                _ => return None,
+            })),
+            _ => None,
+        }
+    }
+
     /// Whether `min`, `max` and `clamp` can order values of `ty` (`[TYP-37]`).
     fn totally_ordered(&self, ty: Ty) -> bool {
         match *self.types.kind(ty) {
@@ -18304,6 +18608,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
 
             ast::ExprKind::Field { base, name } => {
+                // `[STD-20]` (ODR-039) — `i64.MAX`, `f64.INF`: a constant named
+                // through a scalar type, unless a local has that name.
+                if let ast::ExprKind::Path { segments } = &base.kind
+                    && let [segment] = segments.as_slice()
+                    && self.lookup(segment.name).is_none()
+                    && let Some(scalar) = self.scalar_named(segment.name.as_str())
+                {
+                    if let Some(constant) = self.scalar_constant(scalar, name.name, span) {
+                        return constant;
+                    }
+                    let shown = self.types.display(scalar);
+                    self.error(codes::E1010, name.span, format!("`{shown}` has no constant `{}`", name.name));
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 // `[GRM-24]` — `math.PI`: a constant reached through a module.
                 if let ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } = &base.kind
                     && let Some(module) = self.namespace_named(base)
@@ -22828,6 +23146,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_float_method(receiver, name, args, span);
+        }
+        // `[STD-20]` (ODR-039) — an integer's methods, built in as a float's are.
+        if matches!(self.types.kind(receiver.ty), TyKind::Int(_) | TyKind::Uint(_))
+            && explicit.is_empty()
+            && IntMethod::named(name.name.as_str()).is_some()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            return self.synth_int_method(receiver, name, args, span);
         }
         // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
         // which generic code bounded by `Ord` uses.
@@ -30292,6 +30618,90 @@ fn attr_argument(attrs: &[ast::Attribute], name: &str) -> Option<Symbol> {
             ast::AttrArg::Named { .. } => None,
         })
     })
+}
+
+/// `[STD-20]` (ODR-039) — an integer method: the ones of their own, and the
+/// four families over the operators.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IntMethod {
+    Abs,
+    Pow,
+    Signum,
+    DivTrunc,
+    RemTrunc,
+    IsPowerOfTwo,
+    NextPowerOfTwo,
+    Bits(hir::IntBits),
+    Family(IntFamily, IntFamilyOp),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IntFamily {
+    Checked,
+    Wrapping,
+    Saturating,
+    Overflowing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IntFamilyOp {
+    Op(hir::IntOp),
+    Pow,
+}
+
+impl IntMethod {
+    fn named(name: &str) -> Option<IntMethod> {
+        if let Some(bits) = hir::IntBits::named(name) {
+            return Some(IntMethod::Bits(bits));
+        }
+        Some(match name {
+            "abs" => IntMethod::Abs,
+            "pow" => IntMethod::Pow,
+            "signum" => IntMethod::Signum,
+            "div_trunc" => IntMethod::DivTrunc,
+            "rem_trunc" => IntMethod::RemTrunc,
+            "is_power_of_two" => IntMethod::IsPowerOfTwo,
+            "next_power_of_two" => IntMethod::NextPowerOfTwo,
+            _ => {
+                let (prefix, rest) = name.split_once('_')?;
+                let family = match prefix {
+                    "checked" => IntFamily::Checked,
+                    "wrapping" => IntFamily::Wrapping,
+                    "saturating" => IntFamily::Saturating,
+                    "overflowing" => IntFamily::Overflowing,
+                    _ => return None,
+                };
+                let op = if rest == "pow" { IntFamilyOp::Pow } else { IntFamilyOp::Op(hir::IntOp::named(rest)?) };
+                // A shift has no saturating form: its amount, not its value,
+                // is what goes out of range.
+                if family == IntFamily::Saturating && matches!(op, IntFamilyOp::Op(hir::IntOp::Shl | hir::IntOp::Shr)) {
+                    return None;
+                }
+                IntMethod::Family(family, op)
+            }
+        })
+    }
+
+    fn arity(self) -> usize {
+        match self {
+            IntMethod::Abs
+            | IntMethod::Signum
+            | IntMethod::IsPowerOfTwo
+            | IntMethod::NextPowerOfTwo
+            | IntMethod::Bits(_)
+            | IntMethod::Family(_, IntFamilyOp::Op(hir::IntOp::Neg)) => 0,
+            _ => 1,
+        }
+    }
+
+    /// A shift amount (`[TYP-10]`) and an exponent (`[TYP-30]`) may be any
+    /// integer type; every other argument has the receiver's.
+    fn takes_any_integer(self) -> bool {
+        matches!(
+            self,
+            IntMethod::Pow | IntMethod::Family(_, IntFamilyOp::Pow | IntFamilyOp::Op(hir::IntOp::Shl | hir::IntOp::Shr))
+        )
+    }
 }
 
 /// An integer written directly, with an optional leading `-`. Enough for a

@@ -10728,10 +10728,10 @@ the running narrative behind it.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_15.md`,
-  pinned in `docs/spec-source/development-target.json`. The spec's working
-  sources are `tasks/spec-0.9.9/parts/`; `parts-h15/` is frozen.
-* **Next numbers:** ODR-039, D-312, ADR-049.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_16.md`
+  (ODR-039), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h16/` is frozen.
+* **Next numbers:** ODR-040, D-313, ADR-049.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10817,6 +10817,20 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     `adopt_literal` fits a negated literal as one constant. The backend prints
     narrow integer constants through `int_literal`, a signed least value as
     `(-MAX - 1)`.
+* **Then A2: `[STD-20]` and `[STD-3]` (ODR-039, Hardened_16).** The integer
+  methods are built into the integer types as the float ones are
+  (`synth_int_method`, table `IntMethod` in `ember_typeck`). One primitive,
+  `hir::Builtin::IntOverflowing(IntOp)`, gives `(result modulo 2^N, wrapped?)`;
+  MIR computes it in place (`lower_int_overflowing`: the checked-arithmetic
+  statement without its assertion, a zero divisor still panicking; a shift
+  masks its amount and flags one outside `0 ≤ n < width`). The `checked_`,
+  `wrapping_` and `saturating_` forms are HIR built on it; the `pow` forms are
+  `**`'s square-and-multiply loop over `overflowing_mul`
+  (`overflowing_power`). Bit counts are `hir::Builtin::IntBits`, the
+  runtime's `ember_count_ones`/`leading_zeros`/`trailing_zeros` (and their
+  `u128` forms). `i64.MAX`, `f64.EPSILON` and the rest are `scalar_constant`,
+  reached from a `Field` expression whose base names a scalar type (a local
+  of that name wins). `math.fma` is in `std/src/math.em`.
 
 **The owner's standing instructions (all still in force)**
 
@@ -11054,11 +11068,8 @@ in `docs/AUTOPILOT.md` §2):
 
 1. ~~D-272, so `i128` and `u128` reach C; then add both to `Number` in `std/src/math.em`.~~
    Done 2026-09-26.
-2. `[STD-20]`: the float constants (`f64.INF`, `NAN`, `EPSILON`, `MIN`, `MAX`: an associated
-   constant on a scalar type, not built yet) and the integer methods (`abs`, `pow`, `signum`,
-   `div_trunc`, `rem_trunc`, `checked_*`, `wrapping_*`, `saturating_*`, `overflowing_*`,
-   `count_ones`, `leading_zeros`, `trailing_zeros`, `is_power_of_two`, `next_power_of_two`, `MIN`,
-   `MAX`); `math.fma` (`[STD-3]`).
+2. ~~`[STD-20]`: the float constants and the integer methods; `math.fma` (`[STD-3]`).~~ Done
+   2026-09-26 (ODR-039, Hardened_16).
 3. The operator interfaces of Part IV §8 (`Add[Rhs = Self]` with `type Output`, likewise `Sub`,
    `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, the bit operators and the `…Assign`
    forms), with a bound's associated-type binding (`Add[Output = T]`) and every number type
