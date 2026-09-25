@@ -23,7 +23,7 @@ use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
 use ember_span::{SourceMap, Symbol};
-use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, IntTy, StructId, Ty, TyKind, TypeTable, UintTy};
+use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, IntTy, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Output {
@@ -548,21 +548,30 @@ impl Emitter<'_> {
                         let (none, some) = (&def.variants[0], &def.variants[1]);
                         let elem = some.fields[0].ty;
                         let (option, elem_c) = (self.c_type(ty), self.c_type(elem));
-                        (
-                            format!("static {option} {symbol}({RT}vec* v)"),
+                        let last = format!("(unsigned char*)v->ptr + v->len * sizeof({elem_c}), sizeof({elem_c})");
+                        // `[TYP-13]` — a niche `Option` is its payload, and
+                        // its `None` is zero bytes.
+                        let body = if self.types.option_niche(id).is_some() {
+                            vec![
+                                format!("{option} r;"),
+                                "memset(&r, 0, sizeof r);".to_string(),
+                                "if (v->len == 0) return r;".to_string(),
+                                "v->len -= 1;".to_string(),
+                                format!("memcpy(&r, {last});"),
+                                "return r;".to_string(),
+                            ]
+                        } else {
                             vec![
                                 format!("{option} r;"),
                                 "memset(&r, 0, sizeof r);".to_string(),
                                 format!("if (v->len == 0) {{ r.tag = {}; return r; }}", none.discriminant),
                                 "v->len -= 1;".to_string(),
-                                format!(
-                                    "memcpy(&r.payload.{}.{}, (unsigned char*)v->ptr + v->len * sizeof({elem_c}), sizeof({elem_c}));",
-                                    some.name, some.fields[0].name
-                                ),
+                                format!("memcpy(&r.payload.{}.{}, {last});", some.name, some.fields[0].name),
                                 format!("r.tag = {};", some.discriminant),
                                 "return r;".to_string(),
-                            ],
-                        )
+                            ]
+                        };
+                        (format!("static {option} {symbol}({RT}vec* v)"), body)
                     }
                     ArrayHelper::Remove => {
                         let c = self.c_type(ty);
@@ -955,7 +964,7 @@ impl Emitter<'_> {
                             format!("{}.", self.debug_type_name(def.name.as_str(), def.origin.as_ref()))
                         };
                         let mut arms = Vec::new();
-                        for variant in &def.variants {
+                        for (variant_index, variant) in def.variants.iter().enumerate() {
                             let mut parts = vec![text(&format!("{prefix}{}", variant.name))];
                             if !variant.fields.is_empty() {
                                 parts.push(text("("));
@@ -968,7 +977,7 @@ impl Emitter<'_> {
                                     if !field.name.as_str().starts_with('_') {
                                         parts.push(text(&format!("{}=", field.name)));
                                     }
-                                    let member = format!("v->payload.{}.{}", variant.name, field.name);
+                                    let member = self.enum_member(id, "*v", variant_index, i);
                                     parts.push(self.debug_stmt("out", &member, field.ty));
                                 }
                                 parts.push(text(")"));
@@ -976,7 +985,7 @@ impl Emitter<'_> {
                             arms.push(format!("case {}: {} break;", variant.discriminant, parts.join(" ")));
                         }
                         // A unit-only enum is its tag.
-                        let tag = if def.is_unit_only() { "*v" } else { "v->tag" };
+                        let tag = if def.is_unit_only() { "*v".to_string() } else { self.enum_tag(id, "*v") };
                         format!("switch ({tag}) {{ {} default: break; }}", arms.join(" "))
                     }
                     _ => unreachable!("[TYP-39] Display functions are requested only for aggregates"),
@@ -1084,21 +1093,24 @@ impl Emitter<'_> {
                     TyKind::Enum(id) => {
                         let def = self.types.enum_def(id).clone();
                         let mut arms = Vec::new();
-                        for variant in &def.variants {
+                        for (variant_index, variant) in def.variants.iter().enumerate() {
                             let parts: Vec<String> = variant
                                 .fields
                                 .iter()
-                                .map(|f| {
-                                    let member = format!("payload.{}.{}", variant.name, f.name);
-                                    self.eq_expr(&format!("a.{member}"), &format!("b.{member}"), f.ty)
+                                .enumerate()
+                                .map(|(field_index, f)| {
+                                    let a = self.enum_member(id, "a", variant_index, field_index);
+                                    let b = self.enum_member(id, "b", variant_index, field_index);
+                                    self.eq_expr(&a, &b, f.ty)
                                 })
                                 .collect();
                             if !parts.is_empty() {
                                 arms.push(format!("case {}: return {};", variant.discriminant, conjunction(parts)));
                             }
                         }
+                        let (tag_a, tag_b) = (self.enum_tag(id, "a"), self.enum_tag(id, "b"));
                         format!(
-                            "if (a.tag != b.tag) return 0; switch (a.tag) {{ {} default: return 1; }}",
+                            "if ({tag_a} != {tag_b}) return 0; switch ({tag_a}) {{ {} default: return 1; }}",
                             arms.join(" ")
                         )
                     }
@@ -2283,11 +2295,11 @@ impl Emitter<'_> {
             }
             TyKind::Enum(id) => {
                 let mut arms = Vec::new();
-                for variant in &self.types.enum_def(*id).variants {
+                for (variant_index, variant) in self.types.enum_def(*id).variants.iter().enumerate() {
                     let mut lines = Vec::new();
-                    for nested in &variant.fields {
+                    for (field_index, nested) in variant.fields.iter().enumerate() {
                         self.debug_edge_lines(
-                            &format!("({access}).payload.{}.{}", variant.name, nested.name),
+                            &self.enum_member(*id, access, variant_index, field_index),
                             nested.ty,
                             field,
                             None,
@@ -2305,7 +2317,7 @@ impl Emitter<'_> {
                     }
                 }
                 if !arms.is_empty() {
-                    out.push(format!("switch (({access}).tag) {{ {} default: break; }}", arms.join(" ")));
+                    out.push(format!("switch ({}) {{ {} default: break; }}", self.enum_tag(*id, access), arms.join(" ")));
                 }
             }
             TyKind::Tuple(items) => {
@@ -2549,6 +2561,10 @@ impl Emitter<'_> {
                 let def = self.types.enum_def(id);
                 if def.is_unit_only() {
                     return Definition::Alias(self.c_type(def.repr));
+                }
+                // `[TYP-13]` — an `Option` with a niche is its payload.
+                if let Some(niche) = self.types.option_niche(id) {
+                    return Definition::Alias(self.c_type(niche.payload));
                 }
                 let mut members = vec![format!("{} tag", self.c_type(def.repr))];
                 let mut union = vec!["union {".to_string()];
@@ -2837,11 +2853,11 @@ impl Emitter<'_> {
                     return;
                 }
                 let mut arms = Vec::new();
-                for variant in def.variants.iter() {
+                for (variant_index, variant) in def.variants.iter().enumerate() {
                     let mut inner = Vec::new();
-                    for field in variant.fields.iter().rev() {
+                    for (field_index, field) in variant.fields.iter().enumerate().rev() {
                         if self.types.needs_drop(field.ty) {
-                            let member = format!("{access}.payload.{}.{}", variant.name, field.name);
+                            let member = self.enum_member(*id, access, variant_index, field_index);
                             self.drop_lines(&member, field.ty, &mut inner);
                         }
                     }
@@ -2855,7 +2871,8 @@ impl Emitter<'_> {
                 }
                 if !arms.is_empty() {
                     out.push(format!(
-                        "switch ({access}.tag) {{ {} default: break; }}",
+                        "switch ({}) {{ {} default: break; }}",
+                        self.enum_tag(*id, access),
                         arms.join(" ")
                     ));
                 }
@@ -3341,14 +3358,11 @@ impl Emitter<'_> {
                     })
                     .collect();
                 let mut arms = Vec::new();
-                for (discriminant, variant, fields) in variants {
+                for (variant_index, (discriminant, _, fields)) in variants.into_iter().enumerate() {
                     let mut retains = Vec::new();
-                    for (name, field_ty) in fields {
-                        self.retain_lines_for_value(
-                            &format!("{access}.payload.{variant}.{name}"),
-                            field_ty,
-                            &mut retains,
-                        );
+                    for (field_index, (_, field_ty)) in fields.into_iter().enumerate() {
+                        let member = self.enum_member(*id, access, variant_index, field_index);
+                        self.retain_lines_for_value(&member, field_ty, &mut retains);
                     }
                     if !retains.is_empty() {
                         arms.push(format!(
@@ -3359,7 +3373,8 @@ impl Emitter<'_> {
                 }
                 if !arms.is_empty() {
                     out.push(format!(
-                        "switch ({access}.tag) {{ {} default: break; }}",
+                        "switch ({}) {{ {} default: break; }}",
+                        self.enum_tag(*id, access),
                         arms.join(" ")
                     ));
                 }
@@ -4983,7 +4998,9 @@ impl Emitter<'_> {
         for projection in &place.projection {
             match projection {
                 Projection::Field(index) => match (at.variant, self.types.kind(at.ty)) {
-                    // After a downcast, a field is that variant's payload.
+                    // After a downcast, a field is that variant's payload; a
+                    // niche `Option`'s `Some` holds it as the whole value.
+                    (Some(_), TyKind::Enum(id)) if self.types.option_niche(*id).is_some() => {}
                     (Some(variant), TyKind::Enum(id)) => {
                         let def = self.types.enum_def(*id);
                         let variant = &def.variants[variant];
@@ -5387,9 +5404,7 @@ impl Emitter<'_> {
                 let read = self.place_in(place, body);
                 let ty = self.place_ty(place, body);
                 match self.types.kind(ty) {
-                    TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => {
-                        format!("{read}.tag")
-                    }
+                    TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => self.enum_tag(*id, &read),
                     _ => read,
                 }
             }
@@ -5425,6 +5440,12 @@ impl Emitter<'_> {
     /// Designated initialisers name both, so nothing is left uninitialised
     /// and `-Wmissing-field-initializers` has nothing to say.
     fn enum_value(&self, id: EnumId, variant: usize, values: &[String]) -> String {
+        if let Some(niche) = self.types.option_niche(id) {
+            if variant == niche.some {
+                return values[0].clone();
+            }
+            return self.niche_none(&niche);
+        }
         let def = self.types.enum_def(id);
         let name = c_name(&def.name.to_string());
         let tag = def.variants[variant].discriminant;
@@ -5439,6 +5460,53 @@ impl Emitter<'_> {
             def.variants[variant].name,
             values.join(", ")
         )
+    }
+
+    /// The discriminant of the payload enum at `access`. `[TYP-13]` — an
+    /// `Option` with a niche has no tag: it is `None` when its payload
+    /// holds the niche.
+    fn enum_tag(&self, id: EnumId, access: &str) -> String {
+        let Some(niche) = self.types.option_niche(id) else {
+            return format!("({access}).tag");
+        };
+        let variants = &self.types.enum_def(id).variants;
+        format!(
+            "({} ? {} : {})",
+            self.niche_holds(&niche, access),
+            variants[niche.none].discriminant,
+            variants[niche.some].discriminant
+        )
+    }
+
+    /// One field of one variant of the payload enum at `access`. A niche
+    /// `Option`'s `Some` holds its one field as the whole value.
+    fn enum_member(&self, id: EnumId, access: &str, variant: usize, field: usize) -> String {
+        if self.types.option_niche(id).is_some() {
+            return format!("({access})");
+        }
+        let variant = &self.types.enum_def(id).variants[variant];
+        format!("({access}).payload.{}.{}", variant.name, variant.fields[field].name)
+    }
+
+    /// True when the niche `Option` at `access` is `None`: `NonZero`'s one
+    /// field is 0, which no `NonZero` holds (`[STD-4]`).
+    fn niche_holds(&self, niche: &Niche, access: &str) -> String {
+        let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
+            unreachable!("a niche is a NonZero's")
+        };
+        let field = &self.types.struct_def(id).fields[0];
+        let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
+        self.eq_expr(&format!("({access}).{}", field.name), &zero, field.ty)
+    }
+
+    /// A niche `Option`'s `None`: its payload holding the niche.
+    fn niche_none(&self, niche: &Niche) -> String {
+        let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
+            unreachable!("a niche is a NonZero's")
+        };
+        let field = &self.types.struct_def(id).fields[0];
+        let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
+        format!("(({}){{ .{} = {zero} }})", self.c_type(niche.payload), field.name)
     }
 
     // -- types ----------------------------------------------------------------

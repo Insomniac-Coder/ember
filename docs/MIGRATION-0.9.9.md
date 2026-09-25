@@ -789,3 +789,19 @@ The next number is ODR-027.
   `std/src/math/mod.em` (`[MOD-1]`). Fixed on the way: a negative literal `const` (`-5`, `-1.5`)
   compiles (D-327), and a `const` may bound a range type (D-329). Found and open: a method without
   `pub` is callable from other modules (D-328).
+* **2026-09-26 — the compiler's stack (D-330, ADR-055).** The compiler runs on a thread with a 256 MB
+  stack on every host: an expression nested more than about fifteen levels deep, which overflowed
+  the stack on Windows, compiles there as on Linux. Open: past about four thousand levels it still stops without a diagnostic (D-331).
+* **2026-09-26 — `NonZero[T]` (`[STD-4]`, ODR-047; Hardened_22; ADR-056).** `from std.core import
+  NonZero`, then `NonZero.new(v)`: `None` for 0, else `Some`; `n.get()` is the integer. `x // d` and
+  `x % d` with `d: NonZero[T]` and `x: T` have no zero check, and `Option[NonZero[T]]` is the size of
+  `T`. `T` is an integer type; `NonZero[f64]` is `E2040`. Fixed on the way:
+  * `i128`, `u128` and `f16` implement `Default` (D-332).
+  * `Self` inside another type, `Option[Self]`, in a generic type's methods (D-333).
+  * `Pair.make(5)` finds `Pair`'s arguments as a generic function's are found (D-334).
+  * A generic type's bound brings its parents (D-335), and a missed bound is one error (D-337).
+  * A `@derive(Clone)` over a field with a `drop` is refused however early an instance is made
+    (D-336).
+  * `x.rem(y)` on a number stays `%` beside another instance of `Rem` (D-338).
+  * The standard library's unused extensions of the built-in types are no longer emitted into every
+    program (D-339).

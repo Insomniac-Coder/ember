@@ -4907,6 +4907,19 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Whether a divisor is known not to be zero: an integer constant other
+    /// than 0, or the value inside a `NonZero` (`[STD-4]`).
+    fn nonzero_divisor(&self, rhs: &hir::Expr) -> bool {
+        match &rhs.kind {
+            hir::ExprKind::Int(value) => *value != 0,
+            hir::ExprKind::Unary { op: hir::UnOp::Neg, operand } => {
+                matches!(operand.kind, hir::ExprKind::Int(value) if value != 0)
+            }
+            hir::ExprKind::Field { base, index: 0 } => self.types.is_nonzero(base.ty),
+            _ => false,
+        }
+    }
+
     fn lower_checked_binary(
         &mut self,
         place: Place,
@@ -4921,25 +4934,29 @@ impl<'a> Builder<'a> {
 
         match op {
             BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem => {
-                // The divisor is zero-checked whatever the policy says.
-                let is_zero = self.temp(self.bool_ty, span);
-                self.push(StmtKind::Assign {
-                    place: Place::local(is_zero),
-                    rvalue: Rvalue::BinaryOp {
-                        op: BinOp::Eq,
-                        lhs: rhs_op.clone(),
-                        rhs: Operand::Const(Const::Int { value: 0, ty }),
-                    },
-                });
-                let after_zero = self.new_block();
-                self.terminate(Terminator::Assert {
-                    cond: Operand::Copy(Place::local(is_zero)),
-                    expected: false,
-                    msg: AssertKind::DivisionByZero,
-                    next: after_zero,
-                    span,
-                });
-                self.current = after_zero;
+                // The divisor is zero-checked whatever the policy says, unless
+                // it cannot be zero: a nonzero constant, or a `NonZero`'s
+                // value (`[STD-4]`, `[EFF-16]`: the check is removed entirely).
+                if !self.nonzero_divisor(rhs) {
+                    let is_zero = self.temp(self.bool_ty, span);
+                    self.push(StmtKind::Assign {
+                        place: Place::local(is_zero),
+                        rvalue: Rvalue::BinaryOp {
+                            op: BinOp::Eq,
+                            lhs: rhs_op.clone(),
+                            rhs: Operand::Const(Const::Int { value: 0, ty }),
+                        },
+                    });
+                    let after_zero = self.new_block();
+                    self.terminate(Terminator::Assert {
+                        cond: Operand::Copy(Place::local(is_zero)),
+                        expected: false,
+                        msg: AssertKind::DivisionByZero,
+                        next: after_zero,
+                        span,
+                    });
+                    self.current = after_zero;
+                }
 
                 // T.MIN / -1 is not representable. The checked helper reports
                 // it; unsigned division cannot overflow at all.

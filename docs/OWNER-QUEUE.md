@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-047 | **CLOSED** — `NonZero[T]` is `std.core`'s, imported by name; `get()` reads it and its field and memberwise constructor are private; `T` is one of the integer types (a private `std.core.Integer`); `x // d` and `x % d` take a `NonZero` of `x`'s type and answer in it, still panicking on overflow; `Option[NonZero[T]]` keeps `None` as 0 | Standard library / types | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_22 |
 | ODR-046 | **CLOSED** — `std.math.det`'s functions take `f32` or `f64` and answer in it (an `f32`'s result is the `f64` one rounded once), within one unit in the last place (`atan2` 1.3); an integer is converted by the program | Standard library / determinism | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_21 |
 | ODR-045 | **CLOSED** — a type's `const` is named `T.NAME` (`Self.NAME` inside it) and is private to its module unless `pub`; constants name one another in any order, one whose value depends on itself is `E6001`, and a panic while one is evaluated is `E6004` | Language / declarations | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
 | ODR-044 | **CLOSED** — `[CG-C-11]`'s pragma is emitted where the compiler implements it (clang's `#pragma STDC FP_CONTRACT OFF`, MSVC's `#pragma fp_contract(off)`); gcc, which does not and warns about it, has `-ffp-contract=off` alone | Implementation / C backend | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
@@ -200,6 +201,59 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-047 — `NonZero[T]`: where it lives, what it offers, how it divides — **CLOSED**
+
+    ID:        ODR-047
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_22
+    Category:  STANDARD LIBRARY / TYPES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_21.md [STD-4], [TYP-13], [EFF-16], [MOD-5]
+
+    Question:  `[STD-4]` gives a `NonZero[T]` for each integer `T`: `Copy`, with
+               a niche, made by `NonZero.new(v) -> Option[NonZero[T]]`, and
+               dividing by one needs no zero check. Is it in the prelude? How
+               is the integer read back? How are the integer types said, and
+               what does another `T` get? Which division takes a `NonZero`
+               divisor, and what does it answer? What else does it implement?
+
+    Blocks implementation:            YES — the API
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Where.** (a) `std.core`, imported: `from std.core import NonZero`.
+  (b) The prelude. `[MOD-5]`'s list is the only definition of the prelude
+  and does not name it, and the table of modules puts it in `std.core`.
+  **(a)**.
+- **Reading it.** (1) `get()`, as Rust's `NonZeroU32::get`. (2) A public
+  field, which could be written: a 0 written there breaks the niche.
+  **(1)**, with the field and the memberwise constructor private to
+  `std.core`, so `NonZero.new` is the only way to make one.
+- **Which `T`.** (i) A private interface, `std.core.Integer`, that
+  `std.core` implements for the twelve integer types and for nothing else;
+  its parents are `Hash` and `Default`, which `new` and the derived `Hash`
+  use. (ii) A public `Integer`, which any type could join, niche or not.
+  **(i)**: the memberships are written in `std`, and `NonZero[f64]` is
+  `E2040` naming `Integer`.
+- **Division.** (A) `x // d` and `x % d` for `x: T` and `d: NonZero[T]`,
+  answering a `T`: `std.core` implements `FloorDiv[NonZero[T]]` and
+  `Rem[NonZero[T]]` for each integer type, as ordinary implementations
+  whose bodies divide by the field. Only the zero check goes: `MIN // -1`
+  still overflows and panics (`[TYP-8]`). (B) As (A), and also
+  `NonZero // NonZero`. **(A)**: the rule is about the divisor.
+- **The rest.** `Copy`, `Eq` and `Hash` are derived. Its `Debug` is derived
+  per `[STR-5]`, `NonZero(value=5)`, as every standard struct's is; whether
+  the standard types get text of their own is settled when `std` declares
+  `Display` (the handoff's B list, item 5). `Ord` waits for `@derive(Ord)`.
+- **The niche.** `Option[NonZero[T]]` is represented as `T` with `None` as
+  0 (ADR-056). The compiler knows `NonZero` by its declaration's name,
+  `std.core.NonZero`, as it knows `Option`; `[TYP-13]`'s list of niches
+  names it.
+
+**Ruling.** (a), (1), (i), (A). `[STD-4]` and `[TYP-13]` say so.
 
 ---
 

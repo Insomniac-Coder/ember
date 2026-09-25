@@ -294,6 +294,10 @@ ODRS = [
     ('ODR-046', '`std.math.det`\'s functions take `f32` or `f64` and answer in it, an `f32` result being the `f64` '
                 'one rounded once; each within one unit in the last place (`atan2` 1.3); no integers (Hardened_21)',
      '`[DET-4]`'),
+    ('ODR-047', '`NonZero[T]` is `std.core`\'s, read with `get()`, its field and constructor private; `T` is an '
+                'integer type, through a private `Integer`; `x // d` and `x % d` take a `NonZero` of `x`\'s type '
+                'and answer in it (Hardened_22)',
+     '`[STD-4]`, `[TYP-13]`'),
 ]
 
 H5_HEAD = """
@@ -306,7 +310,7 @@ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
 Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
-Hardened_21 adds ODR-046.
+Hardened_21 adds ODR-046; Hardened_22 adds ODR-047.
 
 | ODR | Ruling | Rules |
 |---|---|---|

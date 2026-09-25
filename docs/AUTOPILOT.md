@@ -113,6 +113,11 @@ The handoff's start-here subsection keeps this list current: tick items off ther
 - **Commit and push to `main` about every five features**, and always before stopping, only after
   the quick check, the full suite and every gate pass. End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **Every commit carries both identities** (the owner, 2026-09-26: "I actually want both
+  identities to be carried from here after"): the owner as author and Claude as committer,
+  `git commit --author="Gunslinger <ism1988@live.com>"` with the committer
+  `Claude <noreply@anthropic.com>` (the session's `git config`), and the `Co-Authored-By` line
+  above. Earlier commits stay as they are: no history is rewritten.
 - **Then watch CI** with the handoff's `curl` recipe: one watcher, polling every 120 s (the
   unauthenticated GitHub API allows 60 requests an hour). If a job fails, read its annotation
   (recipe in the handoff), fix the cause and push again. Never end a session with `main` red.

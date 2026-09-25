@@ -1824,3 +1824,31 @@ Windows.
 - **Not done.** A limit on nesting with a diagnostic (D-331) needs the
   specification to state one. Growing the stack on demand needs a dependency
   or platform code at each recursion point.
+
+## ADR-056 — `Option[NonZero[T]]` is a `T`, and a `NonZero` divisor has no zero check
+
+**Decided 2026-09-26, with ODR-047.** `[STD-4]` and `[TYP-13]` fix what a
+program sees: an `Option[NonZero[T]]` the size of `T`, and no check for zero
+when dividing by a `NonZero`. This is how.
+
+- **Which `Option`s.** `TypeTable::option_niche` answers for an `Option`
+  instance (a `None` without fields and a `Some` with one) whose payload is
+  `std.core.NonZero[T]`, known by its declaration's name. `[TYP-13]`'s other
+  niches (handles, `Box`, `ref`, `bool`, `char`, ranges, enums with unused
+  discriminants) are not done; `option_niche` is where each joins.
+- **Layout.** The `Option`'s C type is a `typedef` of the payload's struct.
+  `Some(v)` is `v`, and `None` is the payload with its field 0. The
+  discriminant is `(x.value == 0) ? None : Some`, compared through `eq_expr`,
+  so `i128` and `u128` use the runtime's helpers where MSVC has no 128-bit
+  integer. Every place codegen reads a tag or a variant's field goes through
+  `enum_tag` and `enum_member`: construction, the discriminant, a field after
+  a downcast, printing, equality, drop glue, retains, debug edges, and
+  `Array.pop`'s helper, whose `None` is zero bytes.
+- **The division.** `std.core`'s implementations divide by the field,
+  `self // d.value`. MIR lowering leaves out the zero check for a divisor
+  that is a `NonZero`'s field (`nonzero_divisor`), and for an integer
+  constant other than 0, which `[EFF-15]`'s table also names (the C compiler
+  folded that check away before). The overflow check stays: `MIN // -1`
+  panics (`[TYP-8]`).
+- **Not done.** `NonZero` has no `Ord` until `@derive(Ord)` exists, and prints
+  as a struct, `NonZero(value=5)`, until `std` declares `Display`.

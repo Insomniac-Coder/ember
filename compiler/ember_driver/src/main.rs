@@ -98,10 +98,20 @@ fn compile_command(args: &[String]) -> ExitCode {
 /// Direct calls and function constants form the current executable call graph.
 /// Standard `drop` bodies remain roots because drop glue names them from type
 /// information rather than through an explicit MIR call terminator.
-fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
+///
+/// A body is `std`'s when its symbol is in `std`'s namespace or it was written
+/// in one of `std`'s files: `std.core`'s `extend i8 implements
+/// FloorDiv[NonZero[i8]]` makes `i8_floordiv`, named after `i8`, and before
+/// D-339 each such body was emitted into every program.
+fn retain_referenced_standard_bodies(
+    bodies: &mut Vec<ember_mir::Body>,
+    standard_files: &std::collections::BTreeSet<ember_span::FileId>,
+) {
     use std::collections::{BTreeMap, BTreeSet};
 
     let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let standard =
+        |body: &ember_mir::Body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file);
     let by_symbol: BTreeMap<String, usize> = bodies
         .iter()
         .enumerate()
@@ -111,9 +121,8 @@ fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
     let mut pending = Vec::new();
 
     for body in bodies.iter() {
-        let standard = body.symbol.starts_with(&std_prefix);
         let drop_glue = body.name == "drop" || body.name.ends_with(".drop");
-        if (!standard || drop_glue) && keep.insert(body.symbol.clone()) {
+        if (!standard(body) || drop_glue) && keep.insert(body.symbol.clone()) {
             pending.push(body.symbol.clone());
         }
     }
@@ -131,7 +140,7 @@ fn retain_referenced_standard_bodies(bodies: &mut Vec<ember_mir::Body>) {
         }
     }
 
-    bodies.retain(|body| !body.symbol.starts_with(&std_prefix) || keep.contains(&body.symbol));
+    bodies.retain(|body| !standard(body) || keep.contains(&body.symbol));
 }
 
 fn verify_callable_regions_or_panic(bodies: &[ember_mir::Body], types: &TypeTable) {
@@ -2104,7 +2113,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // resolution, but their unused implementation bodies are not part of an
     // executable's observable generated program.
     if program.main.is_some() {
-        retain_referenced_standard_bodies(&mut bodies);
+        let standard_files = modules
+            .iter()
+            .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+            .map(|loaded| loaded.module.span.file)
+            .collect();
+        retain_referenced_standard_bodies(&mut bodies, &standard_files);
     }
     verify_callable_regions_or_panic(&bodies, &types);
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend

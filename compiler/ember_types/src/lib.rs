@@ -488,6 +488,15 @@ pub struct CommonTypes {
 /// reaches it, so a substitution over one cannot collide with `Self`.
 pub const SELF_PARAM: u32 = u32::MAX;
 
+/// `[TYP-13]` — how an `Option` keeps `None` in its payload's niche: the
+/// variants' indices, and the payload type, which is the `Option`'s layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Niche {
+    pub none: usize,
+    pub some: usize,
+    pub payload: Ty,
+}
+
 impl TypeTable {
     pub fn new() -> (TypeTable, CommonTypes) {
         let mut table = TypeTable {
@@ -1226,6 +1235,29 @@ impl TypeTable {
 
     pub fn is_copy(&self, ty: Ty) -> bool {
         self.copy_with(ty, false)
+    }
+
+    /// `[TYP-13]`, `[STD-4]` — an `Option[T]` that keeps `None` inside a
+    /// `T`, when `T` has a niche: a value no `T` ever holds. So far the one
+    /// such `T` is `NonZero[T]`, whose niche is 0.
+    pub fn option_niche(&self, id: EnumId) -> Option<Niche> {
+        let def = self.enum_def(id);
+        if !def.name.as_str().starts_with("Option_") || def.variants.len() != 2 {
+            return None;
+        }
+        let none = def.variants.iter().position(|v| v.fields.is_empty())?;
+        let some = def.variants.iter().position(|v| v.fields.len() == 1)?;
+        let payload = def.variants[some].fields[0].ty;
+        self.is_nonzero(payload).then_some(Niche { none, some, payload })
+    }
+
+    /// `[STD-4]` — `std.core.NonZero[T]`, whose one field is never 0: only
+    /// `NonZero.new` makes one, after testing.
+    pub fn is_nonzero(&self, ty: Ty) -> bool {
+        matches!(
+            self.kind(ty),
+            TyKind::Struct(id) if matches!(&self.struct_def(*id).origin, Some((name, _)) if name.is("std.core.NonZero"))
+        )
     }
 
     /// `[LT-1]` (ODR-024) — `is_copy` with every type parameter taken to be

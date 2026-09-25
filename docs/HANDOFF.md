@@ -10731,33 +10731,43 @@ the running narrative behind it.
     indexing, ODR-042, D-320, D-321; CI green), `bbcf3b2` (A4's first part:
     `std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326;
     CI green), `a79e1a5` (`std.math.det`, ODR-046, D-327 to D-329; both
-    Windows jobs failed, D-330), then D-330's fix.
+    Windows jobs failed, D-330), `bc6d6c8` (D-330's fix; CI green), then
+    `NonZero[T]` (ODR-047, Hardened_22, D-332 to D-339). From the `NonZero`
+    commit on, each commit's author is the owner and its committer Claude
+    (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_21.md`
-  (ODR-046), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h21/` is frozen.
-* **Next numbers:** ODR-047, D-332, ADR-056.
-* **Next task:** the rest of A4, `NonZero[T]` (`[STD-4]`: a `Copy` wrapper
-  for each integer type with a niche, `Option[NonZero[T]]` the size of `T`,
-  made by `NonZero.new(v) -> Option[NonZero[T]]`; dividing by one needs no
-  zero check). Then AUTOPILOT's B list, where D-328 (method visibility) and
-  D-331 (a nesting limit with a diagnostic) also belong.
-* **Last phase table given to the owner (2026-09-25):**
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_22.md`
+  (ODR-047), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h22/` is frozen.
+* **Next numbers:** ODR-048, D-340, ADR-057.
+* **Next task:** A1 to A4 are done. AUTOPILOT's B list, in its order: D-284,
+  `for k in owned m`, D-305; then the open defects, where D-328 (method
+  visibility, after a `std` audit) and D-331 (a nesting limit with a
+  diagnostic, which needs an ODR) also belong; then the rest of the list.
+  `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
+  enums) join at `TypeTable::option_niche` (ADR-056).
+* **Last phase table given to the owner (2026-09-26, while `NonZero` was
+  under way):**
 
   | Phase | % |
   |---|---:|
-  | P1 | 95 |
+  | P1 | 96 |
   | P2 | 85 |
   | P3 | 47 |
-  | P4 | 10 |
+  | P4 | 12 |
   | P5 | 8 |
   | P6 | 2 |
   | P7 | 0 |
-  | 7a | 4 |
+  | 7a | 6 |
   | P8 | 13 |
-  | Overall | 54 |
+  | Overall | 55 |
+
+  `python3 tasks/impl-0.9.9/rule_sizes.py 96 85 47 12 8 2 6` gives the
+  overall figure. The owner was also told that `53ddfbe` (D-272) carries
+  their identity as author by mistake, and that `main` was red on Windows
+  until `bc6d6c8`.
 
   Given 2026-09-25 night, after `c3e3582`: P1 94 to 95 for `[IFC-3]` and
   `[IFC-4]` (associated types named from a type parameter, bounded and
@@ -10950,6 +10960,23 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   hundred levels deep; it overflows Linux's 8 MB main thread without the
   fix. D-331 (**open**): past about four thousand levels the compiler still
   aborts without a diagnostic.
+* **Then `NonZero[T]` (`[STD-4]`, ODR-047, ADR-056; Hardened_22).**
+  `std.core` declares `NonZero[T: Integer]` (a private interface the twelve
+  integer types implement, with parents `Hash` and `Default`), `new` and
+  `get`, and `FloorDiv[NonZero[T]]`/`Rem[NonZero[T]]` for each integer type.
+  `Option[NonZero[T]]` is a `typedef` of the payload with `None` as 0:
+  `TypeTable::option_niche`, and codegen's `enum_tag`, `enum_member`,
+  `niche_holds` and `niche_none` at every tag and payload site. MIR's
+  `nonzero_divisor` leaves out the zero check for a `NonZero`'s field and a
+  nonzero constant. The C assertions (`assert-c`, `assert-c-count`) run only
+  under `cargo test` (`the_conformance_suite_runs`), not in the quick check:
+  break-test a C assertion there. Found and fixed on the way: D-332 (`Default`
+  for `i128`, `u128`, `f16`), D-333 (`Option[Self]`), D-334 (`Pair.make(5)`),
+  D-335 (a generic type's bound brings its parents: `close_recipe_bounds`),
+  D-336 (an early instance settled derived `Clone`s), D-337 (a missed bound
+  is one error: `missed_bounds`), D-338 (`x.rem(y)` beside `Rem[NonZero]`:
+  `method_claims_operator`), D-339 (`std` bodies are recognised by file as
+  well as by symbol, so unused extensions of built-in types are not emitted).
 
 **The owner's standing instructions (all still in force)**
 
@@ -10966,6 +10993,9 @@ cloud session through the night); read it first. The list below is the short for
 * Commit and push about every 5 features. Before each push: the full suite,
   then the gates, then watch CI.
 * End commits with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+* Every commit carries both identities (the owner, 2026-09-26): author
+  `Gunslinger <ism1988@live.com>` (`git commit --author=...`), committer
+  `Claude <noreply@anthropic.com>`, and the `Co-Authored-By` line.
 * Update this handoff and the memory periodically.
 * Ask before spawning agents or workflows, giving the worst-case count. While
   the owner slept they said "no workflows, you go solo".

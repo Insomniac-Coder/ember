@@ -184,6 +184,7 @@ pub fn check(
         checker.current_module = index;
         checker.collect_interfaces(&loaded.module);
     }
+    checker.close_recipe_bounds();
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
         checker.collect_generic_extensions(&loaded.module);
@@ -211,6 +212,7 @@ pub fn check(
     // `K: Hash` needs `String`'s); it is offered each one again.
     checker.extend_early_instances();
     checker.resolve_derived_clones();
+    checker.clones_resolved = true;
     checker.validate_class_methods(modules);
     checker.assign_class_virtual_slots();
     let class_ids: Vec<ClassId> = checker.types.classes().map(|(id, _)| id).collect();
@@ -817,6 +819,9 @@ struct Checker<'a> {
     /// Candidates resolved after every source method is known, so field order
     /// never changes whether a legal derived clone is available.
     pending_derived_clones: Vec<(Ty, Span, bool)>,
+    /// Whether the collection passes have settled the derived `Clone`s: an
+    /// instance made before then waits for them (D-336).
+    clones_resolved: bool,
     /// `[STR-5]` — types that opt out of the implicit `Eq` or `Debug`
     /// (`@no_derive(Eq)`, `@no_derive(Debug)`).
     no_implicit_eq: HashSet<Ty>,
@@ -960,6 +965,8 @@ struct Checker<'a> {
     expr_consts: HashMap<Symbol, ConstState>,
     assoc_consts: HashMap<(Ty, Symbol), ConstState>,
     const_order: Vec<(ConstKey, Span)>,
+    /// What `substitute_ty` puts for `Self`, while `substitute_self` runs.
+    substituting_self: Option<Ty>,
     /// Every item `const`'s value as written, and its module, from the first
     /// pass: a range type's bound may name one before constants are collected
     /// (D-329).
@@ -1238,6 +1245,7 @@ impl<'a> Checker<'a> {
             opaque_lambdas: HashSet::new(),
             derived_clone_methods: Vec::new(),
             pending_derived_clones: Vec::new(),
+            clones_resolved: false,
             no_implicit_eq: HashSet::new(),
             no_implicit_debug: HashSet::new(),
             captures: None,
@@ -1260,6 +1268,7 @@ impl<'a> Checker<'a> {
             expr_consts: HashMap::new(),
             assoc_consts: HashMap::new(),
             const_order: Vec::new(),
+            substituting_self: None,
             const_values: HashMap::new(),
             const_bound_depth: 0,
             applied_extensions: HashSet::new(),
@@ -1977,31 +1986,73 @@ impl<'a> Checker<'a> {
                     None => {}
                 }
             }
-            // `[IFC-3]` — a bound brings its parents: `T: IndexMut[int]` is
-            // an `Index[int]` too, and `Output = f32` binds the parent's
-            // `Output`.
-            let mut at = 0;
-            while at < bounds.len() {
-                let parents = self.interfaces.get(&bounds[at]).map(|def| def.supertraits.clone()).unwrap_or_default();
-                for parent in parents {
-                    if !bounds.contains(&parent) {
-                        bounds.push(parent);
-                    }
-                    for (instance, name, value) in bindings.clone() {
-                        if instance == bounds[at]
-                            && self.interfaces.get(&parent).is_some_and(|def| def.assoc.iter().any(|(assoc, _)| *assoc == name))
-                            && !bindings.iter().any(|&(known, assoc, _)| known == parent && assoc == name)
-                        {
-                            bindings.push((parent, name, value));
-                        }
-                    }
-                }
-                at += 1;
-            }
+            self.close_bounds(&mut bounds, &mut bindings);
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
             declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, bindings });
         }
         declared
+    }
+
+    /// `[IFC-3]` — a bound brings its parents: `T: IndexMut[int]` is an
+    /// `Index[int]` too, and `Output = f32` binds the parent's `Output`. Only
+    /// the interfaces collected so far have parents to bring.
+    fn close_bounds(&self, bounds: &mut Vec<Symbol>, bindings: &mut Vec<(Symbol, Symbol, Ty)>) {
+        let mut at = 0;
+        while at < bounds.len() {
+            let parents = self.interfaces.get(&bounds[at]).map(|def| def.supertraits.clone()).unwrap_or_default();
+            for parent in parents {
+                if !bounds.contains(&parent) {
+                    bounds.push(parent);
+                }
+                for (instance, name, value) in bindings.clone() {
+                    if instance == bounds[at]
+                        && self.interfaces.get(&parent).is_some_and(|def| def.assoc.iter().any(|(assoc, _)| *assoc == name))
+                        && !bindings.iter().any(|&(known, assoc, _)| known == parent && assoc == name)
+                    {
+                        bindings.push((parent, name, value));
+                    }
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// `[IFC-3]` for the generic types (D-335). Their recipes are collected
+    /// before the interfaces, whose signatures may name them, so when their
+    /// parameters were declared no interface had parents to bring:
+    /// `struct NonZero[T: Integer]` with `interface Integer: Default` gave a
+    /// method's body no `T.default()`. Once the interfaces are known, each
+    /// parameter's bounds, and each method's own, are closed again.
+    fn close_recipe_bounds(&mut self) {
+        let close = |this: &Self, generics: &mut [GenericParam]| {
+            for param in generics {
+                this.close_bounds(&mut param.bounds, &mut param.bindings);
+            }
+        };
+        let mut structs = std::mem::take(&mut self.generic_structs);
+        for recipe in structs.values_mut() {
+            close(self, &mut recipe.generic_params);
+            for method in &mut recipe.methods {
+                close(self, &mut method.generics);
+            }
+        }
+        self.generic_structs = structs;
+        let mut enums = std::mem::take(&mut self.generic_enums);
+        for recipe in enums.values_mut() {
+            close(self, &mut recipe.generic_params);
+            for method in &mut recipe.methods {
+                close(self, &mut method.generics);
+            }
+        }
+        self.generic_enums = enums;
+        let mut classes = std::mem::take(&mut self.generic_classes);
+        for recipe in classes.values_mut() {
+            close(self, &mut recipe.generic_params);
+            for method in &mut recipe.methods {
+                close(self, &mut method.generics);
+            }
+        }
+        self.generic_classes = classes;
     }
 
     /// `[CLO-3]` — "A parameter declared `f: fn(A) -> R` is a generic over
@@ -3622,10 +3673,10 @@ impl<'a> Checker<'a> {
             let saved_instance = self.assoc_instance.replace(interface);
             let mut expected_params = Vec::new();
             for &(_, param, mode, _) in &expected.params {
-                let param = self.types.substitute_self(param, ty);
+                let param = self.substitute_self(param, ty);
                 expected_params.push((self.resolve_assoc(param, ty), mode));
             }
-            let expected_ret = self.types.substitute_self(expected.ret, ty);
+            let expected_ret = self.substitute_self(expected.ret, ty);
             let expected_ret = self.resolve_assoc(expected_ret, ty);
             self.assoc_instance = saved_instance;
             let actual_params: Vec<(Ty, Mode)> =
@@ -4135,7 +4186,7 @@ impl<'a> Checker<'a> {
         }
         for &(param_name, param_ty, mode, param_span) in &method.params {
             let param_ty = self.substitute_ty(param_ty, &combined);
-            params.push((param_name, self.types.substitute_self(param_ty, ty), mode, param_span));
+            params.push((param_name, self.substitute_self(param_ty, ty), mode, param_span));
         }
         let ret = self.substitute_ty(method.ret, &combined);
         let prefix: Vec<Ty> = (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
@@ -4156,7 +4207,7 @@ impl<'a> Checker<'a> {
         generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
         let signature = Signature {
             params,
-            ret: self.types.substitute_self(ret, ty),
+            ret: self.substitute_self(ret, ty),
             generics,
             borrows: method.borrows.clone(),
         };
@@ -4344,8 +4395,118 @@ impl<'a> Checker<'a> {
                     _ => pattern == actual,
                 }
             }
+            (TyKind::Enum(_), TyKind::Enum(_)) if pattern != actual => {
+                let origin = |this: &Self, ty: Ty| match *this.types.kind(ty) {
+                    TyKind::Enum(id) => this.types.enum_def(id).origin.clone().or_else(|| this.builtin_generic_origin(ty)),
+                    _ => None,
+                };
+                match (origin(self, pattern), origin(self, actual)) {
+                    (Some((pattern_name, pattern_args)), Some((actual_name, actual_args))) => {
+                        pattern_name == actual_name
+                            && pattern_args.len() == actual_args.len()
+                            && pattern_args.iter().zip(actual_args.iter()).all(|(&pattern, &actual)| {
+                                self.match_generic_extension_type(pattern, actual, bindings)
+                            })
+                    }
+                    _ => false,
+                }
+            }
             _ => pattern == actual,
         }
+    }
+
+    /// `[STR-7]`, `[TYP-16]` (D-334) — `Pair.make(5)`: an associated function
+    /// of a generic struct named without its arguments. They are solved from
+    /// the type the context expects, then from the arguments whose parameter
+    /// types name them (a literal taking its default type), and the call is
+    /// `Pair[i64].make(5)`'s.
+    fn synth_inferred_associated_call(
+        &mut self,
+        generic: Symbol,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let Some(decl) = self.generic_structs.get(&generic).cloned() else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let opaque = self.opaque_arguments(&decl.generic_params);
+        let owner = self.instantiate_struct(generic, &decl, &opaque, decl.decl_span);
+        let shown = generic.as_str().rsplit('.').next().unwrap_or(generic.as_str()).to_string();
+        let Some(entry) = self.associated.get(&(owner, name.name)) else {
+            self.error(codes::E2020, span, format!("`{shown}` has no associated function `{}`", name.name));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let def = entry.def;
+        let signature = self.signatures[def.0 as usize].clone();
+        let mut bindings: Vec<Option<Ty>> = vec![None; decl.generic_params.len()];
+        let ret = self.substitute_self(signature.ret, owner);
+        if let Some(expected) = expected {
+            let mut trial = bindings.clone();
+            if self.match_generic_extension_type(ret, expected, &mut trial) {
+                bindings = trial;
+            }
+        }
+        // The arguments are checked again, against the instance, below; what
+        // this look says is taken back.
+        let mark = self.sink.mark();
+        for (arg, (_, param, _, _)) in args.iter().zip(&signature.params) {
+            if bindings.iter().all(Option::is_some) {
+                break;
+            }
+            let param = self.substitute_self(*param, owner);
+            if !self.types.is_generic(param) || matches!(arg.value.kind, ast::ExprKind::Lambda { .. }) {
+                continue;
+            }
+            let value = self.synth(&arg.value);
+            let value = self.commit(value);
+            let mut trial = bindings.clone();
+            if self.match_generic_extension_type(param, value.ty, &mut trial) {
+                bindings = trial;
+            }
+        }
+        self.sink.rollback(mark);
+        let unsolved: Vec<String> = decl
+            .generic_params
+            .iter()
+            .zip(&bindings)
+            .filter(|(_, found)| found.is_none())
+            .map(|(param, _)| format!("`{}`", param.name))
+            .collect();
+        if !unsolved.is_empty() {
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    span,
+                    format!("cannot tell `{shown}`'s {} from this call to `{}`", unsolved.join(", "), name.name),
+                )
+                .help(format!("name the type's arguments: `{shown}[…].{}(…)`", name.name)),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let solved: Vec<Ty> = bindings.into_iter().flatten().collect();
+        let instance = self.instantiate_struct(generic, &decl, &solved, span);
+        if instance == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        self.synth_associated_call(instance, name, generic_args, args, span)
+    }
+
+    /// The generic struct a path names, for `Pair.make(5)`: a name that is
+    /// not a local, and names no instance.
+    fn generic_struct_named(&self, expr: &ast::Expr) -> Option<Symbol> {
+        let qualified = match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                if self.lookup(segments[0].name).is_some() {
+                    return None;
+                }
+                self.resolve_name(segments[0].name)
+            }
+            _ => self.item_through_module(expr)?,
+        };
+        self.generic_structs.contains_key(&qualified).then_some(qualified)
     }
 
     /// Resolve aliases, fields, variants, constants, statics, and function
@@ -5179,12 +5340,12 @@ impl<'a> Checker<'a> {
             OperatorMethod::Unary(_) => 0,
         };
         let wanted_receiver = if assign { Mode::Mut } else { Mode::Borrow };
-        let ret = self.types.substitute_self(signature.ret, ty);
+        let ret = self.substitute_self(signature.ret, ty);
         let ret = self.resolve_assoc(ret, ty);
         signature.generics.is_empty()
             && receiver == Some(wanted_receiver)
             && signature.params.len() == operands
-            && signature.params.iter().all(|(_, param, _, _)| self.types.substitute_self(*param, ty) == ty)
+            && signature.params.iter().all(|(_, param, _, _)| self.substitute_self(*param, ty) == ty)
             && ret == if assign { self.common.void } else { ty }
     }
 
@@ -5203,7 +5364,7 @@ impl<'a> Checker<'a> {
             _ => return false,
         };
         let signature = self.signatures[declaration.0 as usize].clone();
-        let ret = self.types.substitute_self(signature.ret, ty);
+        let ret = self.substitute_self(signature.ret, ty);
         let ret = self.resolve_assoc(ret, ty);
         let wanted = self.types.intern(TyKind::Ref { mutable, inner: elem });
         let int = self.common.i64;
@@ -5292,7 +5453,7 @@ impl<'a> Checker<'a> {
                         return false;
                     }
                     let expected = self.substitute_ty(expected.ty, &canonical);
-                    let expected = self.types.substitute_self(expected, owner);
+                    let expected = self.substitute_self(expected, owner);
                     let expected = self.resolve_assoc(expected, owner);
                     let actual = self.substitute_ty(actual.ty, &actual_canonical);
                     if expected != actual {
@@ -5300,7 +5461,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 let expected_ret = self.substitute_ty(expected.ret, &canonical);
-                let expected_ret = self.types.substitute_self(expected_ret, owner);
+                let expected_ret = self.substitute_self(expected_ret, owner);
                 let expected_ret = self.resolve_assoc(expected_ret, owner);
                 let actual_ret = self.substitute_ty(actual.ret, &actual_canonical);
                 if expected_ret != actual_ret {
@@ -5339,7 +5500,7 @@ impl<'a> Checker<'a> {
             expected_params.into_iter().zip(actual_written.iter().copied())
         {
             let expected = self.substitute_ty(expected, &canonical);
-            let expected = self.types.substitute_self(expected, owner);
+            let expected = self.substitute_self(expected, owner);
             let expected = self.resolve_assoc(expected, owner);
             let actual = self.substitute_ty(actual, &actual_canonical);
             if expected != actual || expected_mode != actual_mode {
@@ -5347,7 +5508,7 @@ impl<'a> Checker<'a> {
             }
         }
         let expected_ret = self.substitute_ty(expected_ret, &canonical);
-        let expected_ret = self.types.substitute_self(expected_ret, owner);
+        let expected_ret = self.substitute_self(expected_ret, owner);
         let expected_ret = self.resolve_assoc(expected_ret, owner);
         let actual_ret = self.substitute_ty(actual_ret, &actual_canonical);
         expected_ret == actual_ret
@@ -5449,10 +5610,10 @@ impl<'a> Checker<'a> {
                 }
                 let mut signature = self.signatures[default.declaration.0 as usize].clone();
                 for (_, param, _, _) in &mut signature.params {
-                    let substituted = self.types.substitute_self(*param, ty);
+                    let substituted = self.substitute_self(*param, ty);
                     *param = self.resolve_assoc(substituted, ty);
                 }
-                let ret = self.types.substitute_self(signature.ret, ty);
+                let ret = self.substitute_self(signature.ret, ty);
                 signature.ret = self.resolve_assoc(ret, ty);
                 if let Some(receiver) = default.receiver {
                     signature.params.insert(0, (Symbol::intern("self"), ty, receiver, Span::DUMMY));
@@ -5745,7 +5906,7 @@ impl<'a> Checker<'a> {
                 };
                 let default = self.substitute_ty(default, &resolved);
                 let default = match self.interface_self {
-                    Some(owner) => self.types.substitute_self(default, owner),
+                    Some(owner) => self.substitute_self(default, owner),
                     None => default,
                 };
                 resolved.push(default);
@@ -6463,6 +6624,18 @@ impl<'a> Checker<'a> {
         }
         if debug {
             self.no_implicit_debug.insert(ty);
+        }
+    }
+
+    /// D-336 — an instance's derived `Clone`, once the collection passes
+    /// have settled the rest. Before then a field's `clone` or `drop` may not
+    /// be collected yet, and resolving the pending list settled every request
+    /// in it early: `std.core`'s `extend i8 implements FloorDiv[NonZero[i8]]`
+    /// makes `NonZero[i8]` while the program's types are collected, and a
+    /// `@derive(Clone)` over a field with a `drop` was accepted.
+    fn resolve_instance_clones(&mut self) {
+        if self.clones_resolved {
+            self.resolve_derived_clones();
         }
     }
 
@@ -7828,6 +8001,7 @@ impl<'a> Checker<'a> {
     /// with a different layout, not the same one with its fields rewritten.
     fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
         match self.types.kind(ty).clone() {
+            TyKind::Param { index, .. } if index == ember_types::SELF_PARAM => self.substituting_self.unwrap_or(ty),
             TyKind::Param { index, .. } => args.get(index as usize).copied().unwrap_or(ty),
             TyKind::Ref { mutable, inner } => {
                 let inner = self.substitute_ty(inner, args);
@@ -8135,22 +8309,47 @@ impl<'a> Checker<'a> {
     fn struct_bounds_met(&mut self, name: Symbol, params: &[GenericParam], args: &[Ty], span: Span) -> bool {
         let mut met = true;
         for (param, &arg) in params.iter().zip(args) {
-            for &bound in &param.bounds {
-                let bound = self.substitute_bound(bound, args);
-                if !self.implements_or_blanket(arg, bound) {
-                    let shown = self.types.display(arg);
-                    let interface = self.interface_shown(bound);
-                    let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
-                    self.error(
-                        codes::E2040,
-                        span,
-                        format!("`{shown}` does not implement `{interface}`, which `{owner}`'s `{}` requires", param.name),
-                    );
-                    met = false;
-                }
+            for bound in self.missed_bounds(arg, &param.bounds, args) {
+                let shown = self.types.display(arg);
+                let interface = self.interface_shown(bound);
+                let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`{shown}` does not implement `{interface}`, which `{owner}`'s `{}` requires", param.name),
+                );
+                met = false;
             }
         }
         met
+    }
+
+    /// `[TYP-17]` — the bounds of `bounds` that `ty` misses, after
+    /// `substitution`. A parent that a missed bound brought (`[IFC-3]`) is
+    /// not reported as well: implementing the bound that was written needs
+    /// it anyway, and `f64` for `T: Integer` is one mistake, not three.
+    fn missed_bounds(&mut self, ty: Ty, bounds: &[Symbol], substitution: &[Ty]) -> Vec<Symbol> {
+        let mut missed = Vec::new();
+        let mut covered: HashSet<Symbol> = HashSet::new();
+        for &bound in bounds {
+            if covered.contains(&bound) {
+                continue;
+            }
+            let substituted = self.substitute_bound(bound, substitution);
+            if self.implements_or_blanket(ty, substituted) {
+                continue;
+            }
+            missed.push(substituted);
+            let mut pending = vec![bound];
+            while let Some(at) = pending.pop() {
+                for parent in self.interfaces.get(&at).map(|def| def.supertraits.clone()).unwrap_or_default() {
+                    if covered.insert(parent) {
+                        pending.push(parent);
+                    }
+                }
+            }
+        }
+        missed
     }
 
     /// The type arguments with each omitted trailing one taken from its
@@ -8713,7 +8912,7 @@ impl<'a> Checker<'a> {
             && !args.iter().any(|&arg| self.types.is_generic(arg))
         {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
-            self.resolve_derived_clones();
+            self.resolve_instance_clones();
         }
         // The `implements` clause belongs to the generic declaration, so its
         // owner parameters must be bound while an instantiated generic nominal registers
@@ -8844,7 +9043,7 @@ impl<'a> Checker<'a> {
             && !args.iter().any(|&arg| self.types.is_generic(arg))
         {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
-            self.resolve_derived_clones();
+            self.resolve_instance_clones();
         }
         let interface_bindings = decl
             .params
@@ -9034,7 +9233,7 @@ impl<'a> Checker<'a> {
             && !args.iter().any(|&arg| self.types.is_generic(arg))
         {
             self.pending_derived_clones.push((ty, decl.decl_span, explicit));
-            self.resolve_derived_clones();
+            self.resolve_instance_clones();
         }
         let interface_bindings = decl
             .params
@@ -17267,6 +17466,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// ODR-040, D-338 — whether a method registered for a number under an
+    /// operator's name takes a call from the built-in operator. One the type
+    /// declares does. An instance of an operator interface over another
+    /// right-hand type (`std.core`'s `Rem[NonZero[i64]]`) takes only a call
+    /// whose argument is not the number's own type: `x.rem(y)` and
+    /// `7.rem(2)` stay `%`, as `x % y` does.
+    fn method_claims_operator(&mut self, ty: Ty, name: Symbol, args: &[ast::Arg]) -> bool {
+        let Some(entry) = self.methods.get(&(ty, name)).copied() else { return false };
+        let Some(interface) = entry.from_interface else { return true };
+        if !self.open_interface_origin.contains_key(&interface) {
+            return true;
+        }
+        let [arg] = args else { return true };
+        let quiet = self.sink.mark();
+        let value = self.synth(&arg.value);
+        let value = self.read_through(value);
+        self.sink.rollback(quiet);
+        let own = value.ty == ty
+            || (self.types.is_untyped_literal(value.ty) && self.literal_fits(&value, ty))
+            || self.types.widens_to(value.ty, ty);
+        !own
+    }
+
     /// ODR-040 — `x.add(y)` on a number: the built-in `+`, with the other
     /// operand checked against the receiver's type (any integer for a shift,
     /// `[TYP-10]`).
@@ -17329,7 +17551,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let takes = match (&rhs, params.as_slice()) {
                 (None, []) => true,
                 (Some(rhs), [(_, param, _, _)]) => {
-                    let param = self.types.substitute_self(*param, lhs.ty);
+                    let param = self.substitute_self(*param, lhs.ty);
                     rhs.ty == param || (self.types.is_untyped_literal(rhs.ty) && self.literal_fits(rhs, param))
                 }
                 _ => false,
@@ -17343,7 +17565,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.bound_calls.insert(span, bound);
         let concrete = lhs.ty;
         let ret = self.signatures[declaration.0 as usize].ret;
-        let ret = self.types.substitute_self(ret, concrete);
+        let ret = self.substitute_self(ret, concrete);
         let saved_instance = self.assoc_instance.replace(bound);
         let ret = self.resolve_assoc(ret, concrete);
         self.assoc_instance = saved_instance;
@@ -17371,7 +17593,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut args = vec![self.pass_receiver_to(lhs, receiver_mode, declaration, span)];
         if let Some(rhs) = rhs {
             let (_, param, mode, _) = self.signatures[declaration.0 as usize].params[0];
-            let param = self.types.substitute_self(param, concrete);
+            let param = self.substitute_self(param, concrete);
             let rhs = self.coerce(rhs, param);
             args.push(self.pass_argument(rhs, param, mode));
         }
@@ -18771,6 +18993,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let committed = self.commit(expr);
         self.warn_if_literal_loses_precision(ast_expr, committed.ty);
         committed
+    }
+
+    /// `[STR-7]` (D-333) — `Self` replaced by `concrete` everywhere in `ty`:
+    /// inside `Option[Self]` and a generic type's arguments too, which the
+    /// type table's `substitute_self` cannot rebuild.
+    fn substitute_self(&mut self, ty: Ty, concrete: Ty) -> Ty {
+        let outer = self.substituting_self.replace(concrete);
+        let substituted = self.substitute_ty(ty, &[]);
+        self.substituting_self = outer;
+        substituted
     }
 
     /// `[LEX-17a]` (0.9.9) — an unsuffixed float literal that receives `f32`
@@ -20205,6 +20437,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         span,
                     );
                 }
+                if let Some(generic) = self.generic_struct_named(recv) {
+                    return self.synth_inferred_associated_call(generic, *name, generic_args, args, expected, span);
+                }
                 self.method_expectation = expected;
                 self.synth_method_call(recv, *name, generic_args, args, span)
             }
@@ -21612,18 +21847,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 unmet = true;
                 continue;
             }
-            for bound in &param.bounds {
-                let bound = &self.substitute_bound(*bound, &substitution);
-                if !self.implements_or_blanket(ty, *bound) {
-                    let shown = self.types.display(ty);
-                    let bound = &self.interface_shown(*bound);
-                    self.error(
-                        codes::E2040,
-                        span,
-                        format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
-                    );
-                    unmet = true;
-                }
+            for bound in self.missed_bounds(ty, &param.bounds, &substitution) {
+                let shown = self.types.display(ty);
+                let bound = self.interface_shown(bound);
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
+                );
+                unmet = true;
             }
             if !unmet && !self.bindings_met(param, ty, &substitution, span) {
                 unmet = true;
@@ -21894,21 +22126,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
-            for bound in &param.bounds {
-                let bound = &self.substitute_bound(*bound, &substitution);
-                if !self.implements_or_blanket(ty, *bound) {
-                    let shown = self.types.display(ty);
-                    let bound = &self.interface_shown(*bound);
-                    self.error(
-                        codes::E2040,
-                        span,
-                        format!(
-                            "`{shown}` does not implement `{bound}`, which `{}` requires",
-                            param.name
-                        ),
-                    );
-                    unmet = true;
-                }
+            for bound in self.missed_bounds(ty, &param.bounds, &substitution) {
+                let shown = self.types.display(ty);
+                let bound = self.interface_shown(bound);
+                self.error(
+                    codes::E2040,
+                    span,
+                    format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
+                );
+                unmet = true;
             }
             if !unmet && !self.bindings_met(param, ty, &substitution, span) {
                 unmet = true;
@@ -23081,7 +23307,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let params = params
             .into_iter()
             .map(|(param, ty, mode, param_span)| {
-                (param, self.types.substitute_self(ty, owner), mode, param_span)
+                (param, self.substitute_self(ty, owner), mode, param_span)
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
@@ -23180,12 +23406,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let signature = self.signatures[def.0 as usize]
-            .params
-            .iter()
-            .map(|(_, ty, mode, _)| (self.types.substitute_self(*ty, owner), *mode))
-            .collect::<Vec<_>>();
-        let ret = self.types.substitute_self(self.signatures[def.0 as usize].ret, owner);
+        let declared: Vec<(Ty, Mode)> =
+            self.signatures[def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
+        let signature =
+            declared.into_iter().map(|(ty, mode)| (self.substitute_self(ty, owner), mode)).collect::<Vec<_>>();
+        let ret = self.substitute_self(self.signatures[def.0 as usize].ret, owner);
         if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
@@ -23197,7 +23422,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let params = params
             .into_iter()
             .map(|(param, ty, mode, param_span)| {
-                (param, self.types.substitute_self(ty, owner), mode, param_span)
+                (param, self.substitute_self(ty, owner), mode, param_span)
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
@@ -24350,7 +24575,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && let Some((op, false)) = operator_method_named(name.name.as_str())
             && number_has_operator(self.types, receiver.ty, op)
             && IntMethod::named(name.name.as_str()).is_none()
-            && !self.methods.contains_key(&(receiver.ty, name.name))
+            && !self.method_claims_operator(receiver.ty, name.name, args)
         {
             return self.synth_number_operator_method(receiver, op, name, args, span);
         }
@@ -25024,10 +25249,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .map(|(_, t, m, _)| (*t, *m))
             .collect::<Vec<_>>()
             .into_iter()
-            .map(|(t, m)| (self.types.substitute_self(t, concrete), m))
+            .map(|(t, m)| (self.substitute_self(t, concrete), m))
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
-        let ret = self.types.substitute_self(ret, concrete);
+        let ret = self.substitute_self(ret, concrete);
         // `[IFC-4]` — `Self.Real` of a type parameter is its hidden `T.Real`,
         // or what the bound binds it to (`Add[Output = T]`).
         let saved_instance = self.assoc_instance.replace(bound);
@@ -25047,7 +25272,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let params = params
             .into_iter()
             .map(|(param, ty, mode, param_span)| {
-                (param, self.types.substitute_self(ty, concrete), mode, param_span)
+                (param, self.substitute_self(ty, concrete), mode, param_span)
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
@@ -27775,7 +28000,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args.insert(0, receiver);
         self.bound_calls.insert(span, bound);
         let ret = self.signatures[declaration.0 as usize].ret;
-        let ret = self.types.substitute_self(ret, concrete);
+        let ret = self.substitute_self(ret, concrete);
         let saved_instance = self.assoc_instance.replace(bound);
         let ret = self.resolve_assoc(ret, concrete);
         self.assoc_instance = saved_instance;

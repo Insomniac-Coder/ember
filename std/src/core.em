@@ -320,6 +320,18 @@ extend usize implements Default:
     fn default() -> usize:
         return 0
 
+extend i128 implements Default:
+    fn default() -> i128:
+        return 0
+
+extend u128 implements Default:
+    fn default() -> u128:
+        return 0
+
+extend f16 implements Default:
+    fn default() -> f16:
+        return 0.0
+
 extend f32 implements Default:
     fn default() -> f32:
         return 0.0
@@ -575,3 +587,172 @@ extend f32 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
 extend f64 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
         AddAssign, SubAssign, MulAssign, DivAssign, FloorDivAssign, RemAssign, PowAssign:
     type Output = f64
+
+## -- `NonZero` (`[STD-4]`) -----------------------------------------------------
+
+## The integer types, which `NonZero` takes. The interface is private, so no
+## other type can join them.
+interface Integer: Hash + Default:
+    pass
+
+extend i8 implements Integer:
+    pass
+
+extend i16 implements Integer:
+    pass
+
+extend i32 implements Integer:
+    pass
+
+extend i64 implements Integer:
+    pass
+
+extend i128 implements Integer:
+    pass
+
+extend isize implements Integer:
+    pass
+
+extend u8 implements Integer:
+    pass
+
+extend u16 implements Integer:
+    pass
+
+extend u32 implements Integer:
+    pass
+
+extend u64 implements Integer:
+    pass
+
+extend u128 implements Integer:
+    pass
+
+extend usize implements Integer:
+    pass
+
+## `[STD-4]` — an integer that is not zero, made by `NonZero.new`. Since no
+## `NonZero` holds 0, `Option[NonZero[T]]` stores `None` as 0 and is the size
+## of `T` (`[TYP-13]`), and dividing by one needs no check for zero
+## (`[EFF-16]`): `x // d` and `x % d` take a `NonZero` of `x`'s type.
+@derive(Copy, Hash)
+pub struct NonZero[T: Integer]:
+    value: T
+
+    ## `v`, or `None` when it is 0.
+    pub fn new(v: T) -> Option[NonZero[T]]:
+        if v == T.default():
+            return None
+        return Some(NonZero(v))
+
+    ## The integer.
+    pub fn get(self) -> T:
+        return self.value
+
+extend i8 implements FloorDiv[NonZero[i8]], Rem[NonZero[i8]]:
+    type Output = i8
+
+    fn floordiv(self, d: NonZero[i8]) -> i8:
+        return self // d.value
+
+    fn rem(self, d: NonZero[i8]) -> i8:
+        return self % d.value
+
+extend i16 implements FloorDiv[NonZero[i16]], Rem[NonZero[i16]]:
+    type Output = i16
+
+    fn floordiv(self, d: NonZero[i16]) -> i16:
+        return self // d.value
+
+    fn rem(self, d: NonZero[i16]) -> i16:
+        return self % d.value
+
+extend i32 implements FloorDiv[NonZero[i32]], Rem[NonZero[i32]]:
+    type Output = i32
+
+    fn floordiv(self, d: NonZero[i32]) -> i32:
+        return self // d.value
+
+    fn rem(self, d: NonZero[i32]) -> i32:
+        return self % d.value
+
+extend i64 implements FloorDiv[NonZero[i64]], Rem[NonZero[i64]]:
+    type Output = i64
+
+    fn floordiv(self, d: NonZero[i64]) -> i64:
+        return self // d.value
+
+    fn rem(self, d: NonZero[i64]) -> i64:
+        return self % d.value
+
+extend i128 implements FloorDiv[NonZero[i128]], Rem[NonZero[i128]]:
+    type Output = i128
+
+    fn floordiv(self, d: NonZero[i128]) -> i128:
+        return self // d.value
+
+    fn rem(self, d: NonZero[i128]) -> i128:
+        return self % d.value
+
+extend isize implements FloorDiv[NonZero[isize]], Rem[NonZero[isize]]:
+    type Output = isize
+
+    fn floordiv(self, d: NonZero[isize]) -> isize:
+        return self // d.value
+
+    fn rem(self, d: NonZero[isize]) -> isize:
+        return self % d.value
+
+extend u8 implements FloorDiv[NonZero[u8]], Rem[NonZero[u8]]:
+    type Output = u8
+
+    fn floordiv(self, d: NonZero[u8]) -> u8:
+        return self // d.value
+
+    fn rem(self, d: NonZero[u8]) -> u8:
+        return self % d.value
+
+extend u16 implements FloorDiv[NonZero[u16]], Rem[NonZero[u16]]:
+    type Output = u16
+
+    fn floordiv(self, d: NonZero[u16]) -> u16:
+        return self // d.value
+
+    fn rem(self, d: NonZero[u16]) -> u16:
+        return self % d.value
+
+extend u32 implements FloorDiv[NonZero[u32]], Rem[NonZero[u32]]:
+    type Output = u32
+
+    fn floordiv(self, d: NonZero[u32]) -> u32:
+        return self // d.value
+
+    fn rem(self, d: NonZero[u32]) -> u32:
+        return self % d.value
+
+extend u64 implements FloorDiv[NonZero[u64]], Rem[NonZero[u64]]:
+    type Output = u64
+
+    fn floordiv(self, d: NonZero[u64]) -> u64:
+        return self // d.value
+
+    fn rem(self, d: NonZero[u64]) -> u64:
+        return self % d.value
+
+extend u128 implements FloorDiv[NonZero[u128]], Rem[NonZero[u128]]:
+    type Output = u128
+
+    fn floordiv(self, d: NonZero[u128]) -> u128:
+        return self // d.value
+
+    fn rem(self, d: NonZero[u128]) -> u128:
+        return self % d.value
+
+extend usize implements FloorDiv[NonZero[usize]], Rem[NonZero[usize]]:
+    type Output = usize
+
+    fn floordiv(self, d: NonZero[usize]) -> usize:
+        return self // d.value
+
+    fn rem(self, d: NonZero[usize]) -> usize:
+        return self % d.value
