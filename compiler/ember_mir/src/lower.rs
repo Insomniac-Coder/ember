@@ -4853,27 +4853,40 @@ impl<'a> Builder<'a> {
             }
 
             BinOp::Shl | BinOp::Shr => {
-                // [TYP-10] -- a shift amount at or past the width panics under
-                // `panic`; `lower_rvalue` masks it under `wrap`.
+                // [TYP-10] -- an amount that is negative (D-309) or at or past
+                // the width panics under `panic`; `lower_rvalue` masks it
+                // under `wrap`. The amount is tested in its own type, which
+                // may be any integer type (D-308); one too narrow to reach the
+                // width cannot pass it.
                 let width = bit_width(self.types, ty).unwrap_or(64);
-                let too_big = self.temp(self.bool_ty, span);
-                self.push(StmtKind::Assign {
-                    place: Place::local(too_big),
-                    rvalue: Rvalue::BinaryOp {
-                        op: BinOp::Ge,
-                        lhs: rhs_op.clone(),
-                        rhs: Operand::Const(Const::Int { value: width as u128, ty }),
-                    },
-                });
-                let after = self.new_block();
-                self.terminate(Terminator::Assert {
-                    cond: Operand::Copy(Place::local(too_big)),
-                    expected: false,
-                    msg: AssertKind::ShiftTooLarge,
-                    next: after,
-                    span,
-                });
-                self.current = after;
+                let amount_ty = rhs.ty;
+                let mut refusals = Vec::new();
+                if is_signed(self.types, amount_ty) == Some(true) {
+                    refusals.push((BinOp::Lt, 0u128));
+                }
+                if ember_types::int_max(self.types, amount_ty).is_some_and(|max| max >= width as u128) {
+                    refusals.push((BinOp::Ge, width as u128));
+                }
+                for (test, bound) in refusals {
+                    let refused = self.temp(self.bool_ty, span);
+                    self.push(StmtKind::Assign {
+                        place: Place::local(refused),
+                        rvalue: Rvalue::BinaryOp {
+                            op: test,
+                            lhs: rhs_op.clone(),
+                            rhs: Operand::Const(Const::Int { value: bound, ty: amount_ty }),
+                        },
+                    });
+                    let after = self.new_block();
+                    self.terminate(Terminator::Assert {
+                        cond: Operand::Copy(Place::local(refused)),
+                        expected: false,
+                        msg: AssertKind::ShiftTooLarge,
+                        next: after,
+                        span,
+                    });
+                    self.current = after;
+                }
                 self.push(StmtKind::Assign {
                     place,
                     rvalue: Rvalue::BinaryOp { op, lhs: lhs_op, rhs: rhs_op },
@@ -4913,15 +4926,18 @@ impl<'a> Builder<'a> {
                 // [TYP-10] -- under `wrap` the shift amount is masked, which
                 // also removes C's undefined behaviour for an over-wide shift.
                 let width = bit_width(self.types, expr.ty).unwrap_or(64);
+                // The amount keeps its own type (D-308); every integer type
+                // holds `width - 1`, which is at most 127.
+                let amount_ty = rhs.ty;
                 let lhs = self.lower_operand(lhs);
                 let amount = self.lower_operand(rhs);
-                let masked = self.temp(expr.ty, expr.span);
+                let masked = self.temp(amount_ty, expr.span);
                 self.push(StmtKind::Assign {
                     place: Place::local(masked),
                     rvalue: Rvalue::BinaryOp {
                         op: BinOp::BitAnd,
                         lhs: amount,
-                        rhs: Operand::Const(Const::Int { value: (width - 1) as u128, ty: expr.ty }),
+                        rhs: Operand::Const(Const::Int { value: (width - 1) as u128, ty: amount_ty }),
                     },
                 });
                 Rvalue::BinaryOp { op: *shift, lhs, rhs: Operand::Copy(Place::local(masked)) }

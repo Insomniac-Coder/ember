@@ -1598,30 +1598,29 @@ impl Parser<'_> {
                 self.bump();
                 PatternKind::Wild
             }
-            TokenKind::Lit(lit) => {
-                self.bump();
-                let lo = convert_literal(lit);
+            // III.6 — `literal_pattern := ["-"] INT | …`, and a range of two.
+            TokenKind::Lit(_) | TokenKind::Punct(Punct::Minus) => {
+                let Some(lo) = self.parse_pattern_literal() else {
+                    return Pattern { id, kind: PatternKind::Error, span: start.to(self.prev_span()) };
+                };
                 if self.at_punct(Punct::DotDot) || self.at_punct(Punct::DotDotEq) {
                     let inclusive = self.at_punct(Punct::DotDotEq);
                     self.bump();
-                    let TokenKind::Lit(hi) = self.peek().clone() else {
-                        let span = self.span();
-                        self.report_code(codes::E0100, span, "expected a literal after `..`");
-                        return Pattern { id, kind: PatternKind::Error, span };
+                    let Some(hi) = self.parse_pattern_literal() else {
+                        return Pattern { id, kind: PatternKind::Error, span: start.to(self.prev_span()) };
                     };
-                    self.bump();
-                    PatternKind::Range { lo, hi: convert_literal(hi), inclusive }
+                    PatternKind::Range { lo, hi, inclusive }
                 } else {
                     PatternKind::Lit(lo)
                 }
             }
             TokenKind::Keyword(Kw::True) => {
                 self.bump();
-                PatternKind::Lit(Literal::Bool(true))
+                PatternKind::Lit(PatternLit { negative: false, lit: Literal::Bool(true) })
             }
             TokenKind::Keyword(Kw::False) => {
                 self.bump();
-                PatternKind::Lit(Literal::Bool(false))
+                PatternKind::Lit(PatternLit { negative: false, lit: Literal::Bool(false) })
             }
             TokenKind::Keyword(Kw::Ref) => {
                 self.bump();
@@ -1710,6 +1709,31 @@ impl Parser<'_> {
         Pattern { id, kind, span: start.to(self.prev_span()) }
     }
 
+    /// A literal in a pattern: any literal, or `-` directly before an integer
+    /// (D-310). `None` after reporting what stood there instead.
+    fn parse_pattern_literal(&mut self) -> Option<PatternLit> {
+        let negative = self.eat_punct(Punct::Minus);
+        match self.peek().clone() {
+            TokenKind::Lit(lit @ Lit::Int { .. }) => {
+                self.bump();
+                Some(PatternLit { negative, lit: convert_literal(lit) })
+            }
+            TokenKind::Lit(lit) if !negative => {
+                self.bump();
+                Some(PatternLit { negative, lit: convert_literal(lit) })
+            }
+            other => {
+                let span = self.span();
+                let wanted = if negative { "an integer after `-`" } else { "a literal" };
+                self.report(
+                    Diagnostic::error(codes::E0100, span, format!("expected {wanted} in a pattern"))
+                        .primary_label(format!("found {other}")),
+                );
+                None
+            }
+        }
+    }
+
     fn parse_field_patterns(&mut self) -> (Vec<FieldPattern>, bool) {
         let mut fields = Vec::new();
         let mut has_rest = false;
@@ -1752,7 +1776,11 @@ impl Parser<'_> {
                 }
             }
             ExprKind::Path { segments } => PatternKind::Path { segments },
-            ExprKind::Lit(lit) => PatternKind::Lit(lit),
+            ExprKind::Lit(lit) => PatternKind::Lit(PatternLit { negative: false, lit }),
+            ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::Lit(Literal::Int { .. })) => {
+                let ExprKind::Lit(lit) = operand.kind else { unreachable!("matched above") };
+                PatternKind::Lit(PatternLit { negative: true, lit })
+            }
             ExprKind::Tuple(items) => {
                 PatternKind::Tuple(items.into_iter().map(|e| self.expr_to_pattern(e)).collect())
             }

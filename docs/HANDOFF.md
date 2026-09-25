@@ -10802,14 +10802,21 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   * Also fixed on the way: `len(a..=b)` checks the count before its `+ 1`, so a
     range one value too long for an `int` panics with `len`'s message, not as
     an overflow of the count.
-* **Found, open (all older than 0.9.9's work, all small):**
-  * D-308: `x << n` with `n` of another integer type is `E2020`; `[TYP-10]`
-    accepts any integer type for `n`.
-  * D-309: a negative shift amount does not panic (`[TYP-10]`).
-  * D-310: a negative literal pattern (`-5 =>`) is `E0100`; III.6's
-    `literal_pattern := ["-"] INT` allows it.
-  * D-311: a signed minimum written as a literal (`x: i8 = -128`) is
-    `E2010`; `[LEX-24]` makes it one constant.
+* **Then D-308 to D-312, found on the way and fixed** (all older than
+  0.9.9's work):
+  * D-308: a shift amount may be any integer type (`[TYP-10]`); the result
+    has the shifted value's type, and MIR checks or masks the amount in its
+    own type.
+  * D-309: a negative shift amount panics (`[TYP-10]`).
+  * D-310: negative literal patterns (`-5 =>`) parse (`ast::PatternLit`,
+    `parse_pattern_literal`); a pattern literal must fit the scrutinee's type
+    (`E2010`); a pattern that failed to check no longer makes the next arms
+    `W2091`. Range, slice and string patterns are still not built (they
+    parse and are reported unsupported).
+  * D-311 and D-312: `-128` is an `i8` and `-1` is no `u8` (`[LEX-24]`):
+    `adopt_literal` fits a negated literal as one constant. The backend prints
+    narrow integer constants through `int_literal`, a signed least value as
+    `(-MAX - 1)`.
 
 **The owner's standing instructions (all still in force)**
 

@@ -3425,16 +3425,24 @@ impl Emitter<'_> {
                     self.line(&format!("    goto bb{};", otherwise.0));
                     return;
                 }
+                let discr_ty = self.operand_type(discr, body).filter(|ty| self.types.is_integral(*ty));
+                let values: Vec<String> = targets
+                    .iter()
+                    .map(|(value, _)| match discr_ty {
+                        Some(ty) => self.int_literal(*value as u128, ty),
+                        None => value.to_string(),
+                    })
+                    .collect();
                 let discr = self.operand(discr, body);
                 // Phase 0 only produces two-way branches on a boolean.
-                if let [(value, target)] = targets.as_slice() {
+                if let [(_, target)] = targets.as_slice() {
                     self.line(&format!(
-                        "    if ({discr} == {value}) {{ goto bb{}; }} else {{ goto bb{}; }}",
-                        target.0, otherwise.0
+                        "    if ({discr} == {}) {{ goto bb{}; }} else {{ goto bb{}; }}",
+                        values[0], target.0, otherwise.0
                     ));
                 } else {
                     self.line(&format!("    switch ({discr}) {{"));
-                    for (value, target) in targets {
+                    for ((_, target), value) in targets.iter().zip(&values) {
                         self.line(&format!("    case {value}: goto bb{};", target.0));
                     }
                     self.line(&format!("    default: goto bb{};", otherwise.0));
@@ -3689,6 +3697,30 @@ impl Emitter<'_> {
             TyKind::Uint(UintTy::U128) => Some("u128"),
             _ => None,
         }
+    }
+
+    /// A C constant of a narrower integer type, from its two's-complement
+    /// bits (sign-extended or not): unsigned ones with their suffix, negative
+    /// ones negated in parentheses, and a signed type's least value as
+    /// `(-MAX - 1)`, since C reads `-9223372036854775808` as a minus applied
+    /// to a literal too large for any signed type (D-311).
+    fn int_literal(&self, bits: u128, ty: Ty) -> String {
+        let width = ember_types::bit_width(self.types, ty).unwrap_or(64);
+        let suffix = match self.types.kind(ty) {
+            TyKind::Int(IntTy::I64 | IntTy::Isize) => "LL",
+            TyKind::Uint(UintTy::U64 | UintTy::Usize) => "ULL",
+            TyKind::Uint(_) => "U",
+            _ => "",
+        };
+        let low = if width >= 128 { bits } else { bits & ((1u128 << width) - 1) };
+        if !matches!(self.types.kind(ty), TyKind::Int(_)) || low >> (width - 1) == 0 {
+            return format!("{low}{suffix}");
+        }
+        let magnitude = (1u128 << width) - low;
+        if magnitude == 1u128 << (width - 1) {
+            return format!("(-{}{suffix} - 1)", magnitude - 1);
+        }
+        format!("(-{magnitude}{suffix})")
     }
 
     /// A 128-bit constant from its two's-complement bits.
@@ -4996,6 +5028,9 @@ impl Emitter<'_> {
                 if let Some(wide) = self.wide_int(*ty) {
                     return self.wide_constant(*value, wide);
                 }
+                if self.types.is_integral(*ty) {
+                    return self.int_literal(*value, *ty);
+                }
                 let suffix = match self.types.kind(*ty) {
                     TyKind::Int(IntTy::I64 | IntTy::Isize) => "LL",
                     TyKind::Uint(UintTy::U64 | UintTy::Usize) => "ULL",
@@ -5032,10 +5067,22 @@ impl Emitter<'_> {
     fn rvalue(&self, rvalue: &Rvalue, body: &Body, target: Ty) -> String {
         match rvalue {
             Rvalue::Use(o) => self.operand(o, body),
-            // D-272 — an operation on a 128-bit value is a runtime helper.
+            // D-272 — an operation on a 128-bit value is a runtime helper. A
+            // shift's type is its shifted value's; only a 128-bit amount of
+            // a narrower value needs converting (D-308).
             Rvalue::BinaryOp { op, lhs, rhs } if self.wide_operands(lhs, rhs, body).is_some() => {
-                let wide = self.wide_operands(lhs, rhs, body).expect("checked by the guard");
-                self.wide_binary(*op, lhs, rhs, wide, body)
+                let shift = matches!(op, ember_mir::BinOp::Shl | ember_mir::BinOp::Shr);
+                let shifted = self.operand_type(lhs, body).filter(|ty| self.wide_int(*ty).is_some());
+                match (shift, shifted) {
+                    (true, None) => {
+                        format!("({} {} {})", self.operand(lhs, body), op.c_operator(), self.shift_amount(rhs, body))
+                    }
+                    (true, Some(wide)) => self.wide_binary(*op, lhs, rhs, wide, body),
+                    (false, _) => {
+                        let wide = self.wide_operands(lhs, rhs, body).expect("checked by the guard");
+                        self.wide_binary(*op, lhs, rhs, wide, body)
+                    }
+                }
             }
             // `[TYP-29]`, ODR-021 — float floor division and modulo are the
             // runtime's Python-exact helpers; C has no operator for either.
@@ -5086,6 +5133,13 @@ impl Emitter<'_> {
             }
             Rvalue::UnaryOp { op, operand } => {
                 let wide = self.operand_type(operand, body).and_then(|ty| self.wide_int(ty));
+                // A negated integer constant is one constant, the least
+                // value included (D-311).
+                if let (ember_mir::UnOp::Neg, Operand::Const(Const::Int { value, ty }), None) = (op, operand, wide)
+                    && matches!(self.types.kind(*ty), TyKind::Int(_))
+                {
+                    return self.int_literal(value.wrapping_neg(), *ty);
+                }
                 let operand = self.operand(operand, body);
                 if let Some(suffix) = wide {
                     return match op {

@@ -13501,6 +13501,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Reports unreachable arms and missing values; `true` when the arms
     /// cover every value.
     fn report_match_coverage(&mut self, arms: &[hir::MatchArm], ty: Ty, span: Span) -> bool {
+        // A pattern that failed to check has been reported; it covers
+        // nothing, and the arms after it are not unreachable because of it.
+        let error = self.common.error;
+        fn failed(pattern: &hir::Pattern, error: Ty) -> bool {
+            pattern.ty == error
+                || match &pattern.kind {
+                    hir::PatternKind::Bind { sub, .. } => sub.as_deref().is_some_and(|sub| failed(sub, error)),
+                    hir::PatternKind::Variant { fields, .. } | hir::PatternKind::Fields(fields) | hir::PatternKind::Or(fields) => {
+                        fields.iter().any(|field| failed(field, error))
+                    }
+                    _ => false,
+                }
+        }
+        if arms.iter().any(|arm| failed(&arm.pattern, error)) {
+            return true;
+        }
         let mut seen: Vec<&hir::Pattern> = Vec::new();
         for arm in arms {
             if !usefulness::is_useful(self.types, &seen, &arm.pattern, ty) {
@@ -13716,18 +13732,35 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// III.6 — a literal pattern, narrowed to the scrutinee's type. An
+    /// integer must fit that type (`[LEX-16]`); `-5` is one constant
+    /// (`[LEX-24]`, D-310), so an unsigned type cannot hold it and a signed
+    /// type holds its least value. The pattern keeps the value's two's
+    /// complement bits, so a `u128` above `i128`'s range matches too.
     fn check_literal_pattern(
         &mut self,
-        lit: &ast::Literal,
+        pattern: &ast::PatternLit,
         expected: Ty,
         span: Span,
     ) -> hir::Pattern {
-        let value = match lit {
+        let value = match &pattern.lit {
             ast::Literal::Int { value, .. } if self.types.is_integral(expected) => {
-                i128::try_from(*value).ok()
+                let limit = if pattern.negative {
+                    ember_types::signed_min_magnitude(self.types, expected).or(Some(0).filter(|_| !self.types.is_untyped_literal(expected)))
+                } else {
+                    int_max(self.types, expected)
+                };
+                if limit.is_some_and(|limit| *value > limit) {
+                    let shown = self.types.display(expected);
+                    let sign = if pattern.negative { "-" } else { "" };
+                    self.error(codes::E2010, span, format!("the literal `{sign}{value}` does not fit in `{shown}`"));
+                    return hir::Pattern { ty: self.common.error, kind: hir::PatternKind::Wild, span };
+                }
+                let bits = *value as i128;
+                Some(if pattern.negative { bits.wrapping_neg() } else { bits })
             }
-            ast::Literal::Bool(v) if expected == self.common.bool_ => Some(i128::from(*v)),
-            ast::Literal::Char(c) if expected == self.common.char_ => Some(*c as i128),
+            ast::Literal::Bool(v) if !pattern.negative && expected == self.common.bool_ => Some(i128::from(*v)),
+            ast::Literal::Char(c) if !pattern.negative && expected == self.common.char_ => Some(*c as i128),
             _ => None,
         };
         match value {
@@ -18128,6 +18161,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
             ExprKind::Float(value) => Expr { ty: expected, kind: ExprKind::Float(value), span },
+            // `[LEX-24]` (D-311, D-312) — a minus directly on an integer
+            // literal is part of the constant: `-128` is an `i8`, though
+            // `128` alone is not, and no unsigned type holds `-1`.
+            ExprKind::Unary { op: UnOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::Int(_)) && int_max(self.types, expected).is_some() =>
+            {
+                let ExprKind::Int(value) = operand.kind else { unreachable!("matched above") };
+                let limit = ember_types::signed_min_magnitude(self.types, expected).unwrap_or(0);
+                if value > limit {
+                    let shown = self.types.display(expected);
+                    self.error(codes::E2010, span, format!("the literal `-{value}` does not fit in `{shown}`"));
+                }
+                let operand = Box::new(Expr { ty: expected, kind: ExprKind::Int(value), span: operand.span });
+                Expr { ty: expected, kind: ExprKind::Unary { op: UnOp::Neg, operand }, span }
+            }
             // D-183 — an operator tree of untyped literals (`-7.5`, `1 + 2`)
             // takes the type as a whole: every node still untyped adopts it,
             // or the operands keep a type the backend cannot lower.
@@ -29583,7 +29631,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
 
-        if lhs.ty != rhs.ty && lhs.ty != self.common.error && rhs.ty != self.common.error {
+        // `[TYP-10]` (D-308) — a shift's amount may be any integer type; the
+        // result has the shifted value's type.
+        let shift_by_another_integer = matches!(hir_op, BinOp::Shl | BinOp::Shr)
+            && self.types.is_integral(lhs.ty)
+            && self.types.is_integral(rhs.ty)
+            && !self.types.is_untyped_literal(lhs.ty)
+            && !self.types.is_untyped_literal(rhs.ty);
+        if lhs.ty != rhs.ty && !shift_by_another_integer && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
             let mut diagnostic = Diagnostic::error(

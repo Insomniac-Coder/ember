@@ -839,12 +839,20 @@ pub struct Pattern {
     pub span: Span,
 }
 
+/// III.6's `literal_pattern`: a literal, and the `-` an integer one may
+/// carry (`-5 =>`, D-310).
+#[derive(Clone, Debug)]
+pub struct PatternLit {
+    pub negative: bool,
+    pub lit: Literal,
+}
+
 #[derive(Clone, Debug)]
 pub enum PatternKind {
     /// `_`
     Wild,
-    Lit(Literal),
-    Range { lo: Literal, hi: Literal, inclusive: bool },
+    Lit(PatternLit),
+    Range { lo: PatternLit, hi: PatternLit, inclusive: bool },
     /// `[GRM-12]` — an identifier resolves to a unit variant or `const` if one
     /// is in scope, and is a fresh binding otherwise. Resolution decides.
     Bind { name: Ident, by_ref: bool, mutable: bool, sub: Option<Box<Pattern>> },

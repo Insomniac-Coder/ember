@@ -618,13 +618,18 @@ pub fn type_str(ty: &TypeExpr) -> String {
     }
 }
 
+fn pattern_literal_str(lit: &PatternLit) -> String {
+    let sign = if lit.negative { "-" } else { "" };
+    format!("{sign}{}", literal_str(&lit.lit))
+}
+
 pub fn pattern_str(pattern: &Pattern) -> String {
     match &pattern.kind {
         PatternKind::Wild => "_".to_string(),
-        PatternKind::Lit(lit) => literal_str(lit),
+        PatternKind::Lit(lit) => pattern_literal_str(lit),
         PatternKind::Range { lo, hi, inclusive } => {
             let op = if *inclusive { "..=" } else { ".." };
-            format!("{}{op}{}", literal_str(lo), literal_str(hi))
+            format!("{}{op}{}", pattern_literal_str(lo), pattern_literal_str(hi))
         }
         PatternKind::Bind { name, by_ref, mutable, sub } => {
             let mut out = String::new();
