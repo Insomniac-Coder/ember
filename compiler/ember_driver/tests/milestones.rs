@@ -20,6 +20,7 @@
 //! token stream: a `compile-fail` test may be expected to fail at the lexer,
 //! so its expectations must be readable even when the file does not tokenise.
 
+use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1514,14 +1515,16 @@ fn check_file(path: &Path, root: &Path) {
         }
         _ => {}
     }
-    // Keyed by the whole relative path, not the file's stem: cases run side
-    // by side, and rule directories share file names (`accept_basic`).
-    let out_dir = std::env::temp_dir().join("ember-tests").join(
-        Path::new(&relative)
-            .with_extension("")
-            .to_string_lossy()
-            .replace(['/', '\\'], "__"),
-    );
+    // One short folder per case, named by a hash of its whole relative path:
+    // cases run side by side, and rule directories share file names
+    // (`accept_basic`). Short because Windows' linker cannot write a path over
+    // 260 characters, and the executable is already named after the file;
+    // the path itself as the name put the longest cases over it in CI.
+    let out_dir = std::env::temp_dir().join("ember-tests").join(format!("{:016x}", {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        relative.hash(&mut hasher);
+        hasher.finish()
+    }));
     let profiles = profiles(&expectations);
 
     // A `compile-fail` test must be rejected, with the diagnostics it names.
@@ -1641,8 +1644,8 @@ fn check_file(path: &Path, root: &Path) {
     }
 
     for profile in &profiles {
-        let profile_out_dir = out_dir.join(profile);
-        let out_dir_arg = profile_out_dir.to_string_lossy().into_owned();
+        // The driver adds the profile's own folder (`[BLD-5]`).
+        let out_dir_arg = out_dir.to_string_lossy().into_owned();
         let arguments = ["run", relative.as_str(), "--out-dir", &out_dir_arg, "--profile", profile];
         let run = match &expectations.stdin {
             Some(input) => ember_with_input(&arguments, root, input),
