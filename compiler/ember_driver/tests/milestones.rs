@@ -20,8 +20,11 @@
 //! token stream: a `compile-fail` test may be expected to fail at the lexer,
 //! so its expectations must be readable even when the file does not tokenise.
 
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
@@ -1511,10 +1514,13 @@ fn check_file(path: &Path, root: &Path) {
         }
         _ => {}
     }
+    // Keyed by the whole relative path, not the file's stem: cases run side
+    // by side, and rule directories share file names (`accept_basic`).
     let out_dir = std::env::temp_dir().join("ember-tests").join(
-        path.file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        Path::new(&relative)
+            .with_extension("")
+            .to_string_lossy()
+            .replace(['/', '\\'], "__"),
     );
     let profiles = profiles(&expectations);
 
@@ -1697,7 +1703,6 @@ fn check_directory(name: &str) -> usize {
     if !dir.is_dir() {
         return 0;
     }
-    let mut count = 0;
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("the test directory is readable")
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -1707,27 +1712,75 @@ fn check_directory(name: &str) -> usize {
         })
         .collect();
     entries.sort();
-    let mut failures = Vec::new();
-    for path in entries {
-        check_file_collecting(&path, &root, &mut failures);
-        count += 1;
-    }
-    report_failures(name, &failures);
-    count
+    report_failures(name, &run_cases(&entries, |path| check_file(path, &root)));
+    entries.len()
 }
 
-/// Run one case, recording its failure instead of stopping the directory, so
-/// one run reports every failing case rather than the first.
-fn check_file_collecting(path: &Path, root: &Path, failures: &mut Vec<String>) {
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_file(path, root)));
-    if let Err(payload) = outcome {
-        let message = payload
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
-            .unwrap_or_else(|| "a case panicked with a non-text payload".to_string());
-        failures.push(message);
+/// Cases running at once across every test function in this binary. Cargo
+/// runs the functions side by side, and each would otherwise start a worker
+/// per core of its own.
+static RUNNING: Mutex<usize> = Mutex::new(0);
+static FINISHED: Condvar = Condvar::new();
+
+fn cores() -> usize {
+    std::thread::available_parallelism().map_or(4, |n| n.get())
+}
+
+/// A place among the `cores()` cases that may run at once, held until drop.
+struct Permit;
+
+impl Permit {
+    fn take() -> Permit {
+        let mut running = RUNNING.lock().unwrap_or_else(PoisonError::into_inner);
+        while *running >= cores() {
+            running = FINISHED.wait(running).unwrap_or_else(PoisonError::into_inner);
+        }
+        *running += 1;
+        Permit
     }
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        *RUNNING.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
+        FINISHED.notify_one();
+    }
+}
+
+/// Run `case` over every file, one per core, and return the failures in the
+/// files' order. A failing case is recorded rather than stopping the run, so
+/// one run reports every failing case rather than the first.
+fn run_cases(files: &[PathBuf], case: impl Fn(&Path) + Sync) -> Vec<String> {
+    let next = AtomicUsize::new(0);
+    let mut failures: Vec<(usize, String)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..cores().min(files.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut failed = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = files.get(index) else { return failed };
+                        let _permit = Permit::take();
+                        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| case(path)));
+                        if let Err(payload) = outcome {
+                            let message = payload
+                                .downcast_ref::<String>()
+                                .cloned()
+                                .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                                .unwrap_or_else(|| "a case panicked with a non-text payload".to_string());
+                            failed.push((index, message));
+                        }
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("a worker catches its cases' panics"))
+            .collect()
+    });
+    failures.sort_by_key(|(index, _)| *index);
+    failures.into_iter().map(|(_, message)| message).collect()
 }
 
 fn report_failures(what: &str, failures: &[String]) {
@@ -2484,7 +2537,8 @@ fn the_conformance_suite_runs() {
         "tests/conformance holds no rule directories"
     );
 
-    let mut failures = Vec::new();
+    // Every directory's own checks first; then all the cases in one run.
+    let mut cases = Vec::new();
     for rule_dir in rules {
         let rule = rule_dir.file_name().unwrap().to_string_lossy().into_owned();
         let mut files: Vec<PathBuf> = std::fs::read_dir(&rule_dir)
@@ -2522,8 +2576,8 @@ fn the_conformance_suite_runs() {
                 "{}: no `#$ rules:` annotation",
                 path.display()
             );
-            check_file_collecting(path, &root, &mut failures);
         }
+        cases.extend(files);
     }
-    report_failures("tests/conformance", &failures);
+    report_failures("tests/conformance", &run_cases(&cases, |path| check_file(path, &root)));
 }

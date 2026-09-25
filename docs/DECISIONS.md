@@ -1479,3 +1479,39 @@ reported when many constructions evaluate it.
   one mistake is one error (`[DIA-14]`).
 - Class field defaults still resolve at the construction site; aligning them is
   a follow-up, not part of D-238.
+
+## ADR-046 — The runtime is compiled once, into a machine-wide cache
+
+**Decided 2026-09-25, with the owner-approved test speedups.** Every build used
+to compile the whole runtime (`ember_rt.c`, 5,438 lines, about 145 ms with
+clang) together with the program. With clang and gcc it is now compiled once
+per toolchain and profile into `<cache>/runtime/<key>.o` and linked as an
+object (`ember_build::runtime_object`).
+
+- **Where.** The cache is machine-wide: the variable `cache_dir_var()` names
+  (`EMBER_CACHE`), else `%LOCALAPPDATA%\<cli>\cache`, `~/Library/Caches/<cli>`
+  or `$XDG_CACHE_HOME/<cli>` (`~/.cache/<cli>`), else the temporary directory.
+  Go's and Zig's build caches live in the same places. An object under
+  `target/` would be rebuilt by every test case, because each case has its own
+  output folder. `[BLD-5]` governs a build's output, which stays in
+  `target/<profile>/`. The runtime object is toolchain state, like the runtime
+  in `[TOOL-1]`'s archive. The B6 budget ("clean `debug` build, cold cache")
+  already tells a clean build from a cold cache.
+- **Key.** A BLAKE3 hash (the crate already depends on it) of the compile
+  command (flags, include directories, source path), the source, each file in
+  the include directories, and the compiler's file on disk: its path, size and
+  modification time. An upgraded compiler, or another one first on `PATH`,
+  gets a new object. The key only names the object; none of it reaches the
+  artefact (`[BLD-13]`).
+- **Side by side.** The object is compiled under `<key>.o.tmp<pid>` and renamed
+  into place, as the interface cache has done since D-189. A rename lost to
+  another build keeps that build's identical object.
+- **MSVC** still compiles the runtime with each program. A `/GL` (shipping)
+  object needs `/LTCG` at link, and `/Zi` ties an object to its PDB. No build
+  had ever used MSVC when this was written (D-251: its detection always
+  failed), so an MSVC object could not be verified.
+- **Fallback.** When the cache directory cannot be created, the build compiles
+  the source with the program, as before.
+- **Not done.** Nothing prunes old objects (each runtime edit leaves up to
+  three, one per profile), and only the include directories' own files are
+  hashed, not their subdirectories (the runtime's headers are flat).

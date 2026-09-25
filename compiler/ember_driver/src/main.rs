@@ -2140,9 +2140,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let exe = layout.bin.join(exe_name);
 
     let toolchain = Toolchain::detect(options.cc.as_deref()).map_err(|e| e.to_string())?;
-    let runtime_source = format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX);
-    let sources = vec![c_path.clone(), runtime.join(runtime_source)];
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
+    // The runtime is compiled once per toolchain and profile, then linked as
+    // an object; without one (MSVC), it is compiled with the program.
+    let runtime_input = ember_build::runtime_object(
+        &toolchain,
+        &runtime_source,
+        &includes,
+        options.profile,
+        &ember_build::cache_root(),
+    )
+    .map_err(|e| e.to_string())?
+    .unwrap_or(runtime_source);
+    let sources = vec![c_path.clone(), runtime_input];
     ember_build::compile_and_link(
         &toolchain,
         &LinkRequest {

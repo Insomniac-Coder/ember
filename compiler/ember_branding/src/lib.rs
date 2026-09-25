@@ -107,6 +107,12 @@ pub fn std_path_var() -> String {
     format!("{}_STD", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// The environment variable that moves the global build cache (which holds
+/// the compiled runtime) away from the platform's cache directory.
+pub fn cache_dir_var() -> String {
+    format!("{}_CACHE", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// Where `std`'s sources live, or `None` where they cannot be found.
 ///
 /// The order is: the environment variable; then `std/src` beside the running
@@ -152,6 +158,7 @@ mod tests {
     #[test]
     fn the_std_path_variable_is_derived_too() {
         assert_eq!(std_path_var(), "EMBER_STD");
+        assert_eq!(cache_dir_var(), "EMBER_CACHE");
     }
 
     #[test]

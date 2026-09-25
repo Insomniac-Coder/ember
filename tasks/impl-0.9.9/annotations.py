@@ -5,7 +5,8 @@ with that code whose text (message, labels, notes or helps) contains `text`; one
 line of code also needs the diagnostic's primary span on that line. A missing diagnostic and an
 unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
 `#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty) and
-`#$ panics:`. A test uses its first listed profile.
+`#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
+core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
@@ -14,9 +15,19 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
+OUT = os.path.join(tempfile.gettempdir(), 'ember-annotations')
+
+
+def out_dir(path):
+    """`ember run`'s output folder for one file: files run side by side, and rule directories
+    share file names."""
+    relative = os.path.splitext(os.path.relpath(path, ROOT))[0]
+    return os.path.join(OUT, relative.replace(os.sep, '__').replace('/', '__'))
 
 
 def expected_stdin(text):
@@ -125,7 +136,8 @@ def check(path):
     if kind == 'compile-fail' and exit_code == 0:
         problems.append('expected compilation to fail')
     if kind in ('run-pass', 'run-fail'):
-        code, out, err = run(['run', '--profile', profile], path, expected_stdin(text))
+        code, out, err = run(['run', '--profile', profile, '--out-dir', out_dir(path)], path,
+                             expected_stdin(text))
         stdout = expected_stdout(text)
         if stdout is not None and out.rstrip('\n').split('\n') != stdout:
             problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')
@@ -137,9 +149,13 @@ def check(path):
     return problems
 
 
+directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
+everything = sorted({path for _, paths in directories for path in paths})
+with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+    found = dict(zip(everything, pool.map(check, everything)))
+
 failures = 0
-for directory in sys.argv[1:]:
-    paths = sorted(glob.glob(os.path.join(directory, '*.em')))
+for directory, paths in directories:
     # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
     if 'conformance' in os.path.normpath(directory).split(os.sep) \
             and not any(os.path.basename(p).startswith('accept_') for p in paths):
@@ -147,7 +163,7 @@ for directory in sys.argv[1:]:
         print(os.path.relpath(directory, ROOT))
         print('    no accept_* case ([TST-4a])')
     for path in paths:
-        problems = check(path)
+        problems = found[path]
         if problems:
             failures += 1
             print(os.path.relpath(path, ROOT))

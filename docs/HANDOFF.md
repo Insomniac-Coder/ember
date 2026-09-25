@@ -10699,7 +10699,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-25 05:15 IST
+#### Start here after a context reset — state at 2026-09-25 06:00 IST
 
 Everything below is committed and pushed on `main`. The working tree was clean
 when this was written. **Read this subsection first**; the rest of §0.355 is
@@ -10707,13 +10707,14 @@ the running narrative behind it.
 
 **Where things stand**
 
-* **Last commit:** `f3a8d6c` (D-248/D-250). CI was still running when this
-  was written; check it first (recipe below). CI was green on every earlier
-  push that day: `c2f0bd4`, `d0df020`, `6df0fc4`, `37efa47`.
+* **Last commits:** `f3a8d6c` (D-248/D-250), the handoff `770780b`, then
+  the test speedups (A/B/C, below), the newest. Check CI for it first (recipe
+  below). CI was green on every earlier push that day: `c2f0bd4`, `d0df020`,
+  `6df0fc4`, `37efa47`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_11.md`,
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h11/` is frozen.
-* **Next numbers:** ODR-031, D-251.
+* **Next numbers:** ODR-031, D-252.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10760,114 +10761,60 @@ the running narrative behind it.
 * Answer plainly.
 * Phase-status requests get the table first.
 
-**Immediate next task: test speedups A, B and C.** The owner approved this on
-2026-09-25: "yes go ahead with A, B and C". Nothing of it had been written when
-this handoff was made. The design and measurements follow.
+**Done after the reset: test speedups A, B and C** (owner-approved on
+2026-09-25, "yes go ahead with A, B and C"). Measured on 24 cores:
 
-*Measured on 2026-09-25 (24 cores):*
+| Run | Before | After |
+|---|---:|---:|
+| Full suite, `cargo test --workspace --no-fail-fast` | about 11 min | 55 s |
+| `compiler/ember_driver/tests/milestones.rs` alone | 650 s | 53 s |
+| Quick check, `annotations.py` over every directory | 323 s | 27 s |
 
-* The full suite (`cargo test --workspace --no-fail-fast`) takes **about 11
-  minutes** wall-clock.
-  * About 10.8 of those minutes are `compiler/ember_driver/tests/milestones.rs`
-    (35 test functions, 650 s).
-  * Everything else takes 1–3 s in total. Doc-tests are negligible.
-* **Test programs:** 1,256 in all — 993 in `tests/conformance`, 181 in
-  `run-pass`, 62 in `compile-fail`, 13 in `compile-pass`, 5 in `run-fail`
-  and 2 in `milestones`.
-* **Also run:** 48 UI fixtures (`tests/ui`, 1 s) and about 240 Rust unit
-  tests.
-* `the_conformance_suite_runs` (milestones.rs, about line 2470) runs all 993
-  conformance files **one after another** in one test function.
-  `check_directory` (about line 1695) does the same for the other
-  directories.
-* **Cost of one program with the debug-built compiler:**
-  * `ember check`: about 460 ms.
-  * clang compiling the whole runtime again: about 145 ms per build
-    (`runtime/ember_rt/src/ember_rt.c`, 5,438 lines).
-  * clang compiling the program's own C: about 100 ms.
-* A single case can run `ember` up to seven times:
-  * a diagnostics `check`;
-  * `--emit c` per profile, when it has `assert-c`;
-  * a build and run per profile.
-* The quick check (`tasks/impl-0.9.9/annotations.py`) is sequential too, and
-  takes several minutes.
+* **A.** `run_cases` in `milestones.rs` runs a test function's cases one per
+  core and reports failures in file order. A global permit (`Permit`, a
+  `static Mutex` and `Condvar`) caps the cases running across all test
+  functions at the core count. Each case builds in
+  `temp_dir()/ember-tests/<relative path, separators as __>`, because rule
+  directories share file names. `the_conformance_suite_runs` makes its
+  per-directory checks ([TST-4a], `#$ rules:`) first, then runs every file in
+  one list.
+* **B.** `annotations.py` maps `check` over every file with a thread pool,
+  gives each `ember run` its own `--out-dir` under
+  `temp_dir()/ember-annotations/`, and prints in order.
+* **C.** With clang or gcc, `ember_build::runtime_object` compiles the runtime
+  once per toolchain and profile into `<cache>/runtime/<blake3 key>.o`, and the
+  driver links it as an object (ADR-046). The cache root is `cache_root()`:
+  `EMBER_CACHE` (`ember_branding::cache_dir_var()`), else
+  `%LOCALAPPDATA%\ember\cache` here. MSVC returns `None` and compiles the
+  runtime with each program. Test:
+  `the_runtime_object_is_reused_until_an_input_changes`.
+* All three were break-tested. Two broken conformance expectations (`ARN-1`,
+  `WK-7`) were reported by both runners, in order. Dropping the header hash
+  failed the unit test.
 
-*A — run the harness's cases in parallel (milestones.rs):*
+**Immediate next task: D-251 (`docs/DEFECTS.md`), found while doing C.** Every
+build so far, in CI and here, has used clang:
 
-1. **Unique output folders.** `check_file` (about line 1467) builds into
-   `temp_dir()/ember-tests/<file stem>`. Two rule directories can hold files
-   of one name, so key the folder by the path relative to the root, with its
-   separators replaced.
-2. **A shared runner** `check_files(files, root) -> Vec<String>`:
-   * `std::thread::scope` workers, as many as `available_parallelism()`;
-   * an `AtomicUsize` work index;
-   * each case run through `check_file_collecting`, which already catches
-     panics;
-   * failures sorted back into the files' order.
-3. **A global permit** (a `static Mutex<usize>` and a `Condvar`) caps the
-   cases running at once across *all* test functions at the core count.
-   Cargo runs the 35 functions side by side as well.
-4. **Wire it in.** `the_conformance_suite_runs` keeps its per-directory
-   assertions first ([TST-4a] `accept_` case, `#$ rules:` present), then
-   flattens every file into one list for the runner. `check_directory` uses
-   the runner too.
-5. The interface cache under `target/<profile>/cache` is shared but safe
-   (D-189: write aside, then rename; `compiler/ember_build/src/interface.rs`,
-   about line 273).
-6. **Expected:** about 11 minutes down to 1–2.
-
-*B — run the quick check in parallel (annotations.py):*
-
-1. `run()` calls `ember` with `cwd=ROOT`, and `ember run` without
-   `--out-dir` writes `target/<profile>/{c,bin}/<stem>`. Give each run
-   `--out-dir <temp>/ember-annotations/<relative path, separators
-   replaced>/<profile>`.
-2. Map `check(path)` over every file with
-   `concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())`.
-3. Print the results in order, and keep the [TST-4a] directory message.
-
-*C — compile the runtime once and reuse it (`compiler/ember_build/src/lib.rs`,
-and `compiler/ember_driver/src/main.rs` around lines 2120–2155):*
-
-1. **Today:** `compile_and_link` (ember_build, about line 244) runs one
-   compiler command with the program's C and the runtime's C.
-   * MSVC flags: `/nologo /std:c11 /W3`, plus `/Od /Zi /MDd`, `/O2 /MD` or
-     `/O2 /GL /MD` by profile.
-   * clang/gcc flags: `-std=c11 -Wall -Wextra`, plus `-O0 -g`, `-O2` or
-     `-O3` by profile, and `-lm` off Windows.
-2. **Add `runtime_object(toolchain, source, include_dirs, profile) ->
-   Result<Option<PathBuf>, BuildError>`.** For clang/gcc it compiles with
-   `-c` and the same flags into `<cache_root>/runtime/<key>.o`.
-   * The key is an FNV-1a 64 hash of: the runtime source's bytes; every
-     header under the include directories (sorted); the toolchain's name; the
-     compiler's path; and the profile's flags.
-   * Compile to `<key>.o.tmp<pid>`, then rename into place. On Windows the
-     rename fails when another build won the race; then delete the temporary
-     and use the existing object. A rename is atomic, so a reader only ever
-     sees a complete object.
-3. **MSVC returns `None`** and keeps compiling the runtime source with each
-   program. MSVC is not installed on this machine, so that path cannot be
-   verified here, and `/GL` (shipping) objects need `/LTCG` at link. Say so
-   in the commit.
-4. **`cache_root()`**, in this order of preference:
-   1. the variable named by a new branding helper,
-      `ember_branding::cache_dir_var()` = `<PREFIX>_CACHE`, following
-      `std_path_var()`;
-   2. on Windows `%LOCALAPPDATA%\<CLI_NAME>\cache`, on macOS
-      `~/Library/Caches/<CLI_NAME>`, elsewhere `$XDG_CACHE_HOME/<CLI_NAME>`
-      or `~/.cache/<CLI_NAME>`;
-   3. otherwise `temp_dir()/<CLI_NAME>-cache`.
-
-   Use `ember_branding::CLI_NAME`: `tools/check_branding.py` rejects new
-   hard-coded names. This is the global build cache Zig and Go use for the
-   same job.
-5. **`LinkRequest` gains `objects: &[PathBuf]`**, appended to the command.
-   Update every place that builds one: the driver, and ember_build's own
-   tests.
-6. **CI** builds with clang and gcc on ubuntu, and with msvc and clang-cl on
-   windows (`EMBER_CC`). Watch all four after the push.
-7. **Afterwards:** time the suite and the quick check again, and record the
-   numbers here and in memory.
+* **MSVC is never detected.** `capture_environment` in
+  `compiler/ember_build/src/lib.rs` passes
+  `call "<vcvars64.bat>" >nul 2>&1 && set` to `cmd /c` as one argument. Rust
+  quotes it with `\"`, and `cmd` does not understand that, so the batch file
+  never runs. VS 2022 BuildTools **is** installed here (MSVC 14.44, `cl.exe`
+  and `link.exe` present), yet `ember run --cc msvc` says "no C compiler
+  found". Passing the same command line verbatim works (`raw_arg`, from
+  `std::os::windows::process::CommandExt`); a Python check showed `INCLUDE`
+  set.
+* **Nothing reads `EMBER_CC`**, which CI sets per job. The tests call `ember`
+  without `--cc`.
+* **`clang-cl` is not a `--cc` value.** `[MAN-1]` lists
+  `auto | bundled | msvc | clang | gcc`, while Part XX §2 wants CI on
+  "windows-latest with MSVC + clang-cl". Probably an ODR (ODR-031).
+* **Fixing detection makes MSVC the default here** (`[MAN-1]`: auto prefers
+  MSVC on Windows). The emitted C has never been compiled by MSVC, so expect
+  failures in the suite. Then give C an MSVC path (`cl /c`, `/Fo`; mind `/GL`
+  and `/Zi`), or the local suite loses C's gain.
+* gcc is not installed here. Only CI's ubuntu job can test it, once
+  `EMBER_CC` is read.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):
@@ -10948,7 +10895,7 @@ unless named otherwise):
   `callable_declarations` declares a generic extension's members as
   `generic:<target>@<span start>`.
 
-**Backlog after A/B/C, in order:**
+**Backlog after D-251, in order:**
 
 1. **The rest of [STD-15].**
    * `sort_by` and `sort_by_key`: the runtime's `ember_vec_sort` takes a
@@ -10999,10 +10946,16 @@ unless named otherwise):
 * **Old builds.** To check behaviour at an older commit, use a scratch
   worktree (`git worktree add --detach <dir> <sha>`) and build it there. Do
   not stash while a suite runs.
+* **Every build is clang** until D-251 is fixed. MSVC detection always
+  fails, and CI's `EMBER_CC` is read by nothing.
+* **The runtime object cache** is `%LOCALAPPDATA%\ember\cache\runtime`; set
+  `EMBER_CACHE` to move it. Its key covers the runtime's source and headers, so
+  an edit to the runtime needs no manual clean.
 
 **Recipes**
 
-* **Fast check** (directories only; about 4 minutes until B lands):
+* **Full suite:** `cargo test --workspace --no-fail-fast`, about 1 minute.
+* **Fast check** (directories only; about 30 seconds):
 
   ```
   python tasks/impl-0.9.9/annotations.py tests/conformance/*/ tests/compile-fail tests/compile-pass tests/run-pass tests/run-fail tests/milestones tests/std tests/ffi

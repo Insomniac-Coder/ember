@@ -596,3 +596,15 @@ The next number is ODR-027.
   parameters (a generic signature's `Wrapper[T]`) has signatures only: no bodies, no per-instance
   derive or abstract-method checks, no class glue in the C output. Two `TYP-22` tests that relied
   on duck typing (a `T` field returned as `i32`) were corrected.
+* **2026-09-25 — the test runs are fast.** Owner-approved speedups A, B and C, measured on 24
+  cores. The full suite (`cargo test --workspace --no-fail-fast`) went from about 11 minutes to
+  55 s, and `milestones.rs` alone from 650 s to 53 s. The quick check (`annotations.py` over
+  every directory) went from 323 s to 27 s. **A:** the harness runs its cases in parallel
+  (`run_cases`: one worker per core, failures reported in file order, and a global permit that
+  caps cases across all test functions). Each case builds in a folder named after its whole
+  relative path, because rule directories share file names. **B:** `annotations.py` checks files
+  in a thread pool, each `ember run` in a folder of its own. **C:** with clang and gcc, the runtime
+  is compiled once per toolchain and profile into a machine-wide cache and linked as an object
+  (ADR-046); MSVC still compiles it with each program. Found on the way: D-251. MSVC detection
+  never succeeds (a quoting defect), and nothing reads CI's `EMBER_CC`, so every build so far, in
+  CI and here, has used clang.

@@ -231,6 +231,7 @@ impl Layout {
 }
 
 pub struct LinkRequest<'a> {
+    /// C sources, and objects to link with them (see [`runtime_object`]).
     pub sources: &'a [PathBuf],
     pub include_dirs: &'a [PathBuf],
     pub output: PathBuf,
@@ -283,18 +284,7 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.arg("-std=c11").arg("-Wall").arg("-Wextra");
-            match request.profile {
-                Profile::Debug => {
-                    command.arg("-O0").arg("-g");
-                }
-                Profile::Release => {
-                    command.arg("-O2");
-                }
-                Profile::Shipping => {
-                    command.arg("-O3");
-                }
-            }
+            command.args(gnu_flags(request.profile));
             for dir in request.include_dirs {
                 command.arg("-I").arg(dir);
             }
@@ -307,7 +297,21 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
             }
         }
     }
+    run(command)
+}
 
+/// clang's and gcc's flags for a profile, shared by the program's compile and
+/// the runtime object's so the two always agree.
+fn gnu_flags(profile: Profile) -> Vec<&'static str> {
+    let optimisation: &[&str] = match profile {
+        Profile::Debug => &["-O0", "-g"],
+        Profile::Release => &["-O2"],
+        Profile::Shipping => &["-O3"],
+    };
+    ["-std=c11", "-Wall", "-Wextra"].iter().chain(optimisation).copied().collect()
+}
+
+fn run(mut command: Command) -> Result<(), BuildError> {
     let rendered = format!("{command:?}");
     let output = command.output()?;
     if !output.status.success() {
@@ -321,6 +325,121 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
     Ok(())
 }
 
+/// The global build cache, shared by every build on the machine: the variable
+/// named by `cache_dir_var()`, else the platform's cache directory, else the
+/// temporary directory. Zig and Go keep their build caches the same way.
+pub fn cache_root() -> PathBuf {
+    let name = ember_branding::CLI_NAME;
+    let env_dir = |var: &str| std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = env_dir(&ember_branding::cache_dir_var()) {
+        return dir;
+    }
+    let platform = if cfg!(windows) {
+        env_dir("LOCALAPPDATA").map(|dir| dir.join(name).join("cache"))
+    } else if cfg!(target_os = "macos") {
+        env_dir("HOME").map(|dir| dir.join("Library").join("Caches").join(name))
+    } else {
+        env_dir("XDG_CACHE_HOME")
+            .or_else(|| env_dir("HOME").map(|dir| dir.join(".cache")))
+            .map(|dir| dir.join(name))
+    };
+    platform.unwrap_or_else(|| std::env::temp_dir().join(format!("{name}-cache")))
+}
+
+/// The runtime compiled once per toolchain and profile into `cache`, to be
+/// linked into every program instead of recompiled with each (about 145 ms
+/// of every clang build). The object's name is a hash of everything that
+/// shapes it: the compile command, the source, the headers in
+/// `include_dirs` and the compiler's file on disk. It is compiled under a
+/// temporary name and renamed into place, so a build running alongside sees
+/// the whole object or none.
+///
+/// `None` means: compile `source` with the program. That is MSVC's path
+/// (a `/GL` shipping object needs `/LTCG` at link, and no build had ever
+/// used MSVC when this was written, D-251, so an MSVC object could not be
+/// verified), and the fallback when `cache` cannot be created.
+pub fn runtime_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    profile: Profile,
+    cache: &Path,
+) -> Result<Option<PathBuf>, BuildError> {
+    let (Toolchain::Clang(compiler) | Toolchain::Gcc(compiler)) = toolchain else {
+        return Ok(None);
+    };
+    let mut command = Command::new(compiler);
+    command.args(gnu_flags(profile)).arg("-c");
+    for dir in include_dirs {
+        command.arg("-I").arg(dir);
+    }
+    command.arg(source);
+
+    let mut key = blake3::Hasher::new();
+    let mut part = |bytes: &[u8]| {
+        key.update(&(bytes.len() as u64).to_le_bytes());
+        key.update(bytes);
+    };
+    part(format!("{command:?}").as_bytes());
+    part(&std::fs::read(source)?);
+    // ponytail: the include directories' own files, not their subdirectories
+    // (the runtime's headers are flat); walk deeper if that changes.
+    for dir in include_dirs {
+        let mut headers: Vec<PathBuf> = std::fs::read_dir(dir)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        headers.sort();
+        for header in headers {
+            part(header.to_string_lossy().as_bytes());
+            part(&std::fs::read(&header)?);
+        }
+    }
+    // An upgraded compiler, or another one first on PATH, is a new key.
+    if let Some(file) = compiler_file(compiler) {
+        part(file.to_string_lossy().as_bytes());
+        if let Ok(meta) = file.metadata() {
+            let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+            part(&meta.len().to_le_bytes());
+            part(&modified.map_or(0, |since| since.as_nanos()).to_le_bytes());
+        }
+    }
+
+    let dir = cache.join("runtime");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Ok(None);
+    }
+    let object = dir.join(format!("{}.o", key.finalize().to_hex()));
+    if object.is_file() {
+        return Ok(Some(object));
+    }
+    let temp = object.with_extension(format!("o.tmp{}", std::process::id()));
+    command.arg("-o").arg(&temp);
+    if let Err(error) = run(command) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&temp, &object) {
+        let _ = std::fs::remove_file(&temp);
+        // Another build renamed its identical object into place first (and
+        // Windows refuses to replace a file that a linker has open).
+        if !object.is_file() {
+            return Err(error.into());
+        }
+    }
+    Ok(Some(object))
+}
+
+/// The compiler's file on disk, found as `Command` finds a bare name.
+fn compiler_file(program: &Path) -> Option<PathBuf> {
+    if program.components().count() > 1 {
+        return Some(program.to_path_buf());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +450,34 @@ mod tests {
             assert_eq!(Profile::from_name(profile.name()), Some(profile));
         }
         assert_eq!(Profile::from_name("fast"), None);
+    }
+
+    /// Compiled once, reused while nothing changes, and rebuilt when a header
+    /// changes.
+    #[test]
+    fn the_runtime_object_is_reused_until_an_input_changes() {
+        let toolchain = Toolchain::detect(None).expect("a C toolchain");
+        let dir = std::env::temp_dir().join(format!("runtime-object-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("include")).expect("the test directory is creatable");
+        let source = dir.join("rt.c");
+        std::fs::write(&source, "int rt_answer(void) { return 42; }\n").expect("the source is writable");
+        let includes = [dir.join("include")];
+        let build = || {
+            runtime_object(&toolchain, &source, &includes, Profile::Debug, &dir.join("cache"))
+                .expect("the runtime compiles")
+        };
+        // MSVC compiles the runtime with each program instead.
+        let Some(first) = build() else { return };
+        let stamp = || std::fs::metadata(&first).and_then(|m| m.modified()).expect("the object exists");
+        let built = stamp();
+        assert_eq!(build().as_ref(), Some(&first));
+        assert_eq!(stamp(), built, "an unchanged runtime was compiled again");
+        std::fs::write(dir.join("include").join("rt.h"), "#define RT 1\n").expect("the header is writable");
+        let second = build().expect("the object is built");
+        assert_ne!(second, first, "a changed header kept the old object");
+        assert!(second.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
