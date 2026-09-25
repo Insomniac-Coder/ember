@@ -50,9 +50,36 @@ inspect options:
     --elided-only                      report only statically elided checks
 ";
 
+/// The compiler's stack: the same on every host (D-330). Checking and
+/// lowering recurse once for each level of an expression, and a debug build
+/// spends about 65 KB of stack on a level of a binary operator, so the 1 MB
+/// Windows gives a program's main thread held a twelve-deep polynomial and no
+/// more, where Linux's 8 MB held a hundred levels. The size is reserved, not
+/// committed: a host spends only what a program's nesting uses.
+const COMPILER_STACK: usize = 256 << 20;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match run(&args) {
+    // Named as the main thread is, which an internal error's message names.
+    let compiler = std::thread::Builder::new()
+        .name("main".to_string())
+        .stack_size(COMPILER_STACK)
+        .spawn(move || compile_command(&args));
+    match compiler {
+        // A panic, an internal error, was reported on the thread; it ends
+        // the process as it would have on the main thread.
+        Ok(thread) => thread
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+        Err(error) => {
+            eprintln!("error: cannot start the compiler's thread: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn compile_command(args: &[String]) -> ExitCode {
+    match run(args) {
         Ok(code) => code,
         Err(message) => {
             eprintln!("error: {message}");

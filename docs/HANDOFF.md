@@ -10730,19 +10730,20 @@ the running narrative behind it.
     `9298803` (D-316 `f16`, ODR-041, and D-318; CI green), `89fb9ca` (A3's
     indexing, ODR-042, D-320, D-321; CI green), `bbcf3b2` (A4's first part:
     `std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326;
-    CI green), then `std.math.det` (ODR-046, D-327 to D-329).
+    CI green), `a79e1a5` (`std.math.det`, ODR-046, D-327 to D-329; both
+    Windows jobs failed, D-330), then D-330's fix.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_21.md`
   (ODR-046), pinned in `docs/spec-source/development-target.json`. The spec's
   working sources are `tasks/spec-0.9.9/parts/`; `parts-h21/` is frozen.
-* **Next numbers:** ODR-047, D-330, ADR-055.
+* **Next numbers:** ODR-047, D-332, ADR-056.
 * **Next task:** the rest of A4, `NonZero[T]` (`[STD-4]`: a `Copy` wrapper
   for each integer type with a niche, `Option[NonZero[T]]` the size of `T`,
   made by `NonZero.new(v) -> Option[NonZero[T]]`; dividing by one needs no
-  zero check). Then AUTOPILOT's B list, where D-328 (method visibility) also
-  belongs.
+  zero check). Then AUTOPILOT's B list, where D-328 (method visibility) and
+  D-331 (a nesting limit with a diagnostic) also belong.
 * **Last phase table given to the owner (2026-09-25):**
 
   | Phase | % |
@@ -10936,6 +10937,19 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   and `tests/conformance/DET-4/` holds verified values. Found on the way: D-327
   (negative literal constants; fixed), D-329 (a `const` range bound; fixed),
   D-328 (private methods are callable from other modules; **open**).
+* **D-330: the compiler's stack (ADR-055).** `a79e1a5` failed both Windows
+  jobs: `thread 'main' has overflowed its stack` compiling either `DET-4`
+  case. A debug build of the compiler spends about 65 KB of stack on each
+  level of a binary operator (`synth_with_expectation` 37 KB,
+  `synth_binary` 28 KB; measured with gdb under `ulimit -s 1024`), and the
+  main thread has 1 MB on Windows: fifteen levels, and `det.em`'s
+  polynomials are twelve deep. The driver's `main` now runs `run` on a
+  thread with a 256 MB stack, named `main`, and resumes a panic from it.
+  `ulimit -s 1024` reproduces Windows on Linux. The test,
+  `run-pass/a_deep_expression_compiles_on_every_host.em`, is a sum four
+  hundred levels deep; it overflows Linux's 8 MB main thread without the
+  fix. D-331 (**open**): past about four thousand levels the compiler still
+  aborts without a diagnostic.
 
 **The owner's standing instructions (all still in force)**
 

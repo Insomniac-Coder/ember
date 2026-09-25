@@ -1800,3 +1800,27 @@ compiler may fuse a multiply and an add (D-325). This is the sequence.
   the model bit for bit over 1455 arguments and eight functions, in every
   profile and under clang and gcc, and over 600 `f32` arguments. The model is
   `tools/det_model.py`, and `tools/check_det.py` repeats the comparison in CI.
+
+## ADR-055 — The compiler runs on a thread with a 256 MB stack
+
+**Decided 2026-09-26, with D-330.** The specification says nothing about the
+compiler's own stack, and the host decided it: 1 MB for a main thread on
+Windows, 8 MB on Linux. A program that compiled on Linux could overflow on
+Windows.
+
+- **One stack everywhere.** `main` starts the compiler on a thread with a
+  256 MB stack and waits for it. How deep an expression can nest is then the
+  same on every host, for a given build of the compiler.
+- **Why 256 MB.** A debug build of the compiler spends about 65 KB of stack
+  on each level of a binary operator, and a parenthesised level costs more:
+  a polynomial in Horner form a hundred levels deep needs 16 to 32 MB. 256 MB
+  holds about four thousand levels of a sum in a debug build. The size is a
+  reservation of address space on Linux, macOS and Windows; pages are
+  committed as the recursion reaches them, so a shallow program costs what
+  it did.
+- **Panics.** An internal error panics on the compiler's thread, which is
+  named `main` so that the message reads as it did; `main` resumes the panic,
+  and the process ends with the same status.
+- **Not done.** A limit on nesting with a diagnostic (D-331) needs the
+  specification to state one. Growing the stack on demand needs a dependency
+  or platform code at each recursion point.
