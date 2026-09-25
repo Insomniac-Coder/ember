@@ -611,6 +611,10 @@ pub enum Builtin {
     ArrayClear,
     ArrayPop { option: Ty },
     ArrayRemove,
+    /// `[STD-15]` (ODR-031) — `xs.drain(r)` with the range already checked
+    /// and resolved to `lo`, `hi`: the elements `lo..hi` moved out, in order,
+    /// into a new `Array`, and the rest closed up.
+    ArrayDrain,
     ArrayInsert,
     /// `[STD-15]` — `xs.capacity()`: the slots allocated.
     ArrayCapacity,
@@ -767,6 +771,13 @@ pub enum Builtin {
     /// `[SPN-6]` — advance a chunk cursor and yield one final-partial-capable
     /// shared or mutable subspan.
     SpanChunksNext { elem: Ty, mutable: bool },
+    /// `[STD-15]` (ODR-031) — `windows(n)`: check a non-zero width and
+    /// construct the shared window iterator, lowered as `SpanChunksNew` is.
+    SpanWindowsNew { iterator: Ty },
+    /// `[STD-15]` (ODR-031) — advance a window cursor by one and yield the
+    /// next full window as a shared subspan, or nothing once fewer than the
+    /// width remain.
+    SpanWindowsNext { elem: Ty },
     /// `[SPN-8]`, `[SPN-9]` — safely extract a raw pointer from a Span. The
     /// pointer result deliberately carries no safe borrow or lifetime tie.
     SpanAsPtr { mutable: bool },
@@ -971,6 +982,7 @@ impl Builtin {
             Builtin::ArrayClear => "clear",
             Builtin::ArrayPop { .. } => "pop",
             Builtin::ArrayRemove => "remove",
+            Builtin::ArrayDrain => "drain",
             Builtin::ArrayInsert => "insert",
             Builtin::ArrayCapacity => "capacity",
             Builtin::ArrayReserve => "reserve",
@@ -1030,6 +1042,8 @@ impl Builtin {
                 if mutable { "chunks_mut" } else { "chunks" }
             }
             Builtin::SpanChunksNext { .. } => "next",
+            Builtin::SpanWindowsNew { .. } => "windows",
+            Builtin::SpanWindowsNext { .. } => "next",
             Builtin::SpanAsPtr { mutable } => {
                 if mutable { "as_mut_ptr" } else { "as_ptr" }
             }

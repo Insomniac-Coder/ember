@@ -164,6 +164,34 @@ extend[T] Array[T]:
                 kept += 1
         self.truncate(kept)
 
+    ## Sorts by `cmp`, which says how two elements order. Stable: elements
+    ## `cmp` finds equal keep their order (ODR-031).
+    pub fn sort_by(mut self, cmp: fn(T, T) -> Ordering):
+        order = stable_order(self, cmp)
+        self.apply_order(order)
+
+    ## Sorts by `key(x)`, calling `key` once for each element, as Python's
+    ## `key=` does. Stable (ODR-031).
+    pub fn sort_by_key[K: Ord](mut self, key: fn(T) -> K):
+        keys: Array[K] = []
+        for i in range(self.len()):
+            keys.push(key(self[i]))
+        order = stable_order(keys, fn(a, b) => a.cmp(b))
+        self.apply_order(order)
+
+    ## Puts the element at `order[i]` at `i`, following each cycle of the
+    ## permutation with `swap`: no element is copied or moved out, so any `T`
+    ## sorts.
+    fn apply_order(mut self, mut order: Array[int]):
+        for start in range(self.len()):
+            at = start
+            while order[at] != start:
+                next = order[at]
+                self.swap(at, next)
+                order[at] = at
+                at = next
+            order[at] = at
+
 extend[T: Eq] Array[T]:
     ## Drops each element equal to the one kept before it, so a sorted array
     ## keeps one of each value.
@@ -190,6 +218,63 @@ extend[T: Ord] Array[T]:
                 Ordering.Equal: return Ok(mid)
                 Ordering.Greater: hi = mid
         return Err(lo)
+
+    ## `sort` for an element type with an `Ord` of its own. The compiler's
+    ## `sort` orders numbers and text itself and routes the rest here (D-256).
+    fn sort_ord(mut self):
+        order = stable_order(self, fn(a, b) => a.cmp(b))
+        self.apply_order(order)
+
+extend[T: Ord + Clone] Array[T]:
+    ## `sorted` for what the compiler's own `sorted` does not take: elements
+    ## with an `Ord` of their own, or that are not `Copy` (D-256).
+    fn sorted_ord(self) -> Array[T]:
+        out = self.clone()
+        out.sort_ord()
+        return out
+
+## `[STD-15]` — the order a stable sort puts `xs` in, as indices: a bottom-up
+## merge that takes from the right run only when `cmp` finds its element
+## less. Each pass writes every index once, whatever `cmp` answers, so an
+## inconsistent order can only permute the elements, never lose or repeat one
+## (`[HASH-3]`).
+fn stable_order[T](xs: Array[T], cmp: fn(T, T) -> Ordering) -> Array[int]:
+    n = xs.len()
+    order: Array[int] = []
+    merged: Array[int] = []
+    for i in range(n):
+        order.push(i)
+        merged.push(i)
+    width = 1
+    while width < n:
+        lo = 0
+        while lo < n:
+            mid = min(lo + width, n)
+            hi = min(lo + 2 * width, n)
+            left = lo
+            right = mid
+            out = lo
+            while left < mid and right < hi:
+                if cmp(xs[order[right]], xs[order[left]]) == Ordering.Less:
+                    merged[out] = order[right]
+                    right += 1
+                else:
+                    merged[out] = order[left]
+                    left += 1
+                out += 1
+            while left < mid:
+                merged[out] = order[left]
+                left += 1
+                out += 1
+            while right < hi:
+                merged[out] = order[right]
+                right += 1
+                out += 1
+            lo += 2 * width
+        for i in range(n):
+            order[i] = merged[i]
+        width *= 2
+    return order
 
 extend[T: Display] Array[T]:
     ## The elements' text with `sep` between each two, as Python's

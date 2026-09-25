@@ -225,7 +225,10 @@ pub fn check(
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
     // name in source, so they are gathered as they are checked and appended
     // here rather than found by walking the modules again.
-    functions.extend(std::mem::take(&mut checker.lambdas));
+    let opaque = std::mem::take(&mut checker.opaque_lambdas);
+    functions.extend(
+        std::mem::take(&mut checker.lambdas).into_iter().filter(|lambda| !opaque.contains(&lambda.def)),
+    );
     let callable_declarations = checker.callable_declarations(modules);
     CheckOutput {
         program: Program { functions, main },
@@ -296,6 +299,8 @@ struct ClosureCall {
 enum SpanIteratorKind {
     Elements { mutable: bool },
     Chunks { mutable: bool },
+    /// `[STD-15]` (ODR-031) — `windows(n)`, shared views only.
+    Windows,
 }
 
 /// `[TYP-16]` — a struct declared with type parameters. Its fields are
@@ -672,6 +677,20 @@ struct Checker<'a> {
     /// no name in source, so they are collected here and appended to the
     /// program rather than found by walking the module again.
     lambdas: Vec<Function>,
+    /// D-257 — the number the next closure is named with (`closureN`, and its
+    /// environment `closureN_env`). It never goes back, so a dropped or
+    /// re-checked lambda never lets two closures share a name in the C.
+    closure_numbers: usize,
+    /// D-257 — how many instances have been made signature-only (they are
+    /// over another generic's own parameters). A lambda whose body made one
+    /// cannot be emitted.
+    skipped_instances: usize,
+    /// D-257 — lambdas over opaque generic parameters, made while a generic
+    /// body was checked with its parameters opaque. No instance of them
+    /// exists, so they are not emitted; each instance of the body makes its
+    /// own. A lambda over concrete types only is kept, because an instance
+    /// made during the same check may call it.
+    opaque_lambdas: HashSet<DefId>,
     /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
     derived_clone_methods: Vec<(DefId, Ty, Span, bool)>,
     /// Candidates resolved after every source method is known, so field order
@@ -1017,6 +1036,9 @@ impl<'a> Checker<'a> {
             routed_method: None,
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
+            closure_numbers: 0,
+            skipped_instances: 0,
+            opaque_lambdas: HashSet::new(),
             derived_clone_methods: Vec::new(),
             pending_derived_clones: Vec::new(),
             no_implicit_eq: HashSet::new(),
@@ -3098,9 +3120,7 @@ impl<'a> Checker<'a> {
             let args = self.opaque_arguments(params);
             self.type_params = params.iter().map(|param| param.name).zip(args).collect();
             self.current_generics = params.to_vec();
-            let lambdas = self.lambdas.len();
             let _ = self.check_one_method(owner, decl, block, def, &member.attrs, member.span);
-            self.lambdas.truncate(lambdas);
             self.generically_checked.insert(method.source);
             self.type_params.clear();
             self.current_generics.clear();
@@ -5230,11 +5250,14 @@ impl<'a> Checker<'a> {
     }
 
     fn has_own_drop(&self, ty: Ty) -> bool {
-        match self.types.kind(ty) {
+        // D-258 — a `drop` written in an `extend` block is the type's own too;
+        // `has_drop` records only one written in the type's body.
+        let declared = match self.types.kind(ty) {
             TyKind::Struct(id) => self.types.struct_def(*id).has_drop,
             TyKind::Enum(id) => self.types.enum_def(*id).has_drop,
             _ => false,
-        }
+        };
+        declared || self.methods.contains_key(&(ty, Symbol::intern("drop")))
     }
 
     /// `[STR-5]` — a struct or enum implements `Clone` field-wise when every
@@ -14701,7 +14724,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let bool_ty = self.common.bool_;
         let method = name.name.as_str();
         let wanted = match method {
-            "remove" | "swap_remove" | "truncate" | "reserve" | "extend" => 1,
+            "remove" | "swap_remove" | "truncate" | "reserve" | "extend" | "drain" => 1,
             "insert" | "swap" => 2,
             _ => 0,
         };
@@ -14709,21 +14732,25 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2020, span, format!("`{method}` takes {wanted} argument(s), found {}", args.len()));
             return error;
         }
-        if matches!(method, "sort" | "sorted") && !self.sortable(elem) {
+        // D-256 — `[STD-15]`'s `sort` and `sorted` take any `T: Ord`. The
+        // compiler orders numbers and text itself (and `sorted` copies, so its
+        // own takes `Copy` elements); the rest go to std's `sort_ord` and
+        // `sorted_ord`, the stable sort `sort_by` uses.
+        let compiler_sorts = self.sortable(elem) && (method == "sort" || self.types.is_copy(elem));
+        if matches!(method, "sort" | "sorted") && !compiler_sorts {
+            let routed = if method == "sort" { "sort_ord" } else { "sorted_ord" };
+            let routed = ast::Ident { name: Symbol::intern(routed), span: name.span };
+            let ord = self.implements(elem, Symbol::intern("std.core.Ord"));
+            if ord && self.lookup_method(receiver.ty, routed.name).is_some() {
+                let receiver_span = receiver.span;
+                return self.synth_registered_method(receiver, receiver_span, routed, args, Vec::new(), span);
+            }
             let shown = self.types.display(elem);
-            self.error(
-                codes::E2040,
-                span,
-                format!("`{shown}` does not implement `Ord`, which `{method}` needs"),
-            );
+            let missing = if ord { "Clone" } else { "Ord" };
+            self.error(codes::E2040, span, format!("`{shown}` does not implement `{missing}`, which `{method}` needs"));
             return error;
         }
         if method == "sorted" {
-            if !self.types.is_copy(elem) {
-                let shown = self.types.display(elem);
-                self.error(codes::E0900, span, format!("`sorted` of `{shown}` values is not implemented yet: it needs `Clone`"));
-                return error;
-            }
             let ty = receiver.ty;
             return Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArraySorted { elem }, args: vec![receiver] }, span };
         }
@@ -14731,7 +14758,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E2140, span, format!("`{method}` changes the array, so it needs an Array variable"));
             return error;
         }
-        if method == "extend" && !self.is_cloneable(elem) {
+        if method == "extend" && !self.implements(elem, Symbol::intern("std.core.Clone")) {
             let shown = self.types.display(elem);
             self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `extend` needs"));
             return error;
@@ -14795,6 +14822,109 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     stmts.push(Stmt::Expr(call(Builtin::Assert, vec![in_range, message], void)));
                 }
                 let action = call(Builtin::ArraySwap, vec![local(borrow, borrow_ty), local(i, usize_ty), local(j, usize_ty)], void);
+                after_arguments(stmts, action)
+            }
+            // `[STD-15]` (ODR-031) — `drain(r)` takes the elements in `r` out, in
+            // order, as a new `Array`, and the rest close up. `r` is any range
+            // of integers (`a..b`, `a..=b`, `a..`, `..b`); one reaching outside
+            // `0..=len`, or starting after it ends, panics.
+            "drain" => {
+                let range = self.synth_committed(&args[0].value);
+                let Some((shape, bound)) = self.range_parts(range.ty) else {
+                    if range.ty != self.common.error {
+                        let shown = self.types.display(range.ty);
+                        self.error(codes::E2020, range.span, format!("`drain` takes a range, not `{shown}`"));
+                    }
+                    return error;
+                };
+                if !self.types.is_integral(bound) {
+                    let shown = self.types.display(range.ty);
+                    self.error(codes::E2020, range.span, format!("`drain` takes a range of integers, not `{shown}`"));
+                    return error;
+                }
+                if matches!(self.types.kind(bound), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128)) {
+                    let shown = self.types.display(range.ty);
+                    self.error(codes::E0900, range.span, format!("`drain` with a `{shown}` is not implemented yet"));
+                    return error;
+                }
+                let int_ty = self.common.i64;
+                let range_ty = range.ty;
+                let borrow_ty = receiver.ty;
+                let held = self.declare(None, range_ty, span);
+                let borrow = self.declare(None, borrow_ty, span);
+                let (lo, hi) = (self.declare(None, int_ty, span), self.declare(None, int_ty, span));
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let bound_as_int = |this: &mut Self, index: usize| {
+                    let field = Expr {
+                        ty: bound,
+                        kind: ExprKind::Field { base: Box::new(local(held, range_ty)), index },
+                        span,
+                    };
+                    if bound == int_ty { field } else { this.coerce_numeric_to_int(field) }
+                };
+                let length = || {
+                    let through = Expr { ty: array_ty, kind: ExprKind::Deref(Box::new(local(borrow, borrow_ty))), span };
+                    let len = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::ArrayLen, args: vec![through] }, span };
+                    Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(len), to: int_ty }, span }
+                };
+                let (start, end) = match shape {
+                    "std.core.RangeTo" => (Expr { ty: int_ty, kind: ExprKind::Int(0), span }, bound_as_int(self, 0)),
+                    "std.core.RangeFrom" => (bound_as_int(self, 0), length()),
+                    _ => (bound_as_int(self, 0), bound_as_int(self, 1)),
+                };
+                let compare = |op, lhs: Expr, rhs: Expr| Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                    span,
+                };
+                let assert = |this: &mut Self, holds: Expr, message: &str| {
+                    let message = Expr { ty: this.common.str_, kind: ExprKind::Str(message.to_string()), span };
+                    Stmt::Expr(call(Builtin::Assert, vec![holds, message], void))
+                };
+                let zero = || Expr { ty: int_ty, kind: ExprKind::Int(0), span };
+                let outside = "drain range reaches outside the array";
+                // The range, then the borrow, which the bounds read through.
+                let mut stmts = vec![
+                    Stmt::Let { local: held, init: Some(range) },
+                    Stmt::Let { local: borrow, init: Some(receiver) },
+                    Stmt::Let { local: lo, init: Some(start) },
+                    Stmt::Let { local: hi, init: Some(end) },
+                ];
+                stmts.push(assert(self, compare(BinOp::Le, zero(), local(lo, int_ty)), outside));
+                // An unsigned bound past `int`'s range arrives negative, and
+                // `0..=u64.MAX` would otherwise pass as the empty `0..0`.
+                stmts.push(assert(self, compare(BinOp::Le, zero(), local(hi, int_ty)), outside));
+                // `a..=b` includes `b`: `b` is checked against the length
+                // before `b + 1` is formed, which cannot then overflow.
+                let inclusive = shape == "std.core.RangeInclusive";
+                let end_op = if inclusive { BinOp::Lt } else { BinOp::Le };
+                stmts.push(assert(self, compare(end_op, local(hi, int_ty), length()), outside));
+                let stop = if inclusive {
+                    Expr {
+                        ty: int_ty,
+                        kind: ExprKind::Binary {
+                            op: BinOp::Add,
+                            lhs: Box::new(local(hi, int_ty)),
+                            rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Int(1), span }),
+                        },
+                        span,
+                    }
+                } else {
+                    local(hi, int_ty)
+                };
+                let stop_local = self.declare(None, int_ty, span);
+                stmts.push(Stmt::Let { local: stop_local, init: Some(stop) });
+                stmts.push(assert(
+                    self,
+                    compare(BinOp::Le, local(lo, int_ty), local(stop_local, int_ty)),
+                    "drain range starts after it ends",
+                ));
+                let as_usize = |id| Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(id, int_ty)), to: usize_ty }, span };
+                let action = call(
+                    Builtin::ArrayDrain,
+                    vec![local(borrow, borrow_ty), as_usize(lo), as_usize(stop_local)],
+                    array_ty,
+                );
                 after_arguments(stmts, action)
             }
             "sort" => call(Builtin::ArraySort, vec![receiver], void),
@@ -14883,14 +15013,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 return error;
             }
         };
-        if !self.sortable(elem) {
+        // D-256 — as `xs.sorted()` does: the compiler's own sort takes `Copy`
+        // numbers and text, and an `Array` of any other `T: Ord + Clone` goes
+        // to std's `sorted_ord`.
+        if !(self.sortable(elem) && self.types.is_copy(elem)) {
+            let ord = self.implements(elem, Symbol::intern("std.core.Ord"));
+            let routed = ast::Ident { name: Symbol::intern("sorted_ord"), span };
+            if ord && matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+                self.extend_builtin_instance(value.ty);
+                if self.lookup_method(value.ty, routed.name).is_some() {
+                    let value_span = value.span;
+                    return self.synth_registered_method(value, value_span, routed, &[], Vec::new(), span);
+                }
+            }
             let shown = self.types.display(elem);
-            self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `sorted` needs"));
-            return error;
-        }
-        if !self.types.is_copy(elem) {
-            let shown = self.types.display(elem);
-            self.error(codes::E0900, span, format!("`sorted` of `{shown}` values is not implemented yet: it needs `Clone`"));
+            if !ord {
+                self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `sorted` needs"));
+            } else if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+                self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `sorted` needs"));
+            } else {
+                self.error(codes::E0900, span, format!("`sorted` of a view of `{shown}` values is not implemented yet"));
+            }
             return error;
         }
         // A fixed array is read through a view; an `Array` and a view have
@@ -15559,6 +15702,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 SpanIteratorKind::Chunks { mutable } => {
                     self.types.intern(TyKind::Span { elem, mutable })
                 }
+                SpanIteratorKind::Windows => {
+                    self.types.intern(TyKind::Span { elem, mutable: false })
+                }
             };
             let item_option = self.option_of(item);
             let which = match kind {
@@ -15568,6 +15714,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 SpanIteratorKind::Chunks { mutable } => {
                     Builtin::SpanChunksNext { elem, mutable }
                 }
+                SpanIteratorKind::Windows => Builtin::SpanWindowsNext { elem },
             };
             (
                 item_option,
@@ -17658,6 +17805,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if segments.len() == 1 {
                 if let Some(local) = self.lookup(segments[0].name) {
                     let value = self.read_local_expecting(local, callee.span, None);
+                    let value = self.through_callable_ref(value);
                     if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
                         if let Some(&def) = self.callable_value_bindings.get(&local) {
                             let latebound =
@@ -17706,6 +17854,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     // call path used to consult only the closure's own scope
                     // and reported `E1010`.
                     if let Some(value) = self.resolve_capture(segments[0].name, callee.span) {
+                        let value = self.through_callable_ref(value);
                         if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
                             return self.synth_indirect_call(value, args, span, false, false);
                         }
@@ -19063,6 +19212,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// The signature an opaque generic parameter may be called with, read from
     /// the generics of the body being checked. `None` for a parameter that
     /// carries no `[CLO-3]` bound, which is then not callable at all.
+    /// D-257 — ODR-024 makes a borrowed parameter of a non-`Copy` type a
+    /// `ref T` local, and a callable parameter is one in most instances (a
+    /// closure's environment struct, or the caller's own callable passed on).
+    /// What is called is the value it refers to.
+    fn through_callable_ref(&mut self, value: Expr) -> Expr {
+        let TyKind::Ref { inner, .. } = *self.types.kind(value.ty) else { return value };
+        let callable = match *self.types.kind(inner) {
+            TyKind::Fn { .. } => true,
+            TyKind::Struct(id) => self.closure_calls.contains_key(&id),
+            _ => self.callable_bound_of(inner).is_some(),
+        };
+        if callable { self.read_through(value) } else { value }
+    }
+
     fn callable_bound_of(&mut self, ty: Ty) -> Option<(Ty, bool)> {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
@@ -19102,6 +19265,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.types.unify_with_fixed(inner, actual, solved, fixed);
         }
+        // D-257 — a callable parameter passed on arrives borrowed (`ref F`),
+        // and the callee's `fn(A) -> R` parameter is borrowed too: `F` solves
+        // its hidden generic. Solving it with `ref F` left a value the callee
+        // could not call.
+        let actual = match (self.types.kind(declared), self.types.kind(actual)) {
+            (TyKind::Param { index, .. }, TyKind::Ref { mutable: false, inner })
+                if generics.get(*index as usize).is_some_and(|param| param.callable.is_some()) =>
+            {
+                *inner
+            }
+            _ => actual,
+        };
         if !self.types.unify_with_fixed(declared, actual, solved, fixed) {
             return false;
         }
@@ -19385,7 +19560,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         });
         self.instances.insert(key.clone(), instance);
         self.generic_of.insert(instance, def);
-        self.pending.push((key, instance));
+        // D-257 — an instance over another generic's own parameters (made
+        // while that generic's body is checked opaquely) is a signature only,
+        // as D-250 made it for generic types: its body would be checked where
+        // those parameters' bounds are not in scope (a callable one could not
+        // be called), and it never runs. The concrete instance is made when
+        // the caller itself is instantiated.
+        if key.args.iter().any(|&arg| self.types.is_generic(arg)) {
+            self.skipped_instances += 1;
+        } else {
+            self.pending.push((key, instance));
+        }
         let _ = (name, span);
         instance
     }
@@ -19430,7 +19615,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         });
         self.instances.insert(key.clone(), instance);
         self.generic_of.insert(instance, def);
-        self.pending_generic_methods.push((key, instance));
+        // D-257 — as for a generic function's instance: one over another
+        // generic's own parameters is a signature only.
+        if key.args.iter().any(|&arg| self.types.is_generic(arg)) {
+            self.skipped_instances += 1;
+        } else {
+            self.pending_generic_methods.push((key, instance));
+        }
         let _ = (name, span);
         instance
     }
@@ -21128,7 +21319,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             && matches!(
                 name.name.as_str(),
                 "sort" | "reverse" | "clear" | "pop" | "remove" | "insert" | "sorted" | "swap_remove" | "swap"
-                    | "truncate" | "reserve" | "extend"
+                    | "truncate" | "reserve" | "extend" | "drain"
             )
             && explicit.is_empty()
             && !self.methods.contains_key(&(receiver.ty, name.name))
@@ -21930,6 +22121,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// with unannotated parameters in a context without an expected type is
     /// `E2061`".
     fn synth_lambda(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
+        let number = self.closure_numbers;
+        self.closure_numbers += 1;
+        let skipped_before = self.skipped_instances;
         let wanted = expected.and_then(|ty| match self.types.kind(ty) {
             TyKind::Fn { params, ret, .. } => Some((params.clone(), *ret)),
             _ => None,
@@ -22054,7 +22248,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
             let ret = ret.unwrap_or(body_ty);
-            let def = self.push_closure(&params, ret, locals, body, None, span);
+            let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before);
             let ty = self.types.intern(TyKind::Fn {
                 latebound: false,
                 params: params
@@ -22096,10 +22290,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     vis: FieldVis::Private,
                 })
                 .collect();
-            let probe_name = Symbol::intern(&format!(
-                "closure{}_capture_probe_env",
-                self.lambdas.len()
-            ));
+            let probe_name = Symbol::intern(&format!("closure{number}_capture_probe_env"));
             let probe_id = self.types.add_struct(StructDef {
                 name: probe_name,
                 fields: probe_fields,
@@ -22167,7 +22358,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 vis: FieldVis::Private,
             })
             .collect();
-        let env_name = Symbol::intern(&format!("closure{}_env", self.lambdas.len()));
+        let env_name = Symbol::intern(&format!("closure{number}_env"));
         let struct_id = self.types.add_struct(StructDef {
             name: env_name,
             fields,
@@ -22230,6 +22421,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 lambda.is_owned,
             )),
             span,
+            number,
+            skipped_before,
         );
         self.closure_calls.insert(struct_id, ClosureCall { def, once });
 
@@ -22357,6 +22550,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         body: Block,
         env: Option<(Symbol, Ty, Mode, bool)>,
         span: Span,
+        number: usize,
+        skipped_before: usize,
     ) -> DefId {
         let def = DefId(self.signatures.len() as u32);
         let closure_environment = env.as_ref().and_then(|(_, ty, _, _)| match self.types.kind(*ty) {
@@ -22379,13 +22574,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // parameter `[LT-7]` limits the result to the callable type's sources;
         // that half is D-220, open.)
         let sources = self.sources_of(&signature_params);
+        // D-257 — over opaque parameters, or calling an instance that is a
+        // signature only: never emitted (see `opaque_lambdas`).
+        if self.skipped_instances != skipped_before
+            || self.types.is_generic(ret)
+            || signature_params.iter().any(|(_, ty, _, _)| self.types.is_generic(*ty))
+            || locals.iter().any(|local| self.types.is_generic(local.ty))
+        {
+            self.opaque_lambdas.insert(def);
+        }
         self.signatures.push(Signature {
             params: signature_params,
             ret,
             borrows: None,
             generics: Vec::new(),
         });
-        let symbol = format!("{}closure{}", ember_branding::mangle_prefix(), self.lambdas.len());
+        let symbol = format!("{}closure{number}", ember_branding::mangle_prefix());
         self.lambdas.push(Function {
             def,
             name: Symbol::intern(&symbol),
@@ -23875,6 +24079,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             "std.collections.MutSpanIter" => SpanIteratorKind::Elements { mutable: true },
             "std.collections.SpanChunks" => SpanIteratorKind::Chunks { mutable: false },
             "std.collections.MutSpanChunks" => SpanIteratorKind::Chunks { mutable: true },
+            "std.collections.SpanWindows" => SpanIteratorKind::Windows,
             _ => return None,
         };
         Some((args[0], kind))
@@ -24354,6 +24559,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             SpanIteratorKind::Chunks { mutable } => (
                 self.types.intern(TyKind::Span { elem, mutable }),
                 Builtin::SpanChunksNext { elem, mutable },
+            ),
+            SpanIteratorKind::Windows => (
+                self.types.intern(TyKind::Span { elem, mutable: false }),
+                Builtin::SpanWindowsNext { elem },
             ),
         };
         let result = self.option_of(item);
@@ -25272,7 +25481,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
-        if matches!(name.name.as_str(), "chunks" | "chunks_mut") {
+        if matches!(name.name.as_str(), "chunks" | "chunks_mut" | "windows") {
             if args.len() != 1 {
                 self.error(
                     codes::E2020,
@@ -25292,8 +25501,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 receiver
             };
             let width = self.integer_as_usize(&args[0].value);
+            // `[STD-15]` (ODR-031) — windows overlap, so they are shared views
+            // of a shared reborrow, whatever the receiver.
+            let windows = name.name.is("windows");
             let iterator = self.instantiate_named_generic(
-                if wants_mut {
+                if windows {
+                    "std.collections.SpanWindows"
+                } else if wants_mut {
                     "std.collections.MutSpanChunks"
                 } else {
                     "std.collections.SpanChunks"
@@ -25301,12 +25515,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 &[elem],
                 span,
             );
+            let which = if windows {
+                Builtin::SpanWindowsNew { iterator }
+            } else {
+                Builtin::SpanChunksNew { iterator, mutable: wants_mut }
+            };
             return Expr {
                 ty: iterator,
-                kind: ExprKind::Builtin {
-                    which: Builtin::SpanChunksNew { iterator, mutable: wants_mut },
-                    args: vec![source, width],
-                },
+                kind: ExprKind::Builtin { which, args: vec![source, width] },
                 span,
             };
         }
@@ -25588,7 +25804,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.error(codes::E2020, span, format!("`clone` takes no arguments, found {}", args.len()));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            if !self.is_cloneable(elem) {
+            // `implements` also answers a type parameter's `Clone` bound
+            // (`[TYP-17]`), which `is_cloneable` does not.
+            if !self.implements(elem, Symbol::intern("std.core.Clone")) {
                 let shown = self.types.display(elem);
                 self.error(
                     codes::E2040,
@@ -25642,7 +25860,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // array is viewed, and the view's method runs. `get_mut(i)` is a
         // mutable view's `get`.
         let through_view = match name.name.as_str() {
-            "iter" | "chunks" | "split_at" => Some((false, name)),
+            "iter" | "chunks" | "split_at" | "windows" => Some((false, name)),
             "iter_mut" | "chunks_mut" => Some((true, name)),
             "get_mut" => Some((true, ast::Ident { name: Symbol::intern("get"), span: name.span })),
             _ => None,

@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-031 | **CLOSED** — `Array`'s `sort_by`/`sort_by_key` are stable (`f` once per element), `windows(n)` yields shared overlapping views and panics on `0`, `drain(r)` returns an `Array` and takes any integer range | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -184,6 +185,77 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-031 — what do `sort_by`, `sort_by_key`, `windows` and `drain` take and give? — **CLOSED**
+
+    ID:        ODR-031
+    Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_12
+    Category:  STANDARD LIBRARY / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_11.md [STD-15], [SPN-4], [HASH-3]
+
+    Question:  `[STD-15]` lists `drain(range)`, `sort_by_key(f)`, `sort_by(cmp)` and
+               `windows(n)` by name only. What does `drain` return, and which ranges
+               does it take? What is `cmp`'s type, and are the two sorts stable? How
+               often is `f` called? What does `windows(0)` do, and is there a
+               mutable form?
+
+    Blocks implementation:            YES — the four methods cannot be written without it
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options for `drain`.**
+- **(A) A lazy iterator holding the array**, as Rust's `Drain`. Rejected for now:
+  it needs an iterator that restores the tail when it is dropped half-used, and
+  iterator values and adapters (`[STD-19]`) are not settled.
+- **(B) An eager `Array[T]` of the removed elements.** Python's list has no
+  `drain`; the closest is taking a slice and deleting it, which is (B). It never
+  leaves the array half-closed, and `for x in xs.drain(r)` still reads naturally.
+
+**Options for the sorts.**
+- `sort_by(cmp: fn(T, T) -> Ordering)`, with `Ordering` from the prelude. Stable,
+  as `sort` is, so the three sorts agree.
+- `sort_by_key[K: Ord](f: fn(T) -> K)`: **(A)** call `f` on every comparison, as
+  Rust's `sort_by_key` does, or **(B)** once per element, in order, as Python's
+  `key=` does. (B): it is Python's contract, does `n` calls rather than about
+  `2 n log n`, and makes a key with side effects predictable.
+
+**Options for `windows`.**
+- `windows(0)`: panic, as `chunks(0)` does (`[SPN-4]`), rather than yield
+  nothing forever or yield empty views.
+- A `windows_mut`: rejected. Windows overlap, so two mutable views could alias
+  one element (`[BRW-5]`).
+
+**Ruling.**
+- `drain(r) -> Array[T]` (B). `r` is any range of integers: `a..b`, `a..=b`,
+  `a..` or `..b`. The elements in `r` are moved out, in order, and the rest
+  close up. A range reaching outside `0..=len`, or starting after it ends,
+  panics.
+- `sort_by(cmp: fn(T, T) -> Ordering)` and `sort_by_key[K: Ord](f: fn(T) -> K)`
+  are stable, and `f` is called once for each element, in order (B).
+- `windows(n)` yields every run of `n` neighbours, one step apart, as shared
+  views; none when `n > len`; `n == 0` panics as `chunks(0)` does. There is no
+  `windows_mut`.
+
+**Implementation (2026-09-25).**
+- `sort_by` and `sort_by_key` are Ember in `std/src/core.em`: a stable bottom-up
+  merge over indices (`stable_order`), then the permutation applied with `swap`
+  (`apply_order`). No element is copied or moved out, so any `T` sorts, and an
+  inconsistent `cmp` can only permute (`[HASH-3]`).
+- `sort()` of an element type with its own `Ord` goes to the same code
+  (`sort_ord`, D-256).
+- `windows` mirrors `chunks`: `SpanWindows[T]` in `std/src/collections.em`, the
+  builtins `SpanWindowsNew`/`SpanWindowsNext`, and `lower_span_windows_next`.
+- `drain` is the builtin `ArrayDrain`, with the range checked in the checker and
+  a per-type C helper that moves the elements out.
+- Writing the sorts needed D-257: a callable parameter could not be passed on to
+  another function.
+- Tests: `STD-15/accept_sort_by_and_sort_by_key.em`, `accept_sort_of_ord_types.em`,
+  `accept_windows.em`, `accept_drain.em`, `reject_drain_without_a_range.em`,
+  `reject_changing_an_array_while_a_window_lives.em`, `run_fail_windows_of_zero.em`,
+  `run_fail_drain_outside_the_array.em` and `run_fail_drain_range_backwards.em`.
 
 ---
 

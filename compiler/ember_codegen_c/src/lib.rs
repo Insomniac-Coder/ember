@@ -313,6 +313,9 @@ enum ArrayHelper {
     Less,
     Pop,
     Remove,
+    /// `[STD-15]` (ODR-031) — `drain`: move `lo..hi` out into a new buffer
+    /// and close the gap.
+    Drain,
     /// `[STD-15]` — `swap_remove`: the last element fills the gap.
     SwapRemove,
     /// `[STD-15]` — `truncate`: drop the elements from `n` on.
@@ -546,6 +549,24 @@ impl Emitter<'_> {
                                 format!("memcpy(&r, at, sizeof({c}));"),
                                 format!("memmove(at, at + sizeof({c}), (v->len - i - 1) * sizeof({c}));"),
                                 "v->len -= 1;".to_string(),
+                                "return r;".to_string(),
+                            ],
+                        )
+                    }
+                    // The elements are moved out bitwise into the new buffer,
+                    // so neither array drops them. An empty range returns
+                    // before any pointer arithmetic: an empty array's buffer
+                    // is null.
+                    ArrayHelper::Drain => {
+                        let c = self.c_type(ty);
+                        (
+                            format!("static {RT}vec {symbol}({RT}vec* v, size_t lo, size_t hi)"),
+                            vec![
+                                format!("if (lo == hi) {{ return {RT}vec_empty(); }}"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + lo * sizeof({c});"),
+                                format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), at, hi - lo);"),
+                                format!("memmove(at, at + (hi - lo) * sizeof({c}), (v->len - hi) * sizeof({c}));"),
+                                "v->len -= hi - lo;".to_string(),
                                 "return r;".to_string(),
                             ],
                         )
@@ -3787,6 +3808,8 @@ impl Emitter<'_> {
                     | Builtin::ArenaMapClear
                     | Builtin::ArenaMapIterNext { .. }
                     | Builtin::SpanChunksNew { .. }
+                    | Builtin::SpanWindowsNew { .. }
+                    | Builtin::SpanWindowsNext { .. }
                     | Builtin::ClassSuperInit { .. } => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",
@@ -4059,6 +4082,11 @@ impl Emitter<'_> {
                     Builtin::ArrayRemove => {
                         let elem = self.element_of(*arg_ty);
                         return format!("{}({}, {})", self.array_helper(ArrayHelper::Remove, elem), rendered[0], rendered[1]);
+                    }
+                    Builtin::ArrayDrain => {
+                        let elem = self.element_of(*arg_ty);
+                        let helper = self.array_helper(ArrayHelper::Drain, elem);
+                        return format!("{helper}({}, {}, {})", rendered[0], rendered[1], rendered[2]);
                     }
                     Builtin::ArraySwapRemove => {
                         let elem = self.element_of(*arg_ty);

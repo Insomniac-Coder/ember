@@ -231,6 +231,11 @@ ODRS = [
     ('ODR-030', '`extend` is a contextual keyword, a keyword only at the start of an item before the type it '
                 'extends, so `Array` can have its `extend` method (Hardened_11)',
      '`[LEX-15]`'),
+    ('ODR-031', '`Array`\'s `sort_by(cmp: fn(T, T) -> Ordering)` and `sort_by_key[K: Ord](f: fn(T) -> K)` are '
+                'stable, and `f` is called once per element; `windows(n)` yields shared, overlapping views one step '
+                'apart, none when `n > len`, and panics on `0`; `drain(r) -> Array[T]` takes any integer range and '
+                'panics outside `0..=len` (Hardened_12)',
+     '`[STD-15]`'),
 ]
 
 H5_HEAD = """
@@ -240,7 +245,7 @@ Each ambiguity found while implementing 0.9.9 is an owner decision request (`doc
 ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
 Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
 Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
-Hardened_10 adds ODR-029; Hardened_11 adds ODR-030.
+Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031.
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -176,6 +176,15 @@ pub struct MutSpanChunks[T]:
     index: usize
     width: usize
 
+## `[STD-15]` (ODR-031) — `windows(n)`: every run of `n` neighbours, one step
+## apart. Shared views only: overlapping mutable ones would alias. The fields
+## are `SpanChunks`'s, in its order, because construction is lowered the same.
+@view
+pub struct SpanWindows[T]:
+    source: Span[T]
+    index: usize
+    width: usize
+
 ## Occupancy is separate from the two uninitialized carriers. This lets an
 ## empty fixed-capacity map reserve all backing bytes in one Arena allocation
 ## without manufacturing invalid `K` or `V` values.

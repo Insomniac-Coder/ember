@@ -1222,7 +1222,9 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::SpanSharedReborrow
                 | Builtin::SpanChunksNew { .. }
                 | Builtin::SpanIterNext { .. }
-                | Builtin::SpanChunksNext { .. },
+                | Builtin::SpanChunksNext { .. }
+                | Builtin::SpanWindowsNew { .. }
+                | Builtin::SpanWindowsNext { .. },
             ..
         } => Elision::Named(vec![0]),
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the

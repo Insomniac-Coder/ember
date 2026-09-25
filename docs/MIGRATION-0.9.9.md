@@ -112,6 +112,11 @@ annexes. Each Part gets its own probe sweep when it becomes current; the sweep's
 | ODR-024 | may a returned view borrow a borrowed parameter that is not itself a view (`[LT-1]` vs `[FN-1]`, M2)? | yes: a borrowed or `mut` non-`Copy` parameter is a source, passed by address | H5 |
 | ODR-025 | what do `[ERR-4]`'s function-taking methods accept (`[CLO-7]` named `Option.map` as a stored callback)? | eager; payload moved in (`filter` borrows); `once fn`; a lambda infers `owned`, never `mut` | H6 |
 | ODR-026 | is a type with its own `drop` implicitly `Clone` (`[STR-5]`)? | no: a field-wise copy would release twice; `@derive(Clone)` or a written `clone` | H7 |
+| ODR-027 | what is a range value (`[CTL-3]`)? | a `Copy` value with public bounds; a `for` counts over a copy of them | H8 |
+| ODR-028 | a method named like an inherited one (`[CLS-4]`)? | it replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one | H9 |
+| ODR-029 | what does `parse[T]()` accept (`[TXT-10]`)? | strict (no white space); `ParseError` is `Empty`, `Invalid` or `Overflow` | H10 |
+| ODR-030 | how can `Array` have a method named `extend` (`[LEX-15]`)? | `extend` is a contextual keyword | H11 |
+| ODR-031 | what do `sort_by`, `sort_by_key`, `windows` and `drain` take and give (`[STD-15]`)? | stable sorts, `f` once per element; shared windows, panic on `0`; `drain(r) -> Array[T]` over any integer range | H12 |
 
 The next number is ODR-027.
 
@@ -623,3 +628,26 @@ The next number is ODR-027.
   a hello build takes 0.21 s. The full suite passes under MSVC (39 s), clang-cl (51 s) and clang
   (55 s). D-254: the speedups' long per-case folder names had pushed CI's longest paths past
   Windows' 260 characters.
+* **2026-09-25 — MSVC on any PATH (D-255).** `vcvars64.bat` failed on a long PATH (cmd's
+  8,191-character lines). It now runs on Windows' own short PATH, with telemetry skipped, and
+  each build appends its own PATH to what the batch file added. An x64 Visual Studio developer
+  environment is used as it is. A read-only reviewer found three more (an x86 prompt was reused, a
+  shell's Visual Studio variables could reach the cache, the runtime object's key missed `INCLUDE`
+  and `LIB`), all fixed.
+* **2026-09-25 — the rest of `[STD-15]` (ODR-031, Hardened_12; D-256 to D-258).**
+  * `sort_by(cmp)` and `sort_by_key(f)` are Ember in `std.core`: a stable merge over indices,
+    then the permutation applied with `swap`. They take any element type, and `sort_by_key`
+    calls `f` once per element, in order.
+  * `sort()` and `sorted()` take any `T: Ord` (`sorted` also needs `Clone`) (D-256); numbers
+    and text keep the runtime's sort.
+  * `windows(n)` yields shared, overlapping views, as `chunks` does, and panics on `0`.
+  * `drain(r) -> Array[T]` takes any integer range.
+  * Writing the sorts needed D-257: a callable parameter can now be passed on to another
+    function, and a lambda in a generic body is no longer emitted over opaque types.
+  * Every method `[STD-15]` lists is now built.
+  * Two read-only reviewers then broke the first D-257 fix: it crashed the compiler on a lambda
+    capturing only concrete locals in a generic body, and could give two closures one C name.
+    Revised: such lambdas are marked rather than cut, and closures are numbered from a counter
+    that never goes back. They also found `drain(0..=u64.MAX)` draining nothing and `sorted` of
+    `Ord` types refused, both fixed. A test they prompted exposed D-258: a `drop` in an `extend`
+    block did not stop the implicit `Clone` (ODR-026).

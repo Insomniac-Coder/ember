@@ -2055,6 +2055,12 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
+            hir::ExprKind::Builtin { which: hir::Builtin::SpanWindowsNew { iterator }, args } => {
+                self.lower_span_chunks_new(place, &args[0], &args[1], *iterator, false, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::SpanWindowsNext { elem }, args } => {
+                self.lower_span_windows_next(place, &args[0], *elem, expr.ty, expr.span);
+            }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::MemReplace { elem },
                 args,
@@ -4404,6 +4410,109 @@ impl<'a> Builder<'a> {
                 Operand::Copy(source),
                 Operand::Copy(Place::local(cursor)),
                 Operand::Copy(Place::local(chunk_len)),
+            ],
+            dest: Place::local(item),
+            next: after_build,
+        });
+        self.current = after_build;
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(item))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    /// `[STD-15]` (ODR-031) — the next window: the item exists while
+    /// `width <= len - cursor`. That cannot underflow, because the cursor
+    /// only passes a window it has just checked, and it compares against the
+    /// remaining length rather than forming `cursor + width`, which could
+    /// overflow. The cursor moves by one, and the view is extracted as a
+    /// shared chunk is.
+    fn lower_span_windows_next(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        elem: Ty,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let TyKind::Struct(iterator_id) = *self.types.kind(receiver.ty) else {
+            unreachable!("a Span window iterator is a public struct")
+        };
+        let source_ty = self.types.struct_def(iterator_id).fields[0].ty;
+        let iterator = self.lower_place(receiver);
+        let source = iterator.clone().field(0);
+        let cursor = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(cursor),
+            rvalue: Rvalue::Use(Operand::Copy(iterator.clone().field(1))),
+        });
+        let remaining = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(remaining),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(source.clone().field(1)),
+                rhs: Operand::Copy(Place::local(cursor)),
+            },
+        });
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Le,
+                lhs: Operand::Copy(iterator.clone().field(2)),
+                rhs: Operand::Copy(Place::local(remaining)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("a Span window iterator returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        self.push(StmtKind::Assign {
+            place: iterator.clone().field(1),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        let item_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let item = self.temp(item_ty, span);
+        let after_build = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::SpanChunksNext { elem, mutable: false },
+                arg_ty: source_ty,
+            },
+            args: vec![
+                Operand::Copy(source),
+                Operand::Copy(Place::local(cursor)),
+                Operand::Copy(iterator.field(2)),
             ],
             dest: Place::local(item),
             next: after_build,
