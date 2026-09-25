@@ -28,7 +28,7 @@ pub struct Ident {
 }
 
 /// One parsed source file.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Module {
     pub directive: Option<Directive>,
     pub imports: Vec<Import>,
@@ -41,7 +41,7 @@ pub struct Module {
 }
 
 /// Where a script's statements came from, so a tool can put them back.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Script {
     /// The index in `Module::items` of the synthesised `fn main()`.
     pub main: usize,
@@ -51,7 +51,7 @@ pub struct Script {
     pub first: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Directive {
     pub name: Ident,
     pub value: String,
@@ -114,7 +114,7 @@ impl Visibility {
 // Items
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Item {
     pub id: NodeId,
     pub attrs: Vec<Attribute>,
@@ -124,7 +124,7 @@ pub struct Item {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ItemKind {
     Fn(FnDecl),
     Struct(StructDecl),
@@ -144,14 +144,14 @@ pub enum ItemKind {
     Comptime(Block),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Import {
     pub id: NodeId,
     pub kind: ImportKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ImportKind {
     /// `import a.b.c [as d]`
     Module { path: Vec<Ident>, alias: Option<Ident> },
@@ -167,13 +167,13 @@ pub enum ForeignLanguage {
     Cpp,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ImportItem {
     pub name: Ident,
     pub alias: Option<Ident>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExternClass {
     pub name: Ident,
     /// The foreign path as written: `cpp.RageV.Layer`.
@@ -182,7 +182,7 @@ pub struct ExternClass {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FnDecl {
     pub name: Ident,
     pub is_unsafe: bool,
@@ -241,7 +241,7 @@ pub enum ParamKind {
     Named { name: Ident, ty: TypeExpr },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct GenericParam {
     pub id: NodeId,
     pub name: Ident,
@@ -252,14 +252,14 @@ pub struct GenericParam {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Bound {
     pub subject: TypeExpr,
     pub bounds: Vec<TypeExpr>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StructDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -268,7 +268,7 @@ pub struct StructDecl {
     pub members: Vec<Member>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ClassDecl {
     pub name: Ident,
     pub openness: Openness,
@@ -288,7 +288,7 @@ pub enum Openness {
     Abstract,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EnumDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -297,7 +297,7 @@ pub struct EnumDecl {
     pub members: Vec<Member>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Variant {
     pub id: NodeId,
     pub attrs: Vec<Attribute>,
@@ -309,14 +309,14 @@ pub struct Variant {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VariantField {
     pub name: Option<Ident>,
     pub ty: TypeExpr,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InterfaceDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -326,7 +326,7 @@ pub struct InterfaceDecl {
     pub members: Vec<Member>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExtendDecl {
     pub generics: Vec<GenericParam>,
     pub target: TypeExpr,
@@ -335,14 +335,14 @@ pub struct ExtendDecl {
     pub members: Vec<Member>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConstDecl {
     pub name: Ident,
     pub ty: Option<TypeExpr>,
     pub value: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StaticDecl {
     pub name: Ident,
     /// `[STA-1]` — any access to a `static mut` requires `unsafe`.
@@ -351,7 +351,7 @@ pub struct StaticDecl {
     pub value: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypeAlias {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -366,7 +366,7 @@ pub struct TypeAlias {
     pub range: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExternBlock {
     pub is_unsafe: bool,
     pub abi: String,
@@ -374,7 +374,7 @@ pub struct ExternBlock {
 }
 
 /// A member of a struct, class, enum, interface or `extend` body.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Member {
     pub id: NodeId,
     pub attrs: Vec<Attribute>,
@@ -386,7 +386,7 @@ pub struct Member {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MemberKind {
     Field(FieldDecl),
     Fn(FnDecl),
@@ -394,7 +394,7 @@ pub enum MemberKind {
     TypeAlias(TypeAlias),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FieldDecl {
     pub name: Ident,
     pub ty: TypeExpr,

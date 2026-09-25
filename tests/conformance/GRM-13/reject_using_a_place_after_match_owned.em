@@ -10,4 +10,4 @@ fn main():
     match owned a:
         Some(s): println(take(s))
         None: pass
-    println(a)  #$ error[E3040]
+    println(a)  #$ error[E3050]

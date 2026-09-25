@@ -696,3 +696,10 @@ The next number is ODR-027.
     and `Self(…)` (D-278), `[TYP-36]`'s `Default` (D-281), struct `init` (D-283, part), and
     instances made by signatures missing extensions (D-285). Open: D-279, D-280, D-282, D-284,
     D-286.
+* **2026-09-25 — four open defects closed (D-263, D-279, D-282, D-286).** `()` is the value of
+  `void`, so `return Ok(())` and `Option[void]` work, and `void` prints as `()` (D-263). A generic
+  struct may name a generic type declared after it, collected on demand (D-279). `@borrows(self)`
+  names the receiver, in generic types' methods too (D-282). `println`'s arguments are evaluated
+  where they are written, as a call's: `println(xs, xs.pop())` is `E3021`, and printing a moved
+  value is `E3050` as borrowing one is (D-286); the `[EXC-3]` elision now lets its closing access
+  follow plain statements, which the copied arguments add.

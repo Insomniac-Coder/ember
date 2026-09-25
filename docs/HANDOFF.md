@@ -10718,7 +10718,8 @@ the running narrative behind it.
   * `9df14af`: D-255, MSVC on a long PATH, with a read-only review's three fixes.
   * `e2bcfb3`: the rest of `[STD-15]` (ODR-031, Hardened_12; D-256 to D-258).
   * `b748723`: what `Map` needs first (D-259 to D-274); CI green.
-  * The `Map`/`Set` commit (ODR-032 to ODR-036, Hardened_13), the newest.
+  * `08693bf`: `Map`/`Set` (ODR-032 to ODR-036, Hardened_13); CI green.
+  * The D-263/D-279/D-282/D-286 commit, the newest.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10730,7 +10731,7 @@ the running narrative behind it.
 
   | Phase | % |
   |---|---:|
-  | P1 | 88 |
+  | P1 | 93 |
   | P2 | 85 |
   | P3 | 47 |
   | P4 | 10 |
@@ -10739,11 +10740,13 @@ the running narrative behind it.
   | P7 | 0 |
   | 7a | 4 |
   | P8 | 13 |
-  | Overall | 49 |
+  | Overall | 51 |
 
-  P1 rose for `[GRM-13]`, `[GRM-15]`, `[TYP-6]`, `[TYP-16]` defaults,
-  `[TYP-23]`, `[TYP-25]`, `[TYP-34]`, `[TYP-36]`'s `Hash` column and
-  `[HASH-1]`/`[HASH-2]`; P4 for `@derive(Hash)` (`[DRV-1]`).
+  Given 2026-09-25 evening, after `08693bf`. P1 rose (88 to 93) for the
+  `Map`/`Set` work's Part II–VI rules: `[HASH-1]`–`[HASH-4]`, `[TYP-17]`
+  generic bounds, `[TYP-21]`, `[TYP-23]`, `[TYP-36]`'s `Default`, `[TYP-38]`,
+  `[TYP-39]`, `[GRM-26]`, `[LEX-15]`, `[STR-2]`, `[STR-5]`, `[STR-6]` (part),
+  `[MOD-5]`. The Part XV `Map` rules themselves sit in no phase.
 
   Format rules for the table are in the memory file
   `feedback_phase_completion_table`. The overall is weighted over P1–P6 and
@@ -10907,9 +10910,17 @@ prelude `len`, `iter()` in `check_for_iterator`, literals in
 `synth_map_literal`/`synth_set_literal`/`fill_collection`, printing in
 codegen's `fmt_map_body`. The own-key `AsKey` is `is_own_key`/`synth_own_key`.
 
-**Immediate next task:** backlog item 1's remainder: phase 2 of the Map/Set plan
-(two read-only reviewers, owner-approved), then the open defects it left
-(D-279, D-280, D-282, D-284, D-286) and `for k in owned m`.
+**Then (2026-09-25 evening):** D-263 (`()` is `void`'s value), D-279 (a
+generic type named before its declaration: `collect_generic_struct_on_demand`),
+D-282 (`@borrows(self)`), D-286 (`println` arguments evaluated where written,
+`lower_print_argument`; the `[EXC-3]` elision's closing access may follow plain
+statements). Phase 2 of the Map/Set plan (two read-only reviewers, owner-
+approved) was launched and its findings are being verified.
+
+**Immediate next task:** verify and fix the reviewers' findings; then D-280
+(a method's own type parameters renumbered from 0 collide with the caller's
+in a generic type's opaque check: keep the ranges apart and offset inference;
+repro in the ledger row) and D-284; then `for k in owned m`.
 
 **What 2026-09-25 built** (oldest first; the details are in `docs/DEFECTS.md`
 and `docs/MIGRATION-0.9.9.md`):

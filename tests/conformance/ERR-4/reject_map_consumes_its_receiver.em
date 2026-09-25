@@ -5,5 +5,5 @@
 fn main():
     names: Option[String] = Some("a")
     upper = names.map(fn(s) => s)
-    println(names)    #$ error[E3040]: `names` has been moved out of
+    println(names)    #$ error[E3050]: `names` is borrowed after it has been moved out of
     println(upper)

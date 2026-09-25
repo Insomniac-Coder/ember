@@ -2369,7 +2369,7 @@ impl<'a> Builder<'a> {
             {
                 let which = *which;
                 let pieces: Vec<(Operand, Ty, ember_span::Span)> =
-                    args.iter().map(|a| (self.lower_operand_borrowed(a), a.ty, a.span)).collect();
+                    args.iter().map(|a| self.lower_print_argument(a)).collect();
                 for (operand, arg_ty, span) in pieces {
                     // Each piece is used where it is written.
                     self.at(span);
@@ -5633,6 +5633,39 @@ impl<'a> Builder<'a> {
     /// the value but does not take it, so the caller still owns it and still
     /// drops it. Only an `owned` parameter consumes — `xs.len()` must not move
     /// `xs` away.
+    /// D-286, `[EXP-1]` — one argument of `print`, evaluated where it is
+    /// written: a borrowed place (the checker's `ref`) is borrowed now and
+    /// printed through the reference, and a `Copy` place is read now, so a
+    /// later argument cannot change what an earlier one prints.
+    fn lower_print_argument(&mut self, arg: &'a hir::Expr) -> (Operand, Ty, ember_span::Span) {
+        if let hir::ExprKind::Ref { place, mutable: false } = &arg.kind {
+            let lowered = self.lower_place(place);
+            let temp = self.temp(arg.ty, arg.span);
+            self.push(StmtKind::StorageLive(temp));
+            self.push(StmtKind::Assign {
+                place: Place::local(temp),
+                rvalue: Rvalue::Ref { place: lowered, mutable: false },
+            });
+            let mut through = Place::local(temp);
+            through.projection.push(Projection::Deref);
+            return (Operand::Copy(through), place.ty, arg.span);
+        }
+        let operand = self.lower_operand_borrowed(arg);
+        let operand = match operand {
+            Operand::Copy(place)
+                if !(place.projection.is_empty() && self.locals[place.local.0 as usize].kind == LocalKind::Temp)
+                    && self.types.is_copy(arg.ty) =>
+            {
+                let temp = self.temp(arg.ty, arg.span);
+                self.push(StmtKind::StorageLive(temp));
+                self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(Operand::Copy(place)) });
+                Operand::Copy(Place::local(temp))
+            }
+            other => other,
+        };
+        (operand, arg.ty, arg.span)
+    }
+
     fn lower_operand_borrowed(&mut self, expr: &'a hir::Expr) -> Operand {
         match self.lower_operand(expr) {
             Operand::Move(place) => Operand::Copy(place),

@@ -8,7 +8,7 @@
 //! root, or an unknown handle use remains dynamic and therefore fail-closed.
 
 use ember_mir::{
-    AccessElisionReason, Body, ElidedAccess, Operand, Place, Rvalue, Stmt, StmtKind, Terminator,
+    AccessElisionReason, Body, ElidedAccess, Operand, Place, Rvalue, StmtKind, Terminator,
 };
 use ember_types::{TyKind, TypeTable};
 
@@ -103,16 +103,16 @@ fn matching_end(
         _ => return None,
     };
     let successor_block = body.blocks.get(successor.0 as usize)?;
-    if let Some(Stmt {
-        kind: StmtKind::EndAccess {
-            place: end_place,
-            mutable: end_mutable,
-        },
-        ..
-    }) = successor_block.stmts.first()
-    {
-        if end_place == place && *end_mutable == mutable {
-            return Some((successor.0 as usize, 0));
+    // The end may follow plain statements (a `print` argument copied out,
+    // D-286): an assignment or a storage marker runs no user code. A `drop`
+    // may, and anything else ends the search.
+    for (index, statement) in successor_block.stmts.iter().enumerate() {
+        match &statement.kind {
+            StmtKind::EndAccess { place: end_place, mutable: end_mutable } => {
+                return (end_place == place && *end_mutable == mutable).then_some((successor.0 as usize, index));
+            }
+            StmtKind::Assign { .. } | StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+            _ => return None,
         }
     }
     None

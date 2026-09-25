@@ -156,6 +156,10 @@ pub fn check(
     // below was split to avoid.
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
+        checker.note_generic_structs(&loaded.module);
+    }
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
         checker.collect_type_headers(&loaded.module);
     }
     // Recipes may refer to earlier recipes in their declaring module. Walking
@@ -996,6 +1000,10 @@ struct Checker<'a> {
     /// D-278 — the generic type whose methods are being collected, with its
     /// own parameters: `W[T]` inside `W`'s methods is their `Self`.
     collecting_generic: Option<(Symbol, Vec<Ty>)>,
+    /// D-279 — every generic struct not collected yet, by name, with its
+    /// module and item index: one named by an earlier declaration's field or
+    /// method is collected on demand.
+    pending_generic_structs: HashMap<Symbol, (usize, usize, ast::Item)>,
     /// The loops currently open, innermost last, each with its label if it has
     /// one. `break`/`continue` index into this to find their target.
     loop_labels: Vec<Option<Symbol>>,
@@ -1129,6 +1137,7 @@ impl<'a> Checker<'a> {
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
+            pending_generic_structs: HashMap::new(),
             loop_labels: Vec::new(),
             in_defer: false,
             in_unsafe: false,
@@ -1267,6 +1276,8 @@ impl<'a> Checker<'a> {
                     ast::ExprKind::Path { segments } if segments.len() == 1 => {
                         (segments[0].name, expr.span)
                     }
+                    // `[LT-1a]` — "`self` names the receiver" (D-282).
+                    ast::ExprKind::SelfExpr => (Symbol::intern("self"), expr.span),
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(
@@ -1321,8 +1332,13 @@ impl<'a> Checker<'a> {
                     // naming it grants no region and no storage authority.
                 }
                 // `[LT-1a]` (ODR-024) — a source parameter (`[LT-1]`) or a
-                // `mut` parameter, which is the caller's place either way.
-                Some((_, ty, mode, _)) if *mode == Mode::Mut || self.is_source_parameter(*ty, *mode) => {}
+                // `mut` parameter, which is the caller's place either way. A
+                // generic type's receiver, `Self` until an instance exists, is
+                // the caller's place too.
+                Some((_, ty, mode, _))
+                    if *mode == Mode::Mut
+                        || self.is_source_parameter(*ty, *mode)
+                        || (*ty == self.common.self_ty && *mode != Mode::Owned) => {}
                 Some((_, ty, mode, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
                     let why = if *mode == Mode::Owned {
@@ -2649,12 +2665,50 @@ impl<'a> Checker<'a> {
 
     /// `[TYP-16]` — collect generic struct recipes after nominal headers are
     /// globally visible and before any ordinary function signature is read.
+    /// D-279 — record every generic struct before any is collected.
+    fn note_generic_structs(&mut self, module: &ast::Module) {
+        for (item_index, item) in module.items.iter().enumerate() {
+            let ast::ItemKind::Struct(decl) = &item.kind else { continue };
+            if !decl.generics.is_empty() {
+                let name = self.qualified(decl.name.name);
+                self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
+            }
+        }
+    }
+
+    /// D-279 — collect the generic struct `name` now, if it is declared and
+    /// not collected yet: a declaration before it names it.
+    fn collect_generic_struct_on_demand(&mut self, name: Symbol) {
+        let Some((module, item_index, item)) = self.pending_generic_structs.remove(&name) else { return };
+        let saved_module = std::mem::replace(&mut self.current_module, module);
+        let saved_params = std::mem::take(&mut self.type_params);
+        let saved_collecting = self.collecting_generic.take();
+        let saved_self = self.self_ty.take();
+        self.collect_generic_struct(item_index, &item);
+        self.current_module = saved_module;
+        self.type_params = saved_params;
+        self.collecting_generic = saved_collecting;
+        self.self_ty = saved_self;
+    }
+
     fn collect_generic_structs(&mut self, module: &ast::Module) {
         for (item_index, item) in module.items.iter().enumerate() {
             let ast::ItemKind::Struct(decl) = &item.kind else { continue };
             if decl.generics.is_empty() {
                 continue;
             }
+            let name = self.qualified(decl.name.name);
+            // Collected already, on demand.
+            if self.pending_generic_structs.remove(&name).is_none() {
+                continue;
+            }
+            self.collect_generic_struct(item_index, item);
+        }
+    }
+
+    fn collect_generic_struct(&mut self, item_index: usize, item: &ast::Item) {
+        {
+            let ast::ItemKind::Struct(decl) = &item.kind else { return };
             let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|g| g.name).collect();
@@ -2699,12 +2753,7 @@ impl<'a> Checker<'a> {
                     params: signature.params,
                     ret: signature.ret,
                     generics: signature.generics,
-                    borrows: signature.borrows.map(|positions| {
-                        positions
-                            .into_iter()
-                            .map(|position| position + usize::from(receiver.is_some()))
-                            .collect()
-                    }),
+                    borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
                     span: member.span,
                 });
@@ -2775,12 +2824,7 @@ impl<'a> Checker<'a> {
                     params: signature.params,
                     ret: signature.ret,
                     generics: signature.generics,
-                    borrows: signature.borrows.map(|positions| {
-                        positions
-                            .into_iter()
-                            .map(|position| position + usize::from(receiver.is_some()))
-                            .collect()
-                    }),
+                    borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
                     span: member.span,
                 });
@@ -2859,12 +2903,7 @@ impl<'a> Checker<'a> {
                     params: signature.params,
                     ret: signature.ret,
                     generics: signature.generics,
-                    borrows: signature.borrows.map(|positions| {
-                        positions
-                            .into_iter()
-                            .map(|position| position + usize::from(receiver.is_some()))
-                            .collect()
-                    }),
+                    borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
                     span: member.span,
                 });
@@ -2945,12 +2984,7 @@ impl<'a> Checker<'a> {
                     params: signature.params,
                     ret: signature.ret,
                     generics: signature.generics,
-                    borrows: signature.borrows.map(|positions| {
-                        positions
-                            .into_iter()
-                            .map(|position| position + usize::from(receiver.is_some()))
-                            .collect()
-                    }),
+                    borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
                     span: member.span,
                 });
@@ -5047,9 +5081,18 @@ impl<'a> Checker<'a> {
         generic_index_base: usize,
     ) -> Option<(Option<Mode>, Signature)> {
         let outer = self.self_ty.replace(self.common.self_ty);
-        let signature = self.method_signature(decl, None, attrs, span, generic_index_base);
+        // The receiver is in the list while `@borrows` is checked, so it may
+        // name `self`; the recipe keeps only the parameters after it, and the
+        // borrow positions already count it.
+        let placeholder = self.common.self_ty;
+        let signature = self.method_signature(decl, Some(placeholder), attrs, span, generic_index_base);
         self.self_ty = outer;
-        signature
+        signature.map(|(receiver, mut signature)| {
+            if receiver.is_some() {
+                signature.params.remove(0);
+            }
+            (receiver, signature)
+        })
     }
 
     fn method_signature(
@@ -5813,6 +5856,8 @@ impl<'a> Checker<'a> {
             return self.ref_guard_of(args[0].0, name.is("RefMut"));
         }
         let resolved_name = self.resolve_name(name);
+        // D-279 — a generic struct declared later is collected now.
+        self.collect_generic_struct_on_demand(resolved_name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_struct(resolved_name, &decl, &resolved, span);
@@ -5959,6 +6004,8 @@ impl<'a> Checker<'a> {
             TyKind::Class(_) | TyKind::ClassInterface(_) => true,
             // Already reported: one error per cascade ([DIA-14]).
             TyKind::Error => true,
+            // `[TYP-36]` — `void`'s `Debug` is `()`.
+            TyKind::Void => true,
             // `[STR-5]` — a struct or enum has `Debug` field-wise when every
             // field does (`Point(x=1, y=2)`, `Shape.Circle(1)`). The
             // compiler-known wrappers (`Box`, `Cell`, …) have no format yet.
@@ -17579,6 +17626,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // `(a, b)` — Part IV.3. An expected tuple of the same arity flows
             // into the elements, so `(1, 2.0): (i64, f64)` works; otherwise
             // each element defaults on its own.
+            // `[TYP-27]` — `()` is the value of type `void` (D-263).
+            ast::ExprKind::Tuple(items) if items.is_empty() => self.void_value(span),
             ast::ExprKind::Tuple(items) => {
                 let wanted = match expected {
                     Some(e) => match self.types.kind(e) {
@@ -27961,6 +28010,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// type has no implicit value, so a body that can reach its end is
     /// `E2182` (ODR-023). Before this check the backend returned the
     /// uninitialised return slot (D-186).
+    /// `[TYP-27]` — `()`, the one value of `void`. HIR has no node of its
+    /// own for it; a `void`-typed `Error` lowers to the constant `void`.
+    fn void_value(&self, span: Span) -> Expr {
+        Expr { ty: self.common.void, kind: ExprKind::Error, span }
+    }
+
     fn complete_function_end(&mut self, mut body: Block, name: Span) -> Block {
         let ret = self.ret_ty;
         if ret == self.common.void
@@ -27981,7 +28036,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let end = body.span.shrink_to_end();
         match void_ok {
             Some(enum_id) => {
-                let unit = Expr { ty: self.common.void, kind: ExprKind::Error, span: end };
+                let unit = self.void_value(end);
                 body.stmts.push(Stmt::Return(Some(Expr {
                     ty: ret,
                     kind: ExprKind::EnumLit { enum_id, variant: 0, fields: vec![unit] },
@@ -28137,6 +28192,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             format!("printing a `{shown}` is not implemented yet"),
                         );
                     }
+                    // D-286, `[EXP-1]` — an argument is evaluated where it is
+                    // written: a place that is not `Copy` is borrowed there, so
+                    // a later argument that changes it conflicts with the
+                    // borrow, as in any call (`[BRW-5]`).
+                    let value = if is_place(&value.kind) && !self.types.is_copy(value.ty) {
+                        let ty = self.types.intern(TyKind::Ref { mutable: false, inner: value.ty });
+                        let value_span = value.span;
+                        Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: false }, span: value_span }
+                    } else {
+                        value
+                    };
                     values.push(value);
                 }
             }

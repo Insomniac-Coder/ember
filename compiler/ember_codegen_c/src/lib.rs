@@ -780,6 +780,10 @@ impl Emitter<'_> {
         if let Some((text, _)) = self.text_pair(v, v, ty) {
             return format!("{RT}fmt_repr_str({out}, {text});");
         }
+        // `[TYP-36]` — `void` shows as `()`.
+        if matches!(self.types.kind(ty), TyKind::Void) {
+            return format!("{RT}vec_extend({out}, \"()\", 2);");
+        }
         match self.types.kind(ty) {
             TyKind::Char => format!("{RT}fmt_repr_char({out}, {v});"),
             _ if self.is_display_aggregate(ty) => format!("{}({out}, &({v}));", self.fmt_fn(ty)),
@@ -2489,7 +2493,7 @@ impl Emitter<'_> {
                         .struct_def(id)
                         .fields
                         .iter()
-                        .map(|f| format!("{} {}", self.c_type(f.ty), f.name))
+                        .map(|f| format!("{} {}", self.c_member_type(f.ty), f.name))
                         .collect(),
                 )
             }
@@ -2501,7 +2505,7 @@ impl Emitter<'_> {
                 let mut members = vec![format!("{RT}obj_header _header")];
                 for index in 0..self.types.class_field_count(id) {
                     if let Some(field) = self.types.class_field_at(id, index) {
-                        members.push(format!("{} {}", self.c_type(field.ty), field.name));
+                        members.push(format!("{} {}", self.c_member_type(field.ty), field.name));
                     }
                 }
                 Definition::Struct(members)
@@ -2557,13 +2561,13 @@ impl Emitter<'_> {
                 TyKind::Tuple(items) => items
                     .iter()
                     .enumerate()
-                    .map(|(i, &item)| format!("{} _{i}", self.c_type(item)))
+                    .map(|(i, &item)| format!("{} _{i}", self.c_member_type(item)))
                     .collect(),
                 // `[T; 0]` is legal in Ember; a zero-length array is not legal
                 // C, so the member is padded to one element the same way an
                 // empty struct is.
                 TyKind::Array { elem, len } => {
-                    vec![format!("{} _0[{}]", self.c_type(*elem), (*len).max(1))]
+                    vec![format!("{} _0[{}]", self.c_member_type(*elem), (*len).max(1))]
                 }
                 _ => Vec::new(),
             }),
@@ -4824,6 +4828,9 @@ impl Emitter<'_> {
         match operand {
             // A move and a copy generate the same C; the difference is a fact
             // the borrow checker uses, not a code shape.
+            // A `void` local is never declared; its value is the byte `0`
+            // a `void` member holds (D-263).
+            Operand::Copy(p) | Operand::Move(p) if self.is_void(self.place_ty(p, body)) => "0".to_string(),
             Operand::Copy(p) | Operand::Move(p) => self.place_in(p, body),
             Operand::Const(c) => self.constant(c),
         }
@@ -5046,6 +5053,13 @@ impl Emitter<'_> {
 
     fn is_void(&self, ty: ember_types::Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error)
+    }
+
+    /// A member's C type. Ember's `void` is a unit value, and C cannot declare
+    /// a member of type `void`: one byte carries it, as an enum payload's does
+    /// (D-263).
+    fn c_member_type(&self, ty: ember_types::Ty) -> String {
+        if self.is_void(ty) { "uint8_t".to_string() } else { self.c_type(ty) }
     }
 
     /// Part XVIII §6's type mapping table.
