@@ -118,9 +118,16 @@ impl Toolchain {
         }
         // Already a Visual Studio developer environment (a Developer Prompt,
         // or CI's msvc-dev-cmd): used as it is, as the one the user chose.
+        // Only an x64 one: the plain Developer Prompt targets x86, and the
+        // runtime and the emitted C are 64-bit, which is what vcvars64.bat
+        // gives otherwise.
         let here = Toolchain::Msvc { cl: PathBuf::from("cl.exe"), env: BTreeMap::new() };
-        if std::env::var_os("VCINSTALLDIR").is_some()
+        let x64 = std::env::var("VSCMD_ARG_TGT_ARCH")
+            .is_ok_and(|arch| arch.eq_ignore_ascii_case("x64") || arch.eq_ignore_ascii_case("amd64"));
+        if x64
+            && std::env::var_os("VCINSTALLDIR").is_some()
             && std::env::var_os("INCLUDE").is_some()
+            && std::env::var_os("LIB").is_some()
             && compiler_file(&here).is_some()
         {
             return Some(here);
@@ -173,8 +180,24 @@ impl Toolchain {
 /// has been run before: running it costs over a second, on every build. The
 /// key covers the batch file and the toolset version it selects, so an update
 /// to either runs it again, and so does a cached `INCLUDE` folder that is gone.
+/// The cache holds only what the batch file put on PATH; this process's PATH
+/// follows it (D-255), so a later change to PATH is never masked.
 fn msvc_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
+    let mut env = cached_msvc_environment(vcvars)?;
+    if let (Some((_, path)), Some(current)) =
+        (env.iter_mut().find(|(name, _)| name.eq_ignore_ascii_case("PATH")), std::env::var_os("PATH"))
+    {
+        path.push(';');
+        path.push_str(&current.to_string_lossy());
+    }
+    Some(env)
+}
+
+fn cached_msvc_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
     let mut key = blake3::Hasher::new();
+    // v3: captured without the calling shell's Visual Studio variables, and
+    // PATH holds only the batch file's own directories (D-255).
+    key.update(b"v3\0");
     key.update(vcvars.to_string_lossy().as_bytes());
     for file in [vcvars.to_path_buf(), vcvars.with_file_name("Microsoft.VCToolsVersion.default.txt")] {
         if let Ok(meta) = file.metadata() {
@@ -227,6 +250,38 @@ fn modified_nanos(meta: &std::fs::Metadata) -> u128 {
 fn capture_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
     let line = format!("/c call \"{}\" >nul 2>&1 && set", vcvars.display());
     let mut command = Command::new("cmd");
+    // The batch files extend what they inherit (INCLUDE, LIB, an existing
+    // VSINSTALLDIR), so a shell's own Visual Studio variables would end up in
+    // the machine-wide cache. The child gets none of them, and what the batch
+    // files set is measured against the child's input, not this process.
+    let visual_studio = |name: &str| {
+        let upper = name.to_ascii_uppercase();
+        ["INCLUDE", "LIB", "LIBPATH", "EXTERNAL_INCLUDE", "VSINSTALLDIR", "VCINSTALLDIR", "DEVENVDIR", "PLATFORM"]
+            .contains(&upper.as_str())
+            || upper.starts_with("VSCMD_")
+            || upper.starts_with("__VSCMD_")
+            || (upper.starts_with("VS") && upper.ends_with("COMNTOOLS"))
+    };
+    let mut input: BTreeMap<String, String> = BTreeMap::new();
+    for (name, value) in std::env::vars_os() {
+        let name = name.to_string_lossy().into_owned();
+        if visual_studio(&name) {
+            command.env_remove(&name);
+        } else {
+            input.insert(name.to_ascii_uppercase(), value.to_string_lossy().into_owned());
+        }
+    }
+    // D-255 — the batch files build PATH on single `cmd` lines, which stop at
+    // 8,191 characters, so a long PATH made them fail. They run on Windows'
+    // own short PATH instead, and `msvc_environment` appends this process's
+    // PATH to what they add. Telemetry is skipped: it ends with `START
+    // powershell.exe`, which opens a "cannot find" window when PowerShell is
+    // not on PATH.
+    let system = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let short = format!("{system}\\System32;{system};{system}\\System32\\Wbem;{system}\\System32\\WindowsPowerShell\\v1.0");
+    command.env("PATH", &short);
+    input.insert("PATH".to_string(), short);
+    command.env("VSCMD_SKIP_SENDTELEMETRY", "1");
     // D-251 — passed as written. `arg` would escape the quotes around the
     // path as `\"`, which `cmd` does not read, so the batch file never ran and
     // MSVC was never found.
@@ -252,8 +307,9 @@ fn capture_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
     }
     let needed = ["INCLUDE", "LIB", "LIBPATH", "PATH"];
     env.retain(|name, value| {
-        needed.iter().any(|n| n.eq_ignore_ascii_case(name))
-            || std::env::var(name.as_str()).ok().as_deref() != Some(value.as_str())
+        let upper = name.to_ascii_uppercase();
+        needed.contains(&upper.as_str())
+            || (upper != "VSCMD_SKIP_SENDTELEMETRY" && input.get(&upper) != Some(value))
     });
     Some(env)
 }
@@ -441,8 +497,8 @@ pub fn cache_root() -> PathBuf {
 /// The runtime compiled once per toolchain and profile into `cache`, to be
 /// linked into every program instead of recompiled with each (about 145 ms
 /// of every clang build). The object's name is a hash of everything that
-/// shapes it: the compile command (with MSVC's environment), the source, the
-/// headers in `include_dirs` and the compiler's file on disk. It is compiled
+/// shapes it: the compile command, MSVC's `INCLUDE` and `LIB`, the source,
+/// the headers in `include_dirs` and the compiler's file on disk. It is compiled
 /// under a temporary name and renamed into place, so a build running
 /// alongside sees the whole object or none.
 ///
@@ -486,6 +542,20 @@ pub fn runtime_object(
         key.update(bytes);
     };
     part(format!("{command:?}").as_bytes());
+    // MSVC reads its headers and libraries from these: another Windows SDK is
+    // another object. From the toolchain's variables, else this process's
+    // (a developer environment used as it is).
+    if let Toolchain::Msvc { env, .. } = toolchain {
+        for name in ["INCLUDE", "LIB"] {
+            let value = env
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.clone())
+                .or_else(|| std::env::var(name).ok())
+                .unwrap_or_default();
+            part(value.as_bytes());
+        }
+    }
     part(&std::fs::read(source)?);
     // ponytail: the include directories' own files, not their subdirectories
     // (the runtime's headers are flat); walk deeper if that changes.
