@@ -179,6 +179,7 @@ codes! {
     E2040 = (Error, 2040, Types, "[TYP-17]", "unsatisfied interface bound");
     E2041 = (Error, 2041, Types, "[TYP-19]", "overlapping `extend` implementations");
     E2042 = (Error, 2042, Types, "[STD-27]", "`Float` is implemented only by `f32` and `f64`");
+    E2043 = (Error, 2043, Types, "[IFC-4]", "an associated type's default leads back to itself");
     E2050 = (Error, 2050, Types, "[TYP-22]", "interface is not `dyn`-compatible");
     E2060 = (Error, 2060, Types, "[TYP-23]", "cannot infer type");
     E2061 = (Error, 2061, Types, "[TYP-23]", "lambda parameter types cannot be inferred here");

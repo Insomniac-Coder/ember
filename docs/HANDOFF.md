@@ -10735,18 +10735,29 @@ the running narrative behind it.
     `NonZero[T]` (`e663590`: ODR-047, Hardened_22, D-332 to D-339; CI
     green), `4883eab` (D-305 and `for x in owned e`, D-340, D-341; CI
     green), `b8ad4ec` (D-284: ODR-048, Hardened_23; D-342 open; CI green),
-    then B2's first commit (D-273, D-270, D-328). From the
+    `f93d3c9` (B2's first: D-273, D-270, D-328; CI green), then the
+    owner's simplification pass (ODR-049 to ODR-064, Hardened_24; D-343 and
+    D-344 fixed, D-345 open). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_23.md`
-  (ODR-048), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h23/` is frozen.
-* **Next numbers:** ODR-049, D-343, ADR-058.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_24.md`
+  (ODR-049 to ODR-064), pinned in `docs/spec-source/development-target.json`.
+  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h24/` is
+  frozen.
+* **Next numbers:** ODR-065, D-346, ADR-059.
+* **The owner's simplification pass** (2026-09-26, attended; the proposal is
+  `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
+  Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
+  no text). Still the owner's to decide, one by one: Part II's SP-007,
+  SP-013, SP-016, SP-031. Deferred: Part III (package-private bound
+  inference) until the rest is done; Part IV is backlog. One review gate is
+  open: SP-010's `Copy`-typed class fields with address-taken accesses
+  (`[EXC-17]`, `[EXC-19]`), recorded in ODR-051.
 * **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
-  way: D-273, D-270 and D-328 are fixed. Next: D-218, D-220, D-202, D-201,
+  way: D-273, D-270 and D-328 are fixed. Next: D-345 (a display), D-218, D-220, D-202, D-201,
   D-198, D-342 (a temporary's end for the region check: the loans must tell
   a temporary's own storage from what passes through it; a first attempt
   that ended every temporary with `StorageDead` broke 17 tests, e.g.
@@ -11040,6 +11051,35 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     the compiler's calls of `std` helpers (`sort_ord`, `sorted_ord`).
     `DefaultHasher.new` became `pub`; the other non-`pub` `std` methods are
     helpers. ADR-057 records how visible an implementing method is.
+* **Then the owner's simplification pass (ODR-049 to ODR-064, Hardened_24,
+  ADR-058).** The owner sent a review (`docs/proposals/`), pushed back on,
+  revised, and said "go" for Part I plus SP-014 and SP-017. Most rulings are
+  spec text for features not built yet, or say what the compiler already
+  did (probed first: generic float `<` is IEEE, `owned` handle arguments
+  are retained, nothing deinitialises early, a struct holding handles may be
+  `Copy`); those got regression tests. Built:
+  * **Associated-type defaults (ODR-049).** `InterfaceDef.assoc_defaults`,
+    `fill_assoc_defaults` in `check_implementation_of`,
+    `cyclic_assoc_defaults` (`E2043`, with an error page).
+  * **D-344: default bodies are checked once with `Self` opaque**
+    (`check_default_bodies_opaquely`; the copies are quiet,
+    `check_default_copy`). Five `TYP-22` fixtures and `E2050`'s page had
+    `pass` bodies in methods returning `Self`; they are `todo()` now.
+  * **`alloc_array` by `Default`, `alloc_zeroed` (ODR-064).**
+    `default_initialisation` (a scalar keeps one zero fill), `zeroable`,
+    D-343 (a type parameter's bounds), and `@derive(Zeroable)` on structs
+    (`TypeTable::derive_zeroable`, proved field by field, `E2080`), which
+    §IX.2's corrected example uses. Migration: `alloc_array` of a raw
+    pointer or a range type holding 0 is `E2040` now (help: `alloc_zeroed`).
+    I first told the owner nothing accepted would change; the check found
+    these two, and the owner was told.
+  * Spec only: `Result` unbounded (050), `Copy` and `owned` (051), thread
+    markers (052), guards (053), `@must_drop` (054), float operators (055),
+    compile time (056), effects (057), invalidation (058), formatting (059),
+    drift incl. the attribute table and `@assume_noalloc`'s grammar (060),
+    build inputs (061), inlining (062), early deinitialisation, `L3019`
+    retired (063).
+  * D-345 (open): an associated type through a bound displays as `Self.Out`.
 
 **The owner's standing instructions (all still in force)**
 

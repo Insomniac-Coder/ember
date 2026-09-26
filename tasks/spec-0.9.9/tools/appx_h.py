@@ -302,6 +302,38 @@ ODRS = [
                 '(`Holder[str]`\'s receiver by address, as `Holder[T]`\'s); a parameter an instance\'s type makes a '
                 'view is a source of that instance (Hardened_23)',
      '`[BRW-8]`, `[LT-1]`'),
+    ('ODR-049', "an associated type's default fills in an implementation that does not state it, meeting its bounds; it is not an equality a bound or a default method body may assume; a cycle of defaults is `E2043` — SP-003 (Hardened_24)",
+     '`[IFC-4]`'),
+    ('ODR-050', "`Result[T, E]` bounds neither parameter; each operation says what it needs of `E`; `main`'s error prints its chain when it has one — SP-009 (Hardened_24)",
+     '`[ERR-1]`, `[ERR-10]`, `[ERR-12]`'),
+    ('ODR-051', "a `Copy` value's copy is its bits, retaining each counted handle in it; a struct holding handles may be `Copy`; an `owned` handle argument is the caller's moved, or a retained copy — SP-010 (Hardened_24)",
+     '`[PHIL-3]`, `[OWN-7]`, `[STR-3]`, `[FN-9]`'),
+    ('ODR-052', "`RwLock[T]` and `SyncShared[T]` are `Sync` for a `Send + Sync` `T`, `Mutex[T]` for a `Send` one; a `@sync` class's fields are `Send` and `Sync`; the marker table agrees with `[THR-8]` — SP-011 (Hardened_24)",
+     '`[THR-8]`, `[THR-9]`, `[THR-1]`, `[HEAP-10]`'),
+    ('ODR-053', 'a view is what carries a region; a guard is a view that needs drop, and dropping it ends its access — SP-012 (Hardened_24)',
+     '`[DRP-6]`, `[TYP-34]`'),
+    ('ODR-054', '`@must_drop` is structural: a type owning such a value is one too — SP-015 (Hardened_24)',
+     '`[THR-6]`'),
+    ('ODR-055', "a float's comparison operators are IEEE in generic code too; `cmp`, sorting, `min` and `max` are total; an algorithm keeps to one relation — SP-018 (Hardened_24)",
+     '`[TYP-37]`, `[DRV-1]`'),
+    ('ODR-056', "compile time runs `std.math.det`'s functions when the source names them, and never puts one in place of the platform's — SP-019 (Hardened_24)",
+     '`[CT-4]`'),
+    ('ODR-057', "an operation's effects include what it runs: callbacks, copies, releases, drops, argument evaluation; a generator's by phase; `@nopanic(explicit)` without checks says no modelled panic — SP-020 (Hardened_24)",
+     '`[EFF-1]`, `[EFF-16]`, `[STD-18]`, `[STD-19]`, `[CELL-2]`'),
+    ('ODR-058', 'a body edit re-checks the callers that use a fact of it that changed: effects, inline bodies, borrow summaries — SP-023 (Hardened_24)',
+     '`[BLD-2]`, `[BLD-8]`'),
+    ('ODR-059', "`ember fmt` changes layout only; rewriting source is `--migrate`'s — SP-024 (Hardened_24)",
+     '`[FMT-1]`'),
+    ('ODR-060', 'the formatter writes LF with no manifest switch; `Weak.upgrade` never raises a count from zero; the attribute table lists every attribute; `@assume_noalloc` is an expression inside `unsafe`; `format_to` is variadic — SP-026 (Hardened_24)',
+     '`[LEX-2]`, `[RT-10]`, `[EFF-7]`, `[TYP-26]`, `[ATT-1]`'),
+    ('ODR-061', "a build's acceptance depends on its semantic inputs; build policy and budgets stop a build as themselves, never as a language error — SP-027 (Hardened_24)",
+     '`[PHIL-13]`'),
+    ('ODR-062', "the parallel and vectorisation analyses read through calls by the inline header's specified expansion, never by the C compiler's inlining — SP-028 (Hardened_24)",
+     '`[PAR-2b]`, `[SIMD-5]`'),
+    ('ODR-063', 'an object is deinitialised when its last owner ends as the source says, never earlier; `L3019` is retired — SP-014 (Hardened_24)',
+     '`[RC-3]`'),
+    ('ODR-064', '`alloc_array` initialises with `Default`, `alloc_zeroed` fills with zeros for a `Zeroable` `T`; a struct is `Zeroable` by `@derive(Zeroable)` — SP-017 (Hardened_24)',
+     '`[ARN-3]`, `[ARN-11]`'),
 ]
 
 H5_HEAD = """
@@ -314,7 +346,8 @@ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
 Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
-Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048.
+Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
+ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`).
 
 | ODR | Ruling | Rules |
 |---|---|---|

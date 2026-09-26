@@ -4,7 +4,7 @@
 
 interface Factory:
     fn clone(self) -> Self where Self: Sized:
-        pass
+        todo()
 
 fn take(x: ref dyn Factory):
     x.clone() #$ error[E2020]: requires `Self: Sized`

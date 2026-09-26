@@ -50,6 +50,22 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-064 | **CLOSED** — `alloc_array[T](n)` needs `T: Default` and calls it per element; `alloc_zeroed[T](n)` needs `T: Zeroable` and fills with zeros; neither stands in for the other, and zero-filling for `alloc_array` is allowed only where it is the same (a scalar's standard default) (SP-017) | Language / Memory | — | **Yes** — owner, 2026-09-26 |
+| ODR-063 | **CLOSED** — An object is deinitialised when its last strong owner ends as the source says, never earlier; an elision may remove a retain and release only when it moves no `drop`, `Weak.upgrade` outcome or foreign release (SP-014) | Language / Objects | — | **Yes** — owner, 2026-09-26 |
+| ODR-062 | **CLOSED** — The analyses read through calls by the inline header's specified expansion (`[CG-C-3]`), recursively until a call is recursive; the C compiler's decisions never change a verdict (SP-028) | Language / Dod | — | **Yes** — owner, 2026-09-26 |
+| ODR-061 | **CLOSED** — Acceptance depends on the semantic inputs (language version, target and layout, resolved dependencies, library layers); build policy and exhausted budgets stop a build as themselves, never as a language error; no setting turns off a check Safe Ember needs; `@realtime` means the declaring package's set everywhere (SP-027) | Language / Tooling | — | **Yes** — owner, 2026-09-26 |
+| ODR-060 | **CLOSED** — LF always; `upgrade` fails at zero and never raises a count from zero; the status line points at §XVII.5 and §XVII.8; the table lists every attribute; `@assume_noalloc(call)` is an expression inside `unsafe`; `[TYP-26]` names `format_to` (SP-026) | Editorial / Surface | — | **Yes** — owner, 2026-09-26 |
+| ODR-059 | **CLOSED** — No: it never changes a bound, mode, capture, clone or anything else with meaning; rewriting source is `--migrate`'s, which reports what it changed (SP-024) | Tooling | — | **Yes** — owner, 2026-09-26 |
+| ODR-058 | **CLOSED** — A body edit re-checks the callers that use a fact of it that changed: effects, an inline body, a borrow summary (SP-023) | Tooling / Builds | — | **Yes** — owner, 2026-09-26 |
+| ODR-057 | **CLOSED** — An operation's effects are its own plus the callbacks, copies, retains, releases, drops and argument evaluation it performs, where it performs them; a generator's by call, `next` and drop (SP-020) | Language / Effects | — | **Yes** — owner, 2026-09-26 |
+| ODR-056 | **CLOSED** — A transcendental function runs at compile time when the source names `det`'s; the platform `sin` is `Nondet` and does not; the evaluator never substitutes (SP-019) | Language / Compile Time | — | **Yes** — owner, 2026-09-26 |
+| ODR-055 | **CLOSED** — The operators are IEEE in concrete and generic code alike; `cmp`, `sort()`, `sorted()`, `binary_search`, `min` and `max` are total; `==` and `cmp == Equal` may differ for floats, so an algorithm keeps to one relation; derived `Ord` advances fields on `cmp == Equal` (SP-018) | Language / Types | — | **Yes** — owner, 2026-09-26 |
+| ODR-054 | **CLOSED** — No: a type that owns a `@must_drop` value is `@must_drop` too; a reference to one is bounded by its region instead; `Scope` and `JobScope` cannot be moved into a wrapper at all (SP-015) | Language / Concurrency | — | **Yes** — owner, 2026-09-26 |
+| ODR-053 | **CLOSED** — A view is what carries a region; needing drop is a separate property (SP-012) | Language / Ownership | — | **Yes** — owner, 2026-09-26 |
+| ODR-052 | **CLOSED** — `Mutex[T]` is `Sync` for a `Send` `T`; `RwLock[T]` and `SyncShared[T]` for a `Send + Sync` `T`; a `@sync` class's fields are `Send` and `Sync`; the table follows `[THR-8]` (SP-011) | Language / Concurrency | — | **Yes** — owner, 2026-09-26 |
+| ODR-051 | **CLOSED** — A copy is the value's bits plus a retain of each counted handle in it; no other copy runs code; a type with its own `drop` is never `Copy` (SP-010) | Language / Ownership | — | **Yes** — owner, 2026-09-26 |
+| ODR-050 | **CLOSED** — Nothing, to form a `Result` (SP-009) | Language / Errors | — | **Yes** — owner, 2026-09-26 |
+| ODR-049 | **CLOSED** — A default fills in an implementation that does not state the associated type, read with `Self` as the implementing type, and must meet the type's bounds (SP-003) | Language / Interfaces | — | **Yes** — owner, 2026-09-26 |
 | ODR-048 | **CLOSED** — an instance of a generic passes a parameter its result may point into (the receiver, or a declared source) as the declaration does, whatever the type arguments; a parameter an instance's type makes a reference or view is a source of that instance | Language / regions / generics | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_23 |
 | ODR-047 | **CLOSED** — `NonZero[T]` is `std.core`'s, imported by name; `get()` reads it and its field and memberwise constructor are private; `T` is one of the integer types (a private `std.core.Integer`); `x // d` and `x % d` take a `NonZero` of `x`'s type and answer in it, still panicking on overflow; `Option[NonZero[T]]` keeps `None` as 0 | Standard library / types | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_22 |
 | ODR-046 | **CLOSED** — `std.math.det`'s functions take `f32` or `f64` and answer in it (an `f32`'s result is the `f64` one rounded once), within one unit in the last place (`atan2` 1.3); an integer is converted by the program | Standard library / determinism | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_21 |
@@ -202,6 +218,342 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-064 — `alloc_array` by `Default`; `alloc_zeroed` — **CLOSED**
+
+    ID:        ODR-064
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-017);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / MEMORY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [ARN-3], [ARN-11], §IX.2's example;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-017
+
+    Question:  `alloc_array` zeroed a `Zeroable` `T` and called `T.default()` otherwise, so proving `Zeroable` (which `[ARN-11]` promises field by field) could change a program's values.
+
+    Blocks implementation:            YES
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** `alloc_array[T](n)` needs `T: Default` and calls it per element; `alloc_zeroed[T](n)` needs `T: Zeroable` and fills with zeros; neither stands in for the other, and zero-filling for `alloc_array` is allowed only where it is the same (a scalar's standard default). A struct is `Zeroable` by `@derive(Zeroable)`, proved field by field.
+
+**Implementation.** Built: `alloc_zeroed`, `default_initialisation`, `@derive(Zeroable)`, and D-343 (a generic body's `T: Default` or `T: Zeroable` bound). Migration: `alloc_array` of a raw pointer or of a range type holding 0, which compiled by zeroing, is now `E2040` whose help names `alloc_zeroed`; every scalar's values are unchanged.
+
+---
+
+## ODR-063 — no early deinitialisation — **CLOSED**
+
+    ID:        ODR-063
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-014);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / OBJECTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [RC-3], L3019, Appendix G F-083;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-014
+
+    Question:  `[RC-3]` let an object be deinitialised before its handle's last syntactic use, and planned `L3019` to help programs defend against that.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** An object is deinitialised when its last strong owner ends as the source says, never earlier; an elision may remove a retain and release only when it moves no `drop`, `Weak.upgrade` outcome or foreign release. `with h:` and `mem.keep_alive` stay for `unsafe` and foreign lifetimes. `L3019` is retired, recorded with its reason.
+
+**Implementation.** The compiler never deinitialised early; no program's behaviour changes.
+
+---
+
+## ODR-062 — verdicts do not depend on the C compiler's inlining — **CLOSED**
+
+    ID:        ODR-062
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-028);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / DOD
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [PAR-2b], [SIMD-5], [CG-C-3];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-028
+
+    Question:  `[PAR-2b]` and `[SIMD-5]` required calls to be 'inlined', which the host C compiler decides.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** The analyses read through calls by the inline header's specified expansion (`[CG-C-3]`), recursively until a call is recursive; the C compiler's decisions never change a verdict.
+
+**Implementation.** Spec wording.
+
+---
+
+## ODR-061 — semantic inputs, build policy and budgets — **CLOSED**
+
+    ID:        ODR-061
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-027);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / TOOLING
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [PHIL-13], [EFF-19], [MAN-3], [CT-3];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-027
+
+    Question:  `[PHIL-13]` said no manifest key affects acceptance, yet warnings-as-errors, layers and budgets do.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** Acceptance depends on the semantic inputs (language version, target and layout, resolved dependencies, library layers); build policy and exhausted budgets stop a build as themselves, never as a language error; no setting turns off a check Safe Ember needs; `@realtime` means the declaring package's set everywhere.
+
+**Implementation.** Spec wording.
+
+---
+
+## ODR-060 — specification drift — **CLOSED**
+
+    ID:        ODR-060
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-026);
+               incorporated in 0.9.9_Hardened_24
+    Category:  EDITORIAL / SURFACE
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [LEX-2], [FMT-1], [RT-10], [WK-12], §V.8, [EFF-7], [TYP-26], the front matter;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-026
+
+    Question:  `[LEX-2]` promised a CRLF manifest switch `[FMT-1]` and `[MAN-8]` lack; `[RT-10]` read as a retain from zero; the status line pointed at the code registry; `@error`, `@from`, `@default`, `@ser`, `@grade`, `@attribute` and `@assume_noalloc` were used but missing from the attribute table; `@assume_noalloc(expr)` had no grammar; `format_to` is variadic but `[TYP-26]` named only the output functions.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** LF always; `upgrade` fails at zero and never raises a count from zero; the status line points at §XVII.5 and §XVII.8; the table lists every attribute; `@assume_noalloc(call)` is an expression inside `unsafe`; `[TYP-26]` names `format_to`.
+
+**Implementation.** Spec wording and grammar.
+
+---
+
+## ODR-059 — formatting changes layout only — **CLOSED**
+
+    ID:        ODR-059
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-024);
+               incorporated in 0.9.9_Hardened_24
+    Category:  TOOLING
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [FMT-1], [CLI-20];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-024
+
+    Question:  May `ember fmt` remove a bound it thinks redundant?
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** No: it never changes a bound, mode, capture, clone or anything else with meaning; rewriting source is `--migrate`'s, which reports what it changed.
+
+**Implementation.** Spec wording.
+
+---
+
+## ODR-058 — body edits re-check callers that use a changed fact — **CLOSED**
+
+    ID:        ODR-058
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-023);
+               incorporated in 0.9.9_Hardened_24
+    Category:  TOOLING / BUILDS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [BLD-2], [BLD-8], [EFF-4];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-023
+
+    Question:  `[BLD-8]` said editing a body re-checks that function alone, though callers use its effects, inline body and borrow summaries.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** A body edit re-checks the callers that use a fact of it that changed: effects, an inline body, a borrow summary. SP-025 (existing borrow contracts) is affirmed with no text change.
+
+**Implementation.** Spec wording; the incremental build is not built.
+
+---
+
+## ODR-057 — effects include what an operation runs — **CLOSED**
+
+    ID:        ODR-057
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-020);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / EFFECTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [EFF-1], [EFF-16], [STD-18], [STD-19], [CELL-2];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-020
+
+    Question:  Absolute wording (`format_to` never allocates, adapters allocate nothing, `get` is a load, a function that 'can abort in no way at all') ignored the user code and bookkeeping an operation runs.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** An operation's effects are its own plus the callbacks, copies, retains, releases, drops and argument evaluation it performs, where it performs them; a generator's by call, `next` and drop. The absolute claims are narrowed to the mechanism.
+
+**Implementation.** Spec wording.
+
+---
+
+## ODR-056 — no numeric substitution at compile time — **CLOSED**
+
+    ID:        ODR-056
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-019);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / COMPILE TIME
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [CT-4], Part XIV's example;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-019
+
+    Question:  `[CT-4]` said the evaluator uses `std.math.det` for transcendental functions, and Part XIV's sine table imported the platform `sin`.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** A transcendental function runs at compile time when the source names `det`'s; the platform `sin` is `Nondet` and does not; the evaluator never substitutes. The example uses `det.sin`.
+
+**Implementation.** The evaluator runs neither today; spec only.
+
+---
+
+## ODR-055 — float comparison operators stay IEEE in generic code — **CLOSED**
+
+    ID:        ODR-055
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-018);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / TYPES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [TYP-37], §VI.3, the `Ord` sketch, [DRV-1];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-018
+
+    Question:  `[TYP-37]` had generic code bounded by `Ord` compare floats with `cmp` (total order), so `less(-0.0, 0.0)` changed with extraction into a generic function.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** The operators are IEEE in concrete and generic code alike; `cmp`, `sort()`, `sorted()`, `binary_search`, `min` and `max` are total; `==` and `cmp == Equal` may differ for floats, so an algorithm keeps to one relation; derived `Ord` advances fields on `cmp == Equal`. No `PartialOrd`; `xs.sort()` on floats stays.
+
+**Implementation.** The compiler already does this (probed: generic `<` IEEE, `sort` totalOrder, `min`/`max` total, `binary_search` by `cmp`, `contains` by `==`); regression test added.
+
+---
+
+## ODR-054 — `@must_drop` is structural — **CLOSED**
+
+    ID:        ODR-054
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-015);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / CONCURRENCY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [THR-6], [THR-5], [CORO-13];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-015
+
+    Question:  Could a `@must_drop` value escape its restrictions inside a struct, enum, tuple or generic wrapper?
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** No: a type that owns a `@must_drop` value is `@must_drop` too; a reference to one is bounded by its region instead; `Scope` and `JobScope` cannot be moved into a wrapper at all.
+
+**Implementation.** Scopes are not built yet; spec only.
+
+---
+
+## ODR-053 — a view may need drop — **CLOSED**
+
+    ID:        ODR-053
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-012);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / OWNERSHIP
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md §IV.1, [DRP-6], [TYP-34];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-012
+
+    Question:  Views were called destructor-free, yet `Ref`, `RefMut` and `MutexGuard` are views whose drop ends an access.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** A view is what carries a region; needing drop is a separate property. A plain view drops trivially; a guard ends its access; a view type drops what in it needs drop.
+
+**Implementation.** Spec wording.
+
+---
+
+## ODR-052 — transfer, sharing and destruction across threads — **CLOSED**
+
+    ID:        ODR-052
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-011);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / CONCURRENCY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [THR-8], [THR-9], [THR-1], [HEAP-10], §IV.8;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-011
+
+    Question:  `RwLock[T]` was `Sync` for any `Send` `T`, so two readers could mutate one `Cell`; `SyncShared[T]` needed only `Sync` though its last release may drop `T` on any thread; the marker table said `ref` is never `Send`, against `[THR-8]`.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** `Mutex[T]` is `Sync` for a `Send` `T`; `RwLock[T]` and `SyncShared[T]` for a `Send + Sync` `T`; a `@sync` class's fields are `Send` and `Sync`; the table follows `[THR-8]`. `ref mut` stays not `Sync`.
+
+**Implementation.** Threads are not built yet; spec only.
+
+---
+
+## ODR-051 — counted copies and `owned` handle arguments — **CLOSED**
+
+    ID:        ODR-051
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-010);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / OWNERSHIP
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [PHIL-3], [OWN-7], [STR-3], [FN-9];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-010
+
+    Question:  `Copy` was called bitwise and drop-free, yet handles are `Copy` and retain; `[STR-3]` made a struct holding a handle move-only; `[FN-9]` passed an `owned` handle without a retain while the caller could keep using it.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** A copy is the value's bits plus a retain of each counted handle in it; no other copy runs code; a type with its own `drop` is never `Copy`. A struct may derive `Copy` when every field is `Copy`, handles included. An `owned` handle argument is the caller's moved when the call is its last use, else a retained copy.
+
+**Implementation.** The compiler already does all of this (probed 2026-09-26); the spec now says it. Review gate kept open: `Copy`-typed class fields with address-taken accesses (`[EXC-17]`, `[EXC-19]`), not changed here.
+
+---
+
+## ODR-050 — `Result`'s error parameter is unbounded — **CLOSED**
+
+    ID:        ODR-050
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-009);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / ERRORS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [ERR-1], [ERR-8], [ERR-10], [ERR-12], [FN-8];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-009
+
+    Question:  `[ERR-1]` requires `E: Error`, `[ERR-8]` says the default `AnyError` is not an `Error`, and `[STD-15]` returns `Result[int, int]`. What does `E` need?
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** Nothing, to form a `Result`. Each operation says what it needs: `?` into another type `From[E]`, printing `Display`, a chain `Error` (or `AnyError`'s own), conversion into `AnyError` `E: Error`. `main`'s error prints its chain when it has one; a `Display`-only error prints its message.
+
+**Implementation.** `Error` and `AnyError` are not built yet; spec only.
+
+---
+
+## ODR-049 — an associated type's default is not an equality — **CLOSED**
+
+    ID:        ODR-049
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, SP-003);
+               incorporated in 0.9.9_Hardened_24
+    Category:  LANGUAGE / INTERFACES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_23.md [IFC-4];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-003
+
+    Question:  `assoc_type` admits `type Out = Self` in an interface, but no rule said what it means. Does a bound `T: Add` then know `T.Output = T`? May a default method body assume the default?
+
+    Blocks implementation:            YES
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "go")
+
+**Ruling.** A default fills in an implementation that does not state the associated type, read with `Self` as the implementing type, and must meet the type's bounds. It is not an equality: `T: I` leaves `T.Out` abstract, and a default body sees `Out` as itself. A cycle of defaults is `E2043`.
+
+**Implementation.** Associated defaults are built (`fill_assoc_defaults`, `cyclic_assoc_defaults`); default bodies are checked once with `Self` opaque (D-344).
 
 ---
 

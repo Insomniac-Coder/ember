@@ -4,7 +4,7 @@
 
 interface Clone[T]:
     fn clone(self) -> Self:
-        pass
+        todo()
 
 fn take(x: ref dyn Clone[i32]):    #$ error[E2050]: method `clone` returns `Self` by value
     pass

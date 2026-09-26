@@ -443,6 +443,9 @@ pub struct TypeTable {
     /// (`Cell[i32]`). Kept apart from `origin`, which also decides how a
     /// type resolves.
     written_as: HashMap<StructId, (Symbol, Vec<Ty>)>,
+    /// `[ARN-11]` — the structs declared `@derive(Zeroable)`, by declared
+    /// name (a generic struct's instances share its name as their origin).
+    zeroable_derived: HashSet<Symbol>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -511,6 +514,7 @@ impl TypeTable {
             enums: Vec::new(),
             ranges: Vec::new(),
             written_as: HashMap::new(),
+            zeroable_derived: HashSet::new(),
             next_infer: 0,
             pointer_size: 8,
         };
@@ -1366,6 +1370,12 @@ impl TypeTable {
         }
     }
 
+    /// `[ARN-11]` — record a struct's `@derive(Zeroable)`; each instance is
+    /// `Zeroable` when every field of it is (`is_builtin_zeroable`).
+    pub fn derive_zeroable(&mut self, name: Symbol) {
+        self.zeroable_derived.insert(name);
+    }
+
     /// `[ARN-11]`, `[ARN-12]` — whether an all-zero object representation is
     /// a valid initialized value of this type.
     ///
@@ -1389,7 +1399,16 @@ impl TypeTable {
             // pattern because it makes no validity claim about its payload.
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                !def.drops_fields && def.name.as_str().starts_with("MaybeUninit_")
+                if def.name.as_str().starts_with("MaybeUninit_") {
+                    return !def.drops_fields;
+                }
+                // `[ARN-11]` — a struct only by `@derive(Zeroable)`, which
+                // the compiler proves field by field: its invariants (a
+                // `NonZero`'s) are the author's to vouch for.
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                self.zeroable_derived.contains(&declared)
+                    && !def.has_drop
+                    && def.fields.iter().all(|field| self.is_builtin_zeroable(field.ty))
             }
             // A class handle is non-null; zero bytes cannot manufacture a
             // valid live object handle.

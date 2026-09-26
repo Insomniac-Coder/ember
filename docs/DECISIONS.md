@@ -1880,3 +1880,35 @@ interface method "through any implementation visible in the program".
   would make `pub` on it mean nothing (the interface decides who can see the
   method through `I.m(x)` anyway), and would let a public type's
   implementation of a public interface hide the interface's methods.
+
+## ADR-058 — how the simplification pass is built: associated defaults, opaque default bodies, `alloc_zeroed`
+
+**Decided 2026-09-26, with ODR-049 and ODR-064 (the owner's simplification pass).**
+The rulings fix what a program sees; these are the implementation's choices.
+
+- **Associated-type defaults.** An interface's `type Out = Self` is resolved where the
+  interface is collected, with `Self` the placeholder parameter and the other associated
+  names abstract (`InterfaceDef.assoc_defaults`); a generic interface's instance
+  substitutes its arguments into it. An implementation takes it in `check_implementation_of`
+  (`fill_assoc_defaults`), which runs after every module is collected and before any body is
+  checked, so a header's and an `extend`'s implementations are served alike: `Self` becomes
+  the implementing type, and a default naming another associated type is resolved against
+  the implementation. Cycles are found on the written types (`type_expr_names`), before
+  anything is filled, and the cyclic defaults are dropped after `E2043`.
+- **Default bodies (D-344).** `check_default_bodies_opaquely` checks each default body once
+  with `Self` a parameter placed after the interface's own and the method's own parameters,
+  bounded by the interface (or its instance over opaque arguments), its parents closed; the
+  declaration's signature gains the receiver `method_signature` leaves out of an interface.
+  Each implementation's copy is still checked, since it is what is emitted, but into a quiet
+  sink, reporting only what the opaque check could not see, as D-280 does for generic
+  methods.
+- **`alloc_array` and `alloc_zeroed`.** `default_initialisation` answers `Some(None)` for a
+  scalar, whose standard `Default` is zero bytes (checked against `std/src/core.em`), so
+  `alloc_array[f32](n)` stays one `ember_arena_alloc_zeroed` rather than a loop of calls;
+  every other type calls its `default` per element. A type parameter is answered from its
+  bounds and checked again in each instance.
+- **`@derive(Zeroable)`.** The type table keeps the declared names of the structs that derive
+  it (`derive_zeroable`) rather than a flag on every `StructDef` (thirty construction sites);
+  `is_builtin_zeroable` proves a struct field by field only when its declared name, or its
+  generic origin's, is there. `Zeroable` joins `Copy`, `Display` and `Debug` among the
+  undeclared markers a bound is answered for from the compiler's table.

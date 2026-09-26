@@ -117,6 +117,7 @@ RETIRED = {
     'E6002': 'compile-time evaluation is deterministic by construction (`[CT-4]`)',
     'E9012': 'reserved',
     'L3018': 'the reason category is part of the `# SAFETY(…):` note and optional (`[UNS-8]`)',
+    'L3019': 'an object is never deinitialised before its last owner ends (`[RC-3]`, ODR-063)',
     'E9032': 'reserved',
     'W0001': 'a dangling doc comment is discarded in silence (`[LEX-11]`)',
 }

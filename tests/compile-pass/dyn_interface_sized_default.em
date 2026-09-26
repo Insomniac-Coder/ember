@@ -3,7 +3,7 @@
 
 interface Factory:
     fn clone(self) -> Self where Self: Sized:
-        pass
+        todo()
     fn draw(self) -> i32
 
 fn take(x: ref dyn Factory) -> i32:

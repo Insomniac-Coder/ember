@@ -91,7 +91,7 @@ M = {
 'F-080': ('SPEC', '`String.from(s)`, `s.to_string()` and literal coercion are specified.', ['TXT-9', 'TXT-11']),
 'F-081': ('SPEC', 'Borrowed class-handle parameters may be written through.', ['CLS-7', 'FN-9']),
 'F-082': ('SPEC', 'Debug runs report leaked cycles at exit by default.', ['WK-15']),
-'F-083': ('SPEC', 'Early deinitialisation is specified with `with h:` and lint `L3019`.', ['RC-3']),
+'F-083': ('SPEC', 'An object dies when its last owner ends as the source says, never earlier (ODR-063); `L3019` is retired.', ['RC-3']),
 'F-084': ('SPEC', 'Callable fields, pattern conditions and owned callable values make the idiom writable.', ['CLO-3', 'CLO-11']),
 'F-085': ('GATE', 'Every `ember` block of the current document is extracted and checked.', ['TST-7']),
 'F-086': ('SPEC', '`FixedArena` is the `@noalloc` arena type; `Arena.fixed` returns it.', ['ARN-4']),

@@ -735,6 +735,10 @@ struct InterfaceDef {
     /// `[IFC-4]` — each associated type (`type Real: Float`) with the
     /// interfaces its value must implement.
     assoc: Vec<(Symbol, Vec<Symbol>)>,
+    /// SP-003 (ODR-049) — each associated type's default (`type Out =
+    /// Self`), read with `Self` and the other associated names abstract: what
+    /// an implementation that does not state it takes.
+    assoc_defaults: Vec<(Symbol, Ty)>,
     /// The written supertrait forms are retained for generic-interface
     /// materialization, where `Parent[T]` must resolve with the interface's
     /// own parameter bindings and declaration-module imports.
@@ -2616,6 +2620,9 @@ impl<'a> Checker<'a> {
                     if has_derive(&item.attrs, "Hash") {
                         self.hash_derived.insert(name);
                     }
+                    if has_derive(&item.attrs, "Zeroable") {
+                        self.types.derive_zeroable(name);
+                    }
                     let id = self.types.add_struct(StructDef {
                         name,
                         fields: Vec::new(),
@@ -3093,6 +3100,9 @@ impl<'a> Checker<'a> {
             self.type_params.clear();
             if has_derive(&item.attrs, "Hash") {
                 self.hash_derived.insert(name);
+            }
+            if has_derive(&item.attrs, "Zeroable") {
+                self.types.derive_zeroable(name);
             }
             self.generic_structs.insert(
                 name,
@@ -4765,6 +4775,34 @@ impl<'a> Checker<'a> {
                         }
                         let _ = ty;
                     }
+                    // `[ARN-11]` — `@derive(Zeroable)` is proved field by
+                    // field, and a `drop` of its own rules it out.
+                    if has_derive(&item.attrs, "Zeroable") {
+                        let shown_struct = decl.name.name;
+                        if has_drop {
+                            self.error(
+                                codes::E2080,
+                                decl.name.span,
+                                format!("`{shown_struct}` has a `drop`, so it cannot derive `Zeroable`"),
+                            );
+                        }
+                        let offenders: Vec<(Symbol, Ty, Span)> = self
+                            .types
+                            .struct_def(id)
+                            .fields
+                            .iter()
+                            .filter(|f| !self.types.is_builtin_zeroable(f.ty))
+                            .map(|f| (f.name, f.ty, f.span))
+                            .collect();
+                        for (name, field_ty, span) in offenders {
+                            let shown = self.types.display(field_ty);
+                            self.error(
+                                codes::E2080,
+                                span,
+                                format!("field `{name}` has type `{shown}`, which is not Zeroable"),
+                            );
+                        }
+                    }
                 }
                 ast::ItemKind::Class(decl) => {
                     let Some(&id) = self.class_ids.get(&self.qualified(decl.name.name)) else {
@@ -5369,6 +5407,103 @@ impl<'a> Checker<'a> {
         found
     }
 
+    /// SP-003 (ODR-049) — the defaults of the associated types an interface
+    /// declares and inherits, the nearest declaration's first.
+    fn interface_assoc_defaults(&self, interface: Symbol) -> Vec<(Symbol, Ty)> {
+        let mut found: Vec<(Symbol, Ty)> = Vec::new();
+        let mut pending = vec![interface];
+        let mut seen = HashSet::new();
+        while let Some(interface) = pending.pop() {
+            if !seen.insert(interface) {
+                continue;
+            }
+            let Some(def) = self.interfaces.get(&interface) else { continue };
+            for &(name, default) in &def.assoc_defaults {
+                if !found.iter().any(|(known, _)| *known == name) {
+                    found.push((name, default));
+                }
+            }
+            pending.extend(def.supertraits.iter().copied());
+        }
+        found
+    }
+
+    /// SP-003 (ODR-049) — an associated type an implementation does not state
+    /// is the interface's default for it, read with `Self` as the implementing
+    /// type. Only an implementation takes it: `T: I` leaves `T.Name` abstract.
+    fn fill_assoc_defaults(&mut self, ty: Ty, interface: Symbol) {
+        let mut filled = Vec::new();
+        for (name, default) in self.interface_assoc_defaults(interface) {
+            if self.implementation_assoc(ty, interface, name).is_some() {
+                continue;
+            }
+            let value = self.substitute_self(default, ty);
+            self.instance_assoc.insert((ty, interface, name), value);
+            self.assoc_values.entry((ty, name)).or_insert(value);
+            filled.push(name);
+        }
+        // A default may name another associated type (`type Key = Item`);
+        // `cyclic_assoc_defaults` has made sure the chain ends.
+        for _ in 0..filled.len() {
+            for &name in &filled {
+                let value = self.instance_assoc[&(ty, interface, name)];
+                let resolved = self.resolve_assoc(value, ty);
+                self.instance_assoc.insert((ty, interface, name), resolved);
+                if self.assoc_values.get(&(ty, name)) == Some(&value) {
+                    self.assoc_values.insert((ty, name), resolved);
+                }
+            }
+        }
+    }
+
+    /// SP-003 (ODR-049) — the associated types whose defaults lead back to
+    /// themselves (`type A = B` and `type B = A`), each reported `E2043`.
+    fn cyclic_assoc_defaults(&mut self, decl: &ast::InterfaceDecl, interface: Symbol) -> HashSet<Symbol> {
+        let mut edges: HashMap<Symbol, (Vec<Symbol>, Span)> = HashMap::new();
+        for member in &decl.members {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind
+                && let Some(value) = &alias.value
+            {
+                let mut names = Vec::new();
+                type_expr_names(value, &mut names);
+                edges.insert(alias.name.name, (names, alias.name.span));
+            }
+        }
+        let mut cyclic = HashSet::new();
+        let mut order: Vec<Symbol> = edges.keys().copied().collect();
+        order.sort_by_key(|name| edges[name].1.start);
+        for &start in &order {
+            let mut pending = edges[&start].0.clone();
+            let mut seen = HashSet::new();
+            let mut through = None;
+            while let Some(next) = pending.pop() {
+                if next == start {
+                    through = Some(next);
+                    break;
+                }
+                if !seen.insert(next) {
+                    continue;
+                }
+                if let Some((names, _)) = edges.get(&next) {
+                    pending.extend(names.iter().copied());
+                }
+            }
+            if through.is_some() {
+                cyclic.insert(start);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E2043,
+                        edges[&start].1,
+                        format!("the default of `{interface}`'s `{start}` leads back to `{start}`"),
+                    )
+                    .help("give one of these associated types no default, or a default that does not name the others")
+                    .note("an implementation takes a default by following it until it reaches a type [IFC-4]"),
+                );
+            }
+        }
+        cyclic
+    }
+
     fn interface_has_assoc(&self, interface: Symbol, name: Symbol) -> bool {
         self.interface_assoc(interface).iter().any(|(assoc, _)| *assoc == name)
     }
@@ -5378,6 +5513,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_implementation_of(&mut self, ty: Ty, interface: Symbol, span: Span) {
+        self.fill_assoc_defaults(ty, interface);
         let Some(def) = self.interfaces.get(&interface) else { return };
         let required = def.methods.clone();
         let supertraits = def.supertraits.clone();
@@ -5881,7 +6017,7 @@ impl<'a> Checker<'a> {
             .members
             .iter()
             .filter_map(|m| match &m.kind {
-                ast::MemberKind::TypeAlias(t) if t.value.is_none() => Some(t.name.name),
+                ast::MemberKind::TypeAlias(t) => Some(t.name.name),
                 _ => None,
             })
             .collect();
@@ -5899,6 +6035,19 @@ impl<'a> Checker<'a> {
                 self.assoc_scope.insert(name);
             }
         }
+        // SP-003 (ODR-049) — `type Out = Self` declares `Out` and gives the
+        // value an implementation that does not state it takes. It is not
+        // an equality: a bound `T: I` leaves `T.Out` abstract.
+        let mut assoc_defaults = Vec::new();
+        for member in &decl.members {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind
+                && let Some(value) = &alias.value
+            {
+                assoc_defaults.push((alias.name.name, self.resolve_type(value)));
+            }
+        }
+        let cyclic = self.cyclic_assoc_defaults(decl, name);
+        assoc_defaults.retain(|(assoc, _)| !cyclic.contains(assoc));
         let mut methods = Vec::new();
         let mut defaults = Vec::new();
         let mut dyn_sized_defaults = HashSet::new();
@@ -5978,9 +6127,7 @@ impl<'a> Checker<'a> {
         // an implementation records what each one stands for.
         let mut assoc_bounds = Vec::new();
         for member in &decl.members {
-            if let ast::MemberKind::TypeAlias(alias) = &member.kind
-                && alias.value.is_none()
-            {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind {
                 let bounds = alias.bounds.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
                 assoc_bounds.push((alias.name.name, bounds));
             }
@@ -5994,6 +6141,7 @@ impl<'a> Checker<'a> {
                 defaults,
                 supertraits,
                 assoc: assoc_bounds,
+                assoc_defaults,
                 supertrait_exprs: decl.supertraits.clone(),
                 declaring_module: self.current_module,
                 dyn_sized_defaults,
@@ -6178,6 +6326,11 @@ impl<'a> Checker<'a> {
             .collect();
         self.current_module = saved_module;
         self.type_params = saved_type_params;
+        let assoc_defaults = definition
+            .assoc_defaults
+            .iter()
+            .map(|&(assoc, default)| (assoc, self.substitute_ty(default, args)))
+            .collect();
         self.interfaces.insert(
             instance,
             InterfaceDef {
@@ -6186,6 +6339,7 @@ impl<'a> Checker<'a> {
                 defaults,
                 supertraits,
                 assoc: definition.assoc.clone(),
+                assoc_defaults,
                 supertrait_exprs: Vec::new(),
                 declaring_module: definition.declaring_module,
                 dyn_sized_defaults,
@@ -11408,6 +11562,77 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect()
     }
 
+    /// D-344 — `[TYP-17]` for a default body: checked once with `Self` an
+    /// opaque parameter bounded by the interface, so it uses only what the
+    /// interface provides, and sees an associated type as itself, never as
+    /// the default an implementation may override (SP-003, ODR-049). The
+    /// names of the members checked.
+    fn check_default_bodies_opaquely(&mut self, decl: &ast::InterfaceDecl, interface: Symbol) -> HashSet<Symbol> {
+        let mut checked = HashSet::new();
+        let Some(def) = self.interfaces.get(&interface).cloned() else { return checked };
+        let interface_params = def.generic_params.clone();
+        let interface_args = self.opaque_arguments(&interface_params);
+        let bound = if interface_params.is_empty() {
+            interface
+        } else {
+            match self.instantiate_interface(interface, &def, &interface_args, decl.name.span) {
+                Some(instance) => instance,
+                None => return checked,
+            }
+        };
+        let assoc: Vec<Symbol> = self.interface_assoc(interface).into_iter().map(|(name, _)| name).collect();
+        for member in &decl.members {
+            let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+            let Some(block) = &fn_decl.body else { continue };
+            let Some(&(_, declaration, receiver, _)) = def.methods.iter().find(|(name, ..)| *name == fn_decl.name.name) else {
+                continue;
+            };
+            let signature = self.signatures[declaration.0 as usize].clone();
+            let own = signature.generics.clone();
+            let self_index = interface_params.len() + own.len();
+            let self_name = Symbol::intern("Self");
+            let opaque_self = self.types.intern(TyKind::Param { index: self_index as u32, name: self_name });
+            let mut self_param =
+                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, bindings: Vec::new() };
+            self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
+            // An interface's declaration leaves the receiver out; the body
+            // reads it as `self`.
+            let receiver_param = receiver.and_then(|mode| {
+                fn_decl
+                    .params
+                    .iter()
+                    .find(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }))
+                    .map(|param| (Symbol::intern("self"), opaque_self, mode, param.span))
+            });
+            let params = receiver_param
+                .into_iter()
+                .chain(signature.params.iter().map(|&(name, ty, mode, span)| (name, self.substitute_self(ty, opaque_self), mode, span)))
+                .collect();
+            let ret = self.substitute_self(signature.ret, opaque_self);
+            let opaque = DefId(self.signatures.len() as u32);
+            self.signatures.push(Signature { params, ret, generics: own.clone(), borrows: signature.borrows.clone() });
+            let saved_self = self.self_ty.replace(opaque_self);
+            let saved_params = std::mem::take(&mut self.type_params);
+            let saved_generics = std::mem::take(&mut self.current_generics);
+            let saved_assoc = std::mem::replace(&mut self.assoc_scope, assoc.iter().copied().collect());
+            for (param, &arg) in interface_params.iter().zip(&interface_args) {
+                self.type_params.insert(param.name, arg);
+            }
+            for (index, param) in own.iter().enumerate() {
+                let ty = self.types.intern(TyKind::Param { index: (interface_params.len() + index) as u32, name: param.name });
+                self.type_params.insert(param.name, ty);
+            }
+            self.current_generics = interface_params.iter().cloned().chain(own).chain(std::iter::once(self_param)).collect();
+            let _ = self.check_one_method(opaque_self, fn_decl, block, opaque, &member.attrs, member.span);
+            self.self_ty = saved_self;
+            self.type_params = saved_params;
+            self.current_generics = saved_generics;
+            self.assoc_scope = saved_assoc;
+            checked.insert(fn_decl.name.name);
+        }
+        checked
+    }
+
     /// The bodies of the default methods `register_defaults` created: one copy
     /// per implementing type, checked with `self` bound to that type.
     fn check_default_bodies(&mut self, module: &ast::Module) -> Vec<Function> {
@@ -11416,6 +11641,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for item in &module.items {
             let ast::ItemKind::Interface(decl) = &item.kind else { continue };
             let interface = self.qualified(decl.name.name);
+            let opaque = self.check_default_bodies_opaquely(decl, interface);
             let implementers: Vec<Ty> = implementations
                 .iter()
                 .filter(|(ty, i, _)| *i == interface && !self.is_opaque_instance(*ty))
@@ -11451,38 +11677,56 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     if !self.checked_default_methods.insert(def) {
                         continue;
                     }
-                    if !self.signatures[def.0 as usize].generics.is_empty() {
-                        self.type_params.clear();
-                        let generics = self.signatures[def.0 as usize].generics.clone();
-                        self.current_generics = generics.clone();
-                        for (index, param) in generics.iter().enumerate() {
-                            let ty = self.types.intern(TyKind::Param {
-                                index: index as u32,
-                                name: param.name,
-                            });
-                            self.type_params.insert(param.name, ty);
-                        }
-                        let _ = self.check_one_method(
-                            *ty,
-                            fn_decl,
-                            block,
-                            def,
-                            &member.attrs,
-                            member.span,
-                        );
-                        self.type_params.clear();
-                        self.current_generics.clear();
-                        continue;
+                    // D-344 — the opaque check read the body; a copy reports
+                    // only what that check could not see.
+                    let quiet_copy = opaque.contains(&fn_decl.name.name);
+                    let saved_sink = quiet_copy.then(|| std::mem::replace(self.sink, Sink::new()));
+                    let function = self.check_default_copy(*ty, fn_decl, block, def, member);
+                    if let Some(saved) = saved_sink {
+                        let copy = std::mem::replace(self.sink, saved);
+                        let concrete: Vec<Diagnostic> = copy
+                            .diagnostics()
+                            .iter()
+                            .filter(|diagnostic| {
+                                !self.sink.diagnostics().iter().any(|existing| {
+                                    existing.code == diagnostic.code && existing.primary.span == diagnostic.primary.span
+                                })
+                            })
+                            .cloned()
+                            .collect();
+                        self.emit_concrete_instantiation_diagnostics(concrete);
                     }
-                    if let Some(function) =
-                        self.check_one_method(*ty, fn_decl, block, def, &member.attrs, member.span)
-                    {
-                        out.push(function);
-                    }
+                    out.extend(function);
                 }
             }
         }
         out
+    }
+
+    /// One implementing type's copy of a default body; a generic method's
+    /// copy is checked but not emitted here.
+    fn check_default_copy(
+        &mut self,
+        ty: Ty,
+        fn_decl: &ast::FnDecl,
+        block: &ast::Block,
+        def: DefId,
+        member: &ast::Member,
+    ) -> Option<Function> {
+        if self.signatures[def.0 as usize].generics.is_empty() {
+            return self.check_one_method(ty, fn_decl, block, def, &member.attrs, member.span);
+        }
+        self.type_params.clear();
+        let generics = self.signatures[def.0 as usize].generics.clone();
+        self.current_generics = generics.clone();
+        for (index, param) in generics.iter().enumerate() {
+            let param_ty = self.types.intern(TyKind::Param { index: index as u32, name: param.name });
+            self.type_params.insert(param.name, param_ty);
+        }
+        let _ = self.check_one_method(ty, fn_decl, block, def, &member.attrs, member.span);
+        self.type_params.clear();
+        self.current_generics.clear();
+        None
     }
 
     fn check_one_method(
@@ -23011,6 +23255,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 "Display" => return self.has_display(ty),
                 "Debug" => return self.is_formattable(ty),
                 "Copy" => return self.types.is_copy(ty),
+                "Zeroable" => return self.types.is_builtin_zeroable(ty),
                 _ => {}
             }
         }
@@ -23042,6 +23287,44 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// interface capability. Compiler-known APIs use the fully qualified
     /// interface identity so their behavior cannot depend on which short
     /// names happen to be imported at the call site.
+    /// SP-017 (ODR-049) — how `alloc_array` initialises a `T`: `Some(None)`
+    /// for a scalar, whose standard `Default` is its zero bytes; `Some(Some(f))`
+    /// to call `f`, its `Default.default`; `None` when `T` has no `Default`.
+    /// D-343 — a type parameter has one when its bounds say so; the body is
+    /// checked again for each instance, where `T` is known.
+    fn default_initialisation(&mut self, ty: Ty) -> Option<Option<DefId>> {
+        let default = Symbol::intern("std.core.Default");
+        match self.types.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) => return Some(None),
+            TyKind::Param { .. } => {
+                if !self.implements(ty, default) {
+                    return None;
+                }
+                let declaration = self
+                    .interfaces
+                    .get(&default)?
+                    .methods
+                    .iter()
+                    .find(|(name, ..)| name.is("default"))
+                    .map(|&(_, declaration, ..)| declaration)?;
+                return Some(Some(declaration));
+            }
+            _ => {}
+        }
+        self.standard_associated_capability(ty, "std.core.Default", "default").map(Some)
+    }
+
+    /// `[ARN-11]` — all-zero bytes are a valid `ty`: what the compiler proves
+    /// of a built-in type, or a type parameter's `Zeroable` bound.
+    fn zeroable(&self, ty: Ty) -> bool {
+        if let TyKind::Param { index, .. } = *self.types.kind(ty) {
+            return self.current_generics.get(index as usize).is_some_and(|param| {
+                param.bounds.iter().any(|bound| bound.as_str().rsplit('.').next() == Some("Zeroable"))
+            });
+        }
+        self.types.is_builtin_zeroable(ty)
+    }
+
     fn standard_associated_capability(
         &self,
         ty: Ty,
@@ -23315,7 +23598,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         }
                         _ => "",
                     };
-                    if !matches!(derived, "Copy" | "Clone" | "Eq" | "Hash") {
+                    if !matches!(derived, "Copy" | "Clone" | "Eq" | "Hash") && !(derived == "Zeroable" && site == "struct") {
                         let span = match arg {
                             ast::AttrArg::Expr(expr) => expr.span,
                             ast::AttrArg::Named { value, .. } => value.span,
@@ -23326,7 +23609,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 span,
                                 format!("deriving `{derived}` is not implemented yet"),
                             )
-                            .note("`Copy`, `Clone` and `Hash` can be derived; `Eq` is implicit [STR-5]"),
+                            .note("`Copy`, `Clone` and `Hash` can be derived, and `Zeroable` on a struct; `Eq` is implicit [STR-5]"),
                         );
                     }
                 }
@@ -29296,13 +29579,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 span,
             };
         }
-        if method == "alloc_array" {
+        // SP-017 (ODR-049) — `alloc_array` initialises each element with
+        // `T.default()`; `alloc_zeroed` fills with zero bytes, for a `T` whose
+        // all-zero bytes are valid.
+        if method == "alloc_array" || method == "alloc_zeroed" {
             if explicit.len() != 1 {
                 self.error(
                     codes::E2020,
                     span,
                     format!(
-                        "`Arena.alloc_array` takes one type argument, found {}",
+                        "`Arena.{method}` takes one type argument, found {}",
                         explicit.len()
                     ),
                 );
@@ -29313,7 +29599,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     codes::E2020,
                     span,
                     format!(
-                        "`Arena.alloc_array` takes one argument, found {}",
+                        "`Arena.{method}` takes one argument, found {}",
                         args.len()
                     ),
                 );
@@ -29331,39 +29617,61 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         codes::E3090,
                         span,
                         format!(
-                            "`{shown}` needs `drop` and cannot be allocated with `Arena.alloc_array`"
+                            "`{shown}` needs `drop` and cannot be allocated with `Arena.{method}`"
                         ),
                     )
                     .primary_label("arena array elements are never dropped individually")
                     .help("use `alloc_uninit` only when you will explicitly manage every initialized value")
-                    .note("ordinary `alloc_array` always requires `!needs_drop(T)` [ARN-2, ARN-3]"),
+                    .note(format!("`{method}` always requires `!needs_drop(T)` [ARN-2, ARN-3]")),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let constructor = if self.types.is_builtin_zeroable(elem) {
-                None
+            let which = if method == "alloc_zeroed" {
+                if !self.zeroable(elem) {
+                    let shown = self.types.display(elem);
+                    let help = if self.default_initialisation(elem).is_some() {
+                        format!("`alloc_array[{shown}](n)` initialises each element with `{shown}.default()`")
+                    } else {
+                        "use `alloc_uninit[T](count)`, write every slot, then assert initialization in `unsafe`".to_string()
+                    };
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E2040,
+                            span,
+                            format!("`{shown}` is not `Zeroable`: nothing shows that all-zero bytes are a valid `{shown}`"),
+                        )
+                        .help(help)
+                        .note("`alloc_zeroed` fills with zero bytes, which needs `T: Zeroable` [ARN-3, ARN-11]"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                Builtin::ArenaAllocArrayZeroed { elem }
             } else {
-                self.standard_associated_capability(
-                    elem,
-                    "std.core.Default",
-                    "default",
-                )
+                match self.default_initialisation(elem) {
+                    // The standard `Default` of a scalar is its zero, so one
+                    // fill does what a call per element would.
+                    Some(None) => Builtin::ArenaAllocArrayZeroed { elem },
+                    Some(Some(constructor)) => Builtin::ArenaAllocArrayDefault { elem, constructor },
+                    None => {
+                        let shown = self.types.display(elem);
+                        let help = if self.zeroable(elem) {
+                            format!("all-zero bytes are a valid `{shown}`: `alloc_zeroed[{shown}](n)` fills with them")
+                        } else {
+                            "use `alloc_uninit[T](count)`, write every slot, then assert initialization in `unsafe`".to_string()
+                        };
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E2040,
+                                span,
+                                format!("`{shown}` does not implement `Default`, which `alloc_array` needs"),
+                            )
+                            .help(help)
+                            .note("`alloc_array` initialises each element with `T.default()` [ARN-3]"),
+                        );
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
+                }
             };
-            if !self.types.is_builtin_zeroable(elem) && constructor.is_none() {
-                let shown = self.types.display(elem);
-                self.sink.emit(
-                    Diagnostic::error(
-                        codes::E2040,
-                        span,
-                        format!(
-                            "`{shown}` has no available `Zeroable` or `Default` capability"
-                        ),
-                    )
-                    .help("use `alloc_uninit[T](count)`, write every slot, then assert initialization in `unsafe`")
-                    .note("`alloc_array` requires a proven `Zeroable` representation or an implementation of `Default` [ARN-3, ARN-12]"),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
             let count = self.integer_as_usize(&args[0].value);
             let result = self.types.intern(TyKind::Span { elem, mutable: true });
             let arena_ref = self.types.intern(TyKind::Ref {
@@ -29377,15 +29685,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
             return Expr {
                 ty: result,
-                kind: ExprKind::Builtin {
-                    which: match constructor {
-                        Some(constructor) => {
-                            Builtin::ArenaAllocArrayDefault { elem, constructor }
-                        }
-                        None => Builtin::ArenaAllocArrayZeroed { elem },
-                    },
-                    args: vec![borrowed, count],
-                },
+                kind: ExprKind::Builtin { which, args: vec![borrowed, count] },
                 span,
             };
         }
@@ -32842,6 +33142,42 @@ fn member_declaration_symbol(owner: &str, name: Symbol) -> String {
 /// The name of an interface written in an `implements` list or a supertrait
 /// position. Generic interfaces arrive with generics, so only a bare name is
 /// understood here.
+/// The single names a written type mentions (`Array[Item]` gives `Array` and
+/// `Item`; `Self.Item` gives `Item`), for SP-003's cycle check.
+fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, args } => {
+            match segments.as_slice() {
+                [single] => out.push(single.name),
+                [first, second] if first.name.is("Self") => out.push(second.name),
+                _ => {}
+            }
+            for arg in args {
+                match arg {
+                    ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } => type_expr_names(inner, out),
+                    ast::GenericArg::Const(_) => {}
+                }
+            }
+        }
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => type_expr_names(inner, out),
+        ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
+            for item in items {
+                type_expr_names(item, out);
+            }
+        }
+        ast::TypeKind::Fn { params, ret, .. } => {
+            for param in params {
+                type_expr_names(&param.ty, out);
+            }
+            if let Some(ret) = ret {
+                type_expr_names(ret, out);
+            }
+        }
+        ast::TypeKind::Array { elem, .. } => type_expr_names(elem, out),
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+    }
+}
+
 fn interface_name(ty: &ast::TypeExpr) -> Option<Symbol> {
     match &ty.kind {
         ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 => {

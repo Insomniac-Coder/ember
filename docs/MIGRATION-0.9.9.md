@@ -828,3 +828,27 @@ The next number is ODR-027.
   * A class handle is `Hash` by identity, so it can key a `Map` or fill a `Set` (D-273).
   * `Either.Right("r")` finds a generic enum's arguments from the expected type (D-270, fixed by
     D-341).
+* **2026-09-26 — the owner's simplification pass (ODR-049 to ODR-064; Hardened_24).** The proposal
+  is `docs/proposals/Ember_Simplification_Pass_Revised.md`; Part I, SP-014 and SP-017 are adopted.
+  * **Arenas (ODR-064).** `alloc_array[T](n)` now always calls `T.default()` and needs `T: Default`;
+    zero bytes are `alloc_zeroed[T](n)`, which needs `T: Zeroable`. Every scalar array starts at
+    zero either way. `alloc_array` of a raw pointer or of a range type holding 0 (`int in -5..5`),
+    which compiled by zeroing, is now `E2040`, whose help names `alloc_zeroed`. A struct is
+    `Zeroable` by `@derive(Zeroable)`, proved field by field. A generic body may call `alloc_array`
+    under `T: Default` and `alloc_zeroed` under `T: Zeroable` (D-343).
+  * **Associated-type defaults (ODR-049).** `type Out = Self` in an interface is what an
+    implementation that does not state `Out` takes. Code bounded by the interface, and the
+    interface's own default bodies, see `Out` as itself, not as `Self`; write `T: I[Out = T]` to
+    rely on it. A cycle of defaults is `E2043`.
+  * **Default bodies are checked as generic code (D-344).** An interface's default method may use
+    only what the interface and its parents provide, even if every implementing type has more; a
+    default body is checked even when nothing implements the interface. A stub body `pass` in a
+    method returning a value is now `E2182`: write `todo()`.
+  * **Behaviour kept and now specified:** a float's `<` is IEEE in generic code too, while `sort`,
+    `min`, `max` and `binary_search` are total (ODR-055); an `owned` handle argument the caller
+    keeps using is retained (ODR-051); an object lives until its last owner ends, never less
+    (ODR-063; `L3019` is retired).
+  * Spec only, for features not built yet: `Result`'s `E` is unbounded (ODR-050); `RwLock[T]` and
+    `SyncShared[T]` need `T: Send + Sync` to be shared (ODR-052); `@must_drop` is structural
+    (ODR-054); compile time never substitutes `det.sin` for `sin` (ODR-056); the formatter always
+    writes LF, with no manifest switch (ODR-060).
