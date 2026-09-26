@@ -14071,6 +14071,83 @@ impl<'a> Checker<'a> {
                     return;
                 }
 
+                // A field of a foreign record is a place in C storage, even
+                // though an ordinary read of the record produces a value.
+                if let ast::ExprKind::Field { base, .. } = &target.kind
+                    && let Some(binding) = self.foreign_static_assignment_target(base)
+                    && matches!(self.types.kind(binding.ty), TyKind::Struct(_))
+                {
+                    if !binding.is_mut {
+                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
+                        return;
+                    }
+                    if !self.in_unsafe {
+                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
+                        return;
+                    }
+                    let previous_target = self.in_assignment_target;
+                    self.in_assignment_target = true;
+                    let field = self.synth(target);
+                    self.in_assignment_target = previous_target;
+                    let ExprKind::Field { index, .. } = &field.kind else { return };
+                    let index = *index;
+                    self.reject_readonly_write_in_assignment(&field, target.span);
+                    let field_ty = field.ty;
+                    if let Some(bin) = op
+                        && !self.types.is_numeric(field_ty)
+                        && !self.float_param(field_ty)
+                        && field_ty != self.common.error
+                    {
+                        let shown = self.types.display(field_ty);
+                        self.error(codes::E2020, stmt.span,
+                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                        return;
+                    }
+                    let rhs = match op {
+                        Some(ast::BinOp::Pow) => {
+                            let exponent = self.synth(value);
+                            let exponent = self.read_through(exponent);
+                            self.commit(exponent)
+                        }
+                        Some(_) | None => self.check_expr(value, field_ty),
+                    };
+                    let rhs = if op.is_some() { self.hold_value(rhs, out) } else { rhs };
+                    let rhs = if let Some(bin) = op {
+                        if *bin == ast::BinOp::Pow {
+                            let raised = self.power(field, rhs, value, stmt.span);
+                            self.coerce(raised, field_ty)
+                        } else {
+                            let Some(op) = convert_binop(*bin) else {
+                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
+                                return;
+                            };
+                            if self.reject_integer_true_division(op, field_ty, stmt.span) {
+                                return;
+                            }
+                            Expr {
+                                ty: field_ty,
+                                kind: ExprKind::Binary {
+                                    op,
+                                    lhs: Box::new(field),
+                                    rhs: Box::new(rhs),
+                                },
+                                span: stmt.span,
+                            }
+                        }
+                    } else {
+                        rhs
+                    };
+                    out.push(Stmt::Expr(Expr {
+                        ty: self.common.void,
+                        kind: ExprKind::Builtin {
+                            which: Builtin::ForeignStaticFieldWrite { symbol: binding.symbol, record: binding.ty, index },
+                            args: vec![rhs],
+                        },
+                        span: stmt.span,
+                    }));
+                    return;
+                }
+
                 // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
                 // is the object the method was called on for the whole call:
                 // `mut self` writes that object's fields, and re-pointing the

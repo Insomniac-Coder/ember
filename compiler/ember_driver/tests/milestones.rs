@@ -529,7 +529,7 @@ fn foreign_record_statics_exchange_values_with_c() {
     let run = Command::new(output).output().expect("linked program runs");
     assert!(run.status.success(), "foreign record program failed: {}",
         String::from_utf8_lossy(&run.stderr));
-    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "11\n7\n17\n");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "11\n7\n17\n21\n35\n");
 
     let imported = directory.join(ember_branding::source_file("imported"));
     let entry = directory.join(ember_branding::source_file("entry"));
@@ -537,8 +537,8 @@ fn foreign_record_statics_exchange_values_with_c() {
         "@derive(Copy)\npub struct ForeignPair:\n    pub left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub static mut shared_pair: ForeignPair\n    @ffi(immutable)\n    pub static frozen_pair: ForeignPair\n    pub safe fn read_pair_sum() -> i32\n")
         .expect("foreign record module is writable");
     for (label, source) in [
-        ("from_import", "from imported import ForeignPair, shared_pair, frozen_pair, read_pair_sum\nfn main():\n    println(frozen_pair.left)\n    unsafe:\n        shared_pair = ForeignPair(left = 11, right = 12)\n        println(read_pair_sum())\n"),
-        ("qualified", "import imported\nfn main():\n    println(imported.frozen_pair.left)\n    unsafe:\n        imported.shared_pair = imported.ForeignPair(left = 11, right = 12)\n        println(imported.read_pair_sum())\n"),
+        ("from_import", "from imported import ForeignPair, shared_pair, frozen_pair, read_pair_sum\nfn main():\n    println(frozen_pair.left)\n    unsafe:\n        shared_pair = ForeignPair(left = 11, right = 12)\n        println(read_pair_sum())\n        shared_pair.left = 20\n        println(read_pair_sum())\n        shared_pair.right += 2\n        println(read_pair_sum())\n"),
+        ("qualified", "import imported\nfn main():\n    println(imported.frozen_pair.left)\n    unsafe:\n        imported.shared_pair = imported.ForeignPair(left = 11, right = 12)\n        println(imported.read_pair_sum())\n        imported.shared_pair.left = 20\n        println(imported.read_pair_sum())\n        imported.shared_pair.right += 2\n        println(imported.read_pair_sum())\n"),
     ] {
         std::fs::write(&entry, source).expect("foreign record entry is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
@@ -556,8 +556,18 @@ fn foreign_record_statics_exchange_values_with_c() {
         }).expect("imported foreign record links to the C fixture");
         let imported_run = Command::new(imported_exe).output().expect("imported record program runs");
         assert!(imported_run.status.success());
-        assert_eq!(String::from_utf8_lossy(&imported_run.stdout).replace("\r\n", "\n"), "5\n23\n");
+        assert_eq!(String::from_utf8_lossy(&imported_run.stdout).replace("\r\n", "\n"), "5\n23\n32\n34\n");
     }
+    std::fs::write(&imported,
+        "@derive(Copy)\npub struct ForeignPair:\n    pub(read) left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub static mut shared_pair: ForeignPair\n")
+        .expect("read-only foreign record module is writable");
+    std::fs::write(&entry,
+        "import imported\nfn main():\n    unsafe:\n        imported.shared_pair.left = 20\n")
+        .expect("read-only foreign record entry is writable");
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let readonly = ember(&["check", &entry_arg], &root);
+    assert_ne!(readonly.exit, 0, "a pub(read) field was writable from another module");
+    assert!(readonly.stderr.contains("E1050"), "expected read-only field error: {}", readonly.stderr);
 }
 
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint

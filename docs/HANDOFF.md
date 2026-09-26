@@ -11048,11 +11048,24 @@ first**; the rest of §0.355 is the running narrative behind it.
     the check. `E7002` has an executable error page. Focused annotations and
     the linked record integration test pass. The final full annotation sweep
     reports zero failures, the workspace suite passes, and all repository
-    gates pass. No ODR or hardening is needed for this
-    slice; H38 already specifies the type mapping and `Sync` requirement.
+    gates pass. Commit `fb34547` is pushed to `main`; its CI run is
+    `36279355654`. No ODR or hardening is needed for this slice; H38 already
+    specifies the type mapping and `Sync` requirement.
+  * The next five-feature record-field batch writes a foreign `static mut`
+    field in place, including `+=` after the right operand has run. A C
+    callback mutates another field before returning the operand, so the
+    linked result proves evaluation order. Both `from` imports and qualified
+    module access write C storage. The existing `unsafe`, immutability, and
+    `pub(read)` gates still reject forbidden writes. Focused `FFI-10/`
+    annotations and the linked integration test pass. The final full sweep
+    reports zero failures, the workspace suite passes, and all repository
+    gates pass. The batch is ready to commit and push.
+    `[STA-1]`, `[EXP-2]`, and `[MOD-7]` already specify these behaviors; no
+    ODR or new hardening is needed.
 
-  Check CI for the newest first. H37 `36276950767` and H38 `36277984572`
-  passed; the write run `36278807435` was running at the last check.
+  Check CI for the newest first. H37 `36276950767`, H38 `36277984572`,
+  and scalar-write `36278807435` passed; the record-global run
+  `36279355654` was running at the last check.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through

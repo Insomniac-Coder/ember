@@ -4594,6 +4594,14 @@ impl Emitter<'_> {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
                         return format!("({symbol} = {})", rendered[0]);
                     }
+                    Builtin::ForeignStaticFieldWrite { symbol, record, index } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*record, false));
+                        let TyKind::Struct(id) = self.types.kind(*record) else {
+                            unreachable!("a foreign record field has a struct type")
+                        };
+                        let field = self.types.struct_def(*id).fields[*index].name;
+                        return format!("({symbol}.{field} = {})", rendered[0]);
+                    }
                     // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
                     // now. Each is a move out of a field, a store into it, and
                     // sometimes a drop, and lowering writes exactly those, so

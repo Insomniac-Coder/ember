@@ -786,6 +786,8 @@ pub enum Builtin {
     ForeignStaticRead { symbol: Symbol, immutable: bool },
     /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
     ForeignStaticWrite { symbol: Symbol },
+    /// `[STA-1]` — update one field of a C record global in place.
+    ForeignStaticFieldWrite { symbol: Symbol, record: Ty, index: usize },
     /// `println(x)` for a scalar or `str`.
     Println,
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
@@ -1213,6 +1215,7 @@ impl Builtin {
         match self {
             Builtin::ForeignStaticRead { .. } => "foreign_static_read",
             Builtin::ForeignStaticWrite { .. } => "foreign_static_write",
+            Builtin::ForeignStaticFieldWrite { .. } => "foreign_static_field_write",
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::EPrintln => "eprintln",

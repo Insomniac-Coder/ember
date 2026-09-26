@@ -11,3 +11,4 @@ typedef struct { int32_t left; int32_t right; } ForeignPair;
 ForeignPair shared_pair = {3, 4};
 const ForeignPair frozen_pair = {5, 6};
 int32_t read_pair_sum(void) { return shared_pair.left + shared_pair.right; }
+int32_t bump_pair_left(void) { return ++shared_pair.left; }
