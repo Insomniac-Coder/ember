@@ -932,3 +932,9 @@ The next number is ODR-027.
   256-level `Option[String]` clones and compares on MSVC without stack overflow. Nested
   enum-field matching reads the original place, and implicit field clone bodies remain live
   through structural and `Array` clones. The two regression cases and full workspace suite pass.
+
+* **2026-09-26 — D-362 fixed: a plain class method writes its own fields.** The
+  borrowed `self` handle no longer blocks writes rooted in its object, as
+  `[CLS-7]` requires. Non-`Copy` field assignments still take the per-field
+  `[EXC-16]` write access, demonstrated by an aliasing panic test; `Copy`
+  fields follow `[EXC-17]`. Three `CLS-7` cases replace the old rejection.

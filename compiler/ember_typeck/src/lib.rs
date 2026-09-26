@@ -11770,10 +11770,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let outer_class_method_receiver = self.class_method_receiver.take();
         self.class_method_receiver = match self.types.kind(owner) {
             TyKind::Class(id)
-                if signature_params.first().is_some_and(|(_, _, mode, _)| *mode == Mode::Mut)
-                    && decl.params.first().is_some_and(|param| {
-                        matches!(param.kind, ast::ParamKind::Receiver { .. })
-                    }) =>
+                if decl.params.first().is_some_and(|param| {
+                    matches!(param.kind, ast::ParamKind::Receiver { .. })
+                }) =>
             {
                 params.first().map(|param| (*id, param.local))
             }
@@ -12175,16 +12174,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     /// Return the field index when `expr` is rooted in the current class
-    /// method's `mut self` receiver.  Unlike the constructor helper above,
-    /// this deliberately ignores the initialization lattice: a mutable class
-    /// method may update an already initialized field, including through an
-    /// index or another nested projection.  The caller walks to the root
-    /// field before asking, so a write such as `self.items[i] = value` is
-    /// covered without accidentally admitting `other.items[i]`.
+    /// method's `self` receiver. Unlike the constructor helper above, this
+    /// ignores the initialization lattice: any class method may write an
+    /// initialized field (`[CLS-7]`). The caller walks to the root field.
     fn class_method_field_index(&self, expr: &Expr) -> Option<usize> {
         let (owner, receiver) = self.class_method_receiver?;
         let ExprKind::Field { base, index } = &expr.kind else { return None };
-        let ExprKind::Deref(receiver_expr) = &base.kind else { return None };
+        let receiver_expr = match &base.kind {
+            ExprKind::Deref(inner) => inner.as_ref(),
+            ExprKind::Local(_) => base.as_ref(),
+            _ => return None,
+        };
         let ExprKind::Local(local) = &receiver_expr.kind else { return None };
         if *local != receiver {
             return None;
@@ -24506,6 +24506,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
+        }
+        // A class receiver is borrowed as a handle, while its object's
+        // fields use their own runtime access words. Writing one field does
+        // not re-point the borrowed handle (`[CLS-7]`, `[EXC-19]`).
+        let mut current = place;
+        loop {
+            if self.class_method_field_index(current).is_some() { return false; }
+            current = match &current.kind {
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => base,
+                _ => break,
+            };
         }
 
         let decl = &self.locals[local.0 as usize];

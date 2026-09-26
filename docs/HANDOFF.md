@@ -10754,6 +10754,7 @@ the running narrative behind it.
     ODR-071, ODR-072, Hardened_29). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
+  * `7ec3cce` (D-360: deep equality and clone; CI running at this checkpoint).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10761,7 +10762,7 @@ the running narrative behind it.
   (ODR-072), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h29/` is
   frozen.
-* **Next numbers:** ODR-073, D-362, ADR-063.
+* **Next numbers:** ODR-073, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10838,12 +10839,21 @@ the running narrative behind it.
     the plan was three read-only adversarial reviewers (class locking;
     `String`/`Array[u8]`; C output for `void` and deep nesting), two at a
     time. Do not launch unasked.
+* **D-362 fixed (2026-09-26):** a plain class method may write its fields
+  (`[CLS-7]`). The prior `E1010`/`E3023` gates treated the borrowed `self`
+  handle as though writing its object re-pointed the handle. Type checking
+  now recognizes a class receiver in every method mode and exempts only
+  writes rooted in its fields. A `let` field still cannot be reassigned,
+  and `pub(read)` remains enforced. Non-`Copy` field writes use the per-field
+  runtime access word: the new `CLS-7` run-fail case catches an alias's
+  write while a view is live. Two run-pass cases cover a non-`Copy` field
+  (assignment and `push`) and a `Copy` field. The old
+  `class_readonly_method_write.em` compile-fail case is now that `Copy`
+  run-pass case. No specification ruling was needed.
 * **Next task:** the read-only review of the five recent fixes awaits the
-  owner's separate approval for agents. Continue solo by lifting the
-  "mutable class-field access requires a `mut self` class method in this
-  phase" restriction (`E1010`), which per-field accesses now make possible
-  (`[CLS-7]`: any method may write fields; `[EXC-16]`); `String.push(char)`;
-  the validating `str` conversion; then Phase 3's class work. `[TYP-13]`'s
+  owner's separate approval for agents. Continue solo with `String.push(char)`
+  (`[TXT-11]`), then the validating `str` conversion (`[TXT-2]`), then
+  Phase 3's class work. `[TYP-13]`'s
   other niches join at `TypeTable::option_niche` (ADR-056).
 * **Phase table after the five defects (2026-09-26 evening):**
 
@@ -10851,7 +10861,7 @@ the running narrative behind it.
   |---|---:|
   | P1 | 97 |
   | P2 | 88 |
-  | P3 | 58 |
+  | P3 | 59 |
   | P4 | 13 |
   | P5 | 8 |
   | P6 | 2 |
