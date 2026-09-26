@@ -10793,8 +10793,9 @@ the running narrative behind it.
     a byte); `void` is `Eq`/`Ord` and prints `()`. ODR-071: the type `()`
     is `void`.
   * **D-201**: `TyKind::Vec { elem, text }`; `String` is `text: true`
-    (`common.string`, ADR-061). Not built, noted: `String.push(c: char)`
-    (`[TXT-11]`) and the validating `Span[u8]` to `str` (`[TXT-2]`).
+    (`common.string`, ADR-061). `String.push(c: char)` (`[TXT-11]`) now
+    appends UTF-8 through the runtime's scalar encoder; the validating
+    `Span[u8]` to `str` (`[TXT-2]`) is still to do.
   * **D-202 and D-218: `[EXC-19]` built (ADR-060).** Per-field access words
     (`_access_<field>` in the object, listed in the type info's `fields`);
     field accesses from loans and from plain reads/writes (`field_accesses`,
@@ -10850,10 +10851,16 @@ the running narrative behind it.
   (assignment and `push`) and a `Copy` field. The old
   `class_readonly_method_write.em` compile-fail case is now that `Copy`
   run-pass case. No specification ruling was needed.
+* **`String.push(char)` implemented (2026-09-26, `[TXT-11]`):** the compiler
+  accepts a `char` argument on a mutable `String` receiver and emits a call
+  to the runtime's UTF-8 scalar append. The conformance case covers ASCII
+  and two-, three-, and four-byte characters, byte length, and a following
+  `push_str`. It failed with `E1010` before the implementation. No new
+  specification ruling was needed.
 * **Next task:** the read-only review of the five recent fixes awaits the
-  owner's separate approval for agents. Continue solo with `String.push(char)`
-  (`[TXT-11]`), then the validating `str` conversion (`[TXT-2]`), then
-  Phase 3's class work. `[TYP-13]`'s
+  owner's separate approval for agents. Continue solo with the validating
+  `Span[u8]` to `str` conversion (`[TXT-2]`), then Phase 3's class work.
+  `[TYP-13]`'s
   other niches join at `TypeTable::option_niche` (ADR-056).
 * **Phase table after the five defects (2026-09-26 evening):**
 

@@ -900,6 +900,8 @@ pub enum Builtin {
     StringNew,
     /// `s.push_str(other)`, appending UTF-8 bytes.
     StringPush,
+    /// `s.push(c)`, appending one Unicode scalar encoded as UTF-8.
+    StringPushChar,
     /// `s.len()` in bytes.
     StringLen,
     /// A `String` borrowed as a `str`, which is what `println` takes.
@@ -1210,6 +1212,7 @@ impl Builtin {
             Builtin::ArrayLen => "len",
             Builtin::StringNew => "String",
             Builtin::StringPush => "push_str",
+            Builtin::StringPushChar => "push",
             Builtin::StringLen => "len",
             Builtin::StringAsStr => "as_str",
             Builtin::Format => "format",

@@ -4711,7 +4711,7 @@ static bool is_cased(uint32_t c) {
         || case_lookup(ember_lower_table, ember_lower_table_len, c) != NULL;
 }
 
-static void push_char(ember_vec* out, uint32_t c) {
+void ember_vec_push_char(ember_vec* out, uint32_t c) {
     unsigned char bytes[4];
     ember_vec_extend(out, bytes, encode_utf8(c, bytes));
 }
@@ -4727,14 +4727,14 @@ static ember_vec case_map(ember_str s, const ember_case_entry* table, size_t len
          * none after it) lowers to the final form. */
         if (lower && c == 0x3A3 && previous != 0 && is_cased(previous)
             && !(at + width < s.len && is_cased(ember_str_char_at(s, at + width)))) {
-            push_char(&out, 0x3C2);
+            ember_vec_push_char(&out, 0x3C2);
         } else {
             const uint32_t* to = case_lookup(table, len, c);
             if (to == NULL) {
                 ember_vec_extend(&out, s.ptr + at, width);
             } else {
                 for (int i = 0; i < 3 && to[i] != 0; ++i) {
-                    push_char(&out, to[i]);
+                    ember_vec_push_char(&out, to[i]);
                 }
             }
         }

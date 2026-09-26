@@ -30728,6 +30728,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             (which, None, usize_ty)
         } else if name.name.is("push") && !is_string {
             (Builtin::ArrayPush, Some(elem), self.common.void)
+        } else if name.name.is("push") && is_string {
+            (Builtin::StringPushChar, Some(self.common.char_), self.common.void)
         } else if name.name.is("push_str") && is_string {
             (Builtin::StringPush, Some(str_ty), self.common.void)
         } else if name.name.is("as_str") && is_string {
@@ -30758,7 +30760,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         // `push` grows the buffer, so it needs the caller's variable, not a
         // copy of it.
-        let mutates = matches!(which, Builtin::ArrayPush | Builtin::StringPush);
+        let mutates = matches!(
+            which,
+            Builtin::ArrayPush | Builtin::StringPush | Builtin::StringPushChar
+        );
         let receiver = if mutates {
             self.pass_receiver(receiver, Mode::Mut, span)
         } else {

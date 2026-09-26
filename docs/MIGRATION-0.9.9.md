@@ -938,3 +938,7 @@ The next number is ODR-027.
   `[CLS-7]` requires. Non-`Copy` field assignments still take the per-field
   `[EXC-16]` write access, demonstrated by an aliasing panic test; `Copy`
   fields follow `[EXC-17]`. Three `CLS-7` cases replace the old rejection.
+
+* **2026-09-26 — `String.push(char)` (`[TXT-11]`).** A mutable `String` now
+  appends one Unicode scalar in UTF-8. The regression case checks one- through
+  four-byte encodings, the byte length, and appending text afterward.

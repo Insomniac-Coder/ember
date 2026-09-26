@@ -1054,6 +1054,8 @@ size_t ember_str_char_count(ember_str s);
  * number of bytes UTF-8 gives a character. */
 uint32_t ember_str_char_at(ember_str s, size_t i);
 size_t ember_char_utf8_len(uint32_t c);
+/* Append one valid Unicode scalar to a UTF-8 String. */
+void ember_vec_push_char(ember_vec* out, uint32_t c);
 
 /* `[STD-8b]`: whether `needle` occurs in `text`. UTF-8 matches only at
  * character boundaries, so a character never matches inside another's

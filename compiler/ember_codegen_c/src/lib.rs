@@ -4952,6 +4952,9 @@ impl Emitter<'_> {
                             rendered[0], rendered[1], rendered[1]
                         );
                     }
+                    Builtin::StringPushChar => {
+                        return format!("{RT}vec_push_char({}, {})", rendered[0], rendered[1]);
+                    }
                     Builtin::ArrayLen | Builtin::StringLen => {
                         return format!("({}).len", rendered[0]);
                     }

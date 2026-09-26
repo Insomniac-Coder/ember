@@ -2746,6 +2746,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::FormatWith(_)
             | Builtin::StringNew
             | Builtin::StringPush
+            | Builtin::StringPushChar
             | Builtin::StringLen
             | Builtin::StringAsStr
             | Builtin::StrCharCount
