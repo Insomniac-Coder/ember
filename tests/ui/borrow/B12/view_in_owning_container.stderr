@@ -1,10 +1,10 @@
-error[E3063]: `str` is a view, so it may not be stored in a container element
- --> tests/ui/borrow/B12/view_in_owning_container.em:2:19
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+ --> tests/ui/borrow/B12/view_in_owning_container.em:4:17
   |
-2 |     values: Array[str] = Array[str]()
-  |                   ^^^ stored here
+4 |     values.push(text.as_str())
+  |                 ^^^^ stored here
   |
   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
-  = note: this place has no bounding region, so only a view with the `static` region may be stored in it (TYP-15, LT-3)
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
 
 error: could not compile due to 1 error(s)

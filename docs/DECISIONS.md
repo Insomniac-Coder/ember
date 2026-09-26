@@ -1912,3 +1912,44 @@ The rulings fix what a program sees; these are the implementation's choices.
   `is_builtin_zeroable` proves a struct field by field only when its declared name, or its
   generic origin's, is there. `Zeroable` joins `Copy`, `Display` and `Debug` among the
   undeclared markers a bound is answered for from the compiler's table.
+
+## ADR-059 — how `[TYP-15]`'s storage rule is checked: stores followed, summaries, weak updates
+
+**Decided 2026-09-26, with ODR-069 (SP-013) and D-352, D-353, D-198.** The ruling fixes which
+programs are accepted; these are the implementation's choices.
+
+- **One place for the rule.** `Regions` (`regions.rs`) finds every store and where it lands
+  (`store_target`): a local's own slots, the target of the first reference on the path, or
+  storage no local bounds (`Unbounded`: an `Array`'s element, a class object's field, a span's
+  element, a `Box`'s or `Shared`'s contents, a reference it cannot follow). `stores.rs` judges
+  what the stored value carries. The earlier `check_array_storage_regions` and
+  `check_box_storage_regions` are subsumed and removed; their messages are kept.
+- **Stores through a reference are weak updates.** A store through a reference joins the
+  reference's own slot and every place its loans borrow (`loan_places`, matched by type), or a
+  reference parameter's slot, which stands for the caller's place. Joining rather than
+  replacing is what keeps a store through `r = ref mut name` alive in `name`, and keeps the
+  reference's own loan. A store to part of a slot (a fixed array's element) joins the slot.
+- **A view copied out of an `Array`'s element or a class field is `static`** (`heap_reads`):
+  only `static` views go in, and every store is checked. A span's element is not, since a span
+  may view a local fixed array.
+- **Containers that cannot be viewed into.** A value's regions are its roots (loans and
+  parameters' entry regions) and origins. A loan of, or origin in, a container that owns no
+  storage the value could point into (a `str` from an `Array[str]` or a `Map[str, V]`, not from
+  a `String`) adds nothing, since what the value holds from it is carried separately or is
+  `static` (`copies_only`). This is what lets `[n for n in names]` and a map's keys be stored.
+- **Summaries, to a fixpoint.** A function's `StoreSummary` lists the parameter slots it stores
+  where only `static` goes, and the slots it stores into a `mut` (or reference) parameter's
+  place; `infer_store_summaries` computes them with a worklist (a body again when a callee's
+  grows), and each call applies them: a requirement is checked against the argument (the
+  pointee of a reference argument, through its loans), a flow is a store through the argument.
+  `mem.replace` and `mem.swap` have fixed flows. The summaries reach the borrow check through
+  `CallRegionContract.stores`; the result-provenance summaries are inferred without them.
+- **Bodies that are called dynamically publish nothing** (`dynamic_bodies`: virtual methods,
+  closures, functions used as values, `dyn` adapters' methods, foreign-ABI functions) and are
+  held to the rule themselves.
+- **Instances' results (`declared_borrows`).** A recipe method's declared result type is kept
+  (`declared_rets`); an instance whose rule-1 receiver ties its result gets the parameters whose
+  declared types share a type parameter with the result, where the instance makes them views,
+  as a synthesized `@borrows`, which its callers read like a written one.
+- **Cost.** Summaries re-run region inference for a body when a callee's summary grows; a
+  map-heavy test checks about 15% slower in a debug build (3.05 s to 3.50 s), others unchanged.

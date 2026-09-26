@@ -14,6 +14,7 @@ pub mod facts;
 pub mod loop_access;
 pub mod long_access_lint;
 pub mod regions;
+pub mod stores;
 pub mod unused;
 
 pub use borrows::{

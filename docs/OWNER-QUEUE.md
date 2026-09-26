@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
 | ODR-068 | **CLOSED** — `get_pair_mut(i, j)` on an `Array` or `MutSpan`: two mutable references after checking, or `None` for an index out of range or equal indices (SP-031) | Standard library / borrowing | — | **Yes** — owner, 2026-09-26 |
 | ODR-067 | **CLOSED** — `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` (SP-016) | Standard library / collections | — | **Yes** — owner, 2026-09-26 |
 | ODR-066 | **CLOSED** — a const argument is any compile-time expression; equal by value when known, else by a stated integer normal form; not shown equal is a mismatch that says so (SP-007) | Language / generics | — | **Yes** — owner, 2026-09-26 |
@@ -222,6 +223,53 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-069 — one storage rule for every owning container — **CLOSED**
+
+    ID:        ODR-069
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, Part II,
+               SP-013); incorporated in 0.9.9_Hardened_27
+    Category:  LANGUAGE / REGIONS / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_26.md [TYP-15], [STD-11], [TYP-38], [LT-1];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-013
+
+    Question:  `[TYP-15]` lets any unbounded storage hold `static` views (`names = ["ann"]`),
+               but ODR-036 refused views in a `Map` or `Set` outright, and the compiler refused
+               `Array[str]()` at the type (ERR-044's third point, 2026-09-09) while accepting
+               `["ann"]`. And the rule was only checked where a view entered an `Array`
+               directly: through a `mut` parameter, a `ref mut`, `mem.replace`, `mem.swap`, a
+               class field or an element's field a view outlived its source (D-352, D-353,
+               D-198). How is the one rule applied, and to what?
+
+    Blocks implementation:            YES — D-352, D-353, D-198 (memory safety)
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "adopt this": "let `Map` and
+                                       `Set` hold string literals as `str`, as other containers may")
+
+**Ruling.** `[TYP-15]` is the one rule: a view may be stored only where every region it carries
+outlives the place, and unbounded storage (class fields, statics, `Box`/`Shared`, every heap
+collection's elements including a `Map`'s keys and values and a `Set`'s elements, a span's
+elements) takes only `static` ones. A container at a view type is a type like any other
+(`Array[str]()`, `Map[str, int]()`); an unannotated literal still owns its text (`[TYP-38]`), and
+nothing is inferred to be borrowed to save an allocation. The rule holds wherever the store
+happens: a view stored through a `mut` parameter or reference lands in the place it points to,
+which carries its regions afterwards; a function that stores a view it was given where only a
+`static` one may go, or into the place a `mut` parameter points to, passes that to its callers,
+who check their own arguments (so `Map[str, V].insert("k", v)` compiles and
+`insert(s.as_str(), v)` for a local `String` is `E3063` at the call); a function that can be
+called where no caller is checked (a virtual method, a closure, a function value, a `dyn`
+method) must store only `static` views there. In an instance, a parameter whose declared type
+names a type parameter the declared result names is a source alongside a borrowed receiver
+(`Map[str, V].entry(k)`). This supersedes ODR-036's refusal and ERR-044's third point for these
+containers; `[TYP-15a]`'s arena containers are unchanged.
+
+**Implementation.** `regions.rs` follows each store (`store_target`, loans' places, weak updates
+through references) and lists what must be `static`; `stores.rs` judges it, infers each body's
+store summary to a fixpoint and reports the rest (ADR-059). With it, D-352, D-353 and D-198
+are fixed, and D-356 and D-357, found on the way. `std` needed no change: `Map.insert` and
+`Set.add` publish their key's requirement to their callers.
 
 ---
 

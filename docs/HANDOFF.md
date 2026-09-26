@@ -10762,20 +10762,16 @@ the running narrative behind it.
   (D-198, D-201, D-202, D-218, D-220, D-331, D-342), check SP-010's safety
   question and fix D-345.** Done: D-345, the SP-010 review, SP-007 (spec
   only: `[TYP-41]`; const generics are not built), SP-016 (`AsKey`/`ToKey`)
-  and SP-031 (`get_pair_mut`). **Next: SP-013** (ODR-069: `Map`/`Set` may
-  hold `static` views, as `[TYP-15]` lets every other owning container).
-  It rests on D-352 and D-353, found checking it: a view written through a
-  `mut` parameter, a `ref mut`, `mem.replace` or `mem.swap`, or into a class
-  field or an `Array` element's field, can outlive what it views (probes:
-  `put(name, s.as_str())` with `fn put(mut x: str, v: str): x = v`;
-  `mem.replace(names[0], s.as_str())`; `C(s.as_str())` for `class C: a:
-  str`; then `mem.drop(s)` and a read). Fix those first (they also close
-  D-198), then lift `Map`/`Set`'s blanket `E3063` (typeck, `ODR-036`
-  comment near `"std.collections.Map" => 2`) and check what enters them at
-  the caller. Then the defects.
+  and SP-031 (`get_pair_mut`), and SP-013 (ODR-069: one storage rule for
+  every owning container, `Map[str, V]` included), which needed D-352 and
+  D-353 (views stored through `mut` parameters, references, `mem.replace`,
+  `mem.swap`, into class fields and elements' fields; use after free) and
+  closed D-198. How it is checked is ADR-059 (`regions.rs`'s store following,
+  `stores.rs`'s summaries). **The whole of Part II is done.** Next: the old
+  defect queue.
 * **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
-  way: D-273, D-270 and D-328 are fixed. Next: D-345 (a display), D-218, D-220, D-202, D-201,
-  D-198, D-342 (a temporary's end for the region check: the loans must tell
+  way: D-273, D-270, D-328, D-345 and D-198 are fixed. Next: D-218, D-220, D-202, D-201,
+  D-355 (arrays of `()` in C), D-342 (a temporary's end for the region check: the loans must tell
   a temporary's own storage from what passes through it; a first attempt
   that ended every temporary with `StorageDead` broke 17 tests, e.g.
   `node.get_mut()` on a `Shared`), D-331 (a nesting limit with a

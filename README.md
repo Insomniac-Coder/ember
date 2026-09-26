@@ -20,13 +20,13 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_26` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_26.md`](docs/spec-source/Ember_v0.9.9_Hardened_26.md) |
+| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_27` |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_27.md`](docs/spec-source/Ember_v0.9.9_Hardened_27.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
-| Tests | 271 Rust tests; 1,522 Ember test programs, 249 conformance rule directories |
-| Defects | 313 fixed, 10 open ([`docs/DEFECTS.md`](docs/DEFECTS.md)) |
-| Language decisions | 68 ODRs in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md), each carried into a `Hardened_N` |
+| Tests | 271 Rust tests; 1,534 Ember test programs, 249 conformance rule directories |
+| Defects | 319 fixed, 8 open ([`docs/DEFECTS.md`](docs/DEFECTS.md)) |
+| Language decisions | 69 ODRs in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md), each carried into a `Hardened_N` |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
 Phase estimates against 0.9.9 (2026-09-26; weighted by the size of each phase's rules; method in
@@ -47,10 +47,12 @@ Phase estimates against 0.9.9 (2026-09-26; weighted by the size of each phase's 
 
 The latest language work is the owner's simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md)),
-adopted as ODR-049 to ODR-068: associated-type defaults, `alloc_array` by `Default` and a separate
+adopted as ODR-049 to ODR-069: associated-type defaults, `alloc_array` by `Default` and a separate
 `alloc_zeroed`, float operators that stay IEEE in generic code, no early destruction, a
 memory-safety fix for borrows through handles stored in objects, map lookups that need no key
-conversion (`AsKey`/`ToKey`), `get_pair_mut`, and when two const generic arguments are equal.
+conversion (`AsKey`/`ToKey`), `get_pair_mut`, when two const generic arguments are equal, and one
+storage rule for views in every container (a `Map[str, int]` of string literals), checked at every
+store.
 
 ## What works today
 

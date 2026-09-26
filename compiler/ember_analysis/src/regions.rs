@@ -38,10 +38,10 @@
 //! Consequently the solver must distinguish the value before that write from
 //! the value after it even though both occupy the same compiler region slot.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
-    AggregateKind, BasicBlockId, Body, CallableAccessSummary as CallAccessContract, FuncRef,
+    AggregateKind, BasicBlockId, Body, Builtin, CallableAccessSummary as CallAccessContract, FuncRef,
     LocalId, LocalKind, Operand, Place, Projection, RegionAccessKind, ResultProvenanceSummary,
     ResultRegionSource, Rvalue, StmtKind, Terminator,
 };
@@ -111,6 +111,70 @@ pub enum CallResultContract {
     Fields(ResultProvenanceSummary),
 }
 
+/// `[TYP-15]` — one region slot of a parameter: the argument's position and
+/// the slot's path within the parameter's type (`[LT-14]`).
+pub type ArgSlot = (usize, Vec<Projection>);
+
+/// `[TYP-15]` (D-352) — what a callee stores where its caller's regions do
+/// not otherwise reach, derived from its body. `static_slots` are argument
+/// slots whose views it stores where only a `static` view may go (an `Array`
+/// element, a class object); `flows` are views it stores from one argument
+/// slot into the place another argument points to (`mut x: str` given `v`),
+/// which the caller treats as that store. A body that can be called where no
+/// summary is read (a virtual method, a closure, a function value, a `dyn`
+/// adapter) publishes nothing and is held to the rule by itself.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct StoreSummary {
+    pub static_slots: BTreeSet<ArgSlot>,
+    pub flows: BTreeSet<(ArgSlot, ArgSlot)>,
+}
+
+/// `[TYP-15]` — storage no local region bounds, where a view may be stored
+/// only if it is `static`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Unbounded {
+    /// An element of an `Array` (or a `String`): heap storage.
+    Element,
+    /// A field of a class object.
+    ClassField,
+    /// An element of a `Span` or `MutSpan`, which may be anywhere.
+    SpanElement,
+    /// The contents of a `Box`.
+    BoxContents,
+    /// The contents of a `Shared`.
+    SharedContents,
+    /// The target of a reference the analysis cannot follow (one a call
+    /// returned, say).
+    Unknown,
+}
+
+/// `[TYP-15]` — a view stored where only a `static` one may go, found at
+/// `point`: its type and what it carries, for the caller of
+/// [`Regions::store_requirements`] to judge (a parameter's view is the
+/// callers' to supply, a local's is an error).
+#[derive(Clone, Debug)]
+pub struct StoreRequirement {
+    pub point: Point,
+    pub ty: Ty,
+    pub target: Unbounded,
+    pub roots: HashSet<RegionVid>,
+    pub origins: HashSet<Origin>,
+    /// The callee and argument when the store is a callee's (`static_slots`).
+    pub call: Option<(String, usize)>,
+}
+
+/// `[TYP-15]` — what a slot of a parameter behind a reference (the caller's
+/// place: `mut x: str` is `ref mut str`) holds at a `return`.
+#[derive(Clone, Debug)]
+pub struct CallerPlaceFact {
+    pub point: Point,
+    pub arg: LocalId,
+    pub projection: Vec<Projection>,
+    pub slot: RegionVid,
+    pub roots: HashSet<RegionVid>,
+    pub origins: HashSet<Origin>,
+}
+
 /// The complete region information available at one call boundary.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CallRegionContract {
@@ -120,6 +184,8 @@ pub struct CallRegionContract {
     /// The modifier belongs to the callable type at the call site and is not
     /// part of runtime metadata.
     pub latebound: bool,
+    /// `[TYP-15]` — what the callee stores (D-352); empty when unknown.
+    pub stores: StoreSummary,
 }
 
 impl CallRegionContract {
@@ -179,6 +245,17 @@ pub struct Regions {
     /// each MIR point. This is compile-time-only `[LT-21]` provenance; it is
     /// deliberately absent from layout, ABI, and generated code.
     values_at: HashMap<Point, Vec<ValueFact>>,
+    /// `[TYP-15]` — the place each borrow expression borrows, by the loan's
+    /// region: a store through the reference lands there (D-352).
+    loan_places: HashMap<RegionVid, Place>,
+    /// The entry region of each slot of a reference parameter, and the
+    /// parameter: a reference whose value came from one points at the
+    /// caller's place.
+    entry_refs: HashMap<RegionVid, LocalId>,
+    /// `[TYP-15]` — the places this body reads that are in storage only
+    /// `static` views enter (an `Array`'s element, a class object's field):
+    /// a view copied out of one carries no region (D-198).
+    heap_reads: HashSet<Place>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
@@ -239,13 +316,23 @@ impl Regions {
         }
 
         let mut loan_region = HashMap::new();
+        let mut loan_places = HashMap::new();
         for (block_index, block) in body.blocks.iter().enumerate() {
             for (index, stmt) in block.stmts.iter().enumerate() {
-                let StmtKind::Assign { rvalue: Rvalue::Ref { .. }, .. } = &stmt.kind else {
+                let StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } = &stmt.kind else {
                     continue;
                 };
                 loan_region.insert(Point { block: block_index, index }, next);
+                loan_places.insert(next, place.clone());
                 next += 1;
+            }
+        }
+        let mut entry_refs = HashMap::new();
+        for (local, decl) in body.args() {
+            if matches!(types.kind(decl.ty), TyKind::Ref { .. }) {
+                for slot in &local_regions[local.0 as usize] {
+                    entry_refs.insert(slot.region, local);
+                }
             }
         }
 
@@ -265,6 +352,9 @@ impl Regions {
             loan_region,
             capture_borrow_paths: capture_borrow_paths.clone(),
             values_at: HashMap::new(),
+            loan_places,
+            entry_refs,
+            heap_reads: static_read_places(body, types),
         };
 
         for (index, slots) in regions.local_regions.iter().enumerate() {
@@ -369,6 +459,7 @@ impl Regions {
     pub fn is_static_operand_at(&self, operand: &Operand, point: Point) -> bool {
         match operand {
             Operand::Const(_) => true,
+            Operand::Copy(place) | Operand::Move(place) if self.heap_reads.contains(place) => true,
             Operand::Copy(place) | Operand::Move(place) => {
                 let regions = self.place_regions(place);
                 let Some(state) = self.values_at.get(&point) else { return false };
@@ -469,8 +560,14 @@ impl Regions {
                                 ));
                                 continue;
                             };
+                            // A literal, or a view copied out of heap storage,
+                            // is `static`: there is no region to retain.
+                            let static_source = match value {
+                                Operand::Const(_) => true,
+                                Operand::Copy(place) | Operand::Move(place) => self.heap_reads.contains(place),
+                            };
                             let sources = self.operand_regions_at(value, projection);
-                            if sources.is_empty() {
+                            if sources.is_empty() && !static_source {
                                 violations.push(format!(
                                     "bb{block_index}: result provenance argument {argument} field {projection:?} names no source region slot"
                                 ));
@@ -559,6 +656,7 @@ impl Regions {
                 for (index, stmt) in block.stmts.iter().enumerate() {
                     self.transfer_statement(
                         body,
+                        types,
                         &mut state,
                         Point { block: block_index, index },
                         &stmt.kind,
@@ -595,7 +693,7 @@ impl Regions {
             for (index, stmt) in block.stmts.iter().enumerate() {
                 let point = Point { block: block_index, index };
                 values_at.insert(point, state.clone());
-                self.transfer_statement(body, &mut state, point, &stmt.kind);
+                self.transfer_statement(body, types, &mut state, point, &stmt.kind);
             }
             let point = Point { block: block_index, index: block.stmts.len() };
             values_at.insert(point, state);
@@ -606,6 +704,7 @@ impl Regions {
     fn transfer_statement(
         &self,
         body: &Body,
+        types: &TypeTable,
         state: &mut [ValueFact],
         point: Point,
         kind: &StmtKind,
@@ -613,7 +712,12 @@ impl Regions {
         match kind {
             StmtKind::Assign { place, rvalue } => {
                 let assignments = self.rvalue_facts(body, state, point, place, rvalue);
-                self.install_facts(state, &self.assigned_place_regions(place), assignments);
+                if self.stores_whole_slots(body, types, place) {
+                    self.install_facts(state, &self.assigned_place_regions(place), assignments);
+                } else {
+                    let value = self.rvalue_value_fact(body, state, point, rvalue);
+                    self.store(body, types, state, place, assignments, value);
+                }
             }
             StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
                 self.clear_place_facts(state, dest);
@@ -640,6 +744,7 @@ impl Regions {
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) {
         if let Terminator::Call { func, args, dest, .. } = terminator {
+            let before = state.to_vec();
             let assignments = self.call_result_facts(
                 body,
                 types,
@@ -650,8 +755,471 @@ impl Regions {
                 dest,
                 call_contract,
             );
-            self.install_facts(state, &self.assigned_place_regions(dest), assignments);
+            if self.stores_whole_slots(body, types, dest) {
+                self.install_facts(state, &self.assigned_place_regions(dest), assignments);
+            } else {
+                let value = self.call_value_fact(body, types, &before, point, func, args, call_contract);
+                self.store(body, types, state, dest, assignments, value);
+            }
+            // `[TYP-15]` — what the callee stores into the places its
+            // arguments point to reaches them (D-352).
+            for (value, target) in self.call_flows(body, types, &before, func, args, call_contract) {
+                let destinations = self.store_destinations(body, types, &before, &target, 0);
+                for slot in destinations.slots {
+                    state[slot].merge(&value);
+                }
+            }
         }
+    }
+
+    /// Whether a store to `place` replaces whole slots of its local
+    /// (`[LT-21]`): it is not through a reference or into storage without a
+    /// region, and it names slots rather than part of one.
+    fn stores_whole_slots(&self, body: &Body, types: &TypeTable, place: &Place) -> bool {
+        (matches!(store_target(body, types, place), StoreTarget::Inline)
+            && !self.assigned_place_regions(place).is_empty())
+            || !types.is_view(place_type(body, types, place))
+    }
+
+    /// `[TYP-15]` (D-352) — put `value` wherever a store to `place` lands,
+    /// joining what may be there already: through a reference it lands in the
+    /// place the reference borrows (and the reference's own view of it), in
+    /// part of a slot (a fixed array's element) it joins the slot.
+    fn store(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &mut [ValueFact],
+        place: &Place,
+        mut assignments: HashMap<RegionVid, ValueFact>,
+        value: ValueFact,
+    ) {
+        let destinations = self.store_destinations(body, types, state, place, 0);
+        for slot in self.assigned_place_regions(place) {
+            if let Some(fact) = assignments.remove(&slot) {
+                state[slot].merge(&fact);
+            }
+        }
+        for slot in destinations.slots {
+            state[slot].merge(&value);
+        }
+    }
+
+    /// The slots a store to `place` may land in, and the unbounded storage it
+    /// may reach (`[TYP-15]`).
+    fn store_destinations(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &[ValueFact],
+        place: &Place,
+        depth: usize,
+    ) -> StoreDestinations {
+        let mut out = StoreDestinations::default();
+        self.collect_store_destinations(body, types, state, place, depth, &mut out);
+        out
+    }
+
+    fn collect_store_destinations(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &[ValueFact],
+        place: &Place,
+        depth: usize,
+        out: &mut StoreDestinations,
+    ) {
+        match store_target(body, types, place) {
+            StoreTarget::Inline => out.slots.extend(self.covering_place_regions(place)),
+            StoreTarget::Unbounded(kind) => {
+                out.unbounded.get_or_insert(kind);
+            }
+            StoreTarget::Through { reference, rest } => {
+                let mut pointee = reference.clone();
+                pointee.projection.push(Projection::Deref);
+                pointee.projection.extend(rest.iter().cloned());
+                out.slots.extend(self.covering_place_regions(&pointee));
+                // A reference parameter points at its caller's place, which
+                // the parameter's own slot stands for; `return` checks it.
+                if reference.projection.is_empty() && body.local(reference.local).kind == LocalKind::Arg {
+                    return;
+                }
+                let TyKind::Ref { inner, .. } = *types.kind(place_type(body, types, &reference)) else {
+                    out.unbounded.get_or_insert(Unbounded::Unknown);
+                    return;
+                };
+                let mut followed = false;
+                for root in self.fact_for_place(state, &reference).roots {
+                    if let Some(target) = self.loan_places.get(&root)
+                        && place_type(body, types, target) == inner
+                    {
+                        followed = true;
+                        if depth >= 8 {
+                            out.unbounded.get_or_insert(Unbounded::Unknown);
+                            continue;
+                        }
+                        let mut target = target.clone();
+                        target.projection.extend(rest.iter().cloned());
+                        self.collect_store_destinations(body, types, state, &target, depth + 1, out);
+                    } else if let Some(&parameter) = self.entry_refs.get(&root) {
+                        followed = true;
+                        let mut target = Place { local: parameter, projection: vec![Projection::Deref] };
+                        target.projection.extend(rest.iter().cloned());
+                        out.slots.extend(self.covering_place_regions(&target));
+                    }
+                }
+                if !followed {
+                    out.unbounded.get_or_insert(Unbounded::Unknown);
+                }
+            }
+        }
+    }
+
+    /// The slots at or below `place`, or else the slot it is part of.
+    fn covering_place_regions(&self, place: &Place) -> Vec<RegionVid> {
+        let below = self.assigned_place_regions(place);
+        if !below.is_empty() {
+            return below;
+        }
+        self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| path_is_prefix(&slot.projection, &place.projection))
+            .map(|slot| slot.region)
+            .collect()
+    }
+
+    /// Everything an rvalue's result carries, as one fact.
+    fn rvalue_value_fact(&self, body: &Body, state: &[ValueFact], point: Point, rvalue: &Rvalue) -> ValueFact {
+        match rvalue {
+            Rvalue::Ref { place, .. } => {
+                let mut fact = self.fact_for_place(state, place);
+                if let Some(loan) = self.loan_region.get(&point) {
+                    fact.roots.insert(*loan);
+                }
+                if self.borrows_own_storage(place) {
+                    fact.origins.insert(match body.local(place.local).kind {
+                        LocalKind::Arg => Origin::Param(place.local),
+                        _ => Origin::Local(place.local),
+                    });
+                }
+                fact
+            }
+            Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => self.fact_for_operand(state, operand),
+            Rvalue::Aggregate { operands, .. } => {
+                let mut fact = ValueFact::default();
+                for operand in operands {
+                    fact.merge(&self.fact_for_operand(state, operand));
+                }
+                fact
+            }
+            Rvalue::Repeat { value, .. } => self.fact_for_operand(state, value),
+            Rvalue::BinaryOp { .. } | Rvalue::UnaryOp { .. } | Rvalue::Discriminant(_) => ValueFact::default(),
+        }
+    }
+
+    /// Everything a call's result carries, as one fact: every source the
+    /// contract ties to it.
+    fn call_value_fact(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &[ValueFact],
+        point: Point,
+        func: &FuncRef,
+        args: &[Operand],
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> ValueFact {
+        let contract = call_contract(func);
+        let mut fact = ValueFact::default();
+        let arena = |fact: &mut ValueFact, argument: &Operand| {
+            if let Operand::Copy(place) | Operand::Move(place) = argument
+                && is_growing_arena(types, body.local(place.local).ty)
+            {
+                fact.origins.insert(match body.local(place.local).kind {
+                    LocalKind::Arg => Origin::Param(place.local),
+                    _ => Origin::Local(place.local),
+                });
+            }
+        };
+        match &contract.result {
+            CallResultContract::Legacy(tied) => {
+                for (index, argument) in args.iter().enumerate() {
+                    if tied.ties(index) {
+                        fact.merge(&self.fact_for_operand(state, argument));
+                        arena(&mut fact, argument);
+                    }
+                }
+            }
+            CallResultContract::Fields(summary) => {
+                for source in summary.fields.iter().flat_map(|field| field.sources.iter()) {
+                    match source {
+                        ResultRegionSource::View { argument, projection } => {
+                            if let Some(argument) = args.get(*argument) {
+                                fact.merge(&self.fact_for_operand_at(state, argument, projection));
+                            }
+                        }
+                        ResultRegionSource::Arena { argument } => {
+                            if let Some(argument) = args.get(*argument) {
+                                arena(&mut fact, argument);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if contract.latebound {
+            for (argument, operand) in args.iter().enumerate() {
+                if contract.ties(argument) && !self.operand_regions(operand).is_empty() {
+                    fact.origins.insert(Origin::LateBound { call: point, argument });
+                }
+            }
+        }
+        fact
+    }
+
+    /// The fact of what a reference operand points to: the places its loans
+    /// borrow, where they are known, else the reference's own fact (which
+    /// holds its target's as well as its own loan).
+    fn pointee_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], operand: &Operand, rest: &[Projection]) -> ValueFact {
+        let (Operand::Copy(place) | Operand::Move(place)) = operand else { return ValueFact::default() };
+        let inner = match *types.kind(place_type(body, types, place)) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => return self.fact_for_operand_at(state, operand, rest),
+        };
+        let mut fact = ValueFact::default();
+        let mut followed = false;
+        for root in self.fact_for_place(state, place).roots {
+            if let Some(target) = self.loan_places.get(&root)
+                && place_type(body, types, target) == inner
+            {
+                followed = true;
+                let mut target = target.clone();
+                target.projection.extend(rest.iter().cloned());
+                fact.merge(&self.fact_for_place(state, &target));
+            }
+        }
+        if followed {
+            fact
+        } else {
+            let mut deref = vec![Projection::Deref];
+            deref.extend(rest.iter().cloned());
+            self.fact_for_operand_at(state, operand, &deref)
+        }
+    }
+
+    /// `[TYP-15]` — the stores a call makes into the places its arguments
+    /// point to: each value, and the place it lands in (through the argument).
+    fn call_flows(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        state: &[ValueFact],
+        func: &FuncRef,
+        args: &[Operand],
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> Vec<(ValueFact, Place)> {
+        let pointee = |argument: usize| -> Option<Place> {
+            let (Operand::Copy(place) | Operand::Move(place)) = args.get(argument)? else { return None };
+            let mut target = place.clone();
+            target.projection.push(Projection::Deref);
+            Some(target)
+        };
+        let mut flows = Vec::new();
+        match func {
+            // `mem.replace(place, value)` and `mem.swap(a, b)` store through
+            // their `mut` arguments.
+            FuncRef::Builtin { which: Builtin::MemReplace { .. }, .. } => {
+                if let (Some(value), Some(target)) = (args.get(1), pointee(0)) {
+                    flows.push((self.fact_for_operand(state, value), target));
+                }
+            }
+            FuncRef::Builtin { which: Builtin::MemSwap { .. }, .. } => {
+                if let (Some(a), Some(b), Some(into_a), Some(into_b)) = (args.first(), args.get(1), pointee(0), pointee(1)) {
+                    flows.push((self.pointee_fact(body, types, state, b, &[]), into_a));
+                    flows.push((self.pointee_fact(body, types, state, a, &[]), into_b));
+                }
+            }
+            _ => {
+                for ((from, from_path), (into, into_path)) in call_contract(func).stores.flows {
+                    let Some(source) = args.get(from) else { continue };
+                    let Some(Operand::Copy(target) | Operand::Move(target)) = args.get(into) else { continue };
+                    let value = match from_path.split_first() {
+                        Some((Projection::Deref, rest)) => self.pointee_fact(body, types, state, source, rest),
+                        _ => self.fact_for_operand_at(state, source, &from_path),
+                    };
+                    flows.push((value, project_place(target, &into_path)));
+                }
+            }
+        }
+        flows
+    }
+
+    /// `[TYP-15]` (D-352) — every view this body stores where only a
+    /// `static` one may go: into unbounded storage, directly or through a
+    /// reference, by a builtin that stores its argument, or by a callee whose
+    /// summary says it stores one.
+    pub fn store_requirements(
+        &self,
+        body: &Body,
+        types: &TypeTable,
+        call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    ) -> Vec<StoreRequirement> {
+        let mut out = Vec::new();
+        let mut require = |point: Point, ty: Ty, target: Unbounded, fact: ValueFact, call: Option<(String, usize)>| {
+            if types.is_view(ty) {
+                out.push(StoreRequirement { point, ty, target, roots: fact.roots, origins: fact.origins, call });
+            }
+        };
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for (index, stmt) in block.stmts.iter().enumerate() {
+                let point = Point { block: block_index, index };
+                let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+                if self.stores_whole_slots(body, types, place) {
+                    continue;
+                }
+                let Some(state) = self.values_at.get(&point) else { continue };
+                if let Some(target) = self.store_destinations(body, types, state, place, 0).unbounded {
+                    let value = self.rvalue_value_fact(body, state, point, rvalue);
+                    require(point, place_type(body, types, place), target, value, None);
+                }
+            }
+            let Terminator::Call { func, args, dest, .. } = &block.terminator else { continue };
+            let point = Point { block: block_index, index: block.stmts.len() };
+            let Some(state) = self.values_at.get(&point) else { continue };
+            if !self.stores_whole_slots(body, types, dest)
+                && let Some(target) = self.store_destinations(body, types, state, dest, 0).unbounded
+            {
+                let value = self.call_value_fact(body, types, state, point, func, args, call_contract);
+                require(point, place_type(body, types, dest), target, value, None);
+            }
+            for (value, target_place) in self.call_flows(body, types, state, func, args, call_contract) {
+                if let Some(target) = self.store_destinations(body, types, state, &target_place, 0).unbounded {
+                    require(point, place_type(body, types, &target_place), target, value, None);
+                }
+            }
+            let operand_ty = |operand: &Operand| match operand {
+                Operand::Copy(place) | Operand::Move(place) => Some(place_type(body, types, place)),
+                Operand::Const(_) => None,
+            };
+            match func {
+                FuncRef::Builtin { which, .. } => {
+                    let stored = match which {
+                        Builtin::ArrayPush | Builtin::ArrayInsert => args.get(1).map(|value| (value, None, Unbounded::Element)),
+                        Builtin::ArrayFromLiteral | Builtin::ArrayExtend => args
+                            .get(if matches!(which, Builtin::ArrayExtend) { 1 } else { 0 })
+                            .map(|value| (value, Some(()), Unbounded::Element)),
+                        Builtin::BoxNew { .. } => args.first().map(|value| (value, None, Unbounded::BoxContents)),
+                        Builtin::SharedNew { .. } => args.first().map(|value| (value, None, Unbounded::SharedContents)),
+                        _ => None,
+                    };
+                    let Some((value, elements, target)) = stored else { continue };
+                    let Some(mut ty) = operand_ty(value) else { continue };
+                    if elements.is_some()
+                        && let TyKind::Array { elem, .. } | TyKind::Span { elem, .. } | TyKind::Vec { elem } = *types.kind(ty)
+                    {
+                        ty = elem;
+                    }
+                    require(point, ty, target, self.fact_for_operand(state, value), None);
+                }
+                FuncRef::Direct { symbol, .. } => {
+                    for (argument, path) in call_contract(func).stores.static_slots {
+                        let Some(value) = args.get(argument) else { continue };
+                        let Some(argument_ty) = operand_ty(value) else { continue };
+                        let fact = match path.split_first() {
+                            Some((Projection::Deref, rest)) => self.pointee_fact(body, types, state, value, rest),
+                            _ => self.fact_for_operand_at(state, value, &path),
+                        };
+                        let ty = projected_type(types, argument_ty, &path);
+                        require(point, ty, Unbounded::Unknown, fact, Some((symbol.clone(), argument)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// `[TYP-15]` — what each slot behind a reference parameter holds at
+    /// each `return`: the caller's place, which a view stored there reaches.
+    pub fn caller_place_facts(&self, body: &Body, types: &TypeTable) -> Vec<CallerPlaceFact> {
+        let mut out = Vec::new();
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            if !matches!(block.terminator, Terminator::Return) {
+                continue;
+            }
+            let point = Point { block: block_index, index: block.stmts.len() };
+            let Some(state) = self.values_at.get(&point) else { continue };
+            for (local, decl) in body.args() {
+                // A shared reference's target can be written only through a
+                // `ref mut` inside it (a closure's captures); the slots say.
+                if !matches!(types.kind(decl.ty), TyKind::Ref { .. }) {
+                    continue;
+                }
+                for slot in &self.local_regions[local.0 as usize] {
+                    if !slot.projection.contains(&Projection::Deref) {
+                        continue;
+                    }
+                    let fact = &state[slot.region];
+                    out.push(CallerPlaceFact {
+                        point,
+                        arg: local,
+                        projection: slot.projection.clone(),
+                        slot: slot.region,
+                        roots: fact.roots.clone(),
+                        origins: fact.origins.clone(),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Where a store put something `slot` holds (one of `roots`/`origins`)
+    /// that it did not hold before: the first statement after which it does.
+    pub fn first_store_into(
+        &self,
+        body: &Body,
+        slot: RegionVid,
+        roots: &HashSet<RegionVid>,
+        origins: &HashSet<Origin>,
+    ) -> Option<ember_span::Span> {
+        let gained = |before: &ValueFact, after: &ValueFact| {
+            roots.iter().any(|root| *root != slot && after.roots.contains(root) && !before.roots.contains(root))
+                || origins.iter().any(|origin| after.origins.contains(origin) && !before.origins.contains(origin))
+        };
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for index in 0..block.stmts.len() {
+                let before = self.values_at.get(&Point { block: block_index, index })?;
+                let Some(after) = self.values_at.get(&Point { block: block_index, index: index + 1 }) else { continue };
+                if gained(&before[slot], &after[slot]) {
+                    return Some(block.stmts[index].span);
+                }
+            }
+            if let Terminator::Call { next, .. } = &block.terminator
+                && let Some(before) = self.values_at.get(&Point { block: block_index, index: block.stmts.len() })
+                && let Some(after) = self.values_at.get(&Point { block: next.0 as usize, index: 0 })
+                && gained(&before[slot], &after[slot])
+            {
+                return Some(block.terminator_span);
+            }
+        }
+        None
+    }
+
+    /// The place a borrow expression's loan borrows.
+    pub fn loan_place(&self, region: RegionVid) -> Option<&Place> {
+        self.loan_places.get(&region)
+    }
+
+    /// The parameter slot whose entry region this is, if it is one: the
+    /// parameter and the slot's path.
+    pub fn entry_slot(&self, body: &Body, region: RegionVid) -> Option<(LocalId, Vec<Projection>)> {
+        body.args().find_map(|(local, _)| {
+            self.local_regions[local.0 as usize]
+                .iter()
+                .find(|slot| slot.region == region)
+                .map(|slot| (local, slot.projection.clone()))
+        })
     }
 
     fn rvalue_facts(
@@ -674,7 +1242,7 @@ impl Regions {
                         let source = project_place(place, path);
                         let mut fact = self.fact_for_place(state, &source);
                         fact.roots.insert(loan);
-                        if self.deref_base(&source).is_none() {
+                        if self.borrows_own_storage(&source) {
                             fact.origins.insert(match body.local(source.local).kind {
                                 LocalKind::Arg => Origin::Param(source.local),
                                 _ => Origin::Local(source.local),
@@ -695,7 +1263,7 @@ impl Regions {
                 let mut fact = self.fact_for_place(state, place);
                 let Some(loan) = self.loan_region.get(&point).copied() else { return result };
                 fact.roots.insert(loan);
-                if self.deref_base(place).is_none() {
+                if self.borrows_own_storage(place) {
                     fact.origins.insert(match body.local(place.local).kind {
                         LocalKind::Arg => Origin::Param(place.local),
                         _ => Origin::Local(place.local),
@@ -913,6 +1481,9 @@ impl Regions {
     }
 
     fn fact_for_place(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+        if self.heap_reads.contains(place) {
+            return ValueFact::default();
+        }
         let mut fact = ValueFact::default();
         for region in self.place_regions(place) {
             fact.merge(&state[region]);
@@ -1202,6 +1773,8 @@ impl Regions {
 
     fn operand_regions(&self, operand: &Operand) -> Vec<RegionVid> {
         match operand {
+            // `[TYP-15]` — a view copied out of heap storage is `static`.
+            Operand::Copy(place) | Operand::Move(place) if self.heap_reads.contains(place) => Vec::new(),
             Operand::Copy(place) | Operand::Move(place) => self.place_regions(place),
             // `[LT-3]` — a literal has the static region, which outlives
             // everything and constrains nothing.
@@ -1439,6 +2012,15 @@ impl Regions {
         }
     }
 
+    /// Whether a borrow of `place` borrows its local's own storage, so the
+    /// local is where the view points (`Origin::Local`/`Param`). A borrow
+    /// through a reference borrows what the reference points to, and carries
+    /// the reference's own origins instead — including a reference to a view,
+    /// whose slot's path already ends in the `Deref` (D-356).
+    fn borrows_own_storage(&self, place: &Place) -> bool {
+        self.deref_base(place).is_none() && !place.projection.contains(&Projection::Deref)
+    }
+
     /// The reference a borrow goes *through*, for `[BRW-6]`'s reborrow.
     fn deref_base(&self, place: &Place) -> Option<RegionVid> {
         let mut candidates = self.local_regions[place.local.0 as usize]
@@ -1454,6 +2036,148 @@ impl Regions {
             });
         let region = candidates.next()?.region;
         candidates.next().is_none().then_some(region)
+    }
+}
+
+/// Where a store to a place lands (`[TYP-15]`).
+enum StoreTarget {
+    /// In the local itself: its slots, or an inline part of one.
+    Inline,
+    /// Behind the reference at `reference`; `rest` follows its `Deref`.
+    Through { reference: Place, rest: Vec<Projection> },
+    /// In storage no local region bounds.
+    Unbounded(Unbounded),
+}
+
+#[derive(Default)]
+struct StoreDestinations {
+    slots: Vec<RegionVid>,
+    unbounded: Option<Unbounded>,
+}
+
+/// `[TYP-15]` — classify where a store to `place` lands, walking its
+/// projections from the local: the local's own (inline) storage, the target
+/// of the first reference it goes through, or storage no local bounds. A raw
+/// pointer's target is `unsafe` code's to answer for, and counts as inline.
+fn store_target(body: &Body, types: &TypeTable, place: &Place) -> StoreTarget {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for (index, projection) in place.projection.iter().enumerate() {
+        match (projection, types.kind(ty)) {
+            (Projection::Deref, TyKind::Ref { .. }) => {
+                return StoreTarget::Through {
+                    reference: Place { local: place.local, projection: place.projection[..index].to_vec() },
+                    rest: place.projection[index + 1..].to_vec(),
+                };
+            }
+            (Projection::Deref, TyKind::Ptr { .. }) => return StoreTarget::Inline,
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Vec { .. }) => {
+                return StoreTarget::Unbounded(Unbounded::Element);
+            }
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Span { .. }) => {
+                return StoreTarget::Unbounded(Unbounded::SpanElement);
+            }
+            (Projection::Field(_), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
+                return StoreTarget::Unbounded(Unbounded::ClassField);
+            }
+            _ => ty = project_type(types, ty, projection, &mut variant),
+        }
+    }
+    StoreTarget::Inline
+}
+
+/// `[TYP-15]` — whether a view read from `place` is `static`: it is in an
+/// `Array`'s element or a class object's field (through references to
+/// them), where only `static` views are let in.
+fn reads_static(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Vec { .. })
+            | (Projection::Field(_), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
+                return types.is_view(place_type(body, types, place));
+            }
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Span { .. })
+            | (Projection::Deref, TyKind::Ptr { .. }) => return false,
+            _ => ty = project_type(types, ty, projection, &mut variant),
+        }
+    }
+    false
+}
+
+/// Every place the body reads (or borrows) that [`reads_static`] holds for.
+fn static_read_places(body: &Body, types: &TypeTable) -> HashSet<Place> {
+    let mut places = HashSet::new();
+    let mut note = |operand: &Operand| {
+        if let Operand::Copy(place) | Operand::Move(place) = operand
+            && reads_static(body, types, place)
+        {
+            places.insert(place.clone());
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };
+            match rvalue {
+                Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } => note(operand),
+                Rvalue::BinaryOp { lhs, rhs, .. } => {
+                    note(lhs);
+                    note(rhs);
+                }
+                Rvalue::Aggregate { operands, .. } => operands.iter().for_each(&mut note),
+                Rvalue::Repeat { value, .. } => note(value),
+                Rvalue::Ref { place, .. } => note(&Operand::Copy(place.clone())),
+                Rvalue::Discriminant(_) => {}
+            }
+        }
+        if let Terminator::Call { args, .. } = &block.terminator {
+            args.iter().for_each(&mut note);
+        }
+    }
+    places
+}
+
+/// The type of a place, following its projections (a class field included).
+pub(crate) fn place_type(body: &Body, types: &TypeTable, place: &Place) -> Ty {
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        ty = project_type(types, ty, projection, &mut variant);
+    }
+    ty
+}
+
+/// The type at `path` within a value of type `ty`.
+fn projected_type(types: &TypeTable, mut ty: Ty, path: &[Projection]) -> Ty {
+    let mut variant = None;
+    for projection in path {
+        ty = project_type(types, ty, projection, &mut variant);
+    }
+    ty
+}
+
+/// One projection step of a type; a step that does not apply leaves it.
+fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, variant: &mut Option<usize>) -> Ty {
+    match (projection, types.kind(ty)) {
+        (Projection::Downcast(v), TyKind::Enum(_)) => {
+            *variant = Some(*v);
+            ty
+        }
+        (Projection::Field(i), TyKind::Enum(id)) => match variant.take() {
+            Some(v) => types.enum_def(*id).variants[v].fields.get(*i).map_or(ty, |field| field.ty),
+            None => ty,
+        },
+        (Projection::Field(i), TyKind::Struct(id)) => types.struct_def(*id).fields.get(*i).map_or(ty, |field| field.ty),
+        (Projection::Field(i), TyKind::Class(id)) => types.class_field_at(*id, *i).map_or(ty, |field| field.ty),
+        (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),
+        (
+            Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+        ) => *elem,
+        (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Ptr { inner, .. }) => *inner,
+        (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => *inner,
+        _ => ty,
     }
 }
 

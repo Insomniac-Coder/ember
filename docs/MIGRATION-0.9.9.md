@@ -879,3 +879,22 @@ The next number is ODR-027.
     (D-351). The error's help gives the spelling.
   * Spec only: when two const generic arguments are one type (ODR-066, `[TYP-41]`); const generics
     are not built yet.
+* **2026-09-26 — one storage rule for views (ODR-069, SP-013; Hardened_27).**
+  * `Map`, `Set` and `Array` may hold views that are `static`, such as string literals:
+    `labels: Map[str, int] = {"start": 1}`, `Set[str]()`, `Array[str]()` and `Span[str]` all compile
+    (ODR-036's `E3063` "may not be a `Map` key or value" and "may not be stored in a container
+    element" are gone). An unannotated `{"a": 1}` still has `String` keys.
+  * Storing a view that borrows a local where it could outlive it is now refused wherever it
+    happens, which compiled before and read freed memory (D-352, D-353, D-198): into a class
+    object's field (`C(s.as_str())`, `c.a = s.as_str()`), into an `Array` element or its field
+    through `mem.replace`, `mem.swap`, a `mut` parameter or `ref mut`, into a local array's
+    elements by `extend`, and through a generic function that stores its argument (`E3063` at the
+    call, naming the function). A view stored through a `mut` parameter, `mem.replace`, `mem.swap`
+    or `ref mut` now keeps its source borrowed as long as the variable it went into is used
+    (`E3021` if the source is moved or dropped first).
+  * A function may not store a view of its own local into a `mut` parameter (`E3063`), and a
+    closure may store into a captured variable only a `static` view.
+  * `Map[str, V].entry(k)` holds `k` (the result borrows it); `ref e.a` through a local reference
+    `e` to a view struct is a reborrow, so returning it no longer gives callers `E3065` (D-356).
+  * A literal passed to a function whose result has a field-by-field summary no longer crashes
+    the compiler (D-357).

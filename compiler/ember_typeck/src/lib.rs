@@ -1124,6 +1124,8 @@ struct Checker<'a> {
     /// (`self: Holder[T]` for `Holder[str]`'s), which its body was checked
     /// with.
     declared_params: HashMap<DefId, Vec<(Symbol, Ty)>>,
+    /// As `declared_params`, the result as declared (ODR-069).
+    declared_rets: HashMap<DefId, Ty>,
     /// `[MOD-2]` (D-328) — each method's and associated function's
     /// visibility and declaring module: its own `pub`, or, implementing an
     /// interface, the interface's.
@@ -1342,6 +1344,7 @@ impl<'a> Checker<'a> {
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
             declared_params: HashMap::new(),
+            declared_rets: HashMap::new(),
             method_vis: HashMap::new(),
             routed_call: false,
             member_callable_declarations: Vec::new(),
@@ -4315,6 +4318,8 @@ impl<'a> Checker<'a> {
                 declared.push((param_name, self.substitute_self(param_ty, owner)));
             }
             self.declared_params.insert(def, declared);
+            let ret = self.substitute_self(method.ret, owner);
+            self.declared_rets.insert(def, ret);
         }
         if !method.has_body && matches!(self.types.kind(ty), TyKind::Class(_)) {
             self.abstract_methods.insert(def);
@@ -7395,16 +7400,19 @@ impl<'a> Checker<'a> {
             if !require(self, 1) {
                 return self.common.error;
             }
-            let (elem, arg_span) = args[0];
-            self.reject_stored_view(elem, arg_span, "a span element");
+            // `[TYP-15]` (ODR-069) — a view is checked where it is stored,
+            // by its regions, not refused at the type: `Span[str]` of static
+            // strings is a view of an `Array[str]`.
+            let (elem, _) = args[0];
             return self.types.intern(TyKind::Span { elem, mutable: name.is("MutSpan") });
         }
         if name.is("Array") {
             if !require(self, 1) {
                 return self.common.error;
             }
-            let (elem, arg_span) = args[0];
-            self.reject_stored_view(elem, arg_span, "a container element");
+            // `[TYP-15]` (ODR-069) — `Array[str]()` is as legal as
+            // `["ann"]`; what enters it must be `static`, checked at each store.
+            let (elem, _) = args[0];
             return self.types.intern(TyKind::Vec { elem });
         }
         if name.is("Box") {
@@ -8864,7 +8872,8 @@ impl<'a> Checker<'a> {
     }
 
     /// The type a literal's element has with no context: its own, literals
-    /// committed, and text as `String`, since a map holds no views (ODR-036).
+    /// committed, and text as `String` (ODR-036): a map written with no type
+    /// owns its text, and holds `str` only when the program says so (ODR-069).
     fn collection_element_type(&mut self, element: &ast::Expr) -> Ty {
         let quiet = self.sink.mark();
         let value = self.synth_committed(element);
@@ -9193,24 +9202,10 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
-        // ODR-036 — a `Map`'s keys and values and a `Set`'s elements are not
-        // views: a view inside would make the map itself a view, confined to
-        // locals (`[TYP-15]`). Text keys are `String`.
-        let elements = match name.as_str() {
-            "std.collections.Map" => 2,
-            "std.collections.Set" => 1,
-            _ => 0,
-        };
-        if let Some(&view) = args.iter().take(elements).find(|&&arg| self.types.is_view(arg)) {
-            let shown = self.types.display(view);
-            let owner = if elements == 2 { "a `Map` key or value" } else { "a `Set` element" };
-            self.sink.emit(
-                Diagnostic::error(codes::E3063, span, format!("`{shown}` is a view, so it may not be {owner}"))
-                    .help("store an owned value: `String` for text")
-                    .note("a view inside a map would make the map a view, confined to locals [TYP-15] (ODR-036)"),
-            );
-            return self.common.error;
-        }
+        // `[STD-11]`, `[TYP-15]` (ODR-069, SP-013) — a `Map`'s keys and
+        // values and a `Set`'s elements follow the one storage rule: views are
+        // allowed, and each stored one must be `static`, which the region check
+        // sees at the call that stores it (ODR-036's blanket refusal is gone).
         // `[TYP-17]` — the arguments meet the declaration's bounds, reported
         // where the type is named: `Set[f64]` misses `Hash`. Opaque
         // arguments meet them by the enclosing declaration's own bounds.
@@ -10694,7 +10689,7 @@ impl<'a> Checker<'a> {
                 body,
                 span: item.span,
                 overflow,
-                borrows: self.signatures[def.0 as usize].borrows.clone(),
+                borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
                 emit_if_used: false,
@@ -10891,7 +10886,7 @@ impl<'a> Checker<'a> {
                     body: hir::Block { stmts: Vec::new(), span: job.span },
                     span: job.span,
                     overflow: OverflowPolicy::Panic,
-                    borrows: signature.borrows,
+                    borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
                     emit_if_used: false,
@@ -11179,7 +11174,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             body,
             span,
             overflow,
-            borrows: self.signatures[def.0 as usize].borrows.clone(),
+            borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
             emit_if_used: false,
@@ -11932,7 +11927,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             body,
             span,
             overflow,
-            borrows: self.signatures[def.0 as usize].borrows.clone(),
+            borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
             emit_if_used: false,
@@ -24259,6 +24254,46 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// `[LT-1]` (ODR-048, ODR-069) — `@borrows` as written; or, for a method
+    /// made from a generic type's recipe whose result rule 1 ties to its
+    /// borrowed receiver, the receiver joined by each parameter whose declared
+    /// type names a type parameter the declared result names too, where this
+    /// instance makes the parameter a view. The result's type says it can hold
+    /// that parameter: `Map[str, V].entry(k) -> MapEntry[K, V, H]` returns an
+    /// entry holding `k`, and its callers keep `k`'s source borrowed for it;
+    /// `get(q) -> Option[ref V]` does not name `q`'s type and borrows only
+    /// `self`.
+    fn declared_borrows(&self, def: DefId) -> Option<Vec<usize>> {
+        let signature = &self.signatures[def.0 as usize];
+        if signature.borrows.is_some() {
+            return signature.borrows.clone();
+        }
+        let declared = self.declared_params.get(&def)?;
+        let ret = *self.declared_rets.get(&def)?;
+        let (first, _, mode, _) = signature.params.first()?;
+        if !first.is("self") || *mode == Mode::Owned || !self.types.is_view(signature.ret) {
+            return None;
+        }
+        let mut named = BTreeMap::new();
+        self.params_in(ret, &mut named, &mut HashSet::new());
+        let joined: Vec<usize> = declared
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|&(index, &(_, ty))| {
+                let mut mine = BTreeMap::new();
+                self.params_in(ty, &mut mine, &mut HashSet::new());
+                signature.params.get(index).is_some_and(|(_, own, _, _)| self.types.is_view(*own))
+                    && mine.keys().any(|slot| named.contains_key(slot))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if joined.is_empty() {
+            return None;
+        }
+        Some(std::iter::once(0).chain(joined).collect())
     }
 
     /// A borrowed parameter's local: `ref T` where `def` passes it by address
