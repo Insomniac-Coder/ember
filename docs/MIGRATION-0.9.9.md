@@ -942,3 +942,8 @@ The next number is ODR-027.
 * **2026-09-26 — `String.push(char)` (`[TXT-11]`).** A mutable `String` now
   appends one Unicode scalar in UTF-8. The regression case checks one- through
   four-byte encodings, the byte length, and appending text afterward.
+
+* **2026-09-26 — validated byte views (`[TXT-2]`, `[TXT-5]`).**
+  `Span[u8].to_str()` returns `Result[str, Utf8Error]`, validating UTF-8
+  without copying. Invalid encodings return `Utf8Error.Invalid`; the text
+  view continues to borrow the source buffer.

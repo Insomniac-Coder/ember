@@ -10795,7 +10795,8 @@ the running narrative behind it.
   * **D-201**: `TyKind::Vec { elem, text }`; `String` is `text: true`
     (`common.string`, ADR-061). `String.push(c: char)` (`[TXT-11]`) now
     appends UTF-8 through the runtime's scalar encoder; the validating
-    `Span[u8]` to `str` (`[TXT-2]`) is still to do.
+    `Span[u8]` to `str` (`[TXT-2]`) now validates every byte before yielding
+    a zero-copy view.
   * **D-202 and D-218: `[EXC-19]` built (ADR-060).** Per-field access words
     (`_access_<field>` in the object, listed in the type info's `fields`);
     field accesses from loans and from plain reads/writes (`field_accesses`,
@@ -10857,10 +10858,17 @@ the running narrative behind it.
   and two-, three-, and four-byte characters, byte length, and a following
   `push_str`. It failed with `E1010` before the implementation. No new
   specification ruling was needed.
+* **`Span[u8].to_str()` implemented (2026-09-26, `[TXT-2]`, `[TXT-5]`):**
+  a strict UTF-8 validator rejects overlong encodings, surrogate values,
+  incomplete sequences and values above U+10FFFF before constructing the
+  zero-copy `str`. The return type is `Result[str, Utf8Error]`, with the
+  `Utf8Error.Invalid` unit variant in `std.string`. Borrow provenance follows
+  the source span through the `Result`; the conformance case rejects mutation
+  of the source while the result is live. Valid text, malformed sequences
+  and embedded NUL have run-pass coverage. No spec wording changed.
 * **Next task:** the read-only review of the five recent fixes awaits the
-  owner's separate approval for agents. Continue solo with the validating
-  `Span[u8]` to `str` conversion (`[TXT-2]`), then Phase 3's class work.
-  `[TYP-13]`'s
+  owner's separate approval for agents. Continue solo with Phase 3's class
+  work. `[TYP-13]`'s
   other niches join at `TypeTable::option_niche` (ADR-056).
 * **Phase table after the five defects (2026-09-26 evening):**
 

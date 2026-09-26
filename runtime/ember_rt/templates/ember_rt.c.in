@@ -1525,6 +1525,44 @@ size_t ember_char_utf8_len(uint32_t c) {
     return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
 }
 
+bool ember_utf8_valid(ember_span bytes) {
+    const unsigned char* data = (const unsigned char*)bytes.ptr;
+    if (bytes.len != 0 && data == NULL) {
+        return false;
+    }
+    for (size_t i = 0; i < bytes.len;) {
+        unsigned char a = data[i];
+        if (a < 0x80) {
+            ++i;
+            continue;
+        }
+        size_t width;
+        unsigned char second_min = 0x80;
+        unsigned char second_max = 0xBF;
+        if (a >= 0xC2 && a <= 0xDF) {
+            width = 2;
+        } else if (a >= 0xE0 && a <= 0xEF) {
+            width = 3;
+            if (a == 0xE0) second_min = 0xA0;
+            if (a == 0xED) second_max = 0x9F;
+        } else if (a >= 0xF0 && a <= 0xF4) {
+            width = 4;
+            if (a == 0xF0) second_min = 0x90;
+            if (a == 0xF4) second_max = 0x8F;
+        } else {
+            return false;
+        }
+        if (bytes.len - i < width || data[i + 1] < second_min || data[i + 1] > second_max) {
+            return false;
+        }
+        for (size_t j = 2; j < width; ++j) {
+            if (data[i + j] < 0x80 || data[i + j] > 0xBF) return false;
+        }
+        i += width;
+    }
+    return true;
+}
+
 bool ember_str_contains(ember_str text, ember_str needle) {
     if (needle.len == 0) {
         return true;

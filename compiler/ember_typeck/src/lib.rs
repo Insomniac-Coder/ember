@@ -30215,6 +30215,55 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let inner = self.maybe_uninit_inner(elem).expect("checked above");
             return self.synth_maybe_uninit_span_method(receiver, inner, name, args, span);
         }
+        if !mutable && elem == self.common.u8 && name.name.is("to_str") {
+            if !args.is_empty() {
+                self.error(codes::E2020, span, format!("`to_str` takes 0 arguments, found {}", args.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let Some(error_ty) = self.named_types.get(&Symbol::intern("std.string.Utf8Error")).copied() else {
+                self.error(codes::E1010, span, "cannot find `std.string.Utf8Error`");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let TyKind::Enum(error_id) = self.types.kind(error_ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let (error_id, str_ty) = (*error_id, self.common.str_);
+            let result_ty = self.result_of(str_ty, error_ty);
+            let TyKind::Enum(result_id) = self.types.kind(result_ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let result_id = *result_id;
+            let view_ty = receiver.ty;
+            let view = self.declare(None, view_ty, span);
+            let local = || Expr { ty: view_ty, kind: ExprKind::Local(view), span };
+            let valid = Expr { ty: self.common.bool_, kind: ExprKind::Builtin { which: Builtin::Utf8Valid, args: vec![local()] }, span };
+            let text = Expr { ty: str_ty, kind: ExprKind::Builtin { which: Builtin::SpanToStr, args: vec![local()] }, span };
+            let ok = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![text] }, span };
+            let reason = Expr { ty: error_ty, kind: ExprKind::EnumLit { enum_id: error_id, variant: 0, fields: vec![] }, span };
+            let err = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![reason] }, span };
+            let arm = |kind, body| hir::MatchArm {
+                pattern: hir::Pattern { ty: self.common.bool_, kind, span },
+                guard: None,
+                body: hir::MatchArmBody::Expr(body),
+                span,
+            };
+            let result = Expr {
+                ty: result_ty,
+                kind: ExprKind::Match {
+                    scrutinee: Box::new(valid),
+                    arms: vec![arm(hir::PatternKind::Int(1), ok), arm(hir::PatternKind::Wild, err)],
+                },
+                span,
+            };
+            return Expr {
+                ty: result_ty,
+                kind: ExprKind::Block {
+                    block: Block { stmts: vec![Stmt::Let { local: view, init: Some(receiver) }], span },
+                    value: Box::new(result),
+                },
+                span,
+            };
+        }
         let usize_ty = self.common.usize;
         if mutable && name.name.is("reborrow") {
             if !args.is_empty() {

@@ -780,6 +780,10 @@ pub enum Builtin {
     StrTrimEnd,
     StrSliceOk,
     StrToUpper,
+    /// `[TXT-2]` — validate bytes before exposing them as text.
+    Utf8Valid,
+    /// `[TXT-5]` — view already validated bytes as text without copying.
+    SpanToStr,
     /// `[TXT-10]` (ODR-029) — `parse`: the status (0 when the text is a
     /// literal of the kind that fits) and, once it is 0, the value.
     ParseStatus { kind: ParseKind },
@@ -1173,6 +1177,7 @@ impl Builtin {
             Builtin::StrTrimEnd => "trim_end",
             Builtin::StrSliceOk => "slice_ok",
             Builtin::StrToUpper => "to_upper",
+            Builtin::Utf8Valid | Builtin::SpanToStr => "to_str",
             Builtin::ParseStatus { .. } | Builtin::ParseValue { .. } => "parse",
             Builtin::StrToLower => "to_lower",
             Builtin::StrCharAt => "char_at",

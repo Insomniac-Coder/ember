@@ -9,3 +9,7 @@ pub enum ParseError:
     Empty
     Invalid
     Overflow
+
+## `[TXT-2]` — invalid UTF-8 when viewing foreign or raw bytes as text.
+pub enum Utf8Error:
+    Invalid

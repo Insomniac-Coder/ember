@@ -1568,6 +1568,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::SpanSplitAt { .. }
                 | Builtin::Slice { .. }
                 | Builtin::StrAsBytes
+                | Builtin::SpanToStr
                 | Builtin::SpanReborrow
                 | Builtin::SpanSharedReborrow
                 | Builtin::SpanChunksNew { .. }
@@ -2769,6 +2770,8 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StrContainsChar
             | Builtin::StrIsCharBoundary
             | Builtin::StrAsBytes
+            | Builtin::Utf8Valid
+            | Builtin::SpanToStr
             | Builtin::Slice { .. }
             | Builtin::SpanLen
             | Builtin::SpanGet
