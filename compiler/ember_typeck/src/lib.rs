@@ -11168,6 +11168,7 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
         let contracts = ffi_param_contracts(attrs);
+        let unknown_facts = ffi_unknown_fact_contracts(attrs);
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if let TyKind::Param { index, .. } = this.types.kind(ty)
                 && this.signatures[def.0 as usize].generics.get(*index as usize)
@@ -11215,6 +11216,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         for &(name, ty, mode, span) in &signature {
             if decl.is_foreign_decl && decl.is_safe
+                && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
+                if !self.types.is_ffi_safe(inner) {
+                    self.error(codes::E5050, span,
+                        format!("`{name}` refers to a type with no foreign representation"));
+                }
+            } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*inner) {
                     self.error(codes::E5050, span,
@@ -11232,6 +11239,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             check(self, ret, decl.name.span, "this is the return type".to_string());
         }
         if decl.is_foreign_decl {
+            let mut seen_unknown_names = HashSet::new();
+            for &(name, _) in &unknown_facts {
+                if seen_unknown_names.insert(name)
+                    && !signature.iter().any(|(param, _, _, _)| *param == name) {
+                    self.error(codes::E5002, decl.name.span,
+                        format!("`@ffi` names no parameter `{name}`"));
+                }
+            }
             for &(contract_name, kind) in &contracts {
                 let contract_param = signature.iter().find(|(name, _, _, _)| *name == contract_name);
                 match contract_param {
@@ -11243,6 +11258,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
                                 self.types.kind(ty), TyKind::Ref { mutable: false, inner }
                                     if self.types.is_ffi_safe(*inner)),
+                            FfiPointerContract::NullableSharedOne => mode == Mode::Borrow
+                                && self.foreign_nullable_ref_inner(ty)
+                                    .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)),
+                            FfiPointerContract::NullableMutOne => mode == Mode::Borrow
+                                && self.foreign_nullable_ref_inner(ty)
+                                    .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)),
                         };
                         if !matches_safe_form {
                             self.error(codes::E5002, decl.name.span,
@@ -11256,14 +11277,32 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if decl.is_foreign_decl && decl.is_safe {
             for &(name, ty, mode, span) in &signature {
                 let contract = contracts.iter().find(|(slot, _)| *slot == name).map(|(_, kind)| *kind);
-                if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) {
+                let unknown: Vec<_> = unknown_facts.iter().filter(|(slot, _)| *slot == name)
+                    .map(|(_, axis)| *axis).collect();
+                for axis in &unknown {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` has an unknown {axis} for parameter `{name}`"));
+                }
+                if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
-                    && contract != Some(FfiPointerContract::SharedOne) {
+                    && contract != Some(FfiPointerContract::SharedOne) && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for reference parameter `{name}`"));
+                }
+                if let Some((_, mutable)) = self.foreign_nullable_ref_inner(ty) {
+                    let required = if mutable {
+                        FfiPointerContract::NullableMutOne
+                    } else {
+                        FfiPointerContract::NullableSharedOne
+                    };
+                    if contract != Some(required) && unknown.is_empty() {
+                        self.error(codes::E5002, span,
+                            format!("`safe fn` needs an `@ffi` contract for nullable {}reference parameter `{name}`",
+                                if mutable { "mutable " } else { "" }));
+                    }
                 }
                 if self.foreign_pointer_contract_required(ty) {
                     if contract.is_some() {
@@ -11289,6 +11328,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.foreign_pointer_contract_required(niche.payload)
             }),
             _ => false,
+        }
+    }
+
+    fn foreign_nullable_ref_inner(&self, ty: Ty) -> Option<(Ty, bool)> {
+        let TyKind::Enum(id) = self.types.kind(ty) else { return None };
+        let niche = self.types.option_niche(*id)?;
+        match self.types.kind(niche.payload) {
+            TyKind::Ref { mutable, inner } => Some((*inner, *mutable)),
+            _ => None,
         }
     }
 
@@ -23822,6 +23870,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
+                                } else if let Some((name, _)) = ffi_unknown_fact_arg(arg) {
+                                    if !contracted.insert(name) {
+                                        self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
+                                    }
+                                } else if let Some(name) = ffi_missing_count_arg(arg) {
+                                    let mut diagnostic = Diagnostic::error(codes::E5012, attr.span,
+                                        format!("pointer contract for `{name}` has no count"))
+                                        .help("choose one, count(n), nul_terminated, fixed(N), or inout_count(p)");
+                                    let siblings = ffi_count_siblings(decl, name);
+                                    if !siblings.is_empty() {
+                                        diagnostic = diagnostic.note(format!(
+                                            "possible length parameter: {}", siblings.join(", ")));
+                                    }
+                                    self.sink.emit(diagnostic);
                                 } else {
                                     self.error(codes::E0900, attr.span,
                                         "only `@ffi` link names and borrowed-one pointer contracts are implemented yet");
@@ -34129,6 +34191,8 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
 enum FfiPointerContract {
     SharedOne,
     MutOne,
+    NullableSharedOne,
+    NullableMutOne,
 }
 
 /// ODR-073's first direct-declaration pointer contracts: borrowed single
@@ -34140,7 +34204,7 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) {
         return None;
     }
-    if args.iter().any(|arg| arg.name.is_some()) || !(3..=4).contains(&args.len()) {
+    if args.iter().any(|arg| arg.name.is_some()) || !(3..=5).contains(&args.len()) {
         return None;
     }
     let name = ffi_contract_word(&args[0].value)?;
@@ -34148,12 +34212,23 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
         return None;
     }
-    let kind = if args.len() == 3 {
-        FfiPointerContract::SharedOne
-    } else if ffi_contract_word(&args[3].value).is_some_and(|word| word.is("exclusive")) {
-        FfiPointerContract::MutOne
-    } else {
+    let (mut nullable, mut exclusive, mut aliased) = (false, false, false);
+    for arg in &args[3..] {
+        match ffi_contract_word(&arg.value)?.as_str() {
+            "nullable" if !nullable => nullable = true,
+            "exclusive" if !exclusive => exclusive = true,
+            "aliased" if !aliased => aliased = true,
+            _ => return None,
+        }
+    }
+    if exclusive && aliased {
         return None;
+    }
+    let kind = match (nullable, exclusive) {
+        (false, false) => FfiPointerContract::SharedOne,
+        (false, true) => FfiPointerContract::MutOne,
+        (true, false) => FfiPointerContract::NullableSharedOne,
+        (true, true) => FfiPointerContract::NullableMutOne,
     };
     Some((name, kind))
 }
@@ -34168,6 +34243,92 @@ fn ffi_param_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, FfiPointerContr
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .map(|attr| attr.args.iter().filter_map(ffi_param_contract_arg).collect())
         .unwrap_or_default()
+}
+
+/// `[FFI-11c]` — a `TODO(axis)` is deliberately an unknown fact, never a
+/// completed contract. It may remain on an unsafe declaration during adoption.
+fn ffi_unknown_fact_arg(arg: &ast::AttrArg) -> Option<(Symbol, Vec<Symbol>)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param"))
+        || args.len() < 3 || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    let mut unknown = Vec::new();
+    for arg in &args[1..] {
+        if let Some(axis) = ffi_todo_axis(&arg.value) {
+            if unknown.contains(&axis) { return None; }
+            unknown.push(axis);
+        } else if !ffi_contract_word(&arg.value).is_some_and(|word|
+            matches!(word.as_str(), "borrowed" | "one" | "exclusive" | "nullable" | "aliased")) {
+            return None;
+        }
+    }
+    (!unknown.is_empty()).then_some((name, unknown))
+}
+
+fn ffi_todo_axis(expr: &ast::Expr) -> Option<Symbol> {
+    let ast::ExprKind::Call { callee, args: todo_args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("TODO"))
+        || todo_args.len() != 1 || todo_args[0].name.is_some()
+    {
+        return None;
+    }
+    ffi_contract_word(&todo_args[0].value).filter(|axis|
+        matches!(axis.as_str(), "count" | "nullable" | "ownership" | "lifetime"))
+}
+
+fn ffi_unknown_fact_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, Symbol)> {
+    attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .map(|attr| attr.args.iter().filter_map(ffi_unknown_fact_arg)
+            .flat_map(|(name, axes)| axes.into_iter().map(move |axis| (name, axis)))
+            .collect())
+        .unwrap_or_default()
+}
+
+/// `[FFI-11a]` — a recognisable pointer clause with ownership but no count
+/// gets the specific count diagnostic, not the generic unbuilt-attribute one.
+fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param"))
+        || args.len() < 2 || args.iter().any(|arg| arg.name.is_some())
+        || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed")) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    (!args[2..].iter().any(|arg| ffi_is_count_word(&arg.value))).then_some(name)
+}
+
+fn ffi_is_count_word(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } if segments.len() == 1 => {
+            segments[0].name.is("one") || segments[0].name.is("nul_terminated")
+        }
+        ast::ExprKind::Call { callee, .. } => {
+            let word = ffi_contract_word(callee);
+            word.is_some_and(|word| word.is("count") || word.is("fixed") || word.is("inout_count"))
+                || ffi_todo_axis(expr).is_some_and(|axis| axis.is("count"))
+        }
+        _ => false,
+    }
+}
+
+fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Symbol) -> Vec<String> {
+    decl.params.iter().filter_map(|param| {
+        let ast::ParamKind::Named { name, ty } = &param.kind else { return None };
+        if name.name == pointer { return None; }
+        let written = name.name.as_str();
+        let name_looks_like_count = ["Count", "Len", "Size", "N"]
+            .iter().any(|suffix| written.ends_with(suffix));
+        let unsigned = matches!(&ty.kind,
+            ast::TypeKind::Path { segments, args } if args.is_empty()
+                && segments.len() == 1
+                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"));
+        (name_looks_like_count || unsigned).then(|| written.to_string())
+    }).collect()
 }
 
 /// A C declaration cannot spell an arbitrary linker symbol portably. Names

@@ -10703,11 +10703,11 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-26 night IST
+#### Start here after a context reset — state at 2026-09-27 IST
 
-Everything below is committed and pushed on `main`. The working tree was clean
-when this was written. **Read this subsection first**; the rest of §0.355 is
-the running narrative behind it.
+The previous batches are committed and pushed on `main`; the newest batch is
+described below and committed with this checkpoint. **Read this subsection
+first**; the rest of §0.355 is the running narrative behind it.
 
 **Where things stand**
 
@@ -10812,6 +10812,20 @@ the running narrative behind it.
     are supported. Missing, duplicate, unknown and mismatched clauses are
     rejected, and a `safe fn` cannot expose a raw `*T`. `FFI-10/` has the
     focused accept and reject cases. Other contract forms remain `E0900`.
+    This is commit `da978e2`; `6ccb7d9` is the preceding link-name and
+    unsafe-function batch. CI for both passed, including `da978e2`'s run
+    `36262685921`.
+  * The next five-feature batch extends Hardened_30 without a new ODR. It
+    implements `[FFI-11a]`'s `E5012` missing-count diagnostic, including the
+    five choices and likely length siblings; `[FFI-11c]`'s four `TODO(axis)`
+    markers, including multiple unknown facts on one slot, which keep a
+    declaration unsafe; nullable borrowed-one shared and exclusive references
+    as `Option[ref T]` and `Option[ref mut T]`; and the explicit `aliased` word
+    for shared references. `FFI-11/`, `FFI-11a/`, and `FFI-11c/` cover these
+    forms. The C emitter uses a single pointer for each nullable reference;
+    the full annotation sweep, workspace suite, and repository gates passed
+    before this checkpoint. Owned/retained contracts, other count
+    modes, result lifetimes, and header overlays remain implementation gaps.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
