@@ -76,9 +76,9 @@ pub struct Param {
     pub mode: Mode,
 }
 
-/// The C parameter list behind a hand-declared safe `count(n)` function.
-/// Indices name the visible Ember parameters; count witnesses have no visible
-/// parameter and are supplied by the wrapper from the associated span(s).
+/// The C parameter list behind a hand-declared safe `count(n)` or `fixed(N)`
+/// function. Indices name the visible Ember parameters; count witnesses have
+/// no visible parameter and are supplied from the associated span(s).
 #[derive(Debug, Clone)]
 pub struct FfiCounted {
     pub foreign_symbol: String,
@@ -89,6 +89,7 @@ pub struct FfiCounted {
 pub enum FfiAbiParam {
     Value { public_index: usize, ty: Ty, mode: Mode },
     SpanPointer { public_index: usize, elem: Ty, mutable: bool },
+    ArrayPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     Count { public_indices: Vec<usize>, ty: Ty },
 }
 

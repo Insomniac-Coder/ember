@@ -11381,10 +11381,47 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             FfiPointerContract::Count { exclusive, .. } => mode == Mode::Borrow
                                 && matches!(self.types.kind(ty), TyKind::Span { elem, mutable }
                                     if *mutable == exclusive && self.types.is_ffi_safe(*elem)),
+                            FfiPointerContract::Fixed { len, exclusive, nullable } => {
+                                let referent = if nullable {
+                                    self.foreign_nullable_ref_inner(ty)
+                                } else {
+                                    match self.types.kind(ty) {
+                                        TyKind::Ref { mutable, inner } => Some((*inner, *mutable)),
+                                        _ => None,
+                                    }
+                                };
+                                mode == Mode::Borrow && referent.is_some_and(|(inner, mutable)|
+                                    mutable == exclusive && matches!(self.types.kind(inner),
+                                        TyKind::Array { elem, len: actual }
+                                            if *actual == len && self.types.is_ffi_safe(*elem)))
+                            }
                         };
                         if !matches_safe_form {
-                            self.error(codes::E5002, decl.name.span,
-                                format!("`@ffi` contract for `{contract_name}` needs a pointer carrier"));
+                            let problem = if let FfiPointerContract::Fixed { len, exclusive, nullable } = kind {
+                                let referent = if nullable {
+                                    self.foreign_nullable_ref_inner(ty)
+                                } else {
+                                    match self.types.kind(ty) {
+                                        TyKind::Ref { mutable, inner } => Some((*inner, *mutable)),
+                                        _ => None,
+                                    }
+                                };
+                                if let Some((inner, mutable)) = referent {
+                                    if let TyKind::Array { len: actual, .. } = self.types.kind(inner) {
+                                        if *actual != len {
+                                            Some(format!("`fixed({len})` requires an array of length {len}, found {actual}"))
+                                        } else if mutable != exclusive {
+                                            Some(if exclusive {
+                                                format!("`fixed({len})` with `exclusive` requires a mutable array reference")
+                                            } else {
+                                                format!("`fixed({len})` without `exclusive` requires a shared array reference")
+                                            })
+                                        } else { None }
+                                    } else { None }
+                                } else { None }
+                            } else { None };
+                            self.error(codes::E5002, decl.name.span, problem.unwrap_or_else(||
+                                format!("`@ffi` contract for `{contract_name}` needs a pointer carrier")));
                         }
                     }
                     _ => {}
@@ -11429,7 +11466,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
-                    && contract != Some(FfiPointerContract::SharedOne) && unknown.is_empty() {
+                    && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::Fixed { nullable: false, .. }))
+                    && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for reference parameter `{name}`"));
                 }
@@ -11439,7 +11477,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     } else {
                         FfiPointerContract::NullableSharedOne
                     };
-                    if contract != Some(required) && unknown.is_empty() {
+                    let matches_fixed = matches!(contract,
+                        Some(FfiPointerContract::Fixed { exclusive, nullable: true, .. }) if exclusive == mutable);
+                    if contract != Some(required) && !matches_fixed && unknown.is_empty() {
                         self.error(codes::E5002, span,
                             format!("`safe fn` needs an `@ffi` contract for nullable {}reference parameter `{name}`",
                                 if mutable { "mutable " } else { "" }));
@@ -11507,8 +11547,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if !decl.is_foreign_decl || !decl.is_safe { return None; }
         let contracts = ffi_param_contracts(attrs);
         let mut counted = HashMap::<Symbol, (usize, Ty, bool)>::new();
+        let mut fixed = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut witnesses = HashMap::<Symbol, Vec<usize>>::new();
         for (pointer, contract) in contracts {
+            if let FfiPointerContract::Fixed { len, exclusive, nullable } = contract {
+                let public_index = visible.iter().position(|(name, _, _, _)| *name == pointer)?;
+                let (inner, mutable) = if nullable {
+                    self.foreign_nullable_ref_inner(visible[public_index].1)?
+                } else {
+                    let TyKind::Ref { mutable, inner } = self.types.kind(visible[public_index].1) else { return None };
+                    (*inner, *mutable)
+                };
+                let TyKind::Array { elem, len: actual } = self.types.kind(inner) else { return None };
+                if mutable != exclusive || *actual != len || !self.types.is_ffi_safe(*elem) { return None; }
+                fixed.insert(pointer, (public_index, *elem, exclusive, nullable));
+                continue;
+            }
             let FfiPointerContract::Count { witness, exclusive } = contract else { continue };
             let public_index = visible.iter().position(|(name, _, _, _)| *name == pointer)?;
             let TyKind::Span { elem, mutable } = self.types.kind(visible[public_index].1) else { return None };
@@ -11522,7 +11576,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             counted.insert(pointer, (public_index, *elem, exclusive));
             witnesses.entry(witness).or_default().push(public_index);
         }
-        if counted.is_empty() { return None; }
+        if counted.is_empty() && fixed.is_empty() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
@@ -11534,6 +11588,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 });
             } else if let Some(&(public_index, elem, mutable)) = counted.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable });
+            } else if let Some(&(public_index, elem, mutable, nullable)) = fixed.get(&name.name) {
+                abi_params.push(hir::FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable });
             } else {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 let (_, ty, mode, _) = visible[public_index];
@@ -34463,6 +34519,7 @@ enum FfiPointerContract {
     NullableSharedOne,
     NullableMutOne,
     Count { witness: Symbol, exclusive: bool },
+    Fixed { len: u64, exclusive: bool, nullable: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -34533,7 +34590,8 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         return None;
     }
 
-    let count = if ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+    let fixed = ffi_fixed_length(&args[2].value);
+    let count = if fixed.is_some() || ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
         None
     } else {
         Some(ffi_count_target(&args[2].value)?)
@@ -34550,13 +34608,14 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
     if exclusive && aliased {
         return None;
     }
-    let kind = match (count, nullable, exclusive) {
-        (Some(witness), false, exclusive) => FfiPointerContract::Count { witness, exclusive },
-        (None, false, false) => FfiPointerContract::SharedOne,
-        (None, false, true) => FfiPointerContract::MutOne,
-        (None, true, false) => FfiPointerContract::NullableSharedOne,
-        (None, true, true) => FfiPointerContract::NullableMutOne,
-        (Some(_), true, _) => return None,
+    let kind = match (count, fixed, nullable, exclusive) {
+        (None, Some(len), nullable, exclusive) => FfiPointerContract::Fixed { len, exclusive, nullable },
+        (Some(witness), None, false, exclusive) => FfiPointerContract::Count { witness, exclusive },
+        (None, None, false, false) => FfiPointerContract::SharedOne,
+        (None, None, false, true) => FfiPointerContract::MutOne,
+        (None, None, true, false) => FfiPointerContract::NullableSharedOne,
+        (None, None, true, true) => FfiPointerContract::NullableMutOne,
+        _ => return None,
     };
     Some((name, kind))
 }
@@ -34657,6 +34716,14 @@ fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     }
     let name = ffi_contract_word(&args[0].value)?;
     (!args[2..].iter().any(|arg| ffi_is_count_word(&arg.value))).then_some(name)
+}
+
+fn ffi_fixed_length(expr: &ast::Expr) -> Option<u64> {
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("fixed"))
+        || args.len() != 1 || args[0].name.is_some() { return None; }
+    let ast::ExprKind::Lit(ast::Literal::Int { value, suffix: None }) = &args[0].value.kind else { return None };
+    u64::try_from(*value).ok()
 }
 
 fn ffi_unknown_result_fact_arg(arg: &ast::AttrArg) -> Option<Vec<Symbol>> {

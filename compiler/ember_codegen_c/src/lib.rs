@@ -3326,6 +3326,10 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
+        let result = match self.types.kind(body.return_ty()) {
+            TyKind::Ref { mutable: false, inner } => format!("const {}*", self.c_type(*inner)),
+            _ => self.c_type(body.return_ty()),
+        };
         let params: Vec<_> = counted.abi_params.iter().enumerate().map(|(index, param)| {
             let ty = match param {
                 FfiAbiParam::Value { ty, mode, .. } if *mode == ParameterMode::Mut =>
@@ -3335,12 +3339,16 @@ impl Emitter<'_> {
                     let elem = self.c_type(*elem);
                     if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
                 }
+                FfiAbiParam::ArrayPointer { elem, mutable, .. } => {
+                    let elem = self.c_type(*elem);
+                    if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
+                }
                 FfiAbiParam::Count { ty, .. } => self.c_type(*ty),
             };
             format!("{ty} _ffi{index}")
         }).collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        format!("{} {}({params})", self.c_type(body.return_ty()), counted.foreign_symbol)
+        format!("{result} {}({params})", counted.foreign_symbol)
     }
 
     fn ffi_count_limit(&self, ty: Ty) -> Option<&'static str> {
@@ -3373,6 +3381,15 @@ impl Emitter<'_> {
                         else { format!("const {pointee}*") };
                     foreign_args.push(format!("({pointer})({}).ptr", args[*public_index]));
                 }
+                FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable } => {
+                    let pointee = self.c_type(*elem);
+                    let pointer = if *mutable { format!("{pointee}*") }
+                        else { format!("const {pointee}*") };
+                    let value = format!("({pointer})(({})->_0)", args[*public_index]);
+                    foreign_args.push(if *nullable {
+                        format!("({} ? {value} : NULL)", args[*public_index])
+                    } else { value });
+                }
                 FfiAbiParam::Count { public_indices, ty } => {
                     let first = &args[public_indices[0]];
                     for other in public_indices.iter().skip(1) {
@@ -3399,7 +3416,12 @@ impl Emitter<'_> {
             self.line(&format!("    {call};"));
             self.line("    return;");
         } else {
-            self.line(&format!("    return {call};"));
+            let value = if matches!(self.types.kind(body.return_ty()), TyKind::Ref { mutable: false, .. }) {
+                format!("({})({call})", self.c_type(body.return_ty()))
+            } else {
+                call
+            };
+            self.line(&format!("    return {value};"));
         }
         self.line("}");
         self.line("");

@@ -10886,6 +10886,22 @@ first**; the rest of §0.355 is the running narrative behind it.
     the preceding C contracts and raw-pointer casts needed no spec change.
     The H32 pin, frozen-part equality, rule-id and citation checks, full
     annotation sweep, workspace suite, and repository gates all pass locally.
+  * The next Phase 5 batch implements hand-declared `borrowed fixed(N)`
+    parameters. A safe `ref [T; N]` or `ref mut [T; N]` becomes the C `T*`
+    carrier through a generated wrapper; `exclusive` is required for the
+    mutable form. With `nullable`, `Option[ref [T; N]]` and
+    `Option[ref mut [T; N]]` pass a null C pointer for `None`. The compiler
+    checks the written N, pointer mutability, and
+    FFI-safe element type. `FFI-11/` covers shared, mutable, zero-length,
+    multiple fixed parameters, nullable shared and mutable arguments, and a
+    fixed parameter beside a counted span,
+    plus invalid shapes. A combined pointer parameter and borrowed reference
+    result exposed a C `const` mismatch in generated wrapper signatures;
+    the wrapper now declares the shared result as `const T*` and converts it
+    back to Ember's checked shared reference. Both fixed-array and counted-span
+    combinations have run-pass coverage. Hardened_32 already specifies
+    `fixed(N)` and borrowed results; this is a
+    compiler gap and needs no ODR or new hardening.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
