@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-065 | **CLOSED** — a borrow through a handle stored in an object (or a call made on one) goes through a retained copy to the end of the statement; kept longer it is `E3060`; `mem.drop` moves a handle (review of SP-010) | Language / Objects | — | **No** — delegated, 2026-09-26 |
 | ODR-064 | **CLOSED** — `alloc_array[T](n)` needs `T: Default` and calls it per element; `alloc_zeroed[T](n)` needs `T: Zeroable` and fills with zeros; neither stands in for the other, and zero-filling for `alloc_array` is allowed only where it is the same (a scalar's standard default) (SP-017) | Language / Memory | — | **Yes** — owner, 2026-09-26 |
 | ODR-063 | **CLOSED** — An object is deinitialised when its last strong owner ends as the source says, never earlier; an elision may remove a retain and release only when it moves no `drop`, `Weak.upgrade` outcome or foreign release (SP-014) | Language / Objects | — | **Yes** — owner, 2026-09-26 |
 | ODR-062 | **CLOSED** — The analyses read through calls by the inline header's specified expansion (`[CG-C-3]`), recursively until a call is recursive; the C compiler's decisions never change a verdict (SP-028) | Language / Dod | — | **Yes** — owner, 2026-09-26 |
@@ -218,6 +219,55 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-065 — a borrow through a handle stored in an object keeps its own copy — **CLOSED**
+
+    ID:        ODR-065
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation, after the review
+               the owner asked for of SP-010's access question (ODR-051's review gate);
+               incorporated in 0.9.9_Hardened_25
+    Category:  LANGUAGE / OBJECTS / MEMORY SAFETY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_24.md [RC-5], [EXC-17], [FN-9], [OWN-6];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-010
+
+    Question:  `[RC-5]` keeps an object alive for a borrow through a handle, but only the
+               borrow checker enforced it, and it cannot see a write through another
+               handle. A handle stored in a class object (a `Copy` field, so no access
+               word, `[EXC-17]`) can be overwritten while a borrow through it lives:
+               `r = ref p.child.v; q.child = Node(2); println(r)` read freed memory
+               (D-348). What keeps the object alive?
+
+    Blocks implementation:            YES — D-348 (memory safety)
+    Requires owner semantic decision:  delegated to the agent (owner, 2026-09-26: "check the
+                                       safety proposal")
+
+**Options and costs.** (a) Give every field holding a handle an access word
+(`[EXC-19]`), so the overwrite panics while a borrow lives: a runtime check on
+every such borrow and write, and the per-field words are not built. (b) Reject
+any borrow through a stored handle: `for x in p.child.items:` and
+`p.child.update()` would not compile. (c) Borrow through a retained copy of the
+stored handle, held to the end of the statement: calls and loops through it
+work unchanged, the object outlives the call, and only a borrow kept past its
+statement is refused, at compile time, with a one-line fix (bind the handle to a
+local). **(c)**, which is what `[RC-5]` already promises, made to hold.
+
+**Ruling.** (c). A handle stored in a class object's field or element is copied
+(retained) for a borrow of it or through it and for a call made on it or passed
+it; the copy lasts to the end of the statement. A method's `self` is the object
+it was called on for the whole call. A `mut` handle parameter is passed the copy,
+which is stored back into the place after the call, so the callee may re-point
+it (`[FN-9]`) and never holds another caller's storage; a borrow through a
+mutable reference to a stored handle is through a copy too. A shared borrow of a
+stored handle is of the copy, so a shared reference never points at one. `mem.drop(x)`
+moves `x`, a class handle included (D-347). `[FN-9]`'s `owned` wording is
+corrected: a handle read from a variable is passed as a retained copy and the
+variable keeps its own to its end (ODR-051 said "moved at its last use", which
+neither SP-010 nor the compiler does).
+
+**Implementation.** D-346, D-347, D-348 (`keep_handle_alive`, `MemDrop`, write-backs), D-349.
 
 ---
 
@@ -511,7 +561,7 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 **Ruling.** A copy is the value's bits plus a retain of each counted handle in it; no other copy runs code; a type with its own `drop` is never `Copy`. A struct may derive `Copy` when every field is `Copy`, handles included. An `owned` handle argument is the caller's moved when the call is its last use, else a retained copy.
 
-**Implementation.** The compiler already does all of this (probed 2026-09-26); the spec now says it. Review gate kept open: `Copy`-typed class fields with address-taken accesses (`[EXC-17]`, `[EXC-19]`), not changed here.
+**Implementation.** The compiler already does all of this (probed 2026-09-26); the spec now says it. Review gate: done 2026-09-26 at the owner's request; it found a use after free through handles stored in objects (D-348) and a `mem.drop` that ended nothing (D-347), ruled in ODR-065.
 
 ---
 

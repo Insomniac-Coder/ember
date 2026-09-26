@@ -852,3 +852,17 @@ The next number is ODR-027.
     `SyncShared[T]` need `T: Send + Sync` to be shared (ODR-052); `@must_drop` is structural
     (ODR-054); compile time never substitutes `det.sin` for `sin` (ODR-056); the formatter always
     writes LF, with no manifest switch (ODR-060).
+* **2026-09-26 — handles stored in objects (ODR-065; Hardened_25).**
+  * A borrow of or through a class handle stored in another object (`ref p.child`, `ref p.child.v`,
+    `ref p.nodes[0].v`) lasts to the end of its statement: kept longer it is
+    `E3060`, whose help is to bind the handle to a local first (`c = p.child`, then `ref c.v`).
+    Calls and loops through such a handle are unchanged, and the object now outlives a call made on
+    it even if the call overwrites the field. Before, the object could be freed while the borrow
+    lived (D-348).
+  * `mem.drop(h)` on a class handle ends `h` there: the object is dropped at once (when `h` was its
+    last owner) and using `h` afterwards is `E3040` (D-347).
+  * A `mut` handle parameter can be re-pointed (`n = Node(42)`), which panicked (D-349); given a
+    field (`repoint(p.child)`), the field is re-pointed after the call returns.
+  * A call made on a handle stored in an object (`holder.value.bump()`) retains it for the call.
+  * `L1001` no longer calls a handle "never read" when the program only writes through it (D-346).
+  * An associated type reached through a bound is shown as `T.Out`, not `Self.Out` (D-345).

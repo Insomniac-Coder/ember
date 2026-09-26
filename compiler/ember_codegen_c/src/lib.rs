@@ -4120,6 +4120,7 @@ impl Emitter<'_> {
                     | Builtin::MemTake { .. }
                     | Builtin::MemSwap { .. }
                     | Builtin::MemForget { .. }
+                    | Builtin::MemDrop { .. }
                     | Builtin::AlignOf
                     | Builtin::UnsafeCellIntoInner
                     | Builtin::RefCellBorrow

@@ -165,6 +165,17 @@ struct Builder<'a> {
     /// `[DRP-3]` — the temporaries the statement being lowered has made, and
     /// which end with it. Named locals go in `owned` and end with their block.
     statement_temps: Vec<LocalId>,
+    /// ODR-065 — a handle expression lowered as a retained temporary while a
+    /// borrow through it is lowered (`lower_borrowed_place`).
+    place_overrides: Vec<(*const hir::Expr, Place)>,
+    /// ODR-065 — the stored handles an explicit `mut` argument was copied
+    /// from, with the copy, to store back after the call.
+    write_backs: Vec<(Place, LocalId)>,
+    /// ODR-065 — the `mut` parameters, `self` among them: each points at a
+    /// caller's local or at the retained copy a caller made of a stored handle
+    /// (`lower_mut_argument_with_access`), never into an object, so a borrow
+    /// through one needs no copy.
+    mut_param_locals: Vec<hir::LocalId>,
     arg_count: usize,
     /// [TYP-8] -- this function's policy, from its attribute or the profile.
     overflow: OverflowPolicy,
@@ -229,7 +240,13 @@ impl<'a> Builder<'a> {
             None
         } else {
             function.params.first().and_then(|param| {
-                if param.mode != hir::Mode::Mut {
+                // `[EXC-15]` — a `mut self` method's whole-object write
+                // access. A function's `mut` handle parameter re-points the
+                // caller's handle and opens nothing on the object (`[FN-9]`);
+                // taking it for one made re-pointing panic (D-349).
+                if param.mode != hir::Mode::Mut
+                    || !function.local(param.local).name.is_some_and(|name| name.as_str() == "self")
+                {
                     return None;
                 }
                 let param_ty = function.local(param.local).ty;
@@ -287,6 +304,14 @@ impl<'a> Builder<'a> {
             defers: Vec::new(),
             owned,
             statement_temps: Vec::new(),
+            place_overrides: Vec::new(),
+            write_backs: Vec::new(),
+            mut_param_locals: function
+                .params
+                .iter()
+                .filter(|param| param.mode == hir::Mode::Mut)
+                .map(|param| param.local)
+                .collect(),
             arg_count,
             overflow: function.overflow,
             bool_ty: common.bool_,
@@ -502,6 +527,7 @@ impl<'a> Builder<'a> {
     fn lower_mut_argument_with_access(
         &mut self,
         expr: &'a hir::Expr,
+        receiver: bool,
     ) -> (Operand, Option<Place>) {
         let hir::ExprKind::Ref { place, mutable: true } = &expr.kind else {
             let operand = self.lower_operand_borrowed(expr);
@@ -509,7 +535,27 @@ impl<'a> Builder<'a> {
             return (operand, access);
         };
 
-        let lowered_place = self.lower_place(place);
+        // ODR-065 — a handle stored where another handle can overwrite it is
+        // passed to a `mut` parameter as a retained copy, so the object lives
+        // for the call and the callee sees no storage of anyone else's. A
+        // `mut self` is the object it was called on; an explicit `mut`
+        // parameter may re-point the handle (`[FN-9]`), so after the call the
+        // copy is stored back into the place, as an assignment would.
+        let lowered_place = if self.counted_handle(place.ty) && self.handle_in_shared_memory(place) {
+            let stored = self.lower_place(place);
+            let kept = self.temp(place.ty, place.span);
+            self.push(StmtKind::StorageLive(kept));
+            self.push(StmtKind::Assign {
+                place: Place::local(kept),
+                rvalue: Rvalue::Use(Operand::Copy(stored.clone())),
+            });
+            if !receiver {
+                self.write_backs.push((stored, kept));
+            }
+            Place::local(kept)
+        } else {
+            self.lower_borrowed_place(place)
+        };
         let temp = self.temp(expr.ty, expr.span);
         self.push(StmtKind::StorageLive(temp));
         self.push(StmtKind::Assign {
@@ -544,6 +590,16 @@ impl<'a> Builder<'a> {
             access
         };
         (Operand::Copy(Place::local(temp)), access)
+    }
+
+    /// ODR-065 — store the copies explicit `mut` arguments were given back
+    /// into the places they were read from, releasing what those hold now.
+    fn emit_write_backs(&mut self, mark: usize) {
+        let pending: Vec<(Place, LocalId)> = self.write_backs.drain(mark..).collect();
+        for (stored, kept) in pending {
+            self.push(StmtKind::Drop { place: stored.clone(), flag: None });
+            self.push(StmtKind::Assign { place: stored, rvalue: Rvalue::Use(Operand::Copy(Place::local(kept))) });
+        }
     }
 
     fn lower_block(&mut self, block: &'a hir::Block) {
@@ -1188,6 +1244,21 @@ impl<'a> Builder<'a> {
 
     /// `[OWN-6]` — consume the operand through ordinary move lowering, then
     /// deliberately provide no owner that could run its destructor.
+    /// `[OWN-6]` — `mem.drop(x)` moves `x` into a temporary that the
+    /// statement's end drops. A local is moved even when its type is `Copy`
+    /// (a class handle), so the local no longer owns anything and `[OWN-3]`
+    /// reports a later use (D-347, ODR-063).
+    fn lower_mem_drop(&mut self, value: &'a hir::Expr, elem: Ty, span: ember_span::Span) {
+        let operand = match &value.kind {
+            hir::ExprKind::Local(_) if self.types.needs_drop(elem) => Operand::Move(self.lower_place(value)),
+            _ => self.lower_operand(value),
+        };
+        self.at(span);
+        let temp = self.temp(elem, span);
+        self.push(StmtKind::StorageLive(temp));
+        self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(operand) });
+    }
+
     fn lower_mem_forget(
         &mut self,
         dest: Place,
@@ -1736,6 +1807,7 @@ impl<'a> Builder<'a> {
                 self.current = next;
             }
             hir::ExprKind::Call { callee, arg_eval_order, args, latebound } => {
+                let write_back_mark = self.write_backs.len();
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
                 // `[FN-1]` — the mode decides. `owned` consumes, so the
@@ -1745,6 +1817,10 @@ impl<'a> Builder<'a> {
                 // from block A: every argument was borrowed, so an `owned`
                 // parameter silently did not take ownership.
                 let modes: Vec<hir::Mode> = function.params.iter().map(|p| p.mode).collect();
+                let takes_self = function
+                    .params
+                    .first()
+                    .is_some_and(|param| function.local(param.local).name.is_some_and(|name| name.as_str() == "self"));
                 let mut class_accesses = Vec::new();
                 let eval_order = arg_eval_order
                     .clone()
@@ -1754,7 +1830,7 @@ impl<'a> Builder<'a> {
                 for index in eval_order {
                     let Some(a) = args.get(index) else { continue };
                     let operand = if matches!(modes.get(index), Some(hir::Mode::Mut)) {
-                        let (operand, access) = self.lower_mut_argument_with_access(a);
+                        let (operand, access) = self.lower_mut_argument_with_access(a, index == 0 && takes_self);
                         if let Some(place) = access {
                             class_accesses.push(place);
                         }
@@ -1790,6 +1866,7 @@ impl<'a> Builder<'a> {
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
+                self.emit_write_backs(write_back_mark);
             }
             hir::ExprKind::InterfaceCall {
                 interfaces,
@@ -1816,8 +1893,9 @@ impl<'a> Builder<'a> {
                     }
                     _ => false,
                 };
+                let write_back_mark = self.write_backs.len();
                 let (lowered_receiver, receiver_access) = if class_handle_receiver {
-                    self.lower_mut_argument_with_access(receiver)
+                    self.lower_mut_argument_with_access(receiver, true)
                 } else {
                     (self.lower_operand_borrowed(receiver), None)
                 };
@@ -1834,7 +1912,7 @@ impl<'a> Builder<'a> {
                     let Some(arg) = args.get(index) else { continue };
                     let operand = match modes.get(index).copied() {
                         Some(hir::Mode::Mut) => {
-                            let (operand, access) = self.lower_mut_argument_with_access(arg);
+                            let (operand, access) = self.lower_mut_argument_with_access(arg, false);
                             if let Some(place) = access {
                                 class_accesses.push(place);
                             }
@@ -1874,6 +1952,7 @@ impl<'a> Builder<'a> {
                 for access in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place: access, mutable: true });
                 }
+                self.emit_write_backs(write_back_mark);
             }
             // `[RNG-3]` — `T.checked(v) -> Result[T, RangeError]`. Two
             // compares and a branch, building `Ok(v)` or `Err(OutOfRange)`.
@@ -1885,6 +1964,7 @@ impl<'a> Builder<'a> {
             // `Option` variants.
             // `[CLO-3]` — a call through a value of function type.
             hir::ExprKind::CallIndirect { callee, args, consumes_callee, latebound } => {
+                let write_back_mark = self.write_backs.len();
                 // `[CLO-6]` — the mode on `f`, not the callable's argument
                 // modes, selects `Callable` versus `CallableOnce`. A once
                 // call consumes the callee place even though the erased call
@@ -1911,7 +1991,7 @@ impl<'a> Builder<'a> {
                     .enumerate()
                     .map(|(index, a)| {
                         if matches!(callable_modes.as_ref().and_then(|modes| modes.get(index)), Some(ember_types::FnParamMode::Mut)) {
-                            let (operand, access) = self.lower_mut_argument_with_access(a);
+                            let (operand, access) = self.lower_mut_argument_with_access(a, false);
                             if let Some(place) = access {
                                 class_accesses.push(place);
                             }
@@ -1944,6 +2024,7 @@ impl<'a> Builder<'a> {
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
+                self.emit_write_backs(write_back_mark);
             }
             hir::ExprKind::ClassNew {
                 class_id,
@@ -2099,6 +2180,13 @@ impl<'a> Builder<'a> {
                 args,
             } => {
                 self.lower_mem_forget(place, &args[0], *elem, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::MemDrop { elem },
+                args,
+            } => {
+                self.lower_mem_drop(&args[0], *elem, expr.span);
+                self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Const(Const::Void)) });
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::AlignOf,
@@ -5200,7 +5288,14 @@ impl<'a> Builder<'a> {
                 Rvalue::Aggregate { kind: AggregateKind::Enum(*enum_id, *variant), operands }
             }
             hir::ExprKind::Ref { place, mutable } => {
-                let place = self.lower_place(place);
+                // ODR-065 — a shared borrow *of* a stored handle is of a
+                // retained copy; a mutable one keeps the place, so writes
+                // through it re-point the field.
+                let place = if !*mutable && self.counted_handle(place.ty) && self.handle_in_shared_memory(place) {
+                    self.keep_handle_alive(place)
+                } else {
+                    self.lower_borrowed_place(place)
+                };
                 Rvalue::Ref { place, mutable: *mutable }
             }
             _ => Rvalue::Use(self.lower_operand(expr)),
@@ -5835,6 +5930,13 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_operand_borrowed(&mut self, expr: &'a hir::Expr) -> Operand {
+        // ODR-065 — a handle lent to a callee from a class object's memory
+        // is retained for the call: the callee may overwrite that field
+        // through another handle while it uses the object.
+        if self.counted_handle(expr.ty) && self.handle_in_shared_memory(expr) {
+            let temp = self.keep_handle_alive(expr);
+            return Operand::Copy(temp);
+        }
         match self.lower_operand(expr) {
             Operand::Move(place) => Operand::Copy(place),
             other => other,
@@ -5846,7 +5948,94 @@ impl<'a> Builder<'a> {
         if self.types.is_copy(ty) { Operand::Copy(place) } else { Operand::Move(place) }
     }
 
+    /// A class handle, whose object the borrow checker cannot see other
+    /// handles reach.
+    fn counted_handle(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+    }
+
+    /// The class handle a place's last step goes through (`p.child` in
+    /// `p.child.items[0]`), if any: the nearest base of handle type.
+    fn innermost_handle<'b>(&self, expr: &'b hir::Expr) -> Option<&'b hir::Expr> {
+        let mut current = expr;
+        loop {
+            let base = match &current.kind {
+                hir::ExprKind::Field { base, .. }
+                | hir::ExprKind::EnumField { base, .. }
+                | hir::ExprKind::Index { base, .. } => base,
+                hir::ExprKind::Deref(inner) => inner,
+                _ => return None,
+            };
+            if self.counted_handle(base.ty) {
+                return Some(base);
+            }
+            current = base;
+        }
+    }
+
+    /// ODR-065 — whether the handle `handle` names is stored where another
+    /// handle can overwrite it while this function uses it: in a class
+    /// object (`p.child`, `p.nodes[i]`), or behind a mutable reference that
+    /// may point at one. A shared reference never does — a shared borrow of a
+    /// stored handle is a borrow of a retained copy — and a `mut` parameter
+    /// never does: its caller passes a local, or a copy (`mut_param_locals`).
+    fn handle_in_shared_memory(&self, handle: &hir::Expr) -> bool {
+        let mut current = handle;
+        loop {
+            match &current.kind {
+                hir::ExprKind::Field { base, .. }
+                | hir::ExprKind::EnumField { base, .. }
+                | hir::ExprKind::Index { base, .. } => {
+                    if self.counted_handle(base.ty) {
+                        return true;
+                    }
+                    current = base;
+                }
+                hir::ExprKind::Deref(inner) => {
+                    let mutable = matches!(self.types.kind(inner.ty), TyKind::Ref { mutable: true, .. });
+                    return mutable
+                        && !matches!(&inner.kind, hir::ExprKind::Local(local) if self.mut_param_locals.contains(local));
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// ODR-065 (SP-010), `[RC-5]` — a borrow through a class handle keeps
+    /// the object alive until the borrow's last use. A handle in a local is
+    /// kept by the borrow checker; one stored in a class object's memory
+    /// (`p.child`, `p.nodes[i]`) can be overwritten through another handle
+    /// while the borrow lives, releasing the object. So that handle is
+    /// copied, retaining it, into a temporary the statement's end releases
+    /// (`[EXP-4]`), and the borrow goes through the copy: a borrow that
+    /// outlives the statement outlives the temporary, `E3060`.
+    fn keep_handle_alive(&mut self, handle: &'a hir::Expr) -> Place {
+        let temp = self.temp(handle.ty, handle.span);
+        self.push(StmtKind::StorageLive(temp));
+        self.lower_into(Place::local(temp), handle);
+        Place::local(temp)
+    }
+
+    /// The place a borrow takes, through a retained copy of its innermost
+    /// handle when that handle is stored in an object (`keep_handle_alive`).
+    fn lower_borrowed_place(&mut self, expr: &'a hir::Expr) -> Place {
+        let Some(handle) = self.innermost_handle(expr) else { return self.lower_place(expr) };
+        if !self.handle_in_shared_memory(handle) {
+            return self.lower_place(expr);
+        }
+        let kept = self.keep_handle_alive(handle);
+        self.place_overrides.push((handle as *const hir::Expr, kept));
+        let place = self.lower_place(expr);
+        self.place_overrides.pop();
+        place
+    }
+
     fn lower_place(&mut self, expr: &'a hir::Expr) -> Place {
+        if let Some((_, place)) =
+            self.place_overrides.iter().rev().find(|(overridden, _)| std::ptr::eq(*overridden, expr))
+        {
+            return place.clone();
+        }
         match &expr.kind {
             hir::ExprKind::Local(local) => Place::local(self.local_map[local.0 as usize]),
             hir::ExprKind::Field { base, index } => self.lower_place(base).field(*index),

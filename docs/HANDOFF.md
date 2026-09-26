@@ -10736,26 +10736,30 @@ the running narrative behind it.
     green), `4883eab` (D-305 and `for x in owned e`, D-340, D-341; CI
     green), `b8ad4ec` (D-284: ODR-048, Hardened_23; D-342 open; CI green),
     `f93d3c9` (B2's first: D-273, D-270, D-328; CI green), then the
-    owner's simplification pass (ODR-049 to ODR-064, Hardened_24; D-343 and
-    D-344 fixed, D-345 open). From the
+    owner's simplification pass (`4d98804`: ODR-049 to ODR-064, Hardened_24;
+    D-343, D-344; CI green), then the SP-010 safety review (ODR-065,
+    Hardened_25; D-345 to D-349), and the README rewritten. From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_24.md`
-  (ODR-049 to ODR-064), pinned in `docs/spec-source/development-target.json`.
-  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h24/` is
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_25.md`
+  (ODR-065), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h25/` is
   frozen.
-* **Next numbers:** ODR-065, D-346, ADR-059.
+* **Next numbers:** ODR-066, D-350, ADR-059.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
   no text). Still the owner's to decide, one by one: Part II's SP-007,
   SP-013, SP-016, SP-031. Deferred: Part III (package-private bound
-  inference) until the rest is done; Part IV is backlog. One review gate is
-  open: SP-010's `Copy`-typed class fields with address-taken accesses
-  (`[EXC-17]`, `[EXC-19]`), recorded in ODR-051.
+  inference) until the rest is done; Part IV is backlog. SP-010's review
+  gate is done (ODR-065, below). **The owner then said (2026-09-26): adopt
+  SP-007, SP-013, SP-016 and SP-031, close the whole old defect queue
+  (D-198, D-201, D-202, D-218, D-220, D-331, D-342), check SP-010's safety
+  question and fix D-345.** Done: D-345, the SP-010 review. Next: the four
+  proposals, then the defects.
 * **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
   way: D-273, D-270 and D-328 are fixed. Next: D-345 (a display), D-218, D-220, D-202, D-201,
   D-198, D-342 (a temporary's end for the region check: the loans must tell
@@ -11080,6 +11084,27 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     build inputs (061), inlining (062), early deinitialisation, `L3019`
     retired (063).
   * D-345 (open): an associated type through a bound displays as `Self.Out`.
+* **Then D-345, and the SP-010 review (ODR-065, Hardened_25).** D-345:
+  `project` makes a body's hidden parameter for `T.Out` when it first
+  reaches it through a bound (`no_lazy_projection` keeps an operator's
+  unsaid `Output` at `[IFC-4]`'s `E2040`). The review found a use after free
+  in Safe code (D-348): a borrow through a handle stored in an object, or a
+  call made on one, while another handle overwrites the field. MIR now
+  borrows through a retained copy in a statement temporary
+  (`handle_in_shared_memory`, `keep_handle_alive`, `lower_borrowed_place`,
+  `place_overrides`; receivers and borrowed arguments too); kept past the
+  statement it is `E3060` with a handle-specific help. Also D-347
+  (`mem.drop` of a handle ended nothing: `hir::Builtin::MemDrop`, a move)
+  and D-346 (`L1001` on a handle only written through). ODR-051's `[FN-9]`
+  wording was wrong (an `owned` handle read from a variable is a copy; the
+  variable keeps its own) and is corrected. A `mut` handle argument read from
+  an object is a copy stored back after the call (`write_backs`), so callees
+  need no copies; `mut_param_locals` knows a `mut` parameter never points
+  into an object. D-349: re-pointing a `mut` handle parameter panicked (the
+  `mut self` entry access was taken for any first `mut` handle parameter).
+  The `[EXC-8]` hoisting matcher accepts the receiver copy and its release
+  (`setup_references` returns the copies; `apply` keeps the release). Two
+  run-pass tests pinned the unsafe no-retain call; their counts changed.
 
 **The owner's standing instructions (all still in force)**
 

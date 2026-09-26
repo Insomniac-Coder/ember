@@ -334,6 +334,8 @@ ODRS = [
      '`[RC-3]`'),
     ('ODR-064', '`alloc_array` initialises with `Default`, `alloc_zeroed` fills with zeros for a `Zeroable` `T`; a struct is `Zeroable` by `@derive(Zeroable)` — SP-017 (Hardened_24)',
      '`[ARN-3]`, `[ARN-11]`'),
+    ('ODR-065', 'a borrow through a handle stored in an object, or a call made on one, goes through a retained copy that lasts to the end of the statement; kept longer it is `E3060`; `mem.drop` moves a handle — review of SP-010 (Hardened_25)',
+     '`[RC-5]`, `[EXC-17]`, `[FN-9]`, `[OWN-6]`'),
 ]
 
 H5_HEAD = """
@@ -347,7 +349,8 @@ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Ha
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
 Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
 Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
-ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`).
+ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
+Hardened_25 adds ODR-065, the review of SP-010's access question.
 
 | ODR | Ruling | Rules |
 |---|---|---|

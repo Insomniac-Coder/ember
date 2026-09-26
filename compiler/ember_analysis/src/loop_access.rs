@@ -140,25 +140,32 @@ fn candidate(
     {
         return None;
     }
-    // The matching end must be the whole post-call block.  This both proves
-    // that the access cannot escape the source iteration and gives the rewrite
-    // a single, total continuation path.
-    if end_block.stmts.len() != 1
-        || !matches!(
-            &end_block.stmts[0].kind,
-            StmtKind::EndAccess { place: end_place, mutable: end_mutable }
-                if end_place == &place && *end_mutable == mutable
-        )
-    {
-        return None;
-    }
-
-    let setup_refs = setup_references(
+    let (setup_refs, kept) = setup_references(
         body,
         types,
         &loop_body.stmts[..begin_index],
         place.local,
     )?;
+    // The matching end opens the post-call block, and all that may follow it
+    // there is the release of the receiver copies ODR-065 retains for the call
+    // (`kept`). This both proves that the access cannot escape the source
+    // iteration and gives the rewrite a single, total continuation path. The
+    // modelled callee (below) touches no field of the object, so each copy's
+    // release finds the field still holding the handle and runs no code.
+    if end_block.stmts.is_empty()
+        || !matches!(
+            &end_block.stmts[0].kind,
+            StmtKind::EndAccess { place: end_place, mutable: end_mutable }
+                if end_place == &place && *end_mutable == mutable
+        )
+        || !end_block.stmts[1..].iter().all(|statement| match &statement.kind {
+            StmtKind::Drop { place: dropped, .. } => dropped.projection.is_empty() && kept.contains(&dropped.local),
+            StmtKind::StorageDead(local) => kept.contains(local) || setup_refs.contains(local),
+            _ => false,
+        })
+    {
+        return None;
+    }
     if !direct_call_is_modelled_for_setup_fields(func, args, place.local, &setup_refs, contracts) {
         return None;
     }
@@ -194,11 +201,32 @@ fn setup_references(
     types: &TypeTable,
     statements: &[Stmt],
     root: LocalId,
-) -> Option<Vec<LocalId>> {
+) -> Option<(Vec<LocalId>, Vec<LocalId>)> {
     let mut references = Vec::new();
+    // ODR-065 — a receiver read from the object's own field is a retained
+    // copy of it, borrowed for the call.
+    let mut kept = Vec::new();
     for statement in statements {
         match &statement.kind {
             StmtKind::StorageLive(_) => {}
+            StmtKind::Assign { place: copy, rvalue: Rvalue::Use(Operand::Copy(field)) }
+                if copy.projection.is_empty()
+                    && field.local == root
+                    && !field.projection.is_empty()
+                    && matches!(types.kind(body.local(copy.local).ty), TyKind::Class(_)) =>
+            {
+                kept.push(copy.local)
+            }
+            StmtKind::Assign {
+                place: destination,
+                rvalue: Rvalue::Ref { place: borrowed, mutable: true },
+            } if destination.projection.is_empty()
+                && borrowed.projection.is_empty()
+                && kept.contains(&borrowed.local)
+                && is_distinct_class_reference(body, types, root, destination.local) =>
+            {
+                references.push(destination.local)
+            }
             StmtKind::Assign {
                 place: destination,
                 rvalue:
@@ -216,7 +244,7 @@ fn setup_references(
             _ => return None,
         }
     }
-    Some(references)
+    Some((references, kept))
 }
 
 /// A direct callee must have a verified finite summary, and each summarized
@@ -435,7 +463,8 @@ fn apply(body: &mut Body, candidate: Candidate) {
         terminator: Terminator::Goto(begin_block),
         terminator_span: original_body.terminator_span,
     };
-    body.blocks[candidate.end].stmts.clear();
+    // The access ends at the loop's exit now; the copies' releases stay.
+    body.blocks[candidate.end].stmts.remove(0);
     body.blocks[candidate.step].terminator = Terminator::Goto(steady_header);
 
     body.blocks.push(BasicBlock {

@@ -2063,7 +2063,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if !sink.has_errors() {
         verify_callable_regions_or_panic(&bodies, &types);
     }
-    ember_analysis::check_unused_all(&bodies, &mut sink);
+    ember_analysis::check_unused_all(&bodies, &types, &mut sink);
     // `[DIA-7]` — a borrow error the classifier could not place is recorded
     // rather than left to be noticed. CI fails when the conformance suite
     // produces any, which is what stops an unexplained rejection shipping.

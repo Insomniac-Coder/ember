@@ -963,6 +963,10 @@ struct Checker<'a> {
     /// `[IFC-4]` — while a signature is read, the hidden parameter each
     /// `T.Name` it mentions stands for.
     projection_params: HashMap<(Symbol, Symbol), Ty>,
+    /// D-345 — whether `project` may make a hidden parameter for a `T.Name`
+    /// a body reaches through a bound. An operator's result does not take
+    /// one: `[IFC-4]` makes an unsaid `Output` `E2040` at the operator.
+    no_lazy_projection: bool,
     /// Instantiations reached so far, so each is emitted once (`[MONO-1]`).
     instances: HashMap<Instance, DefId>,
     /// `[LT-1]` (ODR-024) — each instantiation's generic declaration, whose
@@ -1292,6 +1296,7 @@ impl<'a> Checker<'a> {
             block_interfaces: Vec::new(),
             accept_bindings: false,
             projection_params: HashMap::new(),
+            no_lazy_projection: false,
             instances: HashMap::new(),
             generic_of: HashMap::new(),
             generic_structs: HashMap::new(),
@@ -8033,6 +8038,8 @@ impl<'a> Checker<'a> {
             "swap"
         } else if resolved.is("std.mem.forget") {
             "forget"
+        } else if resolved.is("std.mem.drop") {
+            "drop"
         } else {
             return None;
         };
@@ -8070,6 +8077,13 @@ impl<'a> Checker<'a> {
                     which: Builtin::MemForget { elem },
                     args: vec![first],
                 },
+                span,
+            });
+        }
+        if operation == "drop" {
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::MemDrop { elem }, args: vec![first] },
                 span,
             });
         }
@@ -18088,7 +18102,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let ret = self.signatures[declaration.0 as usize].ret;
         let ret = self.substitute_self(ret, concrete);
         let saved_instance = self.assoc_instance.replace(bound);
+        let saved_lazy = std::mem::replace(&mut self.no_lazy_projection, true);
         let ret = self.resolve_assoc(ret, concrete);
+        self.no_lazy_projection = saved_lazy;
         self.assoc_instance = saved_instance;
         // `T: Add` says nothing of `Output`: the result is a `T.Output`,
         // which only a signature naming it can hold.
@@ -23141,7 +23157,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let Some(&value) = self.assoc_values.get(&(ty, name)) {
             return Some(value);
         }
-        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
+        let TyKind::Param { index, name: base_name } = *self.types.kind(ty) else { return None };
         // `[TYP-17]` — `T: Add[Output = T]` says what `T`'s `Output` is.
         if let Some(param) = self.current_generics.get(index as usize)
             && let Some(&(_, _, value)) = param
@@ -23151,9 +23167,36 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return Some(value);
         }
-        let (slot, param) =
-            self.current_generics.iter().enumerate().find(|(_, param)| param.projection == Some((index, name)))?;
-        let param_name = param.name;
+        if let Some((slot, param)) =
+            self.current_generics.iter().enumerate().find(|(_, param)| param.projection == Some((index, name)))
+        {
+            let param_name = param.name;
+            return Some(self.types.intern(TyKind::Param { index: slot as u32, name: param_name }));
+        }
+        // D-345 — a body reaches `T.Name` through a bound its signature does
+        // not name (`a.combine(b)`): a hidden parameter for it now, bounded as
+        // `Name` is declared, so it reads `T.Name` and its bounds provide.
+        // Only the body sees it; a caller never has to fill it in.
+        if self.no_lazy_projection {
+            return None;
+        }
+        let base = self.current_generics.get(index as usize)?;
+        if base.name != base_name || base.projection.is_some() {
+            return None;
+        }
+        let bounds = base.bounds.clone().into_iter().find_map(|bound| {
+            self.interface_assoc(bound).into_iter().find(|(assoc, _)| *assoc == name).map(|(_, bounds)| bounds)
+        })?;
+        let slot = self.current_generics.len();
+        let param_name = Symbol::intern(&format!("{base_name}.{name}"));
+        self.current_generics.push(GenericParam {
+            name: param_name,
+            bounds,
+            callable: None,
+            default: None,
+            projection: Some((index, name)),
+            bindings: Vec::new(),
+        });
         Some(self.types.intern(TyKind::Param { index: slot as u32, name: param_name }))
     }
 

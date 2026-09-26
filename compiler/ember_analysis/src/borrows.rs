@@ -3257,11 +3257,22 @@ fn check_point(
                 if let Some(later) = later {
                     diagnostic = diagnostic.secondary(later, "borrow later used here");
                 }
-                sink.emit_classified(
+                // ODR-065 — the temporary is a handle read out of an object
+                // to keep what it points to alive for the borrow.
+                let handle = matches!(
+                    types.kind(body.local(loan_place.local).ty),
+                    ember_types::TyKind::Class(_) | ember_types::TyKind::ClassInterface(_)
+                );
+                let diagnostic = if handle {
+                    diagnostic
+                        .help("bind the handle to a variable first (`c = p.child`), and borrow through that")
+                        .note("a handle stored in an object can be replaced through another handle, which would free what the borrow points into; the borrow keeps its own copy only to the end of the statement [RC-5]")
+                } else {
                     diagnostic
                         .help("bind the value to a variable first, so it lives as long as the borrow")
-                        .note("a temporary lives to the end of the statement that makes it [EXP-4]"),
-                );
+                        .note("a temporary lives to the end of the statement that makes it [EXP-4]")
+                };
+                sink.emit_classified(diagnostic);
                 continue;
             }
             // `[CTL-2]` survives `for` desugaring as an explicit semantic

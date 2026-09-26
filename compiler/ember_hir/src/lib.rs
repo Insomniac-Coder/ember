@@ -928,6 +928,11 @@ pub enum Builtin {
     MemSwap { elem: Ty },
     /// `[OWN-6]` — consume one value and deliberately suppress its drop.
     MemForget { elem: Ty },
+    /// `[OWN-6]` — `mem.drop(x)`: ends `x`'s ownership now. For a `Copy`
+    /// value that needs drop (a class handle), passing it `owned` would pass
+    /// a retained copy and end nothing (D-347, ODR-063), so the place is
+    /// moved. MIR lowers it; it never reaches the backend.
+    MemDrop { elem: Ty },
     /// `[SPN-2]` — `s.len()`. The length field of the view.
     SpanLen,
     /// `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the checked-without-panic
@@ -1218,6 +1223,7 @@ impl Builtin {
             Builtin::MemTake { .. } => "take",
             Builtin::MemSwap { .. } => "swap",
             Builtin::MemForget { .. } => "forget",
+            Builtin::MemDrop { .. } => "drop",
             // `[RNG-10]`'s construction set. Named as they are
             // written, so a diagnostic quoting one reads as source.
             Builtin::SpanLen => "len",

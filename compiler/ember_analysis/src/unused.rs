@@ -26,20 +26,31 @@ use ember_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Term
 
 /// Each instance of a generic function is its own body; a binding its source
 /// never reads is reported once, at its declaration, not once per instance.
-pub fn check_all(bodies: &[Body], sink: &mut Sink) {
+pub fn check_all(bodies: &[Body], types: &ember_types::TypeTable, sink: &mut Sink) {
     let mut reported = HashSet::new();
     for body in bodies {
-        check(body, sink, &mut reported);
+        check(body, types, sink, &mut reported);
     }
 }
 
-fn check(body: &Body, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
+fn check(body: &Body, types: &ember_types::TypeTable, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
     let mut read = HashSet::new();
     for block in &body.blocks {
         for stmt in &block.stmts {
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     mark_place_indices(place, &mut read);
+                    // D-346 — `q.child = n` through a class handle reads `q`
+                    // to reach the object; only a value's own field is a
+                    // write to the local.
+                    if !place.projection.is_empty()
+                        && matches!(
+                            types.kind(body.local(place.local).ty),
+                            ember_types::TyKind::Class(_) | ember_types::TyKind::ClassInterface(_)
+                        )
+                    {
+                        read.insert(place.local);
+                    }
                     mark_rvalue(rvalue, &mut read);
                 }
                 StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
