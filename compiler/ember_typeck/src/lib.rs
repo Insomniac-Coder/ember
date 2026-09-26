@@ -10632,7 +10632,7 @@ impl<'a> Checker<'a> {
             if decl.abi.is_some() && decl.body.is_none() && !decl.is_foreign_decl {
                 self.error(codes::E0100, decl.name.span, "a bodyless foreign declaration belongs in an `unsafe extern` block");
             }
-            self.check_foreign_signature(decl, def);
+            self.check_foreign_signature(decl, def, &item.attrs);
 
             // `[TYP-17]` — a generic body is checked **once**, with its
             // parameters opaque, so that using an operation its bounds do not
@@ -11146,7 +11146,7 @@ impl<'a> Checker<'a> {
     /// would let a foreign caller manufacture a range value that never passed a
     /// check, and `[RNG-9]` makes that undefined behaviour rather than a wrong
     /// number.
-    fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId) {
+    fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId, attrs: &[ast::Attribute]) {
         if decl.abi.is_none() {
             return;
         }
@@ -11167,6 +11167,7 @@ impl<'a> Checker<'a> {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
+        let contracts = ffi_param_contracts(attrs);
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if let TyKind::Param { index, .. } = this.types.kind(ty)
                 && this.signatures[def.0 as usize].generics.get(*index as usize)
@@ -11212,8 +11213,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
             }
         };
-        for (name, ty, mode, span) in signature {
-            check(self, ty, span, format!("`{name}` is this parameter"));
+        for &(name, ty, mode, span) in &signature {
+            if decl.is_foreign_decl && decl.is_safe
+                && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
+                if !self.types.is_ffi_safe(*inner) {
+                    self.error(codes::E5050, span,
+                        format!("`{name}` refers to a type with no foreign representation"));
+                }
+            } else {
+                check(self, ty, span, format!("`{name}` is this parameter"));
+            }
             if mode == Mode::Borrow && self.types.is_ffi_safe(ty) && self.types.passed_by_address(ty) {
                 self.error(codes::E0900, span,
                     "a borrowed aggregate at a C boundary needs by-value ABI lowering, which is not implemented yet");
@@ -11222,12 +11231,48 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if ret != self.common.void {
             check(self, ret, decl.name.span, "this is the return type".to_string());
         }
+        if decl.is_foreign_decl {
+            for &(contract_name, kind) in &contracts {
+                let contract_param = signature.iter().find(|(name, _, _, _)| *name == contract_name);
+                match contract_param {
+                    None => self.error(codes::E5002, decl.name.span,
+                        format!("`@ffi` names no parameter `{contract_name}`")),
+                    Some(&(_, ty, mode, _)) if !self.foreign_pointer_contract_required(ty) => {
+                        let matches_safe_form = match kind {
+                            FfiPointerContract::MutOne => mode == Mode::Mut && self.types.is_ffi_safe(ty),
+                            FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
+                                self.types.kind(ty), TyKind::Ref { mutable: false, inner }
+                                    if self.types.is_ffi_safe(*inner)),
+                        };
+                        if !matches_safe_form {
+                            self.error(codes::E5002, decl.name.span,
+                                format!("`@ffi` contract for `{contract_name}` needs a pointer carrier"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         if decl.is_foreign_decl && decl.is_safe {
-            let params = self.signatures[def.0 as usize].params.clone();
-            for (name, ty, _, span) in params {
-                if self.foreign_pointer_contract_required(ty) {
+            for &(name, ty, mode, span) in &signature {
+                let contract = contracts.iter().find(|(slot, _)| *slot == name).map(|(_, kind)| *kind);
+                if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) {
                     self.error(codes::E5002, span,
-                        format!("`safe fn` needs an `@ffi` contract for pointer parameter `{name}`"));
+                        format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
+                }
+                if matches!(self.types.kind(ty), TyKind::Ref { .. })
+                    && contract != Some(FfiPointerContract::SharedOne) {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` contract for reference parameter `{name}`"));
+                }
+                if self.foreign_pointer_contract_required(ty) {
+                    if contract.is_some() {
+                        self.error(codes::E5002, span,
+                            format!("`safe fn` cannot expose raw pointer parameter `{name}`"));
+                    } else {
+                        self.error(codes::E5002, span,
+                            format!("`safe fn` needs an `@ffi` contract for pointer parameter `{name}`"));
+                    }
                 }
             }
             if self.foreign_pointer_contract_required(ret) {
@@ -23755,12 +23800,34 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         self.error(codes::E0104, attr.span, "a foreign declaration has only one `@ffi` attribute");
                     }
                     saw_ffi = true;
-                    match ffi_link_name_attr(attr) {
-                        Some(symbol) if c_link_identifier(symbol) => {}
-                        Some(_) => self.error(codes::E0900, attr.span,
-                            "a `link_name` that is not a C identifier is not implemented yet"),
-                        None => self.error(codes::E0900, attr.span,
-                            "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
+                    let mut saw_link_name = false;
+                    let mut contracted = HashSet::new();
+                    for arg in &attr.args {
+                        match arg {
+                            ast::AttrArg::Named { name, .. } if name.name.is("link_name") => {
+                                if saw_link_name {
+                                    self.error(codes::E0104, attr.span, "duplicate `link_name` in `@ffi`");
+                                }
+                                saw_link_name = true;
+                                match ffi_link_name_arg(arg) {
+                                    Some(symbol) if c_link_identifier(symbol) => {}
+                                    Some(_) => self.error(codes::E0900, attr.span,
+                                        "a `link_name` that is not a C identifier is not implemented yet"),
+                                    None => self.error(codes::E0900, attr.span,
+                                        "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
+                                }
+                            }
+                            _ => {
+                                if let Some((name, _)) = ffi_param_contract_arg(arg) {
+                                    if !contracted.insert(name) {
+                                        self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
+                                    }
+                                } else {
+                                    self.error(codes::E0900, attr.span,
+                                        "only `@ffi` link names and borrowed-one pointer contracts are implemented yet");
+                                }
+                            }
+                        }
                     }
                 } else if attr.path.len() == 1 && attr.path[0].name.is("safety") {
                     // Validity and the obligation lint are checked above.
@@ -34040,7 +34107,11 @@ fn attr_argument(attrs: &[ast::Attribute], name: &str) -> Option<Symbol> {
 /// foreign function. Keep the extraction shared by emitted C and the module
 /// interface so a renamed symbol never changes only one side of a call.
 fn ffi_link_name_attr(attr: &ast::Attribute) -> Option<&str> {
-    let [ast::AttrArg::Named { name, value }] = attr.args.as_slice() else { return None };
+    attr.args.iter().find_map(ffi_link_name_arg)
+}
+
+fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
+    let ast::AttrArg::Named { name, value } = arg else { return None };
     if !name.name.is("link_name") {
         return None;
     }
@@ -34052,6 +34123,51 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .and_then(ffi_link_name_attr)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FfiPointerContract {
+    SharedOne,
+    MutOne,
+}
+
+/// ODR-073's first direct-declaration pointer contracts: borrowed single
+/// places passed as one C pointer. Other contract forms stay `E0900` until
+/// their safe surface and ABI lowering are built together.
+fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContract)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) {
+        return None;
+    }
+    if args.iter().any(|arg| arg.name.is_some()) || !(3..=4).contains(&args.len()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed"))
+        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let kind = if args.len() == 3 {
+        FfiPointerContract::SharedOne
+    } else if ffi_contract_word(&args[3].value).is_some_and(|word| word.is("exclusive")) {
+        FfiPointerContract::MutOne
+    } else {
+        return None;
+    };
+    Some((name, kind))
+}
+
+fn ffi_contract_word(expr: &ast::Expr) -> Option<Symbol> {
+    let ast::ExprKind::Path { segments } = &expr.kind else { return None };
+    (segments.len() == 1).then_some(segments[0].name)
+}
+
+fn ffi_param_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, FfiPointerContract)> {
+    attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .map(|attr| attr.args.iter().filter_map(ffi_param_contract_arg).collect())
+        .unwrap_or_default()
 }
 
 /// A C declaration cannot spell an arbitrary linker symbol portably. Names

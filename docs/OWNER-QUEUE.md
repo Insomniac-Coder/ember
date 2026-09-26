@@ -51,6 +51,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
 | ODR-072 | **CLOSED** — in a class method `self` names the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (D-361) | Language / classes | — | **No** — delegated, 2026-09-26 |
+| ODR-073 | **CLOSED** — hand-declared pointer facts use `@ffi(param(name, words...), result(words...))`; `safe fn` exposes the safe Ember type produced by those facts, never a raw pointer | Language / C interop / safety | — | **No** — delegated, 2026-09-26, Hardened_30 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -226,6 +227,48 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-073 — pointer contracts on hand-declared C functions — **CLOSED**
+
+    ID:        ODR-073
+    Status:    CLOSED — ruled 2026-09-26 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_30
+    Category:  LANGUAGE / C INTEROP / SAFETY
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_29.md Part XVI `[FFI-10]`, `[FFI-11]`
+
+    Question:  `[FFI-10]` requires complete pointer facts on a hand-written
+               `safe fn`, supplied by `@ffi(…)`. `[FFI-11]` defines contract
+               words only in the overlay grammar. What is the spelling on a
+               hand declaration, and may its public safe signature still take
+               a raw `*T` that safe callers cannot prove valid?
+
+    Blocks implementation:            YES — safe pointer calls in `[FFI-10]`
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) `@ffi(param(p, borrowed, one), result(borrowed,
+one, from(p)))` reuses `[FFI-11]`'s words and checks that `safe fn` exposes
+their mapped `ref`/`Span`/owned safe type. It requires ABI lowering but leaves
+the existing overlay vocabulary intact. (b) Keep the written raw `*T` as the
+safe API after adding facts: easy to lower, but a safe caller may pass a null,
+dangling or forged pointer; the contract cannot establish validity. (c) Add
+separate declarations for the C carrier and safe wrapper: sound, but doubles
+the declarations and defeats `[FFI-10]`'s direct safe hand declaration. **(a)**.
+
+**Ruling.** In a hand-declared function, `@ffi` accepts `param(name, word,
+...)` for a named pointer parameter and `result(word, ...)` for a pointer
+result. The words and completeness rules are exactly `[FFI-11]`'s; each slot
+is named once, with no fact silently overwritten. On `safe fn`, the written
+Ember parameter/result type or `mut` parameter mode is the safe form produced by the contract, and
+the compiler lowers it to the C ABI carrier. A raw pointer type may be
+declared for an unsafe call, but complete `@ffi` facts alone never make that
+raw pointer safe to pass from Safe code. A mismatch or missing fact is `E5002`.
+`link_name` and `effects` may appear beside these clauses in the same `@ffi`.
+
+**Implementation.** Compiler and conformance work follows the Hardened_30
+cut; unsupported contract shapes remain `E0900` until their lowering exists.
 
 ---
 

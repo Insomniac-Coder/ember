@@ -10798,14 +10798,28 @@ the running narrative behind it.
     Arbitrary assembler linker names and full pointer contracts remain
     explicit `E0900` gaps. No ODR or hardening is needed: Hardened_29 already
     specifies each behavior.
+  * ODR-073 closes a real specification gap found on the next Phase 5 task:
+    Hardened_29 required `@ffi` pointer facts on hand declarations but defined
+    the word syntax only for overlays. Hardened_30 now spells those facts as
+    `@ffi(param(name, words…), result(words…))` and requires `safe fn` to expose
+    the mapped safe Ember type rather than a raw pointer. The C carrier is an
+    ABI lowering detail. H30 is pinned; implementation follows this ruling.
+  * The first Hardened_30 implementation batch accepts borrowed-one pointer
+    clauses on hand-declared C functions. `mut p: T` with `exclusive` passes a
+    mutable single place; `p: ref T` passes a shared single reference. A safe
+    call to C `frexp` writes through the first form; the second emits a C
+    pointer prototype. Two named clauses and `link_name` in the same `@ffi`
+    are supported. Missing, duplicate, unknown and mismatched clauses are
+    rejected, and a `safe fn` cannot expose a raw `*T`. `FFI-10/` has the
+    focused accept and reject cases. Other contract forms remain `E0900`.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_29.md`
-  (ODR-072), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h29/` is
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_30.md`
+  (ODR-073), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` is
   frozen.
-* **Next numbers:** ODR-073, D-363, ADR-063.
+* **Next numbers:** ODR-074, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10961,8 +10975,9 @@ the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** continue Phase 5 with `@ffi` pointer contracts and the
-  remaining C boundary forms. Check the newest CI run before building on it.
+* **Next task:** extend Phase 5 contracts to nullable and counted pointers,
+  pointer results and foreign statics/types. Check the newest CI run before
+  pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

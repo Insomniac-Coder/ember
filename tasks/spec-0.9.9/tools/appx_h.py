@@ -350,6 +350,8 @@ ODRS = [
      '`[TYP-27]`'),
     ('ODR-072', 'in a class method `self` is the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller\'s handle is a `mut` parameter\'s (Hardened_29)',
      '`[CLS-7]`, `[FN-9]`, `[EXC-15]`'),
+    ('ODR-073', 'hand-declared pointer facts use `@ffi(param(name, words…), result(words…))`; a `safe fn` exposes the mapped safe Ember type, never a raw pointer (Hardened_30)',
+     '`[FFI-10]`, `[FFI-11]`'),
 ]
 
 H5_HEAD = """
@@ -367,7 +369,8 @@ ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simpl
 Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
 ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013;
 Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 and ODR-072, found
-closing the last open defects (D-355, D-202).
+closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand-declared C pointer
+contract syntax and safe surface.
 
 | ODR | Ruling | Rules |
 |---|---|---|
