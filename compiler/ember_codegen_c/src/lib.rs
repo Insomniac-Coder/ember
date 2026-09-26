@@ -3948,7 +3948,11 @@ impl Emitter<'_> {
         let pair = self.c_type(pair);
         let elem = self.c_type(elem);
         let view = if mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
-        let tail = if mutable {
+        // A zero-sized element's C type is `void`, which C cannot step over
+        // (D-354): every element is at the base pointer.
+        let tail = if elem == "void" {
+            format!("{source}.ptr")
+        } else if mutable {
             format!("(void*)((({elem}*){source}.ptr) + {boundary})")
         } else {
             format!("(const void*)(((const {elem}*){source}.ptr) + {boundary})")
@@ -4850,12 +4854,7 @@ impl Emitter<'_> {
                     // obligation.
                     Builtin::SpanGetUnchecked => {
                         let elem = self.span_element(*arg_ty);
-                        return format!(
-                            "&(({}*)({}).ptr)[{}]",
-                            self.c_type(elem),
-                            rendered[0],
-                            rendered[1]
-                        );
+                        return format!("&{}", self.buffer_element(&format!("({})", rendered[0]), elem, &rendered[1]));
                     }
                     // `[SPN-1]` — an `Array[T]` or a `[T; N]` viewed. A
                     // buffer keeps its pointer and length; a fixed array's
@@ -5037,14 +5036,14 @@ impl Emitter<'_> {
                 // array is not one).
                 Projection::Index(local) => match self.types.kind(at.ty) {
                     TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
-                        out = format!("(({}*){out}.ptr)[_{}]", self.c_type(*elem), local.0);
+                        out = self.buffer_element(&out, *elem, &format!("_{}", local.0));
                     }
                     TyKind::Ptr { .. } => out = format!("({out})[_{}]", local.0),
                     _ => out.push_str(&format!("._0[_{}]", local.0)),
                 },
                 Projection::ConstIndex(i) => match self.types.kind(at.ty) {
                     TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
-                        out = format!("(({}*){out}.ptr)[{i}]", self.c_type(*elem));
+                        out = self.buffer_element(&out, *elem, &i.to_string());
                     }
                     TyKind::Ptr { .. } => out = format!("({out})[{i}]"),
                     _ => out.push_str(&format!("._0[{i}]")),
@@ -5502,6 +5501,19 @@ impl Emitter<'_> {
     }
 
     /// Part XVIII §6's type mapping table.
+    /// Element `index` of a buffer or view `{ptr, len, …}` as a C place.
+    /// A zero-sized element's C type is `void`, which C cannot index (GCC
+    /// and Clang allow it as an extension, MSVC does not), so every such
+    /// element is the byte at the base pointer (D-354): distinct elements of
+    /// a zero-sized type need not have distinct addresses (ODR-068).
+    fn buffer_element(&self, buffer: &str, elem: Ty, index: &str) -> String {
+        let c = self.c_type(elem);
+        if c == "void" {
+            return format!("(*(char*){buffer}.ptr)");
+        }
+        format!("(({c}*){buffer}.ptr)[{index}]")
+    }
+
     fn c_type(&self, ty: ember_types::Ty) -> String {
         match self.types.kind(ty) {
             TyKind::Bool => "bool".into(),
