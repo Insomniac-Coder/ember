@@ -11309,6 +11309,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
+                && let Some((elem, _)) = self.foreign_nullable_span_elem(ty) {
+                if !self.types.is_ffi_safe(elem) {
+                    self.error(codes::E5050, span,
+                        format!("`{name}` contains a type with no foreign representation"));
+                }
+            } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Span { elem, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*elem) {
                     self.error(codes::E5050, span,
@@ -11412,9 +11418,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             FfiPointerContract::NullableMutOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
                                     .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)),
-                            FfiPointerContract::Count { exclusive, .. } => mode == Mode::Borrow
-                                && matches!(self.types.kind(ty), TyKind::Span { elem, mutable }
-                                    if *mutable == exclusive && self.types.is_ffi_safe(*elem)),
+                            FfiPointerContract::Count { exclusive, nullable, .. } => {
+                                let span = if nullable {
+                                    self.foreign_nullable_span_elem(ty)
+                                } else {
+                                    match self.types.kind(ty) {
+                                        TyKind::Span { elem, mutable } => Some((*elem, *mutable)),
+                                        _ => None,
+                                    }
+                                };
+                                mode == Mode::Borrow && span.is_some_and(|(elem, mutable)|
+                                    mutable == exclusive && self.types.is_ffi_safe(elem))
+                            }
                             FfiPointerContract::Fixed { len, exclusive, nullable } => {
                                 let referent = if nullable {
                                     self.foreign_nullable_ref_inner(ty)
@@ -11605,6 +11620,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` count contract for span parameter `{name}`"));
                 }
+                if self.foreign_nullable_span_elem(ty).is_some()
+                    && !matches!(contract, Some(FfiPointerContract::Count { .. }))
+                    && unknown.is_empty() {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` nullable count contract for span parameter `{name}`"));
+                }
                 if self.foreign_pointer_contract_required(ty) {
                     if contract.is_some() {
                         self.error(codes::E5002, span,
@@ -11703,9 +11724,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             Some(hir::FfiArrayResult { elem: *elem, mutable })
         } else { None };
         let contracts = ffi_param_contracts(attrs);
-        let mut counted = HashMap::<Symbol, (usize, Ty, bool)>::new();
+        let mut counted = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut fixed = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
-        let mut witnesses = HashMap::<Symbol, Vec<usize>>::new();
+        let mut witnesses = HashMap::<Symbol, Vec<hir::FfiCountSource>>::new();
         for (pointer, contract) in contracts {
             if let FfiPointerContract::Fixed { len, exclusive, nullable } = contract {
                 let public_index = visible.iter().position(|(name, _, _, _)| *name == pointer)?;
@@ -11720,21 +11741,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 fixed.insert(pointer, (public_index, *elem, exclusive, nullable));
                 continue;
             }
-            let FfiPointerContract::Count { witness, exclusive } = contract else { continue };
+            let FfiPointerContract::Count { witness, exclusive, nullable } = contract else { continue };
             let public_index = visible.iter().position(|(name, _, _, _)| *name == pointer)?;
-            let TyKind::Span { elem, mutable } = self.types.kind(visible[public_index].1) else { return None };
-            if *mutable != exclusive || !self.types.is_ffi_safe(*elem) { return None; }
+            let (elem, mutable) = if nullable {
+                self.foreign_nullable_span_elem(visible[public_index].1)?
+            } else {
+                let TyKind::Span { elem, mutable } = self.types.kind(visible[public_index].1) else { return None };
+                (*elem, *mutable)
+            };
+            if mutable != exclusive || !self.types.is_ffi_safe(elem) { return None; }
             let source = decl.params.iter().find(|param| matches!(&param.kind,
                 ast::ParamKind::Named { name, .. } if name.name == witness))?;
             if mode_of(source.mode) != Mode::Borrow || source.default.is_some() { return None; }
             let ast::ParamKind::Named { ty, .. } = &source.kind else { return None };
             let witness_name = ffi_integer_witness_type(ty)?;
             if matches!(witness_name.as_str(), "i128" | "u128") { return None; }
-            counted.insert(pointer, (public_index, *elem, exclusive));
-            witnesses.entry(witness).or_default().push(public_index);
+            counted.insert(pointer, (public_index, elem, exclusive, nullable));
+            witnesses.entry(witness).or_default().push(hir::FfiCountSource { public_index, nullable });
         }
         let result_span = if let Some((witness, nullable, exclusive)) = result_count {
-            let public_index = *witnesses.get(&witness)?.first()?;
+            let source = witnesses.get(&witness)?.first()?;
+            let public_index = source.public_index;
             let (elem, mutable) = if nullable {
                 self.foreign_nullable_span_elem(result_ty)?
             } else {
@@ -11742,21 +11769,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 (*elem, *mutable)
             };
             if mutable != exclusive || !self.types.is_ffi_safe(elem) { return None; }
-            Some(hir::FfiSpanResult { public_index, elem, nullable, mutable })
+            Some(hir::FfiSpanResult { public_index, elem, nullable, mutable,
+                source_nullable: source.nullable })
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
-            if let Some(indices) = witnesses.get(&name.name) {
+            if let Some(sources) = witnesses.get(&name.name) {
                 let ast::ParamKind::Named { ty, .. } = &param.kind else { return None };
                 let witness_ty = self.scalar_named(ffi_integer_witness_type(ty)?.as_str())?;
                 abi_params.push(hir::FfiAbiParam::Count {
-                    public_indices: indices.clone(), ty: witness_ty,
+                    sources: sources.clone(), ty: witness_ty,
                 });
-            } else if let Some(&(public_index, elem, mutable)) = counted.get(&name.name) {
-                abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable });
+            } else if let Some(&(public_index, elem, mutable, nullable)) = counted.get(&name.name) {
+                abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable });
             } else if let Some(&(public_index, elem, mutable, nullable)) = fixed.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable });
             } else {
@@ -34689,7 +34717,7 @@ enum FfiPointerContract {
     MutOne,
     NullableSharedOne,
     NullableMutOne,
-    Count { witness: Symbol, exclusive: bool },
+    Count { witness: Symbol, exclusive: bool, nullable: bool },
     Fixed { len: u64, exclusive: bool, nullable: bool },
 }
 
@@ -34830,7 +34858,7 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
     }
     let kind = match (count, fixed, nullable, exclusive) {
         (None, Some(len), nullable, exclusive) => FfiPointerContract::Fixed { len, exclusive, nullable },
-        (Some(witness), None, false, exclusive) => FfiPointerContract::Count { witness, exclusive },
+        (Some(witness), None, nullable, exclusive) => FfiPointerContract::Count { witness, exclusive, nullable },
         (None, None, false, false) => FfiPointerContract::SharedOne,
         (None, None, false, true) => FfiPointerContract::MutOne,
         (None, None, true, false) => FfiPointerContract::NullableSharedOne,

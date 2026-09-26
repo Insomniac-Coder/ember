@@ -57,6 +57,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-076 | **CLOSED** — the type argument to `null[P]()` is the complete raw-pointer type `P`, including constness; the result has exactly type `P` | Language / raw pointers / null construction | — | **No** — delegated, 2026-09-27, Hardened_32 |
 | ODR-077 | **CLOSED** — a safe hand-declared `result(borrowed, count(n), ...)` requires an input span also contracted with `count(n)`; its length supplies the hidden C witness and the result length | Language / C interop / counted results | — | **No** — delegated, 2026-09-27, Hardened_33 |
 | ODR-078 | **CLOSED** — `exclusive` on a borrowed counted result yields `MutSpan[T]` (or `Option[MutSpan[T]]` with `nullable`), at the shared input witness length, through a mutable C pointer | Language / C interop / counted mutable results | — | **No** — delegated, 2026-09-27, Hardened_34 |
+| ODR-079 | **CLOSED** — nullable borrowed `count(n)` inputs map `None` to `(NULL, 0)` and `Some(empty)` to `(non-null, 0)`, synthesizing a call-safe aligned sentinel when its data pointer is null | Language / C interop / nullable counted inputs | — | **No** — delegated, 2026-09-27, Hardened_35 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -232,6 +233,57 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-079 — distinguishing absent and empty counted C inputs — **CLOSED**
+
+    ID:        ODR-079
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_35
+    Category:  LANGUAGE / C INTEROP / NULLABLE COUNTED INPUTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_34.md Part XVI `[FFI-10]`, `[FFI-11]`;
+               Part IV `[TYP-13]`
+
+    Question:  A `nullable count(n)` input maps to `Option[Span[T]]` or
+               `Option[MutSpan[T]]`, but the contract does not say what
+               integer count accompanies `None`. A present empty span may
+               itself have a null data pointer, so passing its pointer and
+               zero length would look identical to `None` at the C boundary.
+
+    Blocks implementation:            YES — nullable counted inputs
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Send `None` as `(NULL, 0)` and `Some(empty)` as a
+non-null pointer with count zero, synthesizing a suitably aligned stable
+sentinel only when the present view's data pointer is null. This preserves
+the nullable contract's distinction and the hidden-count API, but adds a
+small generated wrapper branch and a per-instantiation sentinel. (b) Send
+both as `(NULL, 0)`. This is cheap but erases an observable safe-language
+distinction and makes C unable to tell absence from an empty present span.
+(c) Reject a present empty span with a null pointer. This keeps the C ABI
+simple but makes ordinary safe empty arrays panic just for crossing FFI.
+**(a)**.
+
+**Ruling.** A safe hand-declared borrowed input with `count(n), nullable`
+has type `Option[Span[T]]`, or `Option[MutSpan[T]]` with `exclusive`. The C
+pointer is null and the hidden integer `n` is zero for `None`. For `Some`,
+`n` is the view length with ODR-074's checked integer conversion. Its C
+pointer is non-null even when the view is empty: the wrapper passes the
+view's existing non-null pointer, or an aligned stable sentinel of `T` when
+that pointer is null. The sentinel has static storage duration and `T`'s
+alignment, and must not be read or written when `n` is zero. The C contract's count bound
+already forbids such an access. When several input views share `n`, compare
+their effective lengths, treating `None` as zero, before calling C. A
+counted result sharing `n` receives that effective length. A missing or
+non-integer witness remains `E5002`; 128-bit witnesses remain an explicit
+implementation gap. This ruling does not define `inout_count`.
+
+**Implementation.** Part XVI `[FFI-10]` and `[FFI-11]` of Hardened_35
+state the pointer and witness mapping. The compiler checks the optional
+view shape and emits the null/empty carrier; `FFI-11/` tests None, present
+empty, exclusive input, shared witness equality, and the result length.
 
 ---
 

@@ -3374,6 +3374,15 @@ impl Emitter<'_> {
         }
     }
 
+    fn ffi_span_none(&self, arg: &str) -> String {
+        format!("(({arg}).ptr == NULL && ({arg}).len == SIZE_MAX)")
+    }
+
+    fn ffi_span_length(&self, arg: &str, nullable: bool) -> String {
+        if nullable { format!("({} ? 0 : ({arg}).len)", self.ffi_span_none(arg)) }
+        else { format!("({arg}).len") }
+    }
+
     fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
@@ -3383,11 +3392,20 @@ impl Emitter<'_> {
             match param {
                 FfiAbiParam::Value { public_index, .. } =>
                     foreign_args.push(args[*public_index].clone()),
-                FfiAbiParam::SpanPointer { public_index, elem, mutable } => {
+                FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable } => {
                     let pointee = self.c_type(*elem);
                     let pointer = if *mutable { format!("{pointee}*") }
                         else { format!("const {pointee}*") };
-                    foreign_args.push(format!("({pointer})({}).ptr", args[*public_index]));
+                    let arg = &args[*public_index];
+                    if *nullable {
+                        self.line(&format!("    static {pointee} _ffi_empty_{public_index};"));
+                        let none = self.ffi_span_none(arg);
+                        foreign_args.push(format!(
+                            "({none} ? NULL : (({arg}).ptr != NULL ? ({pointer})({arg}).ptr : ({pointer})&_ffi_empty_{public_index}))"
+                        ));
+                    } else {
+                        foreign_args.push(format!("({pointer})({arg}).ptr"));
+                    }
                 }
                 FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable } => {
                     let pointee = self.c_type(*elem);
@@ -3398,24 +3416,24 @@ impl Emitter<'_> {
                         format!("({} ? {value} : NULL)", args[*public_index])
                     } else { value });
                 }
-                FfiAbiParam::Count { public_indices, ty } => {
-                    let first = &args[public_indices[0]];
-                    for other in public_indices.iter().skip(1) {
+                FfiAbiParam::Count { sources, ty } => {
+                    let first = self.ffi_span_length(&args[sources[0].public_index], sources[0].nullable);
+                    for other in sources.iter().skip(1) {
                         let location = self.location(body.span);
+                        let other = self.ffi_span_length(&args[other.public_index], other.nullable);
                         self.line(&format!(
-                            "    if (({first}).len != ({}).len) {{ {RT}panic(\"FFI span lengths differ\", sizeof(\"FFI span lengths differ\") - 1, {location}); }}",
-                            args[*other],
+                            "    if ({first} != {other}) {{ {RT}panic(\"FFI span lengths differ\", sizeof(\"FFI span lengths differ\") - 1, {location}); }}",
                         ));
                     }
                     if let Some(limit) = self.ffi_count_limit(*ty) {
                         let location = self.location(body.span);
                         self.line(&format!("#if SIZE_MAX > {limit}"));
                         self.line(&format!(
-                            "    if (({first}).len > (size_t){limit}) {{ {RT}panic(\"FFI count does not fit\", sizeof(\"FFI count does not fit\") - 1, {location}); }}",
+                            "    if ({first} > (size_t){limit}) {{ {RT}panic(\"FFI count does not fit\", sizeof(\"FFI count does not fit\") - 1, {location}); }}",
                         ));
                         self.line("#endif");
                     }
-                    foreign_args.push(format!("({})({first}).len", self.c_type(*ty)));
+                    foreign_args.push(format!("({}){first}", self.c_type(*ty)));
                 }
             }
         }
@@ -3424,11 +3442,11 @@ impl Emitter<'_> {
             let elem = self.c_type(result.elem);
             let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
             self.line(&format!("    {pointer} _ffi_result = {call};"));
-            let source = &args[result.public_index];
+            let source = self.ffi_span_length(&args[result.public_index], result.source_nullable);
             let len = if result.nullable {
-                format!("(_ffi_result == NULL ? SIZE_MAX : ({source}).len)")
+                format!("(_ffi_result == NULL ? SIZE_MAX : {source})")
             } else {
-                format!("({source}).len")
+                source
             };
             self.line(&format!("    return ({}){{ _ffi_result, {len} }};", self.c_type(body.return_ty())));
         } else if self.is_void(body.return_ty()) {

@@ -95,6 +95,7 @@ pub struct FfiSpanResult {
     pub elem: Ty,
     pub nullable: bool,
     pub mutable: bool,
+    pub source_nullable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -106,9 +107,15 @@ pub struct FfiArrayResult {
 #[derive(Debug, Clone)]
 pub enum FfiAbiParam {
     Value { public_index: usize, ty: Ty, mode: Mode },
-    SpanPointer { public_index: usize, elem: Ty, mutable: bool },
+    SpanPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     ArrayPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
-    Count { public_indices: Vec<usize>, ty: Ty },
+    Count { sources: Vec<FfiCountSource>, ty: Ty },
+}
+
+#[derive(Debug, Clone)]
+pub struct FfiCountSource {
+    pub public_index: usize,
+    pub nullable: bool,
 }
 
 #[derive(Debug)]

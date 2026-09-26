@@ -362,6 +362,8 @@ ODRS = [
      '`[FFI-10]`, `[FFI-11]`'),
     ('ODR-078', 'an `exclusive` borrowed `count(n)` result is `MutSpan[T]` (nullable as `Option[MutSpan[T]]`) through mutable C `T*`, using ODR-077\'s input witness length (Hardened_34)',
      '`[FFI-10]`, `[FFI-11]`'),
+    ('ODR-079', 'a nullable hand-declared borrowed `count(n)` input sends `None` as null pointer and zero, but preserves `Some(empty)` with a non-null aligned static sentinel and zero (Hardened_35)',
+     '`[FFI-10]`, `[FFI-11]`'),
 ]
 
 H5_HEAD = """
@@ -384,7 +386,8 @@ contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for 
 counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
 the exact pointer type of `null[P]()`; Hardened_33 adds ODR-077, the input length source for a
 borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive counted result's
-mutable view and C pointer.
+mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
+between absent and present-empty views.
 
 | ODR | Ruling | Rules |
 |---|---|---|

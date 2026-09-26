@@ -10946,15 +10946,31 @@ first**; the rest of §0.355 is the running narrative behind it.
     mutation, the empty case, missing input witness, and wrong result types.
     The accepted cases failed before the compiler change. The H34 frozen
     parts and pin are byte-equal, and the full annotation sweep, workspace
-    suite, and repository gates pass locally.
+    suite, and repository gates pass locally. This batch is commit `94cb68e`,
+    pushed to `main`.
+  * ODR-079 closes the nullable counted-input ambiguity. `None` now sends
+    C a null pointer and zero count; a present empty view sends zero with a
+    non-null pointer, using a static aligned sentinel when its data pointer
+    is null. The same integer witness checks effective lengths across
+    nullable and nonnullable inputs, and a counted result uses that length.
+    Hardened_35 is frozen and pinned. The compiler maps
+    `Option[Span[T]]` and `Option[MutSpan[T]]` to those C carriers while
+    retaining `exclusive` for the mutable form. `FFI-11/` tests None,
+    present-empty, present-nonempty, C mutation, shared-witness equality
+    and mismatch, and a counted result from an optional input. The accepted
+    cases failed before this change. The H35 frozen parts and pin match;
+    the full annotation sweep, workspace suite, and repository gates pass
+    locally. The wrapper tests the complete `Option[Span]` niche pair
+    (`ptr == null` and `len == SIZE_MAX`), so a present span is never
+    mistaken for `None` from its length alone.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_34.md`
-  (ODR-078), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_35.md`
+  (ODR-079), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h34/` are frozen.
-* **Next numbers:** ODR-079, D-363, ADR-063.
+  `parts-h35/` are frozen.
+* **Next numbers:** ODR-080, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11111,7 +11127,6 @@ first**; the rest of §0.355 is the running narrative behind it.
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
 * **Next task:** finish the remaining Phase 5 pointer contract shapes,
-  starting with nullable counted inputs,
   then foreign statics/types. Check the newest CI run before pushing
   further work.
   Audit rows for
