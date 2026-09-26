@@ -5799,8 +5799,31 @@ impl Emitter<'_> {
         if matches!(self.types.kind(niche.payload), TyKind::Char) {
             return format!("({access}) == UINT32_C(0x110000)");
         }
+        if matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str) {
+            return format!("({access}).ptr == NULL && ({access}).len == SIZE_MAX");
+        }
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("({access}) == NULL");
+        }
+        if let TyKind::Enum(id) = *self.types.kind(niche.payload) {
+            let sentinel = self.types.enum_unused_discriminant(id).expect("enum niche has an unused discriminant");
+            let repr = self.types.enum_def(id).repr;
+            let value = self.constant(&Const::Int { value: sentinel as u128, ty: repr });
+            return format!("({access}) == {value}");
+        }
+        if let TyKind::Range(id) = *self.types.kind(niche.payload) {
+            let repr = self.types.range_def(id).repr;
+            if let TyKind::Float(float) = self.types.kind(repr) {
+                let suffix = match float {
+                    FloatTy::F16 => "f16",
+                    FloatTy::F32 => "f32",
+                    FloatTy::F64 => "f64",
+                };
+                return format!("{RT}{suffix}_is_nan({access})");
+            }
+            let bits = self.types.range_unused_integer(id).expect("integer range niche has an unused value");
+            let value = self.constant(&Const::Int { value: bits, ty: repr });
+            return format!("({access}) == {value}");
         }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
             unreachable!("struct niche payload expected")
@@ -5825,8 +5848,30 @@ impl Emitter<'_> {
         if matches!(self.types.kind(niche.payload), TyKind::Char) {
             return "UINT32_C(0x110000)".to_string();
         }
+        if matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str) {
+            return format!("(({}){{ .ptr = NULL, .len = SIZE_MAX }})", self.c_type(niche.payload));
+        }
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("(({})NULL)", self.c_type(niche.payload));
+        }
+        if let TyKind::Enum(id) = *self.types.kind(niche.payload) {
+            let sentinel = self.types.enum_unused_discriminant(id).expect("enum niche has an unused discriminant");
+            let repr = self.types.enum_def(id).repr;
+            let value = self.constant(&Const::Int { value: sentinel as u128, ty: repr });
+            return format!("(({}){value})", self.c_type(niche.payload));
+        }
+        if let TyKind::Range(id) = *self.types.kind(niche.payload) {
+            let repr = self.types.range_def(id).repr;
+            if let TyKind::Float(float) = self.types.kind(repr) {
+                return match float {
+                    FloatTy::F16 => "((uint16_t)0x7E00u)".to_string(),
+                    FloatTy::F32 => "EMBER_NAN_F32".to_string(),
+                    FloatTy::F64 => "EMBER_NAN_F64".to_string(),
+                };
+            }
+            let bits = self.types.range_unused_integer(id).expect("integer range niche has an unused value");
+            let value = self.constant(&Const::Int { value: bits, ty: repr });
+            return format!("(({}){value})", self.c_type(niche.payload));
         }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
             unreachable!("struct niche payload expected")

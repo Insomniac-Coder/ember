@@ -968,3 +968,5 @@ The next number is ODR-027.
   `Option[Class]`, `Option[Box[T]]`, `Option[ref T]`, `Option[char]`, and
   `Option[bool]` now occupy the same number of bytes as their payloads.
   Programs still distinguish `Some` and `None` and drop owned payloads once.
+  The same compact layout now covers unit enums with spare discriminants,
+  range types with an excluded representation value, `Span`, and `str`.

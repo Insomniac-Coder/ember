@@ -10907,9 +10907,21 @@ the running narrative behind it.
   the null data pointer of its two-word carrier; `ref dyn` remains outside
   this slice because its layout and lowering need separate work. Still open
   under `[TYP-13]`: `Span`, `str`, extern function, range and enum niches.
-* **Next task:** continue solo with the remaining `[TYP-13]` niches and
-  Phase 3 work after committing this batch. Audit rows for `[CLS-2]` and
-  `[CLS-7]` were stale: the existing code and tests cover their stated gaps.
+* **`[TYP-13]` and `[RNG-7]` five more niche layouts (2026-09-26, third
+  five-feature batch):** `Option` now packs a unit enum with an unused
+  discriminant, an integer range that excludes a representation value, a
+  float range (NaN is invalid), `Span`, and `str` into the payload's size.
+  Enum niche selection checks the representation's bounds; an integer range
+  probes zero and its representation's endpoints. Float NaN checks read IEEE
+  bits so compiler comparison modes cannot hide the niche. Views reserve
+  `(ptr = NULL, len = SIZE_MAX)` for `None`, which is distinct even from a
+  valid empty view whose data pointer is null. Each case failed its size
+  expectation before implementation and now exercises `Some` and `None`.
+  The 0.9.9 target specified every layout; no ODR was needed.
+* **Next task:** continue solo with extern function pointer and `ref dyn`
+  niches or another Phase 3 gap after committing this batch. Audit rows for
+  `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
+  their stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**
 
   | Phase | % |

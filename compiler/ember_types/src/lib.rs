@@ -1267,9 +1267,9 @@ impl TypeTable {
     }
 
     /// `[TYP-13]`, `[STD-4]` — an `Option[T]` that keeps `None` inside a
-    /// `T`, when `T` has a niche: a value no `T` ever holds. A class handle,
-    /// `Box` and an ordinary reference are non-null, `bool` has only two
-    /// values, `char` cannot hold U+110000, and `NonZero[T]` never holds zero.
+    /// `T`, when `T` has a niche: a value no `T` ever holds. This covers
+    /// non-null pointers, spare scalar and enum values, constrained ranges,
+    /// and the impossible pointer/length pair of a view.
     pub fn option_niche(&self, id: EnumId) -> Option<Niche> {
         let def = self.enum_def(id);
         if !def.name.as_str().starts_with("Option_") || def.variants.len() != 2 {
@@ -1281,9 +1281,73 @@ impl TypeTable {
         (self.is_nonzero(payload)
             || matches!(self.kind(payload), TyKind::Class(_) | TyKind::ClassInterface(_))
             || matches!(self.kind(payload), TyKind::Bool | TyKind::Char)
+            || matches!(self.kind(payload), TyKind::Span { .. } | TyKind::Str)
             || matches!(self.kind(payload), TyKind::Ref { inner, .. } if !matches!(self.kind(*inner), TyKind::Dyn { .. }))
-            || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some()))
+            || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some())
+            || matches!(self.kind(payload), TyKind::Enum(id) if self.enum_unused_discriminant(*id).is_some())
+            || matches!(self.kind(payload), TyKind::Range(id) if self.range_unused_integer(*id).is_some()
+                || matches!(self.kind(self.range_def(*id).repr), TyKind::Float(_))))
         .then_some(Niche { none, some, payload })
+    }
+
+    /// `[RNG-7]` — a contiguous integer range leaves a niche if it excludes
+    /// zero or either end of its representation. Return the sentinel's raw
+    /// bits, so an unsigned 128-bit maximum and a signed minimum both fit.
+    pub fn range_unused_integer(&self, id: RangeId) -> Option<u128> {
+        let def = self.range_def(id);
+        let Bound::Int(_) = def.lo else { return None };
+        if !def.contains(Bound::Int(0)) {
+            return Some(0);
+        }
+        let max = int_max(self, def.repr)?;
+        if max > i128::MAX as u128 || !def.contains(Bound::Int(max as i128)) {
+            return Some(max);
+        }
+        if is_signed(self, def.repr) == Some(true) {
+            let bits = bit_width(self, def.repr)?;
+            let min = if bits == 128 { i128::MIN } else { -(1i128 << (bits - 1)) };
+            if !def.contains(Bound::Int(min)) {
+                return Some(min as u128);
+            }
+        }
+        None
+    }
+
+    /// A unit enum may leave an integer value unused. Check nonnegative
+    /// values first, then negative ones when its representation is signed.
+    /// At most one more candidate than there are variants is needed.
+    pub fn enum_unused_discriminant(&self, id: EnumId) -> Option<i128> {
+        let def = self.enum_def(id);
+        if !def.is_unit_only() {
+            return None;
+        }
+        let used = def.variants.iter().map(|variant| variant.discriminant).collect::<HashSet<_>>();
+        let max = int_max(self, def.repr)?;
+        let count = def.variants.len().saturating_add(1);
+        for value in 0..count {
+            let Ok(candidate) = i128::try_from(value) else { break };
+            if candidate as u128 > max {
+                break;
+            }
+            if !used.contains(&candidate) {
+                return Some(candidate);
+            }
+        }
+        if is_signed(self, def.repr) == Some(true) {
+            let bits = bit_width(self, def.repr)?;
+            let min = if bits == 128 { i128::MIN } else { -(1i128 << (bits - 1)) };
+            for value in 1..=count {
+                let Ok(offset) = i128::try_from(value) else { break };
+                let candidate = -offset;
+                if candidate < min {
+                    break;
+                }
+                if !used.contains(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+        None
     }
 
     /// The payload of the compiler-known `Box[T]` struct `id`. Its origin is
@@ -2185,6 +2249,46 @@ pub fn f16_text(bits: u16) -> String {
 mod tests {
     use super::*;
     use ember_span::Span;
+
+    #[test]
+    fn an_enum_niche_stays_inside_its_integer_representation() {
+        let (mut table, _) = TypeTable::new();
+        let variants = |count: i128| {
+            (0..count)
+                .map(|value| VariantDef {
+                    name: Symbol::intern(&format!("V{value}")),
+                    fields: Vec::new(),
+                    discriminant: value,
+                    span: Span::DUMMY,
+                })
+                .collect()
+        };
+        let signed = table.intern(TyKind::Int(IntTy::I8));
+        let signed_id = table.add_enum(EnumDef {
+            name: Symbol::intern("SignedFullPositive"),
+            variants: variants(128),
+            span: Span::DUMMY,
+            origin: None,
+            repr: signed,
+            repr_is_explicit: true,
+            derives_copy: false,
+            has_drop: false,
+        });
+        assert_eq!(table.enum_unused_discriminant(signed_id), Some(-1));
+
+        let unsigned = table.intern(TyKind::Uint(UintTy::U8));
+        let unsigned_id = table.add_enum(EnumDef {
+            name: Symbol::intern("UnsignedFull"),
+            variants: variants(256),
+            span: Span::DUMMY,
+            origin: None,
+            repr: unsigned,
+            repr_is_explicit: true,
+            derives_copy: false,
+            has_drop: false,
+        });
+        assert_eq!(table.enum_unused_discriminant(unsigned_id), None);
+    }
 
     #[test]
     fn f16_text_is_the_fewest_digits_that_read_back() {

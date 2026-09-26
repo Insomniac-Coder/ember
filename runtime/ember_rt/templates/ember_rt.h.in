@@ -78,6 +78,27 @@ static inline float ember_nan_f32(void) {
 #define EMBER_NAN_F32 (ember_nan_f32())
 #define EMBER_NAN_F64 (ember_nan_f64())
 
+/* `[RNG-7]`: no valid range value is NaN. Test the bits so a compiler's
+ * floating-point comparison mode cannot hide Option's NaN niche. */
+static inline bool ember_f16_is_nan(uint16_t bits) {
+    return (bits & UINT16_C(0x7C00)) == UINT16_C(0x7C00)
+        && (bits & UINT16_C(0x03FF)) != 0;
+}
+
+static inline bool ember_f32_is_nan(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT32_C(0x7F800000)) == UINT32_C(0x7F800000)
+        && (bits & UINT32_C(0x007FFFFF)) != 0;
+}
+
+static inline bool ember_f64_is_nan(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT64_C(0x7FF0000000000000)) == UINT64_C(0x7FF0000000000000)
+        && (bits & UINT64_C(0x000FFFFFFFFFFFFF)) != 0;
+}
+
 /* -- str ------------------------------------------------------------------ */
 
 /* [LEX-20] A string literal has type `str`: a view over UTF-8 bytes with the
