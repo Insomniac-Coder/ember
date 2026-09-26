@@ -819,6 +819,13 @@ struct BodySnapshot {
     reported_defaults: HashSet<Span>,
 }
 
+#[derive(Clone, Copy)]
+struct ForeignStatic {
+    ty: Ty,
+    symbol: Symbol,
+    immutable: bool,
+}
+
 struct Checker<'a> {
     types: &'a mut TypeTable,
     common: &'a CommonTypes,
@@ -887,6 +894,8 @@ struct Checker<'a> {
     named_interface_call: Option<(Symbol, Span)>,
     /// `const` and `static` values, substituted wherever their name is used.
     constants: HashMap<Symbol, Expr>,
+    /// Hand-declared C globals are reads of linker storage, never constants.
+    foreign_statics: HashMap<Symbol, ForeignStatic>,
 
     // -- modules (`[MOD-1]` … `[MOD-3]`) -------------------------------------
     /// Every name above is keyed by its **qualified** form, `a.b.Name`, so two
@@ -1288,6 +1297,7 @@ impl<'a> Checker<'a> {
             interfaces: HashMap::new(),
             implemented: Vec::new(),
             constants: HashMap::new(),
+            foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
             visible: vec![HashMap::new()],
             item_spans: HashMap::new(),
@@ -5055,19 +5065,46 @@ impl<'a> Checker<'a> {
                 // the value has to be known here.
                 ast::ItemKind::Static(decl) => {
                     let ty = self.resolve_type(&decl.ty);
+                    if decl.is_foreign_decl {
+                        if !matches!(self.types.kind(ty), TyKind::Bool | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)) {
+                            self.error(codes::E0900, decl.ty.span,
+                                "foreign static reads currently require a C scalar type");
+                            continue;
+                        }
+                        let immutable = ffi_static_immutable(&item.attrs);
+                        if decl.is_mut && immutable {
+                            self.error(codes::E5002, item.span,
+                                "`@ffi(immutable)` cannot describe a `static mut`");
+                            continue;
+                        }
+                        let name = self.qualified(decl.name.name);
+                        let symbol = Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str()));
+                        if self.foreign_statics.values().any(|existing|
+                            existing.symbol == symbol && (existing.ty != ty || existing.immutable != immutable)) {
+                            self.error(codes::E5002, item.span,
+                                "foreign static aliases for one C symbol must have the same type and const contract");
+                            continue;
+                        }
+                        self.foreign_statics.insert(name, ForeignStatic { ty, symbol, immutable });
+                        continue;
+                    }
+                    let Some(initializer) = decl.value.as_ref() else {
+                        self.error(codes::E0100, item.span, "a local static needs an initializer");
+                        continue;
+                    };
                     // `[TYP-15]` with `[LT-3]` — a `static` has no bounding
                     // region, so what may be stored in one is a view whose
                     // region is `static`. `[STA-2]` already requires the
                     // initialiser to be a literal, so the question is decidable
                     // here and needs no region graph.
-                    let static_region = has_static_region(&decl.value);
+                    let static_region = has_static_region(initializer);
                     self.reject_stored_view_unless(
                         ty,
                         decl.ty.span,
                         "a `static`",
                         static_region,
                     );
-                    let value = self.check_expr(&decl.value, ty);
+                    let value = self.check_expr(initializer, ty);
                     if decl.is_mut {
                         self.error(
                             codes::E1010,
@@ -5085,7 +5122,7 @@ impl<'a> Checker<'a> {
                     {
                         self.error(
                             codes::E2130,
-                            decl.value.span,
+                            initializer.span,
                             "a `static` initialiser must be comptime-evaluable, so a literal here",
                         );
                         continue;
@@ -21317,6 +21354,9 @@ impl<'a> Checker<'a> {
                 if self.constants.contains_key(&qualified) {
                     return self.constant_use(qualified, span);
                 }
+                if self.foreign_statics.contains_key(&qualified) {
+                    return self.foreign_static_use(qualified, span);
+                }
                 if self.expr_consts.contains_key(&qualified) {
                     return match self.settle_const(ConstKey::Item(qualified), span) {
                         Some(entry) => self.expr_const_use(entry, span),
@@ -21437,13 +21477,17 @@ impl<'a> Checker<'a> {
                     && let Some(module) = self.namespace_named(base)
                 {
                     let qualified = self.qualified_in_module(module, name.name);
-                    if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified) {
+                    if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified)
+                        || self.foreign_statics.contains_key(&qualified) {
                         if !self.item_accessible(module, qualified) {
                             self.report_item_not_visible(module, qualified, name.span);
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                         }
                         if self.constants.contains_key(&qualified) {
                             return self.constant_use(qualified, span);
+                        }
+                        if self.foreign_statics.contains_key(&qualified) {
+                            return self.foreign_static_use(qualified, span);
                         }
                         return match self.settle_const(ConstKey::Item(qualified), span) {
                             Some(entry) => self.expr_const_use(entry, span),
@@ -24423,6 +24467,24 @@ impl<'a> Checker<'a> {
         literal_copy(&self.constants[&qualified], span)
     }
 
+    fn foreign_static_use(&mut self, qualified: Symbol, span: Span) -> Expr {
+        let binding = self.foreign_statics[&qualified];
+        if !binding.immutable && !self.in_unsafe {
+            self.sink.emit(Diagnostic::error(codes::E5002, span,
+                "reading a foreign static requires `unsafe`")
+                .help("wrap the read in `unsafe:` or assert `@ffi(immutable)` for a const C object"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        Expr {
+            ty: binding.ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: binding.immutable },
+                args: Vec::new(),
+            },
+            span,
+        }
+    }
+
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
     /// reached through a module, for positions where a type is named.
     fn item_through_module(&self, expr: &ast::Expr) -> Option<Symbol> {
@@ -24443,6 +24505,48 @@ impl<'a> Checker<'a> {
     }
 
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Static(decl) = &item.kind && decl.is_foreign_decl {
+            let mut saw_ffi = false;
+            for attr in &item.attrs {
+                if attr.path.len() != 1 || !attr.path[0].name.is("ffi") {
+                    self.check_attribute_list(std::slice::from_ref(attr), "extern item");
+                    continue;
+                }
+                if saw_ffi {
+                    self.error(codes::E0104, attr.span, "a foreign declaration has only one `@ffi` attribute");
+                }
+                saw_ffi = true;
+                let mut saw_link_name = false;
+                let mut saw_immutable = false;
+                for arg in &attr.args {
+                    match arg {
+                        ast::AttrArg::Named { name, .. } if name.name.is("link_name") => {
+                            if saw_link_name {
+                                self.error(codes::E0104, attr.span, "duplicate `link_name` in `@ffi`");
+                            }
+                            saw_link_name = true;
+                            match ffi_link_name_arg(arg) {
+                                Some(symbol) if c_link_identifier(symbol) => {}
+                                Some(_) => self.error(codes::E0900, attr.span,
+                                    "a `link_name` that is not a C identifier is not implemented yet"),
+                                None => self.error(codes::E0900, attr.span,
+                                    "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
+                            }
+                        }
+                        ast::AttrArg::Expr(value)
+                            if ffi_contract_word(value).is_some_and(|word| word.is("immutable")) => {
+                            if saw_immutable {
+                                self.error(codes::E0104, attr.span, "duplicate `immutable` in `@ffi`");
+                            }
+                            saw_immutable = true;
+                        }
+                        _ => self.error(codes::E0900, attr.span,
+                            "only `@ffi(immutable)` and `link_name` are implemented for a foreign static"),
+                    }
+                }
+            }
+            return;
+        }
         if let ast::ItemKind::Fn(decl) = &item.kind {
             self.check_safety_attribute(&item.attrs, decl.is_unsafe,
                 item.vis.kind != ast::VisKind::Private, item.span);
@@ -34075,6 +34179,14 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
                 sink.emit(Diagnostic::error(codes::E0900, item.span, "only `unsafe extern \"C\"` declaration blocks are implemented yet"));
             }
             for inner in &block.items {
+                if let ast::ItemKind::Static(decl) = &inner.kind {
+                    if decl.value.is_some() {
+                        sink.emit(Diagnostic::error(codes::E0100, inner.span,
+                            "a foreign static declaration has no initializer"));
+                    }
+                    items.push(inner.clone());
+                    continue;
+                }
                 if let ast::ItemKind::TypeAlias(alias) = &inner.kind {
                     if alias.value.is_some() || !alias.generics.is_empty() || !alias.bounds.is_empty() || alias.range.is_some() {
                         sink.emit(Diagnostic::error(codes::E0100, inner.span,
@@ -34875,6 +34987,13 @@ enum FfiPointerContract {
     NullableMutOne,
     Count { witness: Symbol, exclusive: bool, nullable: bool },
     Fixed { len: u64, exclusive: bool, nullable: bool },
+}
+
+fn ffi_static_immutable(attrs: &[ast::Attribute]) -> bool {
+    attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| &attr.args)
+        .any(|arg| matches!(arg, ast::AttrArg::Expr(value)
+            if ffi_contract_word(value).is_some_and(|word| word.is("immutable"))))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

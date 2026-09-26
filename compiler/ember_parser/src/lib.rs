@@ -49,6 +49,8 @@ pub(crate) struct Parser<'a> {
     /// `[FFI-11]` permits the keyword `static` as `from(static)` only while
     /// parsing an `@ffi` attribute's contract words.
     in_ffi_attribute: bool,
+    /// The `extern_item` grammar admits an uninitialized `static` only here.
+    in_extern_block: bool,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -68,6 +70,7 @@ impl<'a> Parser<'a> {
             depth: 0,
             too_deep: false,
             in_ffi_attribute: false,
+            in_extern_block: false,
         }
     }
 

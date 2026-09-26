@@ -321,11 +321,8 @@ impl Printer<'_> {
             ast::ItemKind::Static(decl) => {
                 let mutable = if decl.is_mut { "mut " } else { "" };
                 let ty = self.type_expr(&decl.ty);
-                let value = self.expr(&decl.value);
-                self.line(&format!(
-                    "{vis}static {mutable}{}: {ty} = {value}",
-                    decl.name.name
-                ));
+                let value = decl.value.as_ref().map(|expr| format!(" = {}", self.expr(expr))).unwrap_or_default();
+                self.line(&format!("{vis}static {mutable}{}: {ty}{value}", decl.name.name));
             }
             ast::ItemKind::TypeAlias(decl) => {
                 let params = self.generics(&decl.generics);

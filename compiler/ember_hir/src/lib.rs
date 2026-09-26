@@ -782,6 +782,8 @@ impl FloatLib {
 /// library is written in Ember. Each lowers to one `ember_rt` call.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
+    /// `[FFI-10]` — read a hand-declared C global at its linker symbol.
+    ForeignStaticRead { symbol: Symbol, immutable: bool },
     /// `println(x)` for a scalar or `str`.
     Println,
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
@@ -1207,6 +1209,7 @@ impl Builtin {
 
     pub fn name(self) -> &'static str {
         match self {
+            Builtin::ForeignStaticRead { .. } => "foreign_static_read",
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::EPrintln => "eprintln",

@@ -29,6 +29,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
+use ember_build::{LinkRequest, Profile, Toolchain};
 use ember_branding::{MANIFEST, SOURCE_EXT};
 
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
@@ -423,6 +424,61 @@ fn temporary_directory(label: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&path).expect("temporary directory is creatable");
     path
+}
+
+/// `[FFI-10]` — a hand-declared static names linker storage rather than an
+/// inlined Ember constant. A separate C translation unit proves the actual
+/// symbol binding, including `link_name` and `@ffi(immutable)`.
+#[test]
+fn foreign_scalar_statics_read_the_linkers_storage() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_scalar_statics.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "foreign static C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains("extern int32_t raw_counter;"));
+    assert!(emitted.stdout.contains("extern int32_t changing_counter;"));
+    assert!(emitted.stdout.contains("extern const int32_t frozen_count;"));
+    assert!(emitted.stdout.contains("extern const int32_t aliased_count;"));
+
+    let directory = temporary_directory("foreign-static");
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_statics.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let output = directory.join(if cfg!(windows) { "foreign_static.exe" } else { "foreign_static" });
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &includes,
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("foreign static and C fixture link together");
+    let run = Command::new(output).output().expect("linked program runs");
+    assert!(run.status.success(), "foreign static program failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "41\n7\n1\n2\n");
+
+    // Module imports must retain the foreign binding instead of folding it
+    // like an ordinary `const` or losing its C symbol at the boundary.
+    let imported = directory.join(ember_branding::source_file("imported"));
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&imported,
+        "unsafe extern \"C\":\n    @ffi(immutable, link_name=\"aliased_count\")\n    pub static renamed_count: i32\n")
+        .expect("foreign static module is writable");
+    std::fs::write(&entry,
+        "from imported import renamed_count\nfn main():\n    println(renamed_count)\n")
+        .expect("importing module is writable");
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let across_modules = ember(&["build", &entry_arg, "--emit", "c"], &root);
+    assert_eq!(across_modules.exit, 0, "imported foreign static failed: {}", across_modules.stderr);
+    assert!(across_modules.stdout.contains("extern const int32_t aliased_count;"));
 }
 
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint

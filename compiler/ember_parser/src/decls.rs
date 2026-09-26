@@ -499,6 +499,7 @@ impl Parser<'_> {
         };
         self.expect_punct(Punct::Colon);
         let mut items = Vec::new();
+        let outer_extern = std::mem::replace(&mut self.in_extern_block, true);
         if self.at_newline() {
             self.bump();
             if self.eat_indent() {
@@ -521,6 +522,7 @@ impl Parser<'_> {
                 self.eat_dedent();
             }
         }
+        self.in_extern_block = outer_extern;
         ExternBlock { is_unsafe, abi, items }
     }
 
@@ -820,10 +822,19 @@ impl Parser<'_> {
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
         let ty = self.parse_type();
-        self.expect_punct(Punct::Eq);
-        let value = self.parse_expr();
+        let value = if self.in_extern_block {
+            if self.eat_punct(Punct::Eq) {
+                self.report_code(codes::E0100, self.span(), "a foreign static declaration has no initializer");
+                Some(self.parse_expr())
+            } else {
+                None
+            }
+        } else {
+            self.expect_punct(Punct::Eq);
+            Some(self.parse_expr())
+        };
         self.expect_newline();
-        StaticDecl { name, is_mut, ty, value }
+        StaticDecl { name, is_mut, is_foreign_decl: self.in_extern_block, ty, value }
     }
 
     fn parse_implements(&mut self) -> Vec<TypeExpr> {

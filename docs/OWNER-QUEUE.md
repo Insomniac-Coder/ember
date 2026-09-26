@@ -60,6 +60,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-079 | **CLOSED** — nullable borrowed `count(n)` inputs map `None` to `(NULL, 0)` and `Some(empty)` to `(non-null, 0)`, synthesizing a call-safe aligned sentinel when its data pointer is null | Language / C interop / nullable counted inputs | — | **No** — delegated, 2026-09-27, Hardened_35 |
 | ODR-080 | **CLOSED** — `Option[cstr]` has a null-pointer niche and nullable borrowed NUL-terminated inputs/results use it | Language / C interop / nullable strings | — | **No** — delegated, 2026-09-27, Hardened_36 |
 | ODR-081 | **CLOSED** — `str.to_cstring()` returns `Result[CString, NulError]`; `.as_cstr()` is an explicit owner-bound borrow | Language / C interop / owned strings | — | **No** — delegated, 2026-09-27, Hardened_37 |
+| ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -235,6 +236,52 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-082 — immutable foreign-static C type — **CLOSED**
+
+    ID:        ODR-082
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_38
+    Category:  LANGUAGE / C INTEROP / FOREIGN STATICS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_37.md `[FFI-8]`, `[STA-1]`
+
+    Question:  `[FFI-8]` maps both `static const` and ordinary C globals to
+               `extern static`, and permits a safe read after
+               `@ffi(immutable)`. It does not say whether that attribute
+               asserts the C object's `const`-qualified type or only that
+               no code will mutate it. C declarations in different
+               translation units must have compatible qualified types.
+
+    Blocks implementation:            YES — correct C declaration emission
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Make `@ffi(immutable)` assert both that the C
+object is `const T` and that it remains unchanged. Emit `extern const T`,
+and allow a safe read of a `Sync` value. This keeps declarations compatible
+and the assertion auditable, but a non-const object known never to change
+still requires an unsafe read. (b) Treat the attribute only as a logical
+immutability promise and emit `extern T`. That accepts the latter case but
+cannot safely describe a real C `const T` object without another qualifier
+annotation. (c) Add a second attribute for C constness. This handles both
+forms but expands the contract language for one mapping. **(a)**.
+
+**Ruling.** In a hand declaration, `@ffi(immutable)` on `static NAME: T`
+asserts that the external C object has type `const T` and is not mutated
+through any alias for the duration of the program. The generated C uses an
+`extern const T` declaration. A read is safe only when `T` is `Sync`; if
+that property is not established, the declaration is rejected. Without
+the attribute, the generated declaration is `extern T` and a read requires
+`unsafe` even when Ember does not write the value. `@ffi(immutable)` on
+`static mut` is `E5002`: it would assert incompatible contracts. An
+ordinary non-const C global known never to change may be declared without
+the attribute and read in `unsafe`.
+
+**Implementation.** Hardened_38 updates `[FFI-8]`. Conformance covers the
+two declaration qualifiers, real C linkage, safe and unsafe reads, and the
+incompatible `static mut` attribute.
 
 ---
 

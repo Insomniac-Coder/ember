@@ -134,6 +134,7 @@ pub fn emit(
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
             .collect(),
+        foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
         clone_parts_fns: std::cell::RefCell::new(Vec::new()),
@@ -159,6 +160,11 @@ pub fn emit(
             .collect(),
     };
     emitter.emit_module(bodies, module_name, has_main, leak_check);
+    let foreign_declarations = emitter.foreign_statics.borrow().iter()
+        .map(|(symbol, (ty, immutable))| format!("extern {}{} {symbol};\n",
+            if *immutable { "const " } else { "" }, emitter.c_type(*ty)))
+        .collect::<String>();
+    emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
     Output {
         c_source: emitter.out,
         safety_json: safety_json(bodies, map),
@@ -268,6 +274,8 @@ struct Emitter<'a> {
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
     direct_param_modes: BTreeMap<String, Vec<ParameterMode>>,
+    /// C globals used by a generated body, collected while rendering calls.
+    foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool)>>,
     /// D-182 — aggregate types whose drop is emitted as an out-of-line
     /// `static` function, in first-request order. An `Array` element or a
     /// `Box` payload drops through one, so a type that owns itself through
@@ -300,6 +308,7 @@ struct Emitter<'a> {
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
 const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
+const FOREIGN_STATIC_DECLARATIONS: &str = "/* @@foreign-static-declarations@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
 const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
@@ -444,6 +453,7 @@ impl Emitter<'_> {
         self.line("");
 
         self.emit_type_declarations();
+        self.line(FOREIGN_STATIC_DECLARATIONS);
         self.collect_virtual_methods(bodies);
         self.collect_interface_methods(bodies);
         self.collect_interface_adapters(bodies);
@@ -4576,6 +4586,10 @@ impl Emitter<'_> {
                 // size is passed at each call, which is how a single
                 // implementation serves every element type.
                 match which {
+                    Builtin::ForeignStaticRead { symbol, immutable } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
+                        return symbol.to_string();
+                    }
                     // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
                     // now. Each is a move out of a field, a store into it, and
                     // sometimes a drop, and lowering writes exactly those, so

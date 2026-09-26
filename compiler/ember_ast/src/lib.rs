@@ -358,8 +358,10 @@ pub struct StaticDecl {
     pub name: Ident,
     /// `[STA-1]` — any access to a `static mut` requires `unsafe`.
     pub is_mut: bool,
+    /// A declaration inside `unsafe extern "C"` has no Ember initializer.
+    pub is_foreign_decl: bool,
     pub ty: TypeExpr,
-    pub value: Expr,
+    pub value: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]

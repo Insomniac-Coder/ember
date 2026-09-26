@@ -145,7 +145,9 @@ impl Printer {
             ItemKind::Static(s) => {
                 let m = if s.is_mut { " mut" } else { "" };
                 self.nest(&format!("Static{m} {}: {}", s.name.name, type_str(&s.ty)), |p| {
-                    p.expr(&s.value);
+                    if let Some(value) = &s.value {
+                        p.expr(value);
+                    }
                 })
             }
             ItemKind::TypeAlias(t) => self.nest(&format!("TypeAlias {}", t.name.name), |p| {

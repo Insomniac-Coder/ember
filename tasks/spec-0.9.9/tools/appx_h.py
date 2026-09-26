@@ -368,6 +368,8 @@ ODRS = [
      '`[TYP-13]`, `[FFI-11]`, `[FFI-15]`'),
     ('ODR-081', '`str.to_cstring()` returns `Result[CString, NulError]`, checking for interior NUL before allocation; `.as_cstr()` is an explicit borrow of its owner (Hardened_37)',
      '`[TXT-5]`, `[FFI-15]`'),
+    ('ODR-082', '`@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38)',
+     '`[FFI-8]`'),
 ]
 
 H5_HEAD = """
@@ -393,7 +395,8 @@ borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive count
 mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
 between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
 their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
-explicit borrowed view.
+explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
+foreign static.
 
 | ODR | Ruling | Rules |
 |---|---|---|

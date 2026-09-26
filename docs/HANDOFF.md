@@ -11009,14 +11009,29 @@ first**; the rest of §0.355 is the running narrative behind it.
     failed before the relevant fixes. The full conformance annotation sweep
     reports zero failures, the workspace suite passes, and all repository
     gates pass locally. Remote CI for this batch is pending.
+  * Commit `61d0b10` contains the H37 C-string and lifetime batch and is
+    pushed to `main`; its CI run is `36276950767`. The next Phase 5 slice
+    gives `unsafe extern "C"` its bodiless `static` grammar and reads C
+    scalar globals by their actual linker symbol. An ordinary or `static
+    mut` global requires `unsafe` to read; `@ffi(immutable)` permits a safe
+    read, and `link_name` works through an import. A separate C translation
+    unit supplies three values for the end-to-end test, while focused
+    `FFI-10/` annotations cover the missing-unsafe and invalid-declaration
+    paths. Conflicting type or const contracts for one C symbol are rejected.
+    ODR-082 settles the genuinely open C type question: the
+    immutable attribute asserts a `const` C object and emits `extern const
+    T`, while an unannotated binding emits `extern T`. Hardened_38 is
+    frozen and pinned. The full annotation sweep reports zero failures,
+    the workspace suite passes, and all repository gates pass locally.
+    Commit and remote CI remain pending.
 
-  Check CI for the newest first. Runs through `474b258` passed remotely;
-  its H36 run is `36275903393`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_37.md`
-  (ODR-081), pinned in `docs/spec-source/development-target.json`. The
+  Check CI for the newest first. Runs through `61d0b10` passed remotely;
+  its H37 run is `36276950767`.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
+  (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h37/` are frozen.
-* **Next numbers:** ODR-082, D-363, ADR-063.
+  `parts-h38/` are frozen.
+* **Next numbers:** ODR-083, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11172,8 +11187,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** finish validation and push the H37 `CString` batch, then
-  implement foreign statics. Check the newest CI run before pushing further work.
+* **Next task:** finish validation and push the H38 foreign-scalar-static
+  batch, then implement mutable foreign-static writes and other FFI gaps.
+  Check the newest CI run before pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.
