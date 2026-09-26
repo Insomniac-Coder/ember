@@ -11336,64 +11336,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    /// D-303 — a tuple, `Option` or `Result` cloned part by part, each part
-    /// as `clone_value` clones it. A plain place is read again for each part
-    /// (a generated `clone` body declares no locals of its own); any other
-    /// value is held once.
-    fn clone_by_parts(&mut self, value: Expr) -> Expr {
-        let (ty, span) = (value.ty, value.span);
-        let (stmts, held, place) = match copy_place(&value) {
-            Some(_) => (Vec::new(), None, Some(value)),
-            None => {
-                let (stmts, held) = self.hold(value, span);
-                (stmts, Some(held), None)
-            }
-        };
-        let read = |held: &Option<Held>, place: &Option<Expr>| match (held, place) {
-            (Some(held), _) => held.read(span),
-            (None, Some(place)) => copy_place(place).expect("a plain place copies"),
-            (None, None) => unreachable!("one of the two is set"),
-        };
-        let result = match self.types.kind(ty).clone() {
-            TyKind::Tuple(items) => {
-                let mut parts = Vec::new();
-                for (index, item) in items.into_iter().enumerate() {
-                    let part = Expr { ty: item, kind: ExprKind::Field { base: Box::new(read(&held, &place)), index }, span };
-                    parts.push(self.clone_value(part));
-                }
-                Expr { ty, kind: ExprKind::TupleLit(parts), span }
-            }
-            TyKind::Enum(id) => {
-                let variants = self.types.enum_def(id).variants.clone();
-                let mut arms = Vec::new();
-                for (variant, definition) in variants.iter().enumerate() {
-                    let mut fields = Vec::new();
-                    for (index, field) in definition.fields.iter().enumerate() {
-                        let part = Expr {
-                            ty: field.ty,
-                            kind: ExprKind::EnumField { base: Box::new(read(&held, &place)), variant, index },
-                            span,
-                        };
-                        fields.push(self.clone_value(part));
-                    }
-                    arms.push(hir::MatchArm {
-                        pattern: hir::Pattern {
-                            ty,
-                            kind: hir::PatternKind::Variant { enum_id: id, variant, fields: Vec::new() },
-                            span,
-                        },
-                        guard: None,
-                        body: hir::MatchArmBody::Expr(Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant, fields }, span }),
-                        span,
-                    });
-                }
-                Expr { ty, kind: ExprKind::Match { scrutinee: Box::new(read(&held, &place)), arms }, span }
-            }
-            _ => unreachable!("clones_by_parts admits tuples and enums"),
-        };
-        Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(result) }, span }
-    }
-
     /// A clone of `value`, whose type `is_cloneable`.
     fn clone_value(&mut self, value: Expr) -> Expr {
         let ty = value.ty;
@@ -11414,7 +11356,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
         }
         if self.clones_by_parts(ty) {
-            return self.clone_by_parts(value);
+            return Expr {
+                ty,
+                kind: ExprKind::Builtin {
+                    which: Builtin::CloneParts { ty },
+                    args: vec![self.borrow_argument(value, ty)],
+                },
+                span,
+            };
         }
         let TyKind::Vec { elem, .. } = *self.types.kind(ty) else {
             unreachable!("clone_value of a type is_cloneable refused")
@@ -34289,4 +34238,3 @@ fn may_name(expr: &ast::Expr, names: &[Symbol]) -> bool {
         _ => true,
     }
 }
-

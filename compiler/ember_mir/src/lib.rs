@@ -1239,10 +1239,39 @@ pub enum FuncRef {
 
 /// `--emit=mir`: a stable textual form, for snapshot tests.
 /// `[COST-1]` — drop the implicit derives (`emit_if_used`) nothing kept
-/// reaches: a direct call, or an `ArrayClone` whose element (or nested
-/// element) is the derive's type, which the backend's clone helper calls.
+/// reaches: a direct call, or a structural clone whose field eventually
+/// reaches the derive's type through a backend helper.
 pub fn prune_unused_implicit(bodies: &mut Vec<Body>, types: &ember_types::TypeTable) {
     use std::collections::HashMap;
+    fn clone_dependencies(
+        ty: Ty,
+        types: &ember_types::TypeTable,
+        clone_of: &HashMap<Ty, usize>,
+        reached: &mut Vec<usize>,
+        seen: &mut std::collections::HashSet<Ty>,
+    ) {
+        if !seen.insert(ty) { return; }
+        if let Some(&body) = clone_of.get(&ty) {
+            reached.push(body);
+            return;
+        }
+        match types.kind(ty) {
+            ember_types::TyKind::Vec { elem, .. } => {
+                clone_dependencies(*elem, types, clone_of, reached, seen);
+            }
+            ember_types::TyKind::Tuple(items) => {
+                for &item in items { clone_dependencies(item, types, clone_of, reached, seen); }
+            }
+            ember_types::TyKind::Enum(id) => {
+                for variant in &types.enum_def(*id).variants {
+                    for field in &variant.fields {
+                        clone_dependencies(field.ty, types, clone_of, reached, seen);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     let by_symbol: HashMap<String, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.clone(), i)).collect();
     let clone_of: HashMap<Ty, usize> = bodies
@@ -1260,11 +1289,10 @@ pub fn prune_unused_implicit(bodies: &mut Vec<Body>, types: &ember_types::TypeTa
             match func {
                 FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
                 FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
-                    let mut elem = *elem;
-                    while let ember_types::TyKind::Vec { elem: inner, .. } = types.kind(elem) {
-                        elem = *inner;
-                    }
-                    reached.extend(clone_of.get(&elem).copied());
+                    clone_dependencies(*elem, types, &clone_of, &mut reached, &mut Default::default());
+                }
+                FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } => {
+                    clone_dependencies(*ty, types, &clone_of, &mut reached, &mut Default::default());
                 }
                 _ => {}
             }

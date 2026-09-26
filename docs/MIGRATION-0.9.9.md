@@ -926,3 +926,9 @@ The next number is ODR-027.
   * **The type `()` is `void`** (ODR-071); `Array[()]` and every other container of `()` work, and
     `()` prints as `()` (D-355).
   * Deeply nested containers compile on every C compiler (D-358).
+
+* **2026-09-26 — D-360 fixed: deep structural comparison and clone.** Equality helpers take
+  pointers; tuple, `Option` and `Result` clones write through pointer-taking helpers. A
+  256-level `Option[String]` clones and compares on MSVC without stack overflow. Nested
+  enum-field matching reads the original place, and implicit field clone bodies remain live
+  through structural and `Array` clones. The two regression cases and full workspace suite pass.

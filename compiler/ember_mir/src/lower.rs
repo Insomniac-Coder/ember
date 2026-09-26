@@ -2791,6 +2791,7 @@ impl<'a> Builder<'a> {
         let scrutinee_place = match &scrutinee.kind {
             hir::ExprKind::Local(_)
             | hir::ExprKind::Field { .. }
+            | hir::ExprKind::EnumField { .. }
             | hir::ExprKind::Deref(_)
             | hir::ExprKind::Index { .. } => self.lower_place(scrutinee),
             _ => {

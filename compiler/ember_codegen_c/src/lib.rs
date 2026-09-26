@@ -136,6 +136,7 @@ pub fn emit(
             .collect(),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
+        clone_parts_fns: std::cell::RefCell::new(Vec::new()),
         fmt_fns: std::cell::RefCell::new(Vec::new()),
         fmt_prints: std::cell::RefCell::new(Vec::new()),
         fmt_specs: std::cell::RefCell::new(Vec::new()),
@@ -277,6 +278,9 @@ struct Emitter<'a> {
     /// field-wise equality function each, requested and emitted like
     /// `drop_glue`.
     eq_fns: std::cell::RefCell<Vec<Ty>>,
+    /// `[STR-5]` — structural clone helpers that write through a destination
+    /// pointer instead of returning a chain of by-value temporaries (D-360).
+    clone_parts_fns: std::cell::RefCell<Vec<Ty>>,
     /// `[STD-15]` — the per-type helpers the Array methods call (a sort's
     /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
     /// like `eq_fns`.
@@ -299,6 +303,7 @@ const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
 const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
+const CLONE_PARTS_PROTOTYPES: &str = "/* @@clone-parts-prototypes@@ */";
 
 /// And by the `[STD-15]` Array helpers' prototypes.
 const ARRAY_HELPER_PROTOTYPES: &str = "/* @@array-helper-prototypes@@ */";
@@ -446,6 +451,7 @@ impl Emitter<'_> {
         self.emit_prototypes(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
         self.line(EQ_FN_PROTOTYPES);
+        self.line(CLONE_PARTS_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
         self.line(FMT_FN_PROTOTYPES);
         self.emit_interface_adapters();
@@ -471,26 +477,135 @@ impl Emitter<'_> {
             self.emit_entry_point(leak_check);
         }
         self.emit_fmt_fns();
+        self.collect_clone_dependencies();
         // The Array helpers first: `clear` drops through glue it may request.
         self.emit_array_helpers();
+        self.emit_clone_parts_fns();
         self.emit_drop_glue();
         self.emit_eq_fns();
     }
 
-    /// The symbol of a `[STD-15]` Array helper, requesting it.
-    /// `[OWN-8]` — a C expression cloning the element at `source`, a
-    /// non-`Copy` value the type checker proved cloneable: a nested array
-    /// through its own helper, anything else through its `clone` function.
-    fn clone_element(&self, source: &str, ty: Ty) -> String {
-        if let TyKind::Vec { elem, .. } = self.types.kind(ty) {
-            let helper = self.array_helper(ArrayHelper::Clone, *elem);
-            return format!("{helper}(({source}).ptr, ({source}).len)");
+    /// The symbol of a structural clone helper, requesting it.
+    fn clone_parts_helper(&self, ty: Ty) -> String {
+        let mut helpers = self.clone_parts_fns.borrow_mut();
+        let index = helpers.iter().position(|&known| known == ty).unwrap_or_else(|| {
+            helpers.push(ty);
+            helpers.len() - 1
+        });
+        ember_branding::mangled(&format!("clone_parts_{index}"))
+    }
+
+    /// Discover the helpers before defining either family: an Array helper
+    /// may clone an Option, and an Option helper may clone an Array.
+    fn collect_clone_dependencies(&self) {
+        let mut scanned_arrays = 0;
+        let mut scanned_parts = 0;
+        loop {
+            let arrays: Vec<(ArrayHelper, Ty)> = self.array_helpers.borrow()[scanned_arrays..].to_vec();
+            let parts: Vec<Ty> = self.clone_parts_fns.borrow()[scanned_parts..].to_vec();
+            if arrays.is_empty() && parts.is_empty() { break; }
+            scanned_arrays += arrays.len();
+            scanned_parts += parts.len();
+            for (helper, ty) in arrays {
+                if matches!(helper, ArrayHelper::Clone | ArrayHelper::Extend) {
+                    self.request_clone_dependency(ty);
+                }
+            }
+            for ty in parts {
+                match self.types.kind(ty) {
+                    TyKind::Tuple(items) => {
+                        for &item in items { self.request_clone_dependency(item); }
+                    }
+                    TyKind::Enum(id) => {
+                        for variant in &self.types.enum_def(*id).variants {
+                            for field in &variant.fields { self.request_clone_dependency(field.ty); }
+                        }
+                    }
+                    _ => unreachable!("only structural types request a clone-parts helper"),
+                }
+            }
         }
-        let (symbol, by_address) = self
-            .clone_fns
-            .get(&ty)
-            .expect("the type checker proved the element cloneable");
-        if *by_address { format!("{symbol}(&{source})") } else { format!("{symbol}({source})") }
+    }
+
+    fn request_clone_dependency(&self, ty: Ty) {
+        if self.types.is_copy(ty) || self.clone_fns.contains_key(&ty) { return; }
+        match self.types.kind(ty) {
+            TyKind::Vec { elem, .. } => { self.array_helper(ArrayHelper::Clone, *elem); }
+            TyKind::Tuple(_) | TyKind::Enum(_) => { self.clone_parts_helper(ty); }
+            _ => {}
+        }
+    }
+
+    /// Clone one field from stable source storage into its final destination.
+    /// Structural children get their own pointer-taking helper, so the C
+    /// stack never holds a by-value copy of every enclosing aggregate.
+    fn clone_part_lines(&self, dest: &str, source: &str, ty: Ty, out: &mut Vec<String>) {
+        if self.types.is_copy(ty) {
+            out.push(format!("{dest} = {source};"));
+            self.retain_lines_for_value(dest, ty, out);
+        } else if let TyKind::Vec { elem, .. } = self.types.kind(ty) {
+            let helper = self.array_helper(ArrayHelper::Clone, *elem);
+            out.push(format!("{dest} = {helper}(({source}).ptr, ({source}).len);"));
+        } else if let Some((symbol, by_address)) = self.clone_fns.get(&ty) {
+            let argument = if *by_address { format!("&({source})") } else { source.to_string() };
+            out.push(format!("{dest} = {symbol}({argument});"));
+        } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_)) {
+            let helper = self.clone_parts_helper(ty);
+            out.push(format!("{helper}(&({source}), &({dest}));"));
+        } else {
+            unreachable!("the type checker proved this field cloneable")
+        }
+    }
+
+    fn emit_clone_parts_fns(&mut self) {
+        let mut emitted = 0;
+        let mut prototypes = Vec::new();
+        loop {
+            let pending: Vec<Ty> = self.clone_parts_fns.borrow()[emitted..].to_vec();
+            if pending.is_empty() { break; }
+            for ty in pending {
+                let symbol = ember_branding::mangled(&format!("clone_parts_{emitted}"));
+                let c_ty = self.c_type(ty);
+                let signature = format!("static void {symbol}(const {c_ty}* src, {c_ty}* dst)");
+                prototypes.push(format!("{signature};"));
+                self.line(&format!("{signature} {{"));
+                match self.types.kind(ty).clone() {
+                    TyKind::Tuple(items) => {
+                        for (index, item) in items.into_iter().enumerate() {
+                            let mut lines = Vec::new();
+                            self.clone_part_lines(&format!("dst->_{index}"), &format!("src->_{index}"), item, &mut lines);
+                            for line in lines { self.line(&format!("    {line}")); }
+                        }
+                    }
+                    TyKind::Enum(id) => {
+                        let def = self.types.enum_def(id).clone();
+                        self.line(&format!("    switch ({}) {{", self.enum_tag(id, "(*src)")));
+                        for (variant_index, variant) in def.variants.iter().enumerate() {
+                            self.line(&format!("    case {}:", variant.discriminant));
+                            self.line("        memset(dst, 0, sizeof *dst);");
+                            if self.types.option_niche(id).is_none() {
+                                self.line(&format!("        dst->tag = {};", variant.discriminant));
+                            }
+                            for (field_index, field) in variant.fields.iter().enumerate() {
+                                let source = self.enum_member(id, "(*src)", variant_index, field_index);
+                                let dest = self.enum_member(id, "(*dst)", variant_index, field_index);
+                                let mut lines = Vec::new();
+                                self.clone_part_lines(&dest, &source, field.ty, &mut lines);
+                                for line in lines { self.line(&format!("        {line}")); }
+                            }
+                            self.line("        return;");
+                        }
+                        self.line("    default: EMBER_UNREACHABLE();");
+                        self.line("    }");
+                    }
+                    _ => unreachable!("CloneParts is requested only for tuples and payload enums"),
+                }
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        self.out = self.out.replacen(CLONE_PARTS_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
     fn array_helper(&self, helper: ArrayHelper, ty: Ty) -> String {
@@ -662,7 +777,9 @@ impl Emitter<'_> {
                             self.retain_lines_for_value(&copy, ty, &mut retains);
                             retains.join(" ")
                         } else {
-                            format!("{copy} = {};", self.clone_element(&source, ty))
+                            let mut lines = Vec::new();
+                            self.clone_part_lines(&copy, &source, ty, &mut lines);
+                            lines.join(" ")
                         };
                         if !per_element.is_empty() {
                             body.push(format!("for (size_t _ci = 0; _ci < count; ++_ci) {{ {per_element} }}"));
@@ -693,7 +810,9 @@ impl Emitter<'_> {
                             self.retain_lines_for_value(&copy, ty, &mut retains);
                             retains.join(" ")
                         } else {
-                            format!("{copy} = {};", self.clone_element(&source, ty))
+                            let mut lines = Vec::new();
+                            self.clone_part_lines(&copy, &source, ty, &mut lines);
+                            lines.join(" ")
                         };
                         if !per_element.is_empty() {
                             body.push(format!("for (size_t _ci = 0; _ci < count; ++_ci) {{ {per_element} }}"));
@@ -756,7 +875,10 @@ impl Emitter<'_> {
             fns.push(ty);
             fns.len() - 1
         });
-        format!("{}({a}, {b})", eq_fn_symbol(index))
+        // The generated function only reads the values. Passing a deeply
+        // nested aggregate by value copies its whole outer value at every
+        // level and can exhaust a small C thread stack (D-360).
+        format!("{}(&({a}), &({b}))", eq_fn_symbol(index))
     }
 
     /// `[TYP-39]` — a value whose `Display` is a generated function: an
@@ -1071,8 +1193,8 @@ impl Emitter<'_> {
     }
 
     /// Define every requested equality function, to a fixpoint, and put
-    /// their prototypes where the marker stands. Values are passed by value
-    /// and never dropped: the comparison borrows.
+    /// their prototypes where the marker stands. The comparison borrows each
+    /// value through a pointer, so nesting does not multiply stack use.
     fn emit_eq_fns(&mut self) {
         let mut emitted = 0;
         let mut prototypes = Vec::new();
@@ -1089,7 +1211,7 @@ impl Emitter<'_> {
                         let fields = self.types.struct_def(id).fields.clone();
                         let parts: Vec<String> = fields
                             .iter()
-                            .map(|f| self.eq_expr(&format!("a.{}", f.name), &format!("b.{}", f.name), f.ty))
+                            .map(|f| self.eq_expr(&format!("a->{}", f.name), &format!("b->{}", f.name), f.ty))
                             .collect();
                         format!("return {};", conjunction(parts))
                     }
@@ -1097,23 +1219,23 @@ impl Emitter<'_> {
                         let parts: Vec<String> = items
                             .iter()
                             .enumerate()
-                            .map(|(i, &item)| self.eq_expr(&format!("a._{i}"), &format!("b._{i}"), item))
+                            .map(|(i, &item)| self.eq_expr(&format!("a->_{i}"), &format!("b->_{i}"), item))
                             .collect();
                         format!("return {};", conjunction(parts))
                     }
                     TyKind::Array { elem, len } => {
-                        let each = self.eq_expr("a._0[i]", "b._0[i]", elem);
+                        let each = self.eq_expr("a->_0[i]", "b->_0[i]", elem);
                         format!("for (size_t i = 0; i < {len}; ++i) {{ if (!{each}) return 0; }} return 1;")
                     }
                     TyKind::Vec { elem, .. } => {
                         let elem_c = self.c_type(elem);
                         let each = self.eq_expr(
-                            &format!("(({elem_c}*)a.ptr)[i]"),
-                            &format!("(({elem_c}*)b.ptr)[i]"),
+                            &format!("(({elem_c}*)a->ptr)[i]"),
+                            &format!("(({elem_c}*)b->ptr)[i]"),
                             elem,
                         );
                         format!(
-                            "if (a.len != b.len) return 0; for (size_t i = 0; i < a.len; ++i) {{ if (!{each}) return 0; }} return 1;"
+                            "if (a->len != b->len) return 0; for (size_t i = 0; i < a->len; ++i) {{ if (!{each}) return 0; }} return 1;"
                         )
                     }
                     TyKind::Enum(id) => {
@@ -1125,8 +1247,8 @@ impl Emitter<'_> {
                                 .iter()
                                 .enumerate()
                                 .map(|(field_index, f)| {
-                                    let a = self.enum_member(id, "a", variant_index, field_index);
-                                    let b = self.enum_member(id, "b", variant_index, field_index);
+                                    let a = self.enum_member(id, "(*a)", variant_index, field_index);
+                                    let b = self.enum_member(id, "(*b)", variant_index, field_index);
                                     self.eq_expr(&a, &b, f.ty)
                                 })
                                 .collect();
@@ -1134,7 +1256,7 @@ impl Emitter<'_> {
                                 arms.push(format!("case {}: return {};", variant.discriminant, conjunction(parts)));
                             }
                         }
-                        let (tag_a, tag_b) = (self.enum_tag(id, "a"), self.enum_tag(id, "b"));
+                        let (tag_a, tag_b) = (self.enum_tag(id, "(*a)"), self.enum_tag(id, "(*b)"));
                         format!(
                             "if ({tag_a} != {tag_b}) return 0; switch ({tag_a}) {{ {} default: return 1; }}",
                             arms.join(" ")
@@ -1142,8 +1264,8 @@ impl Emitter<'_> {
                     }
                     _ => unreachable!("D-187 equality functions are requested only for aggregates"),
                 };
-                prototypes.push(format!("static bool {symbol}({c_ty} a, {c_ty} b);"));
-                self.line(&format!("static bool {symbol}({c_ty} a, {c_ty} b) {{"));
+                prototypes.push(format!("static bool {symbol}(const {c_ty}* a, const {c_ty}* b);"));
+                self.line(&format!("static bool {symbol}(const {c_ty}* a, const {c_ty}* b) {{"));
                 self.line("    (void)a; (void)b;");
                 self.line(&format!("    {body}"));
                 self.line("}");
@@ -3298,6 +3420,21 @@ impl Emitter<'_> {
                     ));
                     return;
                 }
+                // MSVC expands the omitted payload of a unit variant's
+                // compound initializer recursively. With a deeply nested
+                // Option this exceeds its initializer-depth limit, even
+                // though only the tag is live (D-360). Zero the storage at
+                // this MIR assignment boundary, then set the discriminant.
+                if let Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } = rvalue
+                    && operands.is_empty()
+                    && !self.types.enum_def(*id).is_unit_only()
+                    && self.types.option_niche(*id).is_none()
+                {
+                    let tag = self.types.enum_def(*id).variants[*variant].discriminant;
+                    self.line(&format!("    memset(&({lhs}), 0, sizeof({lhs}));"));
+                    self.line(&format!("    ({lhs}).tag = {tag};"));
+                    return;
+                }
                 let rhs = self.rvalue(rvalue, body, ty);
                 self.line(&format!("    {lhs} = {rhs};"));
             }
@@ -3811,6 +3948,18 @@ impl Emitter<'_> {
                 }
             }
             Terminator::Call { func, args, dest, next } => {
+                if let FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } = func {
+                    let source = self.operand(&args[0], body);
+                    let target = self.place_in(dest, body);
+                    let helper = self.clone_parts_helper(*ty);
+                    self.line(&format!("    {helper}({source}, &({target}));"));
+                    if next.0 as usize == index + 1 {
+                        self.line("    /* fallthrough */");
+                    } else {
+                        self.line(&format!("    goto bb{};", next.0));
+                    }
+                    return;
+                }
                 // `[RC-1]`/`[FN-1]` — a class handle is `Copy`, but its C
                 // representation is only one pointer word. Passing a copied
                 // handle to an owned direct parameter therefore needs an
@@ -4666,6 +4815,9 @@ impl Emitter<'_> {
                             rendered[0],
                             rendered[0]
                         );
+                    }
+                    Builtin::CloneParts { .. } => {
+                        unreachable!("CloneParts writes directly into its MIR destination")
                     }
                     Builtin::StrContainsChar => {
                         return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);

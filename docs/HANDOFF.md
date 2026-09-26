@@ -10810,8 +10810,17 @@ the running narrative behind it.
     `EXC-15`, `EXC-18`, `EXC-19`, `CLS-7`.
   * Found and **fixed**: D-359 (a `mut self` method calling another on
     `self` panicked), D-361 (a `mut self` method could re-point `self`;
-    ODR-072, `E2103`). Found and **open**: D-360 (equality and clone of a
-    value nested hundreds deep by value can exhaust the stack).
+    ODR-072, `E2103`). D-360 is now **fixed**: equality helpers borrow
+    aggregates by pointer, and structural clone helpers write into a
+    destination pointer from a borrowed source. The latter replaces inline
+    `Option`/`Result`/tuple clone trees, preserving implicit field clones
+    through MIR reachability. `GRM-39/accept_deep_option_equality.em` fails
+    with Windows stack overflow before the equality change; its 256-level
+    clone and comparison now pass. `STR-5/accept_clone_of_option_with_implicit_struct_clone.em`
+    covers implicit field clones through both `Option` and `Array`. Nested
+    enum-field matches no longer move their payload; unit variants avoid
+    MSVC's recursive initializer-depth limit. The full MSVC workspace suite
+    passed. No specification ruling was needed.
   * Test churn, each checked against what the program now emits: 49 tests
     pinned `ember_access_begin_write`, now `ember_object_begin_write` or
     `ember_field_begin_write` (two became "no check": a `Copy` field has no
@@ -10829,7 +10838,8 @@ the running narrative behind it.
     the plan was three read-only adversarial reviewers (class locking;
     `String`/`Array[u8]`; C output for `void` and deep nesting), two at a
     time. Do not launch unasked.
-* **Next task:** ask the owner about that review. Then: D-360; lift the
+* **Next task:** the read-only review of the five recent fixes awaits the
+  owner's separate approval for agents. Continue solo by lifting the
   "mutable class-field access requires a `mut self` class method in this
   phase" restriction (`E1010`), which per-field accesses now make possible
   (`[CLS-7]`: any method may write fields; `[EXC-16]`); `String.push(char)`;
