@@ -10933,14 +10933,28 @@ first**; the rest of §0.355 is the running narrative behind it.
     the accepted cases failed before the compiler change. This is an
     implementation gap, so no ODR or new hardening is needed. The full
     annotation sweep, workspace suite, and repository gates pass locally.
+    This batch is commit `23176bb`, pushed to `main`.
+  * ODR-078 resolves the genuine mismatch between `[FFI-11]`'s counted
+    `MutSpan`/`exclusive` mapping and ODR-077's concrete shared-`Span`
+    result wording. Hardened_34 is frozen and pinned. It rules that an
+    exclusive borrowed `count(n)` result is `MutSpan[T]` through mutable C
+    `T*`, or `Option[MutSpan[T]]` with `nullable`; ODR-077's shared input
+    witness, checked length, and result lifetime still apply. The compiler
+    now builds that view from the returned C pointer and input length,
+    preserving `None` separately from a non-null zero-length `Some`.
+    `FFI-11/` covers static and input-derived results, nullable forms,
+    mutation, the empty case, missing input witness, and wrong result types.
+    The accepted cases failed before the compiler change. The H34 frozen
+    parts and pin are byte-equal, and the full annotation sweep, workspace
+    suite, and repository gates pass locally.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_33.md`
-  (ODR-077), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_34.md`
+  (ODR-078), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h33/` are frozen.
-* **Next numbers:** ODR-078, D-363, ADR-063.
+  `parts-h34/` are frozen.
+* **Next numbers:** ODR-079, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11097,7 +11111,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
 * **Next task:** finish the remaining Phase 5 pointer contract shapes,
-  starting with exclusive counted results and nullable counted inputs,
+  starting with nullable counted inputs,
   then foreign statics/types. Check the newest CI run before pushing
   further work.
   Audit rows for

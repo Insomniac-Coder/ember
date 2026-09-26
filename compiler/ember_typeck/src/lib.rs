@@ -5124,7 +5124,8 @@ impl<'a> Checker<'a> {
                                 | FfiResultContract::ExclusiveOneStatic | FfiResultContract::NullableExclusiveOneStatic
                                 | FfiResultContract::SharedFixedStatic { .. } | FfiResultContract::NullableSharedFixedStatic { .. }
                                 | FfiResultContract::ExclusiveFixedStatic { .. } | FfiResultContract::NullableExclusiveFixedStatic { .. }
-                                | FfiResultContract::SharedCountStatic { .. } | FfiResultContract::NullableSharedCountStatic { .. }) => Some(Vec::new()),
+                                | FfiResultContract::SharedCountStatic { .. } | FfiResultContract::NullableSharedCountStatic { .. }
+                                | FfiResultContract::ExclusiveCountStatic { .. } | FfiResultContract::NullableExclusiveCountStatic { .. }) => Some(Vec::new()),
                             Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
                                 | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                                 | FfiResultContract::SharedFixedFrom { source: name, .. }
@@ -5132,7 +5133,9 @@ impl<'a> Checker<'a> {
                                 | FfiResultContract::ExclusiveFixedFrom { source: name, .. }
                                 | FfiResultContract::NullableExclusiveFixedFrom { source: name, .. }
                                 | FfiResultContract::SharedCountFrom { source: name, .. }
-                                | FfiResultContract::NullableSharedCountFrom { source: name, .. }) =>
+                                | FfiResultContract::NullableSharedCountFrom { source: name, .. }
+                                | FfiResultContract::ExclusiveCountFrom { source: name, .. }
+                                | FfiResultContract::NullableExclusiveCountFrom { source: name, .. }) =>
                                 params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![index]),
                             None => None,
                         };
@@ -11328,7 +11331,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if ret != self.common.void {
             if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::SharedCountStatic { .. }
-                    | FfiResultContract::SharedCountFrom { .. }))
+                    | FfiResultContract::SharedCountFrom { .. }
+                    | FfiResultContract::ExclusiveCountStatic { .. }
+                    | FfiResultContract::ExclusiveCountFrom { .. }))
                 && let TyKind::Span { elem, .. } = self.types.kind(ret) {
                 if !self.types.is_ffi_safe(*elem) {
                     self.error(codes::E5050, decl.name.span,
@@ -11336,8 +11341,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::NullableSharedCountStatic { .. }
-                    | FfiResultContract::NullableSharedCountFrom { .. }))
-                && let Some(elem) = self.foreign_nullable_span_elem(ret) {
+                    | FfiResultContract::NullableSharedCountFrom { .. }
+                    | FfiResultContract::NullableExclusiveCountStatic { .. }
+                    | FfiResultContract::NullableExclusiveCountFrom { .. }))
+                && let Some((elem, _)) = self.foreign_nullable_span_elem(ret) {
                 if !self.types.is_ffi_safe(elem) {
                     self.error(codes::E5050, decl.name.span,
                         "the nullable counted result contains a type with no foreign representation");
@@ -11512,16 +11519,30 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         "`@ffi` counted result needs a shared `Span[T]`"),
                 Some(FfiResultContract::NullableSharedCountStatic { .. } | FfiResultContract::NullableSharedCountFrom { .. })
                     if !self.foreign_nullable_span_elem(ret)
-                        .is_some_and(|elem| self.types.is_ffi_safe(elem)) =>
+                        .is_some_and(|(elem, mutable)| !mutable && self.types.is_ffi_safe(elem)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` nullable counted result needs `Option[Span[T]]`"),
+                Some(FfiResultContract::ExclusiveCountStatic { .. } | FfiResultContract::ExclusiveCountFrom { .. })
+                    if !matches!(self.types.kind(ret), TyKind::Span { elem, mutable: true }
+                        if self.types.is_ffi_safe(*elem)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` exclusive counted result needs `MutSpan[T]`"),
+                Some(FfiResultContract::NullableExclusiveCountStatic { .. } | FfiResultContract::NullableExclusiveCountFrom { .. })
+                    if !self.foreign_nullable_span_elem(ret)
+                        .is_some_and(|(elem, mutable)| mutable && self.types.is_ffi_safe(elem)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` nullable exclusive counted result needs `Option[MutSpan[T]]`"),
                 _ => {}
             }
             let result_witness = match result_contract {
                 Some(FfiResultContract::SharedCountStatic { witness }
                     | FfiResultContract::NullableSharedCountStatic { witness }
                     | FfiResultContract::SharedCountFrom { witness, .. }
-                    | FfiResultContract::NullableSharedCountFrom { witness, .. }) => Some(witness),
+                    | FfiResultContract::NullableSharedCountFrom { witness, .. }
+                    | FfiResultContract::ExclusiveCountStatic { witness }
+                    | FfiResultContract::NullableExclusiveCountStatic { witness }
+                    | FfiResultContract::ExclusiveCountFrom { witness, .. }
+                    | FfiResultContract::NullableExclusiveCountFrom { witness, .. }) => Some(witness),
                 _ => None,
             };
             if let Some(witness) = result_witness
@@ -11537,7 +11558,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 | FfiResultContract::ExclusiveFixedFrom { source: name, .. }
                 | FfiResultContract::NullableExclusiveFixedFrom { source: name, .. }
                 | FfiResultContract::SharedCountFrom { source: name, .. }
-                | FfiResultContract::NullableSharedCountFrom { source: name, .. }) = result_contract {
+                | FfiResultContract::NullableSharedCountFrom { source: name, .. }
+                | FfiResultContract::ExclusiveCountFrom { source: name, .. }
+                | FfiResultContract::NullableExclusiveCountFrom { source: name, .. }) = result_contract {
                 if !signature.iter().any(|(param, ty, mode, _)| *param == name
                     && (*mode == Mode::Mut || self.is_source_parameter(*ty, *mode))) {
                     self.error(codes::E5002, decl.name.span,
@@ -11629,11 +11652,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    fn foreign_nullable_span_elem(&self, ty: Ty) -> Option<Ty> {
+    fn foreign_nullable_span_elem(&self, ty: Ty) -> Option<(Ty, bool)> {
         let TyKind::Enum(id) = self.types.kind(ty) else { return None };
         let niche = self.types.option_niche(*id)?;
         match self.types.kind(niche.payload) {
-            TyKind::Span { elem, mutable: false } => Some(*elem),
+            TyKind::Span { elem, mutable } => Some((*elem, *mutable)),
             _ => None,
         }
     }
@@ -11659,9 +11682,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let result_count = match ffi_result_contract(attrs) {
             Some(FfiResultContract::SharedCountStatic { witness }
-                | FfiResultContract::SharedCountFrom { witness, .. }) => Some((witness, false)),
+                | FfiResultContract::SharedCountFrom { witness, .. }) => Some((witness, false, false)),
             Some(FfiResultContract::NullableSharedCountStatic { witness }
-                | FfiResultContract::NullableSharedCountFrom { witness, .. }) => Some((witness, true)),
+                | FfiResultContract::NullableSharedCountFrom { witness, .. }) => Some((witness, true, false)),
+            Some(FfiResultContract::ExclusiveCountStatic { witness }
+                | FfiResultContract::ExclusiveCountFrom { witness, .. }) => Some((witness, false, true)),
+            Some(FfiResultContract::NullableExclusiveCountStatic { witness }
+                | FfiResultContract::NullableExclusiveCountFrom { witness, .. }) => Some((witness, true, true)),
             _ => None,
         };
         let result_array = if let Some((len, nullable, exclusive)) = result_fixed {
@@ -11706,16 +11733,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             counted.insert(pointer, (public_index, *elem, exclusive));
             witnesses.entry(witness).or_default().push(public_index);
         }
-        let result_span = if let Some((witness, nullable)) = result_count {
+        let result_span = if let Some((witness, nullable, exclusive)) = result_count {
             let public_index = *witnesses.get(&witness)?.first()?;
-            let elem = if nullable {
+            let (elem, mutable) = if nullable {
                 self.foreign_nullable_span_elem(result_ty)?
             } else {
-                let TyKind::Span { elem, mutable: false } = self.types.kind(result_ty) else { return None };
-                *elem
+                let TyKind::Span { elem, mutable } = self.types.kind(result_ty) else { return None };
+                (*elem, *mutable)
             };
-            if !self.types.is_ffi_safe(elem) { return None; }
-            Some(hir::FfiSpanResult { public_index, elem, nullable })
+            if mutable != exclusive || !self.types.is_ffi_safe(elem) { return None; }
+            Some(hir::FfiSpanResult { public_index, elem, nullable, mutable })
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() { return None; }
@@ -34688,6 +34715,10 @@ enum FfiResultContract {
     NullableSharedCountStatic { witness: Symbol },
     SharedCountFrom { witness: Symbol, source: Symbol },
     NullableSharedCountFrom { witness: Symbol, source: Symbol },
+    ExclusiveCountStatic { witness: Symbol },
+    NullableExclusiveCountStatic { witness: Symbol },
+    ExclusiveCountFrom { witness: Symbol, source: Symbol },
+    NullableExclusiveCountFrom { witness: Symbol, source: Symbol },
 }
 
 fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
@@ -34749,6 +34780,10 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
         (true, true, false, None, Some(witness)) => FfiResultContract::NullableSharedCountStatic { witness },
         (false, false, false, None, Some(witness)) => FfiResultContract::SharedCountFrom { witness, source },
         (false, true, false, None, Some(witness)) => FfiResultContract::NullableSharedCountFrom { witness, source },
+        (true, false, true, None, Some(witness)) => FfiResultContract::ExclusiveCountStatic { witness },
+        (true, true, true, None, Some(witness)) => FfiResultContract::NullableExclusiveCountStatic { witness },
+        (false, false, true, None, Some(witness)) => FfiResultContract::ExclusiveCountFrom { witness, source },
+        (false, true, true, None, Some(witness)) => FfiResultContract::NullableExclusiveCountFrom { witness, source },
         _ => return None,
     })
 }

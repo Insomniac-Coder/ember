@@ -360,6 +360,8 @@ ODRS = [
      '§IV.5'),
     ('ODR-077', 'a safe hand-declared borrowed `count(n)` result requires an input span sharing `n`; its length supplies the hidden C count and result length (Hardened_33)',
      '`[FFI-10]`, `[FFI-11]`'),
+    ('ODR-078', 'an `exclusive` borrowed `count(n)` result is `MutSpan[T]` (nullable as `Option[MutSpan[T]]`) through mutable C `T*`, using ODR-077\'s input witness length (Hardened_34)',
+     '`[FFI-10]`, `[FFI-11]`'),
 ]
 
 H5_HEAD = """
@@ -381,7 +383,8 @@ closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand
 contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for a hand-declared
 counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
 the exact pointer type of `null[P]()`; Hardened_33 adds ODR-077, the input length source for a
-borrowed counted C pointer result.
+borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive counted result's
+mutable view and C pointer.
 
 | ODR | Ruling | Rules |
 |---|---|---|

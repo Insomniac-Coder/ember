@@ -56,6 +56,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-075 | **CLOSED** — both `ref_to_ptr(r)` and a non-strengthening `r as *T` convert a reference to a raw pointer safely; the raw pointer does not keep a loan | Language / raw pointers / source syntax | — | **No** — delegated, 2026-09-27, Hardened_32 |
 | ODR-076 | **CLOSED** — the type argument to `null[P]()` is the complete raw-pointer type `P`, including constness; the result has exactly type `P` | Language / raw pointers / null construction | — | **No** — delegated, 2026-09-27, Hardened_32 |
 | ODR-077 | **CLOSED** — a safe hand-declared `result(borrowed, count(n), ...)` requires an input span also contracted with `count(n)`; its length supplies the hidden C witness and the result length | Language / C interop / counted results | — | **No** — delegated, 2026-09-27, Hardened_33 |
+| ODR-078 | **CLOSED** — `exclusive` on a borrowed counted result yields `MutSpan[T]` (or `Option[MutSpan[T]]` with `nullable`), at the shared input witness length, through a mutable C pointer | Language / C interop / counted mutable results | — | **No** — delegated, 2026-09-27, Hardened_34 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -231,6 +232,54 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-078 — an exclusive borrowed counted result — **CLOSED**
+
+    ID:        ODR-078
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_34
+    Category:  LANGUAGE / C INTEROP / COUNTED MUTABLE RESULTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_33.md Part XVI `[FFI-10]`, `[FFI-11]`
+
+    Question:  `[FFI-11]` maps `count(n)` to `Span[T]` or `MutSpan[T]` and
+               says `exclusive` permits mutable views. ODR-077's concrete
+               result wording, however, always says `Span[T]` and
+               `Some(Span[T])`. Does an exclusive counted result use the
+               mutable mapping, and what C pointer and null carrier does it
+               have?
+
+    Blocks implementation:            YES — exclusive borrowed counted results
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Apply the table's exclusive mapping: the result is
+`MutSpan[T]`, or `Option[MutSpan[T]]` with `nullable`; the C result is a mutable
+`T*`, and ODR-077's input-witness length and lifetime rules still apply. This
+uses the promised safe surface, but a false exclusivity assertion at the C
+boundary is unsafe just like one on an exclusive input. (b) Keep counted
+results shared even with `exclusive`. This makes the word misleading and
+prevents a safe mutable result despite the table. (c) Reject `exclusive` on a
+counted result, leaving mutable results to an unsafe raw-pointer wrapper.
+This preserves the implementation limit but leaves the general contract table
+unfulfilled. **(a)**.
+
+**Ruling.** `result(borrowed, count(n), exclusive, from(...))` maps to
+`MutSpan[T]` and a mutable C element pointer. With `nullable`, the safe result
+is `Option[MutSpan[T]]`: a null C pointer is `None`, and a non-null pointer is
+`Some(MutSpan[T])` at the input span's length. A non-null zero-length result
+remains `Some`; the `Option` niche distinguishes it from `None`. The result
+still needs an input `Span` or `MutSpan` sharing `n`, the checked integer ABI
+witness, and an explicit `from(p)` or `from(static)` lifetime under ODR-077.
+The `exclusive` clause asserts unique mutable access to the returned storage;
+the declaration's author is responsible for the C function keeping that
+assertion true. A shared counted result remains `Span[T]` through `const T*`.
+
+**Implementation.** Part XVI `[FFI-10]` and `[FFI-11]` of Hardened_34 state
+both shared and exclusive result forms. The compiler preserves the mutable
+C pointer and constructs the appropriate result view; `FFI-11/` covers direct,
+nullable, zero-length, and mismatched-mapping cases.
 
 ---
 

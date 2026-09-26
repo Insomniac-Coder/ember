@@ -3327,7 +3327,8 @@ impl Emitter<'_> {
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let result = if let Some(span) = &counted.result_span {
-            format!("const {}*", self.c_type(span.elem))
+            let elem = self.c_type(span.elem);
+            if span.mutable { format!("{elem}*") } else { format!("const {elem}*") }
         } else if let Some(array) = &counted.result_array {
             let elem = self.c_type(array.elem);
             if array.mutable { format!("{elem}*") } else { format!("const {elem}*") }
@@ -3420,7 +3421,9 @@ impl Emitter<'_> {
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
         if let Some(result) = &counted.result_span {
-            self.line(&format!("    const {}* _ffi_result = {call};", self.c_type(result.elem)));
+            let elem = self.c_type(result.elem);
+            let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
+            self.line(&format!("    {pointer} _ffi_result = {call};"));
             let source = &args[result.public_index];
             let len = if result.nullable {
                 format!("(_ffi_result == NULL ? SIZE_MAX : ({source}).len)")

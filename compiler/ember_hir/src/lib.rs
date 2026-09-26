@@ -94,6 +94,7 @@ pub struct FfiSpanResult {
     pub public_index: usize,
     pub elem: Ty,
     pub nullable: bool,
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone)]
