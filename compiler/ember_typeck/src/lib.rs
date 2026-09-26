@@ -824,6 +824,7 @@ struct ForeignStatic {
     ty: Ty,
     symbol: Symbol,
     immutable: bool,
+    is_mut: bool,
 }
 
 struct Checker<'a> {
@@ -5085,7 +5086,7 @@ impl<'a> Checker<'a> {
                                 "foreign static aliases for one C symbol must have the same type and const contract");
                             continue;
                         }
-                        self.foreign_statics.insert(name, ForeignStatic { ty, symbol, immutable });
+                        self.foreign_statics.insert(name, ForeignStatic { ty, symbol, immutable, is_mut: decl.is_mut });
                         continue;
                     }
                     let Some(initializer) = decl.value.as_ref() else {
@@ -13976,6 +13977,88 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 let target = &targets[0];
+
+                // A foreign global is already a declared item. Treating its
+                // bare name as a fresh local would make an apparent write
+                // leave the C object untouched.
+                if let Some(binding) = self.foreign_static_assignment_target(target) {
+                    if !binding.is_mut {
+                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
+                        return;
+                    }
+                    if !self.in_unsafe {
+                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
+                        return;
+                    }
+                    if let Some(bin) = op
+                        && !self.types.is_numeric(binding.ty)
+                        && !self.float_param(binding.ty)
+                        && binding.ty != self.common.error
+                    {
+                        let shown = self.types.display(binding.ty);
+                        self.error(codes::E2020, stmt.span,
+                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                        return;
+                    }
+                    let rhs = match op {
+                        Some(ast::BinOp::Pow) => {
+                            let exponent = self.synth(value);
+                            let exponent = self.read_through(exponent);
+                            self.commit(exponent)
+                        }
+                        Some(_) | None => self.check_expr(value, binding.ty),
+                    };
+                    let rhs = if op.is_some() {
+                        // `[EXP-2]` evaluates the operand before reading the
+                        // place. A C call on the right may itself change this
+                        // global, so the expression tree alone is insufficient.
+                        self.hold_value(rhs, out)
+                    } else {
+                        rhs
+                    };
+                    let rhs = if let Some(bin) = op {
+                        let lhs = Expr {
+                            ty: binding.ty,
+                            kind: ExprKind::Builtin {
+                                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: false },
+                                args: Vec::new(),
+                            },
+                            span: target.span,
+                        };
+                        if *bin == ast::BinOp::Pow {
+                            let raised = self.power(lhs, rhs, value, stmt.span);
+                            self.coerce(raised, binding.ty)
+                        } else {
+                            let Some(op) = convert_binop(*bin) else {
+                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
+                                return;
+                            };
+                            if self.reject_integer_true_division(op, binding.ty, stmt.span) {
+                                return;
+                            }
+                            Expr {
+                                ty: binding.ty,
+                                kind: ExprKind::Binary {
+                                    op,
+                                    lhs: Box::new(lhs),
+                                    rhs: Box::new(rhs),
+                                },
+                                span: stmt.span,
+                            }
+                        }
+                    } else {
+                        rhs
+                    };
+                    out.push(Stmt::Expr(Expr {
+                        ty: self.common.void,
+                        kind: ExprKind::Builtin {
+                            which: Builtin::ForeignStaticWrite { symbol: binding.symbol },
+                            args: vec![rhs],
+                        },
+                        span: stmt.span,
+                    }));
+                    return;
+                }
 
                 // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
                 // is the object the method was called on for the whole call:
@@ -24483,6 +24566,28 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    fn foreign_static_assignment_target(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+        let qualified = match &target.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].name;
+                if self.lookup(name).is_some() || self.is_capture_candidate(name) {
+                    return None;
+                }
+                self.resolve_name(name)
+            }
+            ast::ExprKind::Field { base, name } => {
+                let module = self.namespace_named(base)?;
+                let qualified = self.qualified_in_module(module, name.name);
+                if !self.item_accessible(module, qualified) {
+                    return None;
+                }
+                qualified
+            }
+            _ => return None,
+        };
+        self.foreign_statics.get(&qualified).copied()
     }
 
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item

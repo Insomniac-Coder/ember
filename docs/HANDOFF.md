@@ -11023,10 +11023,24 @@ first**; the rest of §0.355 is the running narrative behind it.
     T`, while an unannotated binding emits `extern T`. Hardened_38 is
     frozen and pinned. The full annotation sweep reports zero failures,
     the workspace suite passes, and all repository gates pass locally.
-    Commit and remote CI remain pending.
+    Commit `366239c` is pushed to `main`; its CI run is `36277984572`.
+  * The next five-feature `[FFI-10]` batch makes foreign `static mut`
+    assignment update the linker object instead of silently declaring a
+    local. The direct, `from`-imported, qualified-module, and `link_name`
+    forms all link against and change a separate C translation unit.
+    Augmented assignment evaluates its right operand before reading the C
+    object; a C callback that increments the same global distinguishes this
+    order. Integer `**=` is linked and run as well, while unsupported
+    boolean arithmetic reports `E2020`. Writes outside `unsafe` and writes
+    to non-`mut` globals fail explicitly. These behaviors follow the existing
+    `[STA-1]`, `[TYP-21]`, and `[EXP-2]` rules, so no ODR or new hardened spec
+    is needed.
+    `FFI-10/` annotations and the linked integration test pass. The final
+    full annotation sweep reports zero failures, the workspace suite passes,
+    and all repository gates pass. The batch is ready to commit and push.
 
-  Check CI for the newest first. Runs through `61d0b10` passed remotely;
-  its H37 run is `36276950767`.
+  Check CI for the newest first. The H37 run `36276950767` passed; the H38
+  run `36277984572` was still running at the last check.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through

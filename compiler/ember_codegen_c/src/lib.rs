@@ -4590,6 +4590,10 @@ impl Emitter<'_> {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
                         return symbol.to_string();
                     }
+                    Builtin::ForeignStaticWrite { symbol } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
+                        return format!("({symbol} = {})", rendered[0]);
+                    }
                     // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
                     // now. Each is a move out of a field, a store into it, and
                     // sometimes a drop, and lowering writes exactly those, so

@@ -454,7 +454,7 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
     let requested = std::env::var(ember_branding::cc_var()).ok();
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
     ember_build::compile_and_link(&toolchain, &LinkRequest {
-        sources: &[generated, fixture, runtime_source],
+        sources: &[generated, fixture.clone(), runtime_source.clone()],
         include_dirs: &includes,
         output: output.clone(),
         profile: Profile::Debug,
@@ -463,22 +463,39 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
     let run = Command::new(output).output().expect("linked program runs");
     assert!(run.status.success(), "foreign static program failed: {}",
         String::from_utf8_lossy(&run.stderr));
-    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "41\n7\n1\n2\n");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "41\n7\n9\n10\n22\n484\n1\n2\n");
 
     // Module imports must retain the foreign binding instead of folding it
     // like an ordinary `const` or losing its C symbol at the boundary.
     let imported = directory.join(ember_branding::source_file("imported"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "unsafe extern \"C\":\n    @ffi(immutable, link_name=\"aliased_count\")\n    pub static renamed_count: i32\n")
+        "unsafe extern \"C\":\n    @ffi(immutable, link_name=\"aliased_count\")\n    pub static renamed_count: i32\n    pub static mut changing_counter: i32\n    pub safe fn read_changing_counter() -> i32\n")
         .expect("foreign static module is writable");
-    std::fs::write(&entry,
-        "from imported import renamed_count\nfn main():\n    println(renamed_count)\n")
-        .expect("importing module is writable");
-    let entry_arg = entry.to_string_lossy().into_owned();
-    let across_modules = ember(&["build", &entry_arg, "--emit", "c"], &root);
-    assert_eq!(across_modules.exit, 0, "imported foreign static failed: {}", across_modules.stderr);
-    assert!(across_modules.stdout.contains("extern const int32_t aliased_count;"));
+    for (label, source) in [
+        ("from_import", "from imported import renamed_count, changing_counter, read_changing_counter\nfn main():\n    unsafe:\n        changing_counter = 12\n    println(read_changing_counter())\n    println(renamed_count)\n"),
+        ("qualified", "import imported\nfn main():\n    unsafe:\n        imported.changing_counter = 12\n    println(imported.read_changing_counter())\n    println(imported.renamed_count)\n"),
+    ] {
+        std::fs::write(&entry, source).expect("importing module is writable");
+        let entry_arg = entry.to_string_lossy().into_owned();
+        let across_modules = ember(&["build", &entry_arg, "--emit", "c"], &root);
+        assert_eq!(across_modules.exit, 0, "{label} foreign static failed: {}", across_modules.stderr);
+        assert!(across_modules.stdout.contains("extern const int32_t aliased_count;"));
+        assert!(across_modules.stdout.contains("extern int32_t changing_counter;"));
+        let imported_c = directory.join(format!("{label}.c"));
+        std::fs::write(&imported_c, across_modules.stdout).expect("imported C is writable");
+        let imported_exe = directory.join(if cfg!(windows) { format!("{label}.exe") } else { label.to_string() });
+        ember_build::compile_and_link(&toolchain, &LinkRequest {
+            sources: &[imported_c, fixture.clone(), runtime_source.clone()],
+            include_dirs: &includes,
+            output: imported_exe.clone(),
+            profile: Profile::Debug,
+            obj_dir: directory.join("obj"),
+        }).expect("imported static links to the C fixture");
+        let imported_run = Command::new(imported_exe).output().expect("imported static program runs");
+        assert!(imported_run.status.success());
+        assert_eq!(String::from_utf8_lossy(&imported_run.stdout).replace("\r\n", "\n"), "12\n2\n");
+    }
 }
 
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint
