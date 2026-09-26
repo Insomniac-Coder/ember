@@ -420,6 +420,12 @@ extend[T] Array[T]:
         order = stable_order(keys, fn(a, b) => a.cmp(b))
         self.apply_order(order)
 
+    ## `[STD-15]` (ODR-068) — mutable references to the elements at `i` and
+    ## `j` at once, or `None` when either index is out of range or they are
+    ## the same: the mutable view's `get_pair_mut`.
+    pub fn get_pair_mut(mut self, i: int, j: int) -> Option[(ref mut T, ref mut T)]:
+        return self.as_mut_span().get_pair_mut(i, j)
+
     ## Puts the element at `order[i]` at `i`, following each cycle of the
     ## permutation with `swap`: no element is copied or moved out, so any `T`
     ## sorts.
@@ -432,6 +438,21 @@ extend[T] Array[T]:
                 order[at] = at
                 at = next
             order[at] = at
+
+extend[T] MutSpan[T]:
+    ## `[SPN-5]` (ODR-068) — mutable references to the elements at `i` and
+    ## `j` at once, or `None` when either index is out of range or they are
+    ## the same. The references come from `split_at`'s two halves, so they
+    ## are disjoint before either exists.
+    pub fn get_pair_mut(mut self, i: int, j: int) -> Option[(ref mut T, ref mut T)]:
+        n = self.len()
+        if i < 0 or j < 0 or i >= n or j >= n or i == j:
+            return None
+        if i < j:
+            (low, high) = self.split_at(j)
+            return Some((ref mut low[i], ref mut high[0]))
+        (low, high) = self.split_at(i)
+        return Some((ref mut high[0], ref mut low[j]))
 
 ## `[STR-5]` — element-wise equality through `T: Eq`. The checker routes a
 ## comparison of sequences here when the element type holds a written `eq`.

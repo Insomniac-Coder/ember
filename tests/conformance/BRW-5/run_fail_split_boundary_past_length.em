@@ -8,4 +8,4 @@
 fn main():
     values: Array[i32] = Array[i32]()
     values.push(1)
-    _parts = values.split_at_mut(2)
+    _parts = values.as_mut_span().split_at(2)

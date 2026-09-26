@@ -76,7 +76,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::O7 => &["mem.drop"],
         Shape::O8 => &["scope"],
         Shape::O9 => &["mem.take"],
-        Shape::B1 => &["split_at_mut"],
+        Shape::B1 => &["get_pair_mut", "split_at"],
         Shape::B2 => &["retain"],
         Shape::B3 => &["borrow"],
         Shape::B4 => &["single owner"],

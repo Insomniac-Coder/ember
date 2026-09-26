@@ -10738,17 +10738,19 @@ the running narrative behind it.
     `f93d3c9` (B2's first: D-273, D-270, D-328; CI green), then the
     owner's simplification pass (`4d98804`: ODR-049 to ODR-064, Hardened_24;
     D-343, D-344; CI green), then the SP-010 safety review (ODR-065,
-    Hardened_25; D-345 to D-349), and the README rewritten. From the
+    Hardened_25; D-345 to D-349), and the README rewritten (`1496b42`; CI
+    green), then Part II's SP-007, SP-016 and SP-031 (ODR-066 to ODR-068,
+    Hardened_26; D-350, D-351 fixed, D-352 and D-353 found). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_25.md`
-  (ODR-065), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h25/` is
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_26.md`
+  (ODR-066 to ODR-068), pinned in `docs/spec-source/development-target.json`.
+  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h26/` is
   frozen.
-* **Next numbers:** ODR-066, D-350, ADR-059.
+* **Next numbers:** ODR-069, D-354, ADR-059.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10758,8 +10760,19 @@ the running narrative behind it.
   gate is done (ODR-065, below). **The owner then said (2026-09-26): adopt
   SP-007, SP-013, SP-016 and SP-031, close the whole old defect queue
   (D-198, D-201, D-202, D-218, D-220, D-331, D-342), check SP-010's safety
-  question and fix D-345.** Done: D-345, the SP-010 review. Next: the four
-  proposals, then the defects.
+  question and fix D-345.** Done: D-345, the SP-010 review, SP-007 (spec
+  only: `[TYP-41]`; const generics are not built), SP-016 (`AsKey`/`ToKey`)
+  and SP-031 (`get_pair_mut`). **Next: SP-013** (ODR-069: `Map`/`Set` may
+  hold `static` views, as `[TYP-15]` lets every other owning container).
+  It rests on D-352 and D-353, found checking it: a view written through a
+  `mut` parameter, a `ref mut`, `mem.replace` or `mem.swap`, or into a class
+  field or an `Array` element's field, can outlive what it views (probes:
+  `put(name, s.as_str())` with `fn put(mut x: str, v: str): x = v`;
+  `mem.replace(names[0], s.as_str())`; `C(s.as_str())` for `class C: a:
+  str`; then `mem.drop(s)` and a read). Fix those first (they also close
+  D-198), then lift `Map`/`Set`'s blanket `E3063` (typeck, `ODR-036`
+  comment near `"std.collections.Map" => 2`) and check what enters them at
+  the caller. Then the defects.
 * **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
   way: D-273, D-270 and D-328 are fixed. Next: D-345 (a display), D-218, D-220, D-202, D-201,
   D-198, D-342 (a temporary's end for the region check: the loans must tell

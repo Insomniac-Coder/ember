@@ -2,7 +2,7 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(1)
     values.push(2)
-    parts = values.split_at_mut(1)
+    parts = values.as_mut_span().split_at(1)
     left = parts.0
     right = parts.1
     first: ref mut i32 = ref mut left[0]

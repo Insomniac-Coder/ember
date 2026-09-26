@@ -139,15 +139,20 @@ extend[T: Hash, E: Hash] Result[T, E] implements Hash:
                 h.write_u8(1)
                 e.hash(h)
 
-## `[STD-12]` (ODR-032) — what a lookup may take for a key `K`: something that
-## hashes as `K` would and compares with one without converting. Every
-## `K: Eq + Hash` is `AsKey[K]` (the compiler provides it: `is_key` is `==`,
-## `to_key` clones).
+## `[STD-12]` (ODR-032, ODR-067) — what a lookup may take for a key `K`:
+## something that hashes as `K` would and compares with one without
+## converting. Every `K: Eq + Hash` is `AsKey[K]` (the compiler provides it:
+## `is_key` is `==`), so looking a key up never needs to copy one.
 pub interface AsKey[K]: Hash:
     fn is_key(self, key: K) -> bool
+
+## `[STD-12]` (ODR-067) — a lookup key that can also make the key it matches,
+## for `m[q] = v` when `q` is new. Every `K: Eq + Hash + Clone` is `ToKey[K]`
+## (the compiler provides it: `to_key` clones).
+pub interface ToKey[K]: AsKey[K]:
     fn to_key(self) -> K
 
-extend str implements AsKey[String]:
+extend str implements AsKey[String], ToKey[String]:
     fn is_key(self, key: String) -> bool:
         return self == key
 
@@ -526,7 +531,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
             None:
                 panic(f"key not found: {q!r}; use .get(k) for an Option")
 
-extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash] Map[K, V, H] implements IndexSet[Q, V]:
+extend[K: Eq + Hash, V, H: Hasher + Default, Q: ToKey[K] + Hash] Map[K, V, H] implements IndexSet[Q, V]:
     ## Replaces, or inserts `q.to_key()` when the key is new (`[STD-12]`).
     fn index_set(mut self, q: Q, owned v: V):
         hash = self.hash_of(q)

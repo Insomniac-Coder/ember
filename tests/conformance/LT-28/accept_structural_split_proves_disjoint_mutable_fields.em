@@ -3,8 +3,8 @@
 #$ stdout: 10
 #$ stdout: 20
 
-# Distinct region slots are not themselves a no-alias proof. `split_at_mut`
-# supplies the existing structural proof, so its two disjoint result views may
+# Distinct region slots are not themselves a no-alias proof. A mutable
+# view's `split_at` supplies the existing structural proof, so its two disjoint result views may
 # become the independently mutable fields of one multi-region view.
 
 @view
@@ -16,7 +16,7 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(1)
     values.push(2)
-    parts = values.split_at_mut(1)
+    parts = values.as_mut_span().split_at(1)
     pair = MutPair(parts.0, parts.1)
     pair.left[0] = 10
     pair.right[0] = 20

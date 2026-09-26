@@ -1,8 +1,9 @@
 #$ test: compile-fail
 #$ rules: BRW-5
 # And the default: two indices the compiler cannot tell apart conflict, because
-# nothing says `i != j`. `split_at_mut`, `chunks_mut` and `iter_mut` are the
-# sanctioned ways to get two mutable element borrows.
+# nothing says `i != j`. `get_pair_mut`, a split of the mutable view,
+# `chunks_mut` and `iter_mut` are the sanctioned ways to get two mutable element
+# borrows.
 
 fn main():
     v: Array[i32] = Array[i32]()

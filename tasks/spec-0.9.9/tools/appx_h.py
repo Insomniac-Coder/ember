@@ -336,6 +336,12 @@ ODRS = [
      '`[ARN-3]`, `[ARN-11]`'),
     ('ODR-065', 'a borrow through a handle stored in an object, or a call made on one, goes through a retained copy that lasts to the end of the statement; kept longer it is `E3060`; `mem.drop` moves a handle — review of SP-010 (Hardened_25)',
      '`[RC-5]`, `[EXC-17]`, `[FN-9]`, `[OWN-6]`'),
+    ('ODR-066', 'a const argument is any compile-time expression; two are equal by value when known, else by a stated integer normal form (`+`, `-`, `*`; other operations opaque), and not shown equal is a mismatch that says so — SP-007 (Hardened_26)',
+     '`[TYP-41]`'),
+    ('ODR-067', '`AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` — SP-016 (Hardened_26)',
+     '`[STD-12]`, `[STD-17]`'),
+    ('ODR-068', '`get_pair_mut(i, j)` on an `Array` or `MutSpan` gives two mutable references, or `None` for an index out of range or equal indices, after checking — SP-031 (Hardened_26)',
+     '`[BRW-5]`, `[STD-15]`, `[SPN-5]`'),
 ]
 
 H5_HEAD = """
@@ -350,7 +356,8 @@ Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Ha
 Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
 Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
 ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
-Hardened_25 adds ODR-065, the review of SP-010's access question.
+Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
+ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031.
 
 | ODR | Ruling | Rules |
 |---|---|---|

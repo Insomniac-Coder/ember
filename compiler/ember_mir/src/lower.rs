@@ -2082,19 +2082,6 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::IntOverflowing(op), args } => {
                 self.lower_int_overflowing(place, *op, args, expr.span);
             }
-            hir::ExprKind::Builtin {
-                which: hir::Builtin::ArraySplitAtMut { elem, pair },
-                args,
-            } => {
-                self.lower_array_split_at_mut(
-                    place,
-                    &args[0],
-                    &args[1],
-                    *elem,
-                    *pair,
-                    expr.span,
-                );
-            }
             hir::ExprKind::Builtin { which: hir::Builtin::Slice { text }, args } => {
                 self.lower_slice(place, args, *text, expr.span);
             }
@@ -4642,33 +4629,6 @@ impl<'a> Builder<'a> {
         });
         self.terminate(Terminator::Goto(join));
         self.current = join;
-    }
-
-    /// `[BRW-5]` — `array.split_at_mut(index)`.
-    ///
-    /// Evaluate the receiver and boundary once, expose the ordinary
-    /// `index <= len` bounds check as an MIR `Assert`, then let the backend
-    /// construct the two representation-level views. The builtin call is
-    /// still a view producer tied to its first (explicit borrow) argument, so
-    /// region analysis keeps the Array borrowed for both returned spans.
-    fn lower_array_split_at_mut(
-        &mut self,
-        dest: Place,
-        receiver: &'a hir::Expr,
-        index: &'a hir::Expr,
-        elem: Ty,
-        pair: Ty,
-        span: ember_span::Span,
-    ) {
-        self.lower_checked_split(
-            dest,
-            receiver,
-            index,
-            pair,
-            true,
-            hir::Builtin::ArraySplitAtMut { elem, pair },
-            span,
-        );
     }
 
     /// `[SPN-3]` — `span.split_at(index)` for shared and mutable views.

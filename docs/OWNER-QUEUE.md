@@ -50,6 +50,9 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-068 | **CLOSED** — `get_pair_mut(i, j)` on an `Array` or `MutSpan`: two mutable references after checking, or `None` for an index out of range or equal indices (SP-031) | Standard library / borrowing | — | **Yes** — owner, 2026-09-26 |
+| ODR-067 | **CLOSED** — `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` (SP-016) | Standard library / collections | — | **Yes** — owner, 2026-09-26 |
+| ODR-066 | **CLOSED** — a const argument is any compile-time expression; equal by value when known, else by a stated integer normal form; not shown equal is a mismatch that says so (SP-007) | Language / generics | — | **Yes** — owner, 2026-09-26 |
 | ODR-065 | **CLOSED** — a borrow through a handle stored in an object (or a call made on one) goes through a retained copy to the end of the statement; kept longer it is `E3060`; `mem.drop` moves a handle (review of SP-010) | Language / Objects | — | **No** — delegated, 2026-09-26 |
 | ODR-064 | **CLOSED** — `alloc_array[T](n)` needs `T: Default` and calls it per element; `alloc_zeroed[T](n)` needs `T: Zeroable` and fills with zeros; neither stands in for the other, and zero-filling for `alloc_array` is allowed only where it is the same (a scalar's standard default) (SP-017) | Language / Memory | — | **Yes** — owner, 2026-09-26 |
 | ODR-063 | **CLOSED** — An object is deinitialised when its last strong owner ends as the source says, never earlier; an elision may remove a retain and release only when it moves no `drop`, `Weak.upgrade` outcome or foreign release (SP-014) | Language / Objects | — | **Yes** — owner, 2026-09-26 |
@@ -219,6 +222,101 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-068 — two mutable elements chosen at run time: `get_pair_mut` — **CLOSED**
+
+    ID:        ODR-068
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, Part II,
+               SP-031); incorporated in 0.9.9_Hardened_26
+    Category:  STANDARD LIBRARY / BORROWING
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_25.md [BRW-5], [STD-15], [SPN-5], §XVII's shape B1;
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-031
+
+    Question:  `[BRW-5]` makes `ref mut a[i]` and `ref mut a[j]` conflict, and its ways out
+               (`split_at`, `swap`, chunks) fit structural access; two elements chosen at run
+               time (a graph's two nodes, a swap-with-update) need a split at the larger
+               index and arithmetic on the smaller, every time.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "adopt this")
+
+**Ruling.** `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]` on an `Array` and a
+`MutSpan`: it borrows the container once, checks that both indices are in range and differ,
+and only then makes the two references; otherwise `None`, and the container is unchanged.
+The pair borrows the receiver (`[LT-1]` rule 1). Distinct elements of a zero-sized type need
+not have distinct addresses, and nothing about addresses follows from the indices. `[BRW-5]`
+itself is unchanged: two indexed borrows written separately still conflict.
+
+**Implementation.** `std/src/core.em`: `MutSpan.get_pair_mut` is written with `split_at`, so
+the two references come from disjoint halves before either exists, and `Array.get_pair_mut`
+calls its mutable view's. It needed D-350 (a `mut self` method of a `MutSpan`), and B1's help
+now names it, and the spec's mutable split, not the compiler's own `split_at_mut` (D-351).
+
+---
+
+## ODR-067 — `AsKey` matches, `ToKey` makes a key — **CLOSED**
+
+    ID:        ODR-067
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, Part II,
+               SP-016); incorporated in 0.9.9_Hardened_26
+    Category:  STANDARD LIBRARY / COLLECTIONS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_25.md [STD-12], [STD-16], [STD-17];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-016
+
+    Question:  `AsKey[K]` had both `is_key` and `to_key`, and the compiler's `AsKey[K]` for a
+               `K` itself made `to_key` a clone. A lookup never converts, so a lookup type
+               had to promise a conversion it is never asked for.
+
+    Blocks implementation:            NO
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "adopt this")
+
+**Ruling.** `interface AsKey[K]: Hash` has `is_key` only; `interface ToKey[K]: AsKey[K]` adds
+`to_key`. Lookups (`get`, `get_mut`, `contains_key`, `remove`, `m[q]`, `q in m`) need
+`AsKey`; `m[q] = v` needs `ToKey` and calls `to_key` only when the key is new. Every
+`K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when it is also `Clone`; `str` is both for
+`String`. `insert` and `entry` take the key itself.
+
+**Implementation.** `std/src/collections.em` (the split, `str`'s implementations, `Map`'s
+`IndexSet` over `Q: ToKey[K]`); the compiler provides `ToKey[K]` for a cloneable key type
+(`implements`); a missed `ToKey` whose only lack is `Clone` has a help naming `insert`.
+Migration: an `AsKey` implementation that wrote `to_key` moves it to `ToKey`.
+
+---
+
+## ODR-066 — when two const arguments are equal — **CLOSED**
+
+    ID:        ODR-066
+    Status:    CLOSED — adopted by the owner 2026-09-26 (the simplification pass, Part II,
+               SP-007); incorporated in 0.9.9_Hardened_26
+    Category:  LANGUAGE / GENERICS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_25.md §IV.7 (const generics), [CT-1], [CT-3];
+               docs/proposals/Ember_Simplification_Pass_Revised.md SP-007
+
+    Question:  The specification shows `fn zeros[const N: int]() -> [f32; N]` and says const
+               generic arguments are evaluated at compile time, but not when `[f32; N + 1]`
+               and `[f32; 1 + N]` are one type in generic code, which leaves the answer to
+               whatever a compiler (or an optimiser) can prove.
+
+    Blocks implementation:            NO — const generics are not built yet
+    Requires owner semantic decision:  ruled by the owner (2026-09-26, "adopt this")
+
+**Ruling.** `[TYP-41]`: a const argument is any expression compile time evaluates, over
+constants and the declaration's own `const` parameters. Known arguments (every argument of an
+instance) are equal when their values are; overflow is `E6004` and exhausted limits `E6001`,
+never a mismatch. In generic code an integer argument is compared by a stated normal form (a
+sum of integer-coefficient products of parameters and opaque terms; `+`, `-` and `*` seen
+through, every other operation opaque and equal only to the same operation on equal
+arguments). Arguments not shown equal are different types (`E2020`), and the diagnostic says
+they could not be shown equal, prints both normal forms and suggests computing the value once.
+
+**Implementation.** None yet: const generics are not built (`E1010`, "not supported yet in
+this phase"). The tests SP-007 lists (computed sizes, the identities, opaque terms, overflow,
+limits) come with them.
 
 ---
 

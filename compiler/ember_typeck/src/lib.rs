@@ -22437,13 +22437,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 continue;
             }
             for bound in self.missed_bounds(ty, &param.bounds, &substitution) {
-                let shown = self.types.display(ty);
-                let bound = self.interface_shown(bound);
-                self.error(
-                    codes::E2040,
-                    span,
-                    format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
-                );
+                self.report_missed_bound(ty, bound, param.name, span);
                 unmet = true;
             }
             if !unmet && !self.bindings_met(param, ty, &substitution, span) {
@@ -22718,13 +22712,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let mut unmet = false;
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             for bound in self.missed_bounds(ty, &param.bounds, &substitution) {
-                let shown = self.types.display(ty);
-                let bound = self.interface_shown(bound);
-                self.error(
-                    codes::E2040,
-                    span,
-                    format!("`{shown}` does not implement `{bound}`, which `{}` requires", param.name),
-                );
+                self.report_missed_bound(ty, bound, param.name, span);
                 unmet = true;
             }
             if !unmet && !self.bindings_met(param, ty, &substitution, span) {
@@ -23244,11 +23232,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
     /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
     fn implements(&self, ty: Ty, interface: Symbol) -> bool {
-        // `[STD-12]` (ODR-032) — every `K: Eq + Hash` is `AsKey[K]`.
+        // `[STD-12]` (ODR-032, ODR-067) — every `K: Eq + Hash` is `AsKey[K]`,
+        // and `ToKey[K]` when it can also be cloned.
         if let Some((generic, args)) = self.open_interface_origin.get(&interface)
-            && generic.as_str() == "std.collections.AsKey"
             && args.as_slice() == [ty]
             && self.is_own_key(ty)
+            && (generic.as_str() == "std.collections.AsKey"
+                || (generic.as_str() == "std.collections.ToKey" && self.is_cloneable(ty)))
         {
             return true;
         }
@@ -28421,6 +28411,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.void_block(stmts, span)
     }
 
+    /// `[TYP-17]` — `E2040` for a type argument that misses a bound, with
+    /// what would meet it where that is known.
+    fn report_missed_bound(&mut self, ty: Ty, bound: Symbol, param: Symbol, span: Span) {
+        let shown = self.types.display(ty);
+        let bound_shown = self.interface_shown(bound);
+        let mut diagnostic = Diagnostic::error(
+            codes::E2040,
+            span,
+            format!("`{shown}` does not implement `{bound_shown}`, which `{param}` requires"),
+        );
+        // ODR-067 — a `ToKey` a key type misses only for want of `Clone`.
+        let to_key = self
+            .open_interface_origin
+            .get(&bound)
+            .is_some_and(|(generic, args)| generic.as_str() == "std.collections.ToKey" && args.as_slice() == [ty]);
+        if to_key && self.is_own_key(ty) && !self.is_cloneable(ty) {
+            diagnostic = diagnostic
+                .help(format!("`m[k] = v` makes the key from `k` when it is new, which needs `{shown}` to be `Clone`; `m.insert(k, v)` takes the key itself"))
+                .note("looking a key up needs only `AsKey`; making one needs `ToKey` [STD-12]");
+        }
+        self.sink.emit(diagnostic);
+    }
+
     /// `[STD-12]` — a key type is its own `AsKey` when it is `Eq` and `Hash`.
     fn is_own_key(&self, ty: Ty) -> bool {
         self.implements(ty, Symbol::intern("std.core.Eq")) && self.implements(ty, Symbol::intern("std.collections.Hash"))
@@ -30511,42 +30524,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return self.clone_value(receiver);
         }
 
-        // `[BRW-5]`'s primary structural repair for two mutable indexed
-        // borrows. The receiver is borrowed once; the result carries that
-        // provenance as two disjoint `MutSpan`s. This is deliberately not
-        // expressed as two independent `as_mut_span` calls, which would be
-        // rejected correctly as overlapping mutable borrows.
+        // `[SPN-5]` (F-075) — a mutable split is `split_at` of the mutable
+        // view; there is no `split_at_mut` (D-351).
         if name.name.is("split_at_mut") && !is_string {
-            if args.len() != 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`split_at_mut` takes 1 argument, found {}", args.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            if !is_place(&receiver.kind) {
-                self.error(
-                    codes::E2140,
-                    span,
-                    "`split_at_mut` needs an Array variable to borrow",
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let Some(index) = self.check_index(&args[0].value, None, span) else {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            };
-            let receiver = self.pass_receiver(receiver, Mode::Mut, span);
-            let view = self.types.intern(TyKind::Span { elem, mutable: true });
-            let pair = self.types.intern(TyKind::Tuple(vec![view, view]));
-            return Expr {
-                ty: pair,
-                kind: ExprKind::Builtin {
-                    which: Builtin::ArraySplitAtMut { elem, pair },
-                    args: vec![receiver, index],
-                },
-                span,
-            };
+            let shown = self.types.display(receiver.ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `split_at_mut`"))
+                    .help("split the array's mutable view: `.as_mut_span().split_at(k)` gives two `MutSpan`s")
+                    .note("`split_at` of a `MutSpan` is the mutable split; there is no separate `split_at_mut` [SPN-5]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
         // `[STD-15]` — the methods a view of the array has (`[SPN-1]`): the
@@ -30779,6 +30766,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if mode == Mode::Borrow && self.receiver_by_address(receiver.ty, callee) {
             let ty = receiver.ty;
             return self.borrow_argument(receiver, ty);
+        }
+        // D-350 — a `mut self` of a `MutSpan` is the view itself
+        // (`mut_param_ty`), so the method takes it by value, as a `mut`
+        // argument of that type is; the write checks still apply. A
+        // view-producing receiver (`buf.as_mut_span()`) is passed as it is
+        // (`[FN-1a]`): the mutable place is the one it views.
+        if mode == Mode::Mut && matches!(self.types.kind(receiver.ty), TyKind::Span { mutable: true, .. }) {
+            if !is_place(&receiver.kind) {
+                return receiver;
+            }
+            let passed = self.pass_receiver(receiver, mode, span);
+            return match passed.kind {
+                ExprKind::Ref { place, .. } => *place,
+                _ => passed,
+            };
         }
         self.pass_receiver(receiver, mode, span)
     }

@@ -944,11 +944,6 @@ pub enum Builtin {
     /// `MutSpan[T]`. Not a conversion: the view points into the container, and
     /// the borrow checker keeps the container borrowed for the view's region.
     SpanFrom { mutable: bool },
-    /// `[BRW-5]`, `[SPN-3]` — split one mutable borrow of an `Array[T]` into
-    /// two disjoint `MutSpan[T]` values at a checked boundary. The tuple type
-    /// travels with the builtin so the C backend can construct the structural
-    /// result without inventing a public helper ABI.
-    ArraySplitAtMut { elem: Ty, pair: Ty },
     /// `[SPN-3]` — split one Span borrow into two same-kind, disjoint views at
     /// a checked boundary. A mutable receiver is reborrowed rather than moved.
     SpanSplitAt { elem: Ty, pair: Ty, mutable: bool },
@@ -1232,7 +1227,6 @@ impl Builtin {
             Builtin::SpanFrom { mutable } => {
                 if mutable { "as_mut_span" } else { "as_span" }
             }
-            Builtin::ArraySplitAtMut { .. } => "split_at_mut",
             Builtin::Slice { .. } => "slice",
             Builtin::StrIsCharBoundary => "is_char_boundary",
             Builtin::StrAsBytes => "as_bytes",

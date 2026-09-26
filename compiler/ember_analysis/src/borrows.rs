@@ -1214,7 +1214,6 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::FixedArenaAlloc { .. }
                 | Builtin::ScopedArenaAlloc { .. }
                 | Builtin::ArenaScope { .. }
-                | Builtin::ArraySplitAtMut { .. }
                 | Builtin::SpanSplitAt { .. }
                 | Builtin::Slice { .. }
                 | Builtin::StrAsBytes
@@ -1301,7 +1300,7 @@ fn contract_for(
 /// view even though `[BRW-5]` gives them disjoint storage identities.
 fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
     let FuncRef::Builtin {
-        which: Builtin::ArraySplitAtMut { .. } | Builtin::SpanSplitAt { .. },
+        which: Builtin::SpanSplitAt { .. },
         ..
     } = func
     else {
@@ -3382,14 +3381,18 @@ fn check_point(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
+                        // ODR-068 — two elements chosen at run time are
+                        // `get_pair_mut`'s; a split is the structural fix.
                         (_, _, _, true, _) => format!(
-                            "use `{owner}.split_at_mut(k)` to obtain two non-overlapping mutable \
-                             spans; `chunks_mut`, `iter_mut`, and `columns_mut` cover other \
-                             structural access patterns"
+                            "use `{owner}.get_pair_mut(i, j)` for two elements at once (`None` when \
+                             they are the same), or `{owner}.as_mut_span().split_at(k)` for two \
+                             non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover \
+                             other patterns"
                         ),
                         (_, _, _, _, true) => String::from(
                             "use one mutable access rather than borrowing the same place twice; \
-                             use `split_at_mut` when the intended operands are disjoint parts of one owner"
+                             split the owner's mutable view with `split_at` when the intended operands are \
+                             disjoint parts of it"
                         ),
                         (Some(name), _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \

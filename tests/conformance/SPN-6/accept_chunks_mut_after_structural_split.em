@@ -7,7 +7,7 @@ fn main():
     values.push(2)
     values.push(3)
     values.push(4)
-    halves = values.split_at_mut(2)
+    halves = values.as_mut_span().split_at(2)
     left = halves.0
     right = halves.1
     left_chunks = left.chunks_mut(1)

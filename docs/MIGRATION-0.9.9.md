@@ -866,3 +866,16 @@ The next number is ODR-027.
   * A call made on a handle stored in an object (`holder.value.bump()`) retains it for the call.
   * `L1001` no longer calls a handle "never read" when the program only writes through it (D-346).
   * An associated type reached through a bound is shown as `T.Out`, not `Self.Out` (D-345).
+* **2026-09-26 — the simplification pass, Part II (ODR-066 to ODR-068; Hardened_26).**
+  * `AsKey[K]` has only `is_key`; `to_key` moved to `ToKey[K]: AsKey[K]` (ODR-067). Lookups need
+    `AsKey`, `m[q] = v` needs `ToKey`. A program's own lookup type that wrote `to_key` implements
+    `ToKey[K]` as well (`extend Q implements AsKey[K], ToKey[K]:`); one without it still looks keys
+    up. `m[k] = v` with a key type that cannot be cloned was already refused; the error is now at the
+    assignment, and its help names `m.insert(k, v)`.
+  * New: `get_pair_mut(i, j)` on an `Array` or a `MutSpan`, two mutable references or `None`
+    (ODR-068). A `mut self` method of a `MutSpan` compiles, and a view-producing receiver
+    (`xs.as_mut_span().get_pair_mut(0, 1)`) is accepted (D-350).
+  * `xs.split_at_mut(k)` is gone: it is `xs.as_mut_span().split_at(k)`, as `[SPN-5]` always said
+    (D-351). The error's help gives the spelling.
+  * Spec only: when two const generic arguments are one type (ODR-066, `[TYP-41]`); const generics
+    are not built yet.

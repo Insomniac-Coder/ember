@@ -4648,21 +4648,6 @@ impl Emitter<'_> {
                     Builtin::ArrayLen | Builtin::StringLen => {
                         return format!("({}).len", rendered[0]);
                     }
-                    // `[BRW-5]` — the MIR assertion has already established
-                    // `boundary <= len`. Build two views over the disjoint
-                    // half-open ranges `[0, boundary)` and `[boundary, len)`.
-                    // Avoid even `null + 0` for an empty Array: C does not
-                    // make pointer arithmetic on a null allocation portable.
-                    Builtin::ArraySplitAtMut { elem, pair } => {
-                        let array = format!("(*{})", rendered[0]);
-                        return self.split_views_expression(
-                            &array,
-                            &rendered[1],
-                            *elem,
-                            *pair,
-                            true,
-                        );
-                    }
                     // `[SPN-3]` — same checked split for an existing Span or
                     // MutSpan. MIR has already checked `boundary <= len` and
                     // made a named mutable receiver an explicit reborrow.
