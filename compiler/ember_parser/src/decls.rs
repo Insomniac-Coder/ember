@@ -392,7 +392,7 @@ impl Parser<'_> {
         let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
         let range = self.parse_range_clause(&name, at_item_level, &generics);
         self.expect_newline();
-        TypeAlias { name, generics, value, bounds, range }
+        TypeAlias { name, generics, is_foreign_decl: false, value, bounds, range }
     }
 
     /// `range_clause := "in" expression` — `[RNG-1]`.

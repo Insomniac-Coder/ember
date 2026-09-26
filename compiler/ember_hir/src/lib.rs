@@ -282,6 +282,7 @@ pub enum ExprKind {
     Float(f64),
     Bool(bool),
     Str(String),
+    CStr(Vec<u8>),
     /// Reading a local, or naming it as a place.
     Local(LocalId),
     /// Field access by resolved index, not by name.
@@ -1659,6 +1660,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Float(v) => format!("{v:?}"),
         ExprKind::Bool(v) => v.to_string(),
         ExprKind::Str(s) => format!("{s:?}"),
+        ExprKind::CStr(bytes) => format!("c{bytes:?}"),
         ExprKind::Local(id) => function
             .local(*id)
             .name

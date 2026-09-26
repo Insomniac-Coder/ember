@@ -10963,9 +10963,19 @@ first**; the rest of §0.355 is the running narrative behind it.
     locally. The wrapper tests the complete `Option[Span]` niche pair
     (`ptr == null` and `len == SIZE_MAX`), so a present span is never
     mistaken for `None` from its length alone.
+  * The next five-feature Phase 5 batch implements incomplete foreign
+    `type` declarations; byte-preserving `c"…"` literals and `cstr` values;
+    hand-declared borrowed `nul_terminated` parameters; input-derived
+    `cstr` results; and static-region `cstr` results. Opaque types retain
+    nominal identity, use forward-declared C struct pointer carriers, and
+    reject by-value or layout operations. Safe string declarations require
+    complete contracts, and `str` passed as `cstr` is `E5020`. `FFI-10/`
+    and `FFI-15/` exercise C calls, non-UTF-8 bytes, constants, malformed
+    declarations, missing contracts, and incomplete-layout rejection.
+    Hardened_35 already specifies these surfaces, so no ODR or new cut was
+    needed. The full annotation sweep and workspace suite pass locally.
 
-  Check CI for the newest first. CI was green on every push that day before
-  `a32d0b7`.
+  Check CI for the newest first. Runs through `19550ec` passed remotely.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_35.md`
   (ODR-079), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
@@ -11127,7 +11137,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
 * **Next task:** finish the remaining Phase 5 pointer contract shapes,
-  then foreign statics/types. Check the newest CI run before pushing
+  nullable C strings and owned `CString`, then foreign statics. Check the newest CI run before pushing
   further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover

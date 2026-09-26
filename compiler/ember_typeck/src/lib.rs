@@ -170,6 +170,12 @@ pub fn check(
         checker.current_module = index;
         checker.collect_type_headers(&loaded.module);
     }
+    // Incomplete foreign types are nominal headers. Register all of them
+    // before generic fields and signatures can refer across module order.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_foreign_opaque_types(&loaded.module);
+    }
     // Recipes may refer to earlier recipes in their declaring module. Walking
     // dependencies before importers also makes the normal module case
     // deterministic while all nominal headers are already globally visible.
@@ -1653,6 +1659,12 @@ impl<'a> Checker<'a> {
         if !self.types.has_unsized_by_value(ty) {
             return ty;
         }
+        if matches!(self.types.kind(ty), TyKind::Opaque(_)) {
+            let shown = self.types.display(ty);
+            self.error(codes::E5050, span,
+                format!("`{shown}` is incomplete and cannot cross the C boundary by value"));
+            return self.common.error;
+        }
         self.error(
             codes::E2020,
             span,
@@ -1705,7 +1717,7 @@ impl<'a> Checker<'a> {
             .items
             .iter()
             .filter_map(|item| match &item.kind {
-                ast::ItemKind::TypeAlias(decl) => Some(decl),
+                ast::ItemKind::TypeAlias(decl) if !decl.is_foreign_decl => Some(decl),
                 _ => None,
             })
             .collect();
@@ -1768,6 +1780,21 @@ impl<'a> Checker<'a> {
             // "alias unresolved" that hides which name is at fault.
             let ty = self.resolve_type(value);
             let name = self.qualified(decl.name.name);
+            self.named_types.insert(name, ty);
+        }
+    }
+
+    fn collect_foreign_opaque_types(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            let ast::ItemKind::TypeAlias(decl) = &item.kind else { continue };
+            if !decl.is_foreign_decl { continue; }
+            let name = self.qualified(decl.name.name);
+            if self.named_types.contains_key(&name) {
+                self.error(codes::E1030, decl.name.span,
+                    format!("`{name}` is already declared in this module"));
+                continue;
+            }
+            let ty = self.types.intern(TyKind::Opaque(name));
             self.named_types.insert(name, ty);
         }
     }
@@ -3123,16 +3150,20 @@ impl<'a> Checker<'a> {
                 .members
                 .iter()
                 .filter_map(|member| match &member.kind {
-                    ast::MemberKind::Field(field) => Some(FieldDef {
-                        name: field.name.name,
-                        ty: self.resolve_type(&field.ty),
-                        span: member.span,
-                        ty_span: field.ty.span,
-                        has_default: field.default.is_some(),
-                        is_let: field.is_let,
-                        read_only_outside: member.read_only_outside,
-                        vis: field_vis(member.vis.kind),
-                    }),
+                    ast::MemberKind::Field(field) => {
+                        let ty = self.resolve_type(&field.ty);
+                        let ty = self.reject_unsized_by_value(ty, field.ty.span, "a field");
+                        Some(FieldDef {
+                            name: field.name.name,
+                            ty,
+                            span: member.span,
+                            ty_span: field.ty.span,
+                            has_default: field.default.is_some(),
+                            is_let: field.is_let,
+                            read_only_outside: member.read_only_outside,
+                            vis: field_vis(member.vis.kind),
+                        })
+                    }
                     _ => None,
                 })
                 .collect();
@@ -3287,16 +3318,20 @@ impl<'a> Checker<'a> {
                 .members
                 .iter()
                 .filter_map(|member| match &member.kind {
-                    ast::MemberKind::Field(field) => Some(FieldDef {
-                        name: field.name.name,
-                        ty: self.resolve_type(&field.ty),
-                        span: member.span,
-                        ty_span: field.ty.span,
-                        has_default: field.default.is_some(),
-                        is_let: field.is_let,
-                        read_only_outside: member.read_only_outside,
-                        vis: field_vis(member.vis.kind),
-                    }),
+                    ast::MemberKind::Field(field) => {
+                        let ty = self.resolve_type(&field.ty);
+                        let ty = self.reject_unsized_by_value(ty, field.ty.span, "a field");
+                        Some(FieldDef {
+                            name: field.name.name,
+                            ty,
+                            span: member.span,
+                            ty_span: field.ty.span,
+                            has_default: field.default.is_some(),
+                            is_let: field.is_let,
+                            read_only_outside: member.read_only_outside,
+                            vis: field_vis(member.vis.kind),
+                        })
+                    }
                     _ => None,
                 })
                 .collect();
@@ -4772,6 +4807,7 @@ impl<'a> Checker<'a> {
                         match &member.kind {
                             ast::MemberKind::Field(field) => {
                                 let ty = self.resolve_type(&field.ty);
+                                let ty = self.reject_unsized_by_value(ty, field.ty.span, "a field");
                                 fields.push(FieldDef {
                                     name: field.name.name,
                                     ty,
@@ -4892,16 +4928,20 @@ impl<'a> Checker<'a> {
                         .members
                         .iter()
                         .filter_map(|member| match &member.kind {
-                            ast::MemberKind::Field(field) => Some(FieldDef {
-                                name: field.name.name,
-                                ty: self.resolve_type(&field.ty),
-                                span: member.span,
-                                ty_span: field.ty.span,
-                                has_default: field.default.is_some(),
-                                is_let: field.is_let,
-                                read_only_outside: member.read_only_outside,
-                                vis: field_vis(member.vis.kind),
-                            }),
+                            ast::MemberKind::Field(field) => {
+                                let ty = self.resolve_type(&field.ty);
+                                let ty = self.reject_unsized_by_value(ty, field.ty.span, "a field");
+                                Some(FieldDef {
+                                    name: field.name.name,
+                                    ty,
+                                    span: member.span,
+                                    ty_span: field.ty.span,
+                                    has_default: field.default.is_some(),
+                                    is_let: field.is_let,
+                                    read_only_outside: member.read_only_outside,
+                                    vis: field_vis(member.vis.kind),
+                                })
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -5038,7 +5078,7 @@ impl<'a> Checker<'a> {
                     }
                     if !matches!(
                         value.kind,
-                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_)
+                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::CStr(_)
                     ) && value.ty != self.common.error
                         // Already reported: the value did not check ([DIA-14]).
                         && !matches!(value.kind, ExprKind::Error)
@@ -5120,13 +5160,15 @@ impl<'a> Checker<'a> {
                     let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
-                            Some(FfiResultContract::SharedOneStatic | FfiResultContract::NullableSharedOneStatic
+                            Some(FfiResultContract::CStrStatic
+                                | FfiResultContract::SharedOneStatic | FfiResultContract::NullableSharedOneStatic
                                 | FfiResultContract::ExclusiveOneStatic | FfiResultContract::NullableExclusiveOneStatic
                                 | FfiResultContract::SharedFixedStatic { .. } | FfiResultContract::NullableSharedFixedStatic { .. }
                                 | FfiResultContract::ExclusiveFixedStatic { .. } | FfiResultContract::NullableExclusiveFixedStatic { .. }
                                 | FfiResultContract::SharedCountStatic { .. } | FfiResultContract::NullableSharedCountStatic { .. }
                                 | FfiResultContract::ExclusiveCountStatic { .. } | FfiResultContract::NullableExclusiveCountStatic { .. }) => Some(Vec::new()),
-                            Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
+                            Some(FfiResultContract::CStrFrom(name)
+                                | FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
                                 | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                                 | FfiResultContract::SharedFixedFrom { source: name, .. }
                                 | FfiResultContract::NullableSharedFixedFrom { source: name, .. }
@@ -5252,7 +5294,10 @@ impl<'a> Checker<'a> {
                 .enumerate()
                 .map(|(i, field)| FieldDef {
                     name: field.name.map(|n| n.name).unwrap_or_else(|| Symbol::intern(&format!("_{i}"))),
-                    ty: self.resolve_type(&field.ty),
+                    ty: {
+                        let ty = self.resolve_type(&field.ty);
+                        self.reject_unsized_by_value(ty, field.ty.span, "an enum payload")
+                    },
                     span: field.span,
                     ty_span: field.ty.span,
                     has_default: false,
@@ -8378,6 +8423,13 @@ impl<'a> Checker<'a> {
             }
         };
 
+        if self.types.has_unsized_by_value(elem) {
+            let shown = self.types.display(elem);
+            self.error(codes::E5050, span,
+                format!("`{shown}` is incomplete and has no size or alignment"));
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
+
         let (rest, ret) = match which {
             Builtin::MemAlloc => {
                 let ptr = self.types.intern(TyKind::Ptr { mutable: true, inner: elem });
@@ -9414,15 +9466,19 @@ impl<'a> Checker<'a> {
         let fields: Vec<FieldDef> = decl
             .fields
             .iter()
-            .map(|field| FieldDef {
-                name: field.name,
-                ty: self.substitute_ty(field.ty, args),
-                span: field.span,
-                ty_span: field.ty_span,
-                has_default: field.has_default,
-                is_let: field.is_let,
-                read_only_outside: field.read_only_outside,
-                vis: field.vis,
+            .map(|field| {
+                let ty = self.substitute_ty(field.ty, args);
+                let ty = self.reject_unsized_by_value(ty, field.ty_span, "a field");
+                FieldDef {
+                    name: field.name,
+                    ty,
+                    span: field.span,
+                    ty_span: field.ty_span,
+                    has_default: field.has_default,
+                    is_let: field.is_let,
+                    read_only_outside: field.read_only_outside,
+                    vis: field.vis,
+                }
             })
             .collect();
         self.types.struct_def_mut(id).fields = fields;
@@ -9534,15 +9590,19 @@ impl<'a> Checker<'a> {
                 fields: variant
                     .fields
                     .iter()
-                    .map(|field| FieldDef {
-                        name: field.name,
-                        ty: self.substitute_ty(field.ty, args),
-                        span: field.span,
-                        ty_span: field.ty_span,
-                        has_default: field.has_default,
-                        is_let: field.is_let,
-                        read_only_outside: field.read_only_outside,
-                        vis: field.vis,
+                    .map(|field| {
+                        let ty = self.substitute_ty(field.ty, args);
+                        let ty = self.reject_unsized_by_value(ty, field.ty_span, "an enum payload");
+                        FieldDef {
+                            name: field.name,
+                            ty,
+                            span: field.span,
+                            ty_span: field.ty_span,
+                            has_default: field.has_default,
+                            is_let: field.is_let,
+                            read_only_outside: field.read_only_outside,
+                            vis: field.vis,
+                        }
                     })
                     .collect(),
                 discriminant: variant.discriminant,
@@ -9684,15 +9744,19 @@ impl<'a> Checker<'a> {
         let fields = decl
             .fields
             .iter()
-            .map(|field| FieldDef {
-                name: field.name,
-                ty: self.substitute_ty(field.ty, args),
-                span: field.span,
-                ty_span: field.ty_span,
-                has_default: field.has_default,
-                is_let: field.is_let,
-                read_only_outside: field.read_only_outside,
-                vis: field.vis,
+            .map(|field| {
+                let ty = self.substitute_ty(field.ty, args);
+                let ty = self.reject_unsized_by_value(ty, field.ty_span, "a field");
+                FieldDef {
+                    name: field.name,
+                    ty,
+                    span: field.span,
+                    ty_span: field.ty_span,
+                    has_default: field.has_default,
+                    is_let: field.is_let,
+                    read_only_outside: field.read_only_outside,
+                    vis: field.vis,
+                }
             })
             .collect();
         self.types.class_def_mut(id).fields = fields;
@@ -10693,6 +10757,7 @@ impl<'a> Checker<'a> {
             // `[TYP-1]` table (0.9.9) -- `float` is a prelude alias of `f64`.
             "float" => c.f64,
             "str" => c.str_,
+            "cstr" => c.cstr,
             "void" => c.void,
             _ => return None,
         })
@@ -11256,7 +11321,10 @@ impl<'a> Checker<'a> {
         let result_contract = ffi_result_contract(attrs);
         let unknown_result = ffi_unknown_result_fact_contracts(attrs);
         let unknown_facts = ffi_unknown_fact_contracts(attrs);
-let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
+        let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
+            if ty == this.common.error {
+                return;
+            }
             if let TyKind::Param { index, .. } = this.types.kind(ty)
                 && this.signatures[def.0 as usize].generics.get(*index as usize)
                     .is_some_and(|param| param.callable.is_some())
@@ -11408,6 +11476,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         format!("`@ffi` names no parameter `{contract_name}`")),
                     Some(&(_, ty, mode, _)) if !self.foreign_pointer_contract_required(ty) => {
                         let matches_safe_form = match kind {
+                            FfiPointerContract::NulTerminated => mode == Mode::Borrow && ty == self.common.cstr,
                             FfiPointerContract::MutOne => mode == Mode::Mut && self.types.is_ffi_safe(ty),
                             FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
                                 self.types.kind(ty), TyKind::Ref { mutable: false, inner }
@@ -11483,6 +11552,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     format!("`safe fn` has an unknown {axis} for its result"));
             }
             match result_contract {
+                Some(FfiResultContract::CStrStatic | FfiResultContract::CStrFrom(_))
+                    if ret != self.common.cstr =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` NUL-terminated result contract needs `cstr`"),
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
                         if self.types.is_ffi_safe(*inner)) =>
@@ -11566,7 +11639,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.error(codes::E5002, decl.name.span,
                     format!("result `count({witness})` needs an input span sharing `{witness}`"));
             }
-            if let Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
+            if let Some(FfiResultContract::CStrFrom(name)
+                | FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
                 | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                 | FfiResultContract::SharedFixedFrom { source: name, .. }
                 | FfiResultContract::NullableSharedFixedFrom { source: name, .. }
@@ -11593,6 +11667,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
+                }
+                if ty == self.common.cstr && contract != Some(FfiPointerContract::NulTerminated) && unknown.is_empty() {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` NUL-terminated contract for `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
                     && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::Fixed { nullable: false, .. }))
@@ -11642,6 +11720,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 } else {
                     "`safe fn` needs an `@ffi` contract for its pointer result"
                 });
+            } else if ret == self.common.cstr && result_contract.is_none() && unknown_result.is_empty() {
+                self.error(codes::E5002, decl.name.span,
+                    "`safe fn` needs an `@ffi` contract for its `cstr` result");
             } else if matches!(self.types.kind(ret), TyKind::Ref { .. })
                 && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
@@ -20681,6 +20762,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 };
             }
         }
+        if expected == self.common.cstr && expr.ty == self.common.str_ {
+            let span = expr.span;
+            self.sink.emit(Diagnostic::error(codes::E5020, span,
+                "expected `cstr`, found `str`")
+                .help("use a `c\"…\"` literal or convert with `.to_cstring()`"));
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
         let span = expr.span;
@@ -22114,6 +22202,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // `[LEX-20]` — a string literal is `str` with static region.
             ast::Literal::Str(s) => {
                 Expr { ty: self.common.str_, kind: ExprKind::Str(s.clone()), span }
+            }
+            ast::Literal::CStr(bytes) => {
+                Expr { ty: self.common.cstr, kind: ExprKind::CStr(bytes.clone()), span }
             }
             ast::Literal::Char(c) => {
                 Expr { ty: self.common.char_, kind: ExprKind::Int(*c as u128), span }
@@ -27950,6 +28041,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::CStr(_)
             | ExprKind::Local(_)
             | ExprKind::FnValue(_)
             | ExprKind::Error => {}
@@ -28133,6 +28225,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::CStr(_)
             | ExprKind::Local(_)
             | ExprKind::FnValue(_)
             | ExprKind::Error => false,
@@ -33872,7 +33965,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 /// number's negation, `-5` (`[LEX-24]`, D-327).
 fn is_literal_value(kind: &ExprKind) -> bool {
     match kind {
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::CStr(_) => true,
         ExprKind::Unary { op: UnOp::Neg, operand } => matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_)),
         _ => false,
     }
@@ -33885,6 +33978,7 @@ fn literal_copy(value: &Expr, span: Span) -> Expr {
         ExprKind::Float(v) => ExprKind::Float(*v),
         ExprKind::Bool(v) => ExprKind::Bool(*v),
         ExprKind::Str(s) => ExprKind::Str(s.clone()),
+        ExprKind::CStr(bytes) => ExprKind::CStr(bytes.clone()),
         ExprKind::Unary { op: UnOp::Neg, operand } => {
             ExprKind::Unary { op: UnOp::Neg, operand: Box::new(literal_copy(operand, span)) }
         }
@@ -33933,8 +34027,21 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
                 sink.emit(Diagnostic::error(codes::E0900, item.span, "only `unsafe extern \"C\"` declaration blocks are implemented yet"));
             }
             for inner in &block.items {
+                if let ast::ItemKind::TypeAlias(alias) = &inner.kind {
+                    if alias.value.is_some() || !alias.generics.is_empty() || !alias.bounds.is_empty() || alias.range.is_some() {
+                        sink.emit(Diagnostic::error(codes::E0100, inner.span,
+                            "a foreign opaque type must be declared as `type Name`"));
+                    } else {
+                        let mut declaration = inner.clone();
+                        if let ast::ItemKind::TypeAlias(alias) = &mut declaration.kind {
+                            alias.is_foreign_decl = true;
+                        }
+                        items.push(declaration);
+                    }
+                    continue;
+                }
                 let ast::ItemKind::Fn(decl) = &inner.kind else {
-                    sink.emit(Diagnostic::error(codes::E0900, inner.span, "foreign static and opaque type declarations are not implemented yet"));
+                    sink.emit(Diagnostic::error(codes::E0900, inner.span, "foreign static declarations are not implemented yet"));
                     continue;
                 };
                 if decl.body.is_some() {
@@ -34233,7 +34340,7 @@ fn fn_param_mode_name(mode: FnParamMode) -> &'static str {
 fn has_static_region(expr: &ast::Expr) -> bool {
     match &expr.kind {
         // A string literal is the case `[LT-3]` names first.
-        ast::ExprKind::Lit(ast::Literal::Str(_)) => true,
+        ast::ExprKind::Lit(ast::Literal::Str(_) | ast::Literal::CStr(_)) => true,
         // `[LEX-19]`'s adjacent-literal concatenation is still literals.
         ast::ExprKind::Binary { lhs, rhs, .. } => {
             has_static_region(lhs) && has_static_region(rhs)
@@ -34713,6 +34820,7 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FfiPointerContract {
+    NulTerminated,
     SharedOne,
     MutOne,
     NullableSharedOne,
@@ -34723,6 +34831,8 @@ enum FfiPointerContract {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FfiResultContract {
+    CStrStatic,
+    CStrFrom(Symbol),
     SharedOneStatic,
     NullableSharedOneStatic,
     SharedOneFrom(Symbol),
@@ -34754,10 +34864,12 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
     let fixed = ffi_fixed_length(&args.get(1)?.value);
     let count = ffi_count_target(&args.get(1)?.value);
+    let nul_terminated = ffi_contract_word(&args.get(1)?.value).is_some_and(|word| word.is("nul_terminated"));
     if !ffi_contract_word(callee).is_some_and(|word| word.is("result"))
         || !(3..=5).contains(&args.len()) || args.iter().any(|arg| arg.name.is_some())
         || !ffi_contract_word(&args[0].value).is_some_and(|word| word.is("borrowed"))
         || !(ffi_contract_word(&args[1].value).is_some_and(|word| word.is("one"))
+            || nul_terminated
             || fixed.is_some() || count.is_some()) {
         return None;
     }
@@ -34787,6 +34899,14 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     }
     let source = source?;
     if exclusive && aliased { return None; }
+    if nul_terminated {
+        if nullable || exclusive { return None; }
+        return Some(if source.is("static") {
+            FfiResultContract::CStrStatic
+        } else {
+            FfiResultContract::CStrFrom(source)
+        });
+    }
     Some(match (source.is("static"), nullable, exclusive, fixed, count) {
         (true, false, false, None, None) => FfiResultContract::SharedOneStatic,
         (true, true, false, None, None) => FfiResultContract::NullableSharedOneStatic,
@@ -34839,7 +34959,8 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
     }
 
     let fixed = ffi_fixed_length(&args[2].value);
-    let count = if fixed.is_some() || ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+    let nul_terminated = ffi_contract_word(&args[2].value).is_some_and(|word| word.is("nul_terminated"));
+    let count = if fixed.is_some() || nul_terminated || ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
         None
     } else {
         Some(ffi_count_target(&args[2].value)?)
@@ -34857,6 +34978,7 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         return None;
     }
     let kind = match (count, fixed, nullable, exclusive) {
+        (None, None, false, false) if nul_terminated => FfiPointerContract::NulTerminated,
         (None, Some(len), nullable, exclusive) => FfiPointerContract::Fixed { len, exclusive, nullable },
         (Some(witness), None, nullable, exclusive) => FfiPointerContract::Count { witness, exclusive, nullable },
         (None, None, false, false) => FfiPointerContract::SharedOne,

@@ -5238,6 +5238,7 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Bool(value) => Operand::Const(Const::Bool(*value)),
             hir::ExprKind::Str(text) => Operand::Const(Const::Str(text.clone())),
+            hir::ExprKind::CStr(bytes) => Operand::Const(Const::CStrLiteral(bytes.clone())),
             hir::ExprKind::Error => Operand::Const(Const::Void),
             hir::ExprKind::Local(_)
             | hir::ExprKind::Field { .. }

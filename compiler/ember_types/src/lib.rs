@@ -123,6 +123,8 @@ pub enum TyKind {
     Never,
     /// A view over UTF-8 bytes with a region; `Span[u8]` known to be valid.
     Str,
+    /// A borrowed pointer to NUL-terminated C bytes, distinct from UTF-8 `str`.
+    CStr,
     /// `Span[T]` and `MutSpan[T]` (Part VII §7): pointer plus length, with a
     /// compile-time region. Part IV §1 puts them in the **View** category
     /// beside `ref T` and `str`, which is why they are a kind here rather than
@@ -134,6 +136,9 @@ pub enum TyKind {
     /// `[SPN-3]` — `Span[T]` is `Copy`; `MutSpan[T]` is move-only and
     /// reborrowable.
     Span { elem: Ty, mutable: bool },
+    /// An incomplete C struct declared by `extern type`. It has identity but
+    /// no value layout; only a pointer to it may cross the boundary.
+    Opaque(Symbol),
     Struct(StructId),
     /// A class value is a non-null counted handle. Its source-level type is
     /// pointer-sized, but its allocation begins with an `ember_obj_header`
@@ -479,6 +484,7 @@ pub struct CommonTypes {
     pub void: Ty,
     pub never: Ty,
     pub str_: Ty,
+    pub cstr: Ty,
     /// `String` (`[TXT-1]`): `Vec { elem: u8, text: true }`.
     pub string: Ty,
     pub int_lit: Ty,
@@ -547,6 +553,7 @@ impl TypeTable {
             void: table.intern(TyKind::Void),
             never: table.intern(TyKind::Never),
             str_: table.intern(TyKind::Str),
+            cstr: table.intern(TyKind::CStr),
             string: table.intern(TyKind::Vec { elem: u8_ty, text: true }),
             self_ty: table.intern(TyKind::Param {
                 index: SELF_PARAM,
@@ -657,7 +664,7 @@ impl TypeTable {
     /// `is_generic_in` (D-182).
     fn has_unsized_by_value_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.kind(ty) {
-            TyKind::Dyn { .. } => true,
+            TyKind::Dyn { .. } | TyKind::Opaque(_) => true,
             TyKind::Ref { .. } | TyKind::Ptr { .. } => false,
             TyKind::Array { elem, .. }
             | TyKind::Vec { elem, .. }
@@ -1156,7 +1163,7 @@ impl TypeTable {
                     field_offsets: vec![0, self.pointer_size],
                 }
             }
-            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } => {
+            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr => {
                 Layout::scalar(self.pointer_size)
             }
             TyKind::Array { elem, len } => {
@@ -1186,7 +1193,7 @@ impl TypeTable {
             TyKind::Param { .. } | TyKind::Assoc { .. } => Layout::ZERO,
             // `[TYP-22]` — `dyn I` is unsized and may only occur behind an
             // indirection such as `ref` or `Box`.
-            TyKind::Dyn { .. } => Layout::ZERO,
+            TyKind::Dyn { .. } | TyKind::Opaque(_) => Layout::ZERO,
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => Layout::ZERO,
         }
     }
@@ -1304,11 +1311,12 @@ impl TypeTable {
                 let safe = self.class_def(*id).is_sync;
                 (safe, safe)
             }
+            TyKind::CStr => (false, false),
             TyKind::Ref { mutable, inner } | TyKind::Span { mutable, elem: inner } => {
                 let (send, sync) = both(*inner, visiting);
                 if *mutable { (send, false) } else { (sync, sync) }
             }
-            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Dyn { .. }
+            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Opaque(_)
             | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_)
             | TyKind::IntLit | TyKind::FloatLit => (false, false),
             TyKind::Struct(id) => {
@@ -1494,6 +1502,7 @@ impl TypeTable {
             | TyKind::Void
             | TyKind::Never
             | TyKind::Str
+            | TyKind::CStr
             | TyKind::Ptr { .. }
             | TyKind::Fn { .. }
             | TyKind::IntLit
@@ -1540,7 +1549,7 @@ impl TypeTable {
             // say, which the checker consults rather than the type table.
             TyKind::Param { .. } | TyKind::Assoc { .. } => params,
             TyKind::Infer(_) => false,
-            TyKind::Dyn { .. } => false,
+            TyKind::Dyn { .. } | TyKind::Opaque(_) => false,
         }
     }
 
@@ -1603,6 +1612,7 @@ impl TypeTable {
             TyKind::Void
             | TyKind::Never
             | TyKind::Str
+            | TyKind::CStr
             | TyKind::Span { .. }
             | TyKind::Ref { .. }
             | TyKind::Fn { .. }
@@ -1610,6 +1620,7 @@ impl TypeTable {
             | TyKind::Param { .. }
             | TyKind::Assoc { .. }
             | TyKind::Dyn { .. }
+            | TyKind::Opaque(_)
             | TyKind::Infer(_)
             | TyKind::IntLit
             | TyKind::FloatLit => false,
@@ -1658,7 +1669,7 @@ impl TypeTable {
     pub fn is_view(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             // Part IV §1's View category, in full.
-            TyKind::Ref { .. } | TyKind::Str | TyKind::Span { .. } => true,
+            TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } => true,
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_view(t)),
             TyKind::Array { elem, .. } => self.is_view(*elem),
             TyKind::Struct(id) => {
@@ -1688,6 +1699,7 @@ impl TypeTable {
             | TyKind::Float(_)
             | TyKind::Void
             | TyKind::Ptr { .. } => true,
+            TyKind::CStr => true,
             TyKind::Fn { abi: Some(_), .. } => true,
             TyKind::Enum(id) => self.option_niche(*id).is_some_and(|niche| {
                 matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. })
@@ -1820,10 +1832,12 @@ impl TypeTable {
             TyKind::Void => "void".into(),
             TyKind::Never => "!".into(),
             TyKind::Str => "str".into(),
+            TyKind::CStr => "cstr".into(),
             TyKind::Span { elem, mutable } => {
                 let name = if *mutable { "MutSpan" } else { "Span" };
                 format!("{name}[{}]", self.render(*elem, user))
             }
+            TyKind::Opaque(name) => self.render_named(*name, None, user),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 self.render_named(def.name, def.origin.as_ref().or(self.written_as.get(id)), user)
@@ -1953,12 +1967,14 @@ impl TypeTable {
             TyKind::Void => "void".into(),
             TyKind::Never => "!".into(),
             TyKind::Str => "str".into(),
+            TyKind::CStr => "cstr".into(),
             TyKind::Span { elem, mutable } => format!(
                 "{}[{}]",
                 if *mutable { "MutSpan" } else { "Span" },
                 self.canonical_name(*elem)?
             ),
             TyKind::Struct(id) => self.struct_def(*id).name.to_string(),
+            TyKind::Opaque(name) => name.to_string(),
             TyKind::Class(id) => self.class_def(*id).name.to_string(),
             TyKind::ClassInterface(interface) => interface.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),

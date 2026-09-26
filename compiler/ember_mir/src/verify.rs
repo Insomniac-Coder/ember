@@ -1035,7 +1035,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 Rvalue::BinaryOp { .. } => Some("an arithmetic operation"),
                 Rvalue::UnaryOp { .. } => Some("a unary operation"),
                 Rvalue::Discriminant(_) => Some("an enum discriminant"),
-                Rvalue::Use(Operand::Const(c)) if !matches!(c, Const::Str(_)) => {
+                Rvalue::Use(Operand::Const(c)) if !matches!(c, Const::Str(_) | Const::CStrLiteral(_)) => {
                     Some("a non-string constant")
                 }
                 _ => None,

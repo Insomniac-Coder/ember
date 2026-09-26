@@ -1421,6 +1421,15 @@ impl Emitter<'_> {
     /// which is declaration order, so a struct's fields are always already
     /// complete types.
     fn emit_type_declarations(&mut self) {
+        // Foreign incomplete structs have no Ember definition. Their tag must
+        // exist before any imported prototype mentions a pointer to one.
+        let opaque: BTreeSet<String> = self.types.all().filter_map(|(_, kind)| match kind {
+            TyKind::Opaque(name) => Some(name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string()),
+            _ => None,
+        }).collect();
+        for name in opaque {
+            self.line(&format!("struct {name};"));
+        }
         let plan: Vec<(String, Definition)> = self
             .order
             .clone()
@@ -2608,7 +2617,9 @@ impl Emitter<'_> {
             | TyKind::Void
             | TyKind::Never
             | TyKind::Str
+            | TyKind::CStr
             | TyKind::Span { .. }
+            | TyKind::Opaque(_)
             | TyKind::Range(_)
             | TyKind::Ref { .. }
             | TyKind::Ptr { .. }
@@ -5669,6 +5680,7 @@ impl Emitter<'_> {
             Const::CStr(text) => {
                 format!("((const uint8_t*){})", c_string_literal(text))
             }
+            Const::CStrLiteral(bytes) => c_bytes_literal(bytes),
             // `[FN-6]` — a function value is its C symbol, which is its
             // address.
             Const::Fn(symbol) => symbol.clone(),
@@ -6138,6 +6150,7 @@ impl Emitter<'_> {
             .into(),
             TyKind::Void | TyKind::Never | TyKind::Error => "void".into(),
             TyKind::Str => format!("{RT}str"),
+            TyKind::CStr => "const char*".into(),
             // A view is a pointer and a length. One C struct serves
             // every element type, as `ember_vec` does: the element
             // type is recovered at each use, and `[TYP-11]`'s C
@@ -6146,6 +6159,7 @@ impl Emitter<'_> {
             TyKind::Span { mutable, .. } => {
                 if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") }
             }
+            TyKind::Opaque(name) => format!("struct {}", name.as_str().rsplit('.').next().unwrap_or(name.as_str())),
             TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
             // Class handles are pointers to the compiler-generated object
             // struct. The name comes from the shared branding helper so a
@@ -6773,8 +6787,12 @@ fn render_float(value: f64, is_f32: bool) -> String {
 /// are emitted as hex escapes so the file stays ASCII whatever the compiler's
 /// source charset is.
 fn c_string_literal(text: &str) -> String {
+    c_bytes_literal(text.as_bytes())
+}
+
+fn c_bytes_literal(bytes: &[u8]) -> String {
     let mut out = String::from("\"");
-    for byte in text.bytes() {
+    for &byte in bytes {
         match byte {
             b'"' => out.push_str("\\\""),
             b'\\' => out.push_str("\\\\"),

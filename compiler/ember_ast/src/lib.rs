@@ -366,6 +366,8 @@ pub struct StaticDecl {
 pub struct TypeAlias {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
+    /// An incomplete C type declared inside `unsafe extern "C"`.
+    pub is_foreign_decl: bool,
     /// `None` for an associated type declaration inside an interface.
     pub value: Option<TypeExpr>,
     pub bounds: Vec<TypeExpr>,

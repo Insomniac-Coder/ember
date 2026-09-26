@@ -883,6 +883,7 @@ pub enum Const {
     /// Kept apart from `Str` (which is an `ember_str` view with a region)
     /// because the file field must not make the cell a view type (`[TYP-15]`).
     CStr(String),
+    CStrLiteral(Vec<u8>),
     /// `[FN-6]` — a named function as a value: its mangled symbol, which in C
     /// is the function's address.
     Fn(String),
@@ -1490,6 +1491,7 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
             Const::Bool(b) => format!("const {b}"),
             Const::Str(s) => format!("const {s:?}"),
             Const::CStr(s) => format!("const cstr {s:?}"),
+            Const::CStrLiteral(bytes) => format!("const cstr {bytes:?}"),
             Const::Fn(symbol) => format!("const fn {symbol}"),
             Const::Void => "const ()".to_string(),
         },
