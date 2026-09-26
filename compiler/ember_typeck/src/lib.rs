@@ -5121,11 +5121,16 @@ impl<'a> Checker<'a> {
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
                             Some(FfiResultContract::SharedOneStatic | FfiResultContract::NullableSharedOneStatic
+                                | FfiResultContract::ExclusiveOneStatic | FfiResultContract::NullableExclusiveOneStatic
                                 | FfiResultContract::SharedFixedStatic { .. } | FfiResultContract::NullableSharedFixedStatic { .. }
+                                | FfiResultContract::ExclusiveFixedStatic { .. } | FfiResultContract::NullableExclusiveFixedStatic { .. }
                                 | FfiResultContract::SharedCountStatic { .. } | FfiResultContract::NullableSharedCountStatic { .. }) => Some(Vec::new()),
                             Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
+                                | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                                 | FfiResultContract::SharedFixedFrom { source: name, .. }
                                 | FfiResultContract::NullableSharedFixedFrom { source: name, .. }
+                                | FfiResultContract::ExclusiveFixedFrom { source: name, .. }
+                                | FfiResultContract::NullableExclusiveFixedFrom { source: name, .. }
                                 | FfiResultContract::SharedCountFrom { source: name, .. }
                                 | FfiResultContract::NullableSharedCountFrom { source: name, .. }) =>
                                 params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![index]),
@@ -11466,6 +11471,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` result contract needs a nullable shared reference result"),
+                Some(FfiResultContract::ExclusiveOneStatic | FfiResultContract::ExclusiveOneFrom(_))
+                    if !matches!(self.types.kind(ret), TyKind::Ref { mutable: true, inner }
+                        if self.types.is_ffi_safe(*inner)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` exclusive result contract needs a mutable reference result"),
+                Some(FfiResultContract::NullableExclusiveOneStatic | FfiResultContract::NullableExclusiveOneFrom(_))
+                    if !self.foreign_nullable_ref_inner(ret)
+                        .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` nullable exclusive result contract needs an optional mutable reference result"),
                 Some(FfiResultContract::SharedFixedStatic { len } | FfiResultContract::SharedFixedFrom { len, .. })
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
                         if matches!(self.types.kind(*inner), TyKind::Array { elem, len: actual }
@@ -11478,6 +11493,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             if *actual == len && self.types.is_ffi_safe(*elem))) =>
                     self.error(codes::E5002, decl.name.span,
                         format!("`@ffi` nullable fixed({len}) result needs an optional shared array reference of length {len}")),
+                Some(FfiResultContract::ExclusiveFixedStatic { len } | FfiResultContract::ExclusiveFixedFrom { len, .. })
+                    if !matches!(self.types.kind(ret), TyKind::Ref { mutable: true, inner }
+                        if matches!(self.types.kind(*inner), TyKind::Array { elem, len: actual }
+                            if *actual == len && self.types.is_ffi_safe(*elem))) =>
+                    self.error(codes::E5002, decl.name.span,
+                        format!("`@ffi` fixed({len}) exclusive result needs a mutable array reference of length {len}")),
+                Some(FfiResultContract::NullableExclusiveFixedStatic { len } | FfiResultContract::NullableExclusiveFixedFrom { len, .. })
+                    if !self.foreign_nullable_ref_inner(ret).is_some_and(|(inner, mutable)|
+                        mutable && matches!(self.types.kind(inner), TyKind::Array { elem, len: actual }
+                            if *actual == len && self.types.is_ffi_safe(*elem))) =>
+                    self.error(codes::E5002, decl.name.span,
+                        format!("`@ffi` nullable fixed({len}) exclusive result needs an optional mutable array reference of length {len}")),
                 Some(FfiResultContract::SharedCountStatic { .. } | FfiResultContract::SharedCountFrom { .. })
                     if !matches!(self.types.kind(ret), TyKind::Span { elem, mutable: false }
                         if self.types.is_ffi_safe(*elem)) =>
@@ -11504,8 +11531,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     format!("result `count({witness})` needs an input span sharing `{witness}`"));
             }
             if let Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
+                | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                 | FfiResultContract::SharedFixedFrom { source: name, .. }
                 | FfiResultContract::NullableSharedFixedFrom { source: name, .. }
+                | FfiResultContract::ExclusiveFixedFrom { source: name, .. }
+                | FfiResultContract::NullableExclusiveFixedFrom { source: name, .. }
                 | FfiResultContract::SharedCountFrom { source: name, .. }
                 | FfiResultContract::NullableSharedCountFrom { source: name, .. }) = result_contract {
                 if !signature.iter().any(|(param, ty, mode, _)| *param == name
@@ -11618,9 +11648,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if !decl.is_foreign_decl || !decl.is_safe { return None; }
         let result_fixed = match ffi_result_contract(attrs) {
             Some(FfiResultContract::SharedFixedStatic { len }
-                | FfiResultContract::SharedFixedFrom { len, .. }) => Some((len, false)),
+                | FfiResultContract::SharedFixedFrom { len, .. }) => Some((len, false, false)),
             Some(FfiResultContract::NullableSharedFixedStatic { len }
-                | FfiResultContract::NullableSharedFixedFrom { len, .. }) => Some((len, true)),
+                | FfiResultContract::NullableSharedFixedFrom { len, .. }) => Some((len, true, false)),
+            Some(FfiResultContract::ExclusiveFixedStatic { len }
+                | FfiResultContract::ExclusiveFixedFrom { len, .. }) => Some((len, false, true)),
+            Some(FfiResultContract::NullableExclusiveFixedStatic { len }
+                | FfiResultContract::NullableExclusiveFixedFrom { len, .. }) => Some((len, true, true)),
             _ => None,
         };
         let result_count = match ffi_result_contract(attrs) {
@@ -11630,7 +11664,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 | FfiResultContract::NullableSharedCountFrom { witness, .. }) => Some((witness, true)),
             _ => None,
         };
-        let result_array_elem = if let Some((len, nullable)) = result_fixed {
+        let result_array = if let Some((len, nullable, exclusive)) = result_fixed {
             let (inner, mutable) = if nullable {
                 self.foreign_nullable_ref_inner(result_ty)?
             } else {
@@ -11638,8 +11672,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 (*inner, *mutable)
             };
             let TyKind::Array { elem, len: actual } = self.types.kind(inner) else { return None };
-            if mutable || *actual != len || !self.types.is_ffi_safe(*elem) { return None; }
-            Some(*elem)
+            if mutable != exclusive || *actual != len || !self.types.is_ffi_safe(*elem) { return None; }
+            Some(hir::FfiArrayResult { elem: *elem, mutable })
         } else { None };
         let contracts = ffi_param_contracts(attrs);
         let mut counted = HashMap::<Symbol, (usize, Ty, bool)>::new();
@@ -11683,7 +11717,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if !self.types.is_ffi_safe(elem) { return None; }
             Some(hir::FfiSpanResult { public_index, elem, nullable })
         } else { None };
-        if counted.is_empty() && fixed.is_empty() && result_array_elem.is_none()
+        if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
@@ -11707,7 +11741,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         Some(hir::FfiCounted {
             foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
             abi_params,
-            result_array_elem,
+            result_array,
             result_span,
         })
     }
@@ -34638,10 +34672,18 @@ enum FfiResultContract {
     NullableSharedOneStatic,
     SharedOneFrom(Symbol),
     NullableSharedOneFrom(Symbol),
+    ExclusiveOneStatic,
+    NullableExclusiveOneStatic,
+    ExclusiveOneFrom(Symbol),
+    NullableExclusiveOneFrom(Symbol),
     SharedFixedStatic { len: u64 },
     NullableSharedFixedStatic { len: u64 },
     SharedFixedFrom { len: u64, source: Symbol },
     NullableSharedFixedFrom { len: u64, source: Symbol },
+    ExclusiveFixedStatic { len: u64 },
+    NullableExclusiveFixedStatic { len: u64 },
+    ExclusiveFixedFrom { len: u64, source: Symbol },
+    NullableExclusiveFixedFrom { len: u64, source: Symbol },
     SharedCountStatic { witness: Symbol },
     NullableSharedCountStatic { witness: Symbol },
     SharedCountFrom { witness: Symbol, source: Symbol },
@@ -34661,7 +34703,7 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
         return None;
     }
 
-    let (mut nullable, mut aliased, mut source) = (false, false, None);
+    let (mut nullable, mut exclusive, mut aliased, mut source) = (false, false, false, None);
     for word in &args[2..] {
         if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) && !nullable {
             nullable = true;
@@ -34669,6 +34711,10 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
         }
         if ffi_contract_word(&word.value).is_some_and(|word| word.is("aliased")) && !aliased {
             aliased = true;
+            continue;
+        }
+        if ffi_contract_word(&word.value).is_some_and(|word| word.is("exclusive")) && !exclusive {
+            exclusive = true;
             continue;
         }
         let ast::ExprKind::Call { callee, args: lifetime } = &word.value.kind else { return None };
@@ -34681,19 +34727,28 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
         if source.is_none() { return None; }
     }
     let source = source?;
-    Some(match (source.is("static"), nullable, fixed, count) {
-        (true, false, None, None) => FfiResultContract::SharedOneStatic,
-        (true, true, None, None) => FfiResultContract::NullableSharedOneStatic,
-        (false, false, None, None) => FfiResultContract::SharedOneFrom(source),
-        (false, true, None, None) => FfiResultContract::NullableSharedOneFrom(source),
-        (true, false, Some(len), None) => FfiResultContract::SharedFixedStatic { len },
-        (true, true, Some(len), None) => FfiResultContract::NullableSharedFixedStatic { len },
-        (false, false, Some(len), None) => FfiResultContract::SharedFixedFrom { len, source },
-        (false, true, Some(len), None) => FfiResultContract::NullableSharedFixedFrom { len, source },
-        (true, false, None, Some(witness)) => FfiResultContract::SharedCountStatic { witness },
-        (true, true, None, Some(witness)) => FfiResultContract::NullableSharedCountStatic { witness },
-        (false, false, None, Some(witness)) => FfiResultContract::SharedCountFrom { witness, source },
-        (false, true, None, Some(witness)) => FfiResultContract::NullableSharedCountFrom { witness, source },
+    if exclusive && aliased { return None; }
+    Some(match (source.is("static"), nullable, exclusive, fixed, count) {
+        (true, false, false, None, None) => FfiResultContract::SharedOneStatic,
+        (true, true, false, None, None) => FfiResultContract::NullableSharedOneStatic,
+        (false, false, false, None, None) => FfiResultContract::SharedOneFrom(source),
+        (false, true, false, None, None) => FfiResultContract::NullableSharedOneFrom(source),
+        (true, false, true, None, None) => FfiResultContract::ExclusiveOneStatic,
+        (true, true, true, None, None) => FfiResultContract::NullableExclusiveOneStatic,
+        (false, false, true, None, None) => FfiResultContract::ExclusiveOneFrom(source),
+        (false, true, true, None, None) => FfiResultContract::NullableExclusiveOneFrom(source),
+        (true, false, false, Some(len), None) => FfiResultContract::SharedFixedStatic { len },
+        (true, true, false, Some(len), None) => FfiResultContract::NullableSharedFixedStatic { len },
+        (false, false, false, Some(len), None) => FfiResultContract::SharedFixedFrom { len, source },
+        (false, true, false, Some(len), None) => FfiResultContract::NullableSharedFixedFrom { len, source },
+        (true, false, true, Some(len), None) => FfiResultContract::ExclusiveFixedStatic { len },
+        (true, true, true, Some(len), None) => FfiResultContract::NullableExclusiveFixedStatic { len },
+        (false, false, true, Some(len), None) => FfiResultContract::ExclusiveFixedFrom { len, source },
+        (false, true, true, Some(len), None) => FfiResultContract::NullableExclusiveFixedFrom { len, source },
+        (true, false, false, None, Some(witness)) => FfiResultContract::SharedCountStatic { witness },
+        (true, true, false, None, Some(witness)) => FfiResultContract::NullableSharedCountStatic { witness },
+        (false, false, false, None, Some(witness)) => FfiResultContract::SharedCountFrom { witness, source },
+        (false, true, false, None, Some(witness)) => FfiResultContract::NullableSharedCountFrom { witness, source },
         _ => return None,
     })
 }
@@ -34704,9 +34759,8 @@ fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {
         .and_then(|attr| attr.args.iter().find_map(ffi_result_contract_arg))
 }
 
-/// ODR-073's first direct-declaration pointer contracts: borrowed single
-/// places passed as one C pointer. Other contract forms stay `E0900` until
-/// their safe surface and ABI lowering are built together.
+/// Direct-declaration borrowed pointer contracts. Unsupported contract forms
+/// remain `E0900` until their safe surface and ABI lowering are built together.
 fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContract)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };

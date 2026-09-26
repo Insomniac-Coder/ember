@@ -10921,6 +10921,18 @@ first**; the rest of §0.355 is the running narrative behind it.
     witness lengths before C. `FFI-11/` covers the direct call, nullable
     `None` and `Some`, a non-null zero-length `Some`, a static result that
     outlives its input, and unequal input lengths.
+  * The next implementation batch follows Hardened_33's existing `exclusive`
+    aliasing rule for borrowed `one` and `fixed(N)` results. A hand-declared
+    safe C function may return `ref mut T`, `Option[ref mut T]`,
+    `ref mut [T; N]`, or `Option[ref mut [T; N]]` when its result clause says
+    `exclusive`, with `from(static)` or `from(p)`. The fixed-array wrapper
+    declares a mutable C element pointer; shared results still use `const`.
+    Result shape, nullability, length, and mutable aliasing are checked as
+    `E5002`. `FFI-11/` run-pass tests cover the four forms, C calls, a write
+    through a returned mutable array reference, and input-derived lifetimes;
+    the accepted cases failed before the compiler change. This is an
+    implementation gap, so no ODR or new hardening is needed. The full
+    annotation sweep, workspace suite, and repository gates pass locally.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -11085,8 +11097,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
 * **Next task:** finish the remaining Phase 5 pointer contract shapes,
-  starting with pointer results, then foreign statics/types. Check the newest
-  CI run before pushing further work.
+  starting with exclusive counted results and nullable counted inputs,
+  then foreign statics/types. Check the newest CI run before pushing
+  further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

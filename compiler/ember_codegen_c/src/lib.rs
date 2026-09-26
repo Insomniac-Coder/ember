@@ -3328,8 +3328,9 @@ impl Emitter<'_> {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let result = if let Some(span) = &counted.result_span {
             format!("const {}*", self.c_type(span.elem))
-        } else if let Some(elem) = counted.result_array_elem {
-            format!("const {}*", self.c_type(elem))
+        } else if let Some(array) = &counted.result_array {
+            let elem = self.c_type(array.elem);
+            if array.mutable { format!("{elem}*") } else { format!("const {elem}*") }
         } else {
             match self.types.kind(body.return_ty()) {
                 TyKind::Ref { mutable: false, inner } => format!("const {}*", self.c_type(*inner)),
@@ -3431,7 +3432,7 @@ impl Emitter<'_> {
             self.line(&format!("    {call};"));
             self.line("    return;");
         } else {
-            let value = if counted.result_array_elem.is_some()
+            let value = if counted.result_array.is_some()
                 || matches!(self.types.kind(body.return_ty()), TyKind::Ref { mutable: false, .. }) {
                 format!("({})({call})", self.c_type(body.return_ty()))
             } else {
