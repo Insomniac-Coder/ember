@@ -20,7 +20,7 @@ Status words: `compliant`, `defect D-nnn`, `gap`, `fixed`, `not yet probed`.
 | `PartialEq`/`PartialOrd` | removed (`[TYP-37]`) | `E1010 cannot find interface` | compliant |
 | `unsafe(reason = …)` | removed (`[UNS-8]`) | `E0100` | compliant |
 | `@derive(SoA)`, `columns_mut` | removed (`SoA[T]` is compiler-known) | not probed | not yet probed |
-| manifest keys `exclusivity`, `overflow`, `bounds_checks`, `gpu.validate` | `E9001` (`[PRF-3]`) | not probed | not yet probed |
+| manifest keys `exclusivity`, `overflow`, `bounds_checks`, `gpu.validate` | `E9001` (`[PRF-3]`) | accepted silently | fixed: all four removed settings are `E9001` with a manifest location; integration cases cover both `[gpu] validate` and dotted `gpu.validate` |
 
 Tests that use a removed construct (31 files: `grep -rln "@latebound\|with_views\|Callable\[\|::\|PartialEq\|#! language" tests`)
 are migrated or retired with the construct, each named in the progress log.
@@ -110,14 +110,14 @@ are migrated or retired with the construct, each named in the progress log.
 | `[LT-7]` | VII | Callable types. Each call through a value or parameter of callable … | fixed | a by-address parameter of a callable type is passed as a pointer; a call through a callable value borrows the callable type's source parameters, and a function whose `@borrows` reaches past them is not a value (D-219). `LT-7/` |
 | `[DRP-4]` | VII | A panic inside `drop` aborts the process (`[PAN-1]`). A `drop` SHOULD … | not yet probed | |
 | `[SPN-5]` | VII | `split_at(i)` on a `Span` returns two `Span`s; on a `MutSpan` it … | not yet probed | |
-| `[OBJ-1]` | VIII | The header is 24 bytes on 64-bit targets and is part of the runtime … | not yet probed | |
-| `[RC-3]` | VIII | Further elisions are allowed only when semantics are preserved … | not yet probed | |
+| `[OBJ-1]` | VIII | The header is 24 bytes on 64-bit targets and is part of the runtime … | compliant | The runtime header checks the 24-byte size and every specified field offset at compile time for 64-bit C and C++ clients. |
+| `[RC-3]` | VIII | Further elisions are allowed only when semantics are preserved … | compliant (partial) | `std.mem.keep_alive(h)` now records a borrowed use without retaining or consuming the handle; `RC-3/accept_keep_alive_marks_a_handle_use.em` fixes its public spelling and scope-end drop order. Raw-pointer and other liveness boundaries remain to probe. |
 | `[RC-4]` | VIII | A non-`Sync` class's counts, and a `Shared`'s, use plain loads and … | not yet probed | |
 | `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … | compliant | D-202 fixed: per-field access words (`[EXC-19]`); a view, `ref`, passed or iterated field holds its field until the loan dies; `EXC-1/` tests |
 | `[EXC-2]` | VIII | Beginning a read access to a field while a write access to it is … | compliant | a read through another handle during a `mut self` call panics; reads share a field; `EXC-2/` tests |
-| `[EXC-6]` | VIII | A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and … | compliant (partial) | the panic names both accesses' kinds and the field (`Bag.items`); the active access's location is not kept (the debug stack of `[EXC-6]` is not built) |
+| `[EXC-6]` | VIII | A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and … | compliant | debug builds keep a per-thread stack of active field accesses and report the conflicting access's file, line, column and field; release and shipping keep the previous zero-overhead fast path. `EXC-6/` covers individual and whole-object field accesses. |
 | `[EXC-7]` | VIII | The opt-in lint `L3013` reports a long-term access held across a … | compliant | `L3013` for a `mut self` method (`Body::mut_self`) across a virtual or `dyn` call; `EXC-7/` tests |
-| `[EXC-14]` | VIII | The 0.9.8 `exclusivity = "unchecked"` setting is removed. Code that … | not yet probed | |
+| `[EXC-14]` | VIII | The 0.9.8 `exclusivity = "unchecked"` setting is removed. Code that … | compliant | Manifest `exclusivity` is `E9001` in both build and profile sections; dynamic checks remain present. |
 | `[WK-11]` | VIII | `Weak(h)` creates a weak handle to a class object or a `Shared` or … | not yet probed | |
 | `[WK-12]` | VIII | `w.upgrade() -> Option[O]` returns a retained strong handle while the … | compliant (single thread) | `Weak.upgrade` of a live object; `@sync` compare-exchange not probed |
 | `[HEAP-4]` | IX | `s.get() -> ref T` borrows the payload: it begins a checked read … | not yet probed | |

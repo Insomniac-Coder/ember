@@ -10866,10 +10866,39 @@ the running narrative behind it.
   the source span through the `Result`; the conformance case rejects mutation
   of the source while the result is live. Valid text, malformed sequences
   and embedded NUL have run-pass coverage. No spec wording changed.
-* **Next task:** the read-only review of the five recent fixes awaits the
-  owner's separate approval for agents. Continue solo with Phase 3's class
-  work. `[TYP-13]`'s
-  other niches join at `TypeTable::option_niche` (ADR-056).
+* **`[EXC-6]` debug conflict locations (2026-09-26, first feature of the
+  next five-feature batch):** debug C builds now keep a per-thread stack of
+  active class-field accesses. A conflict reports the active access's file,
+  line, column and field alongside the offending one. Inline field accesses
+  and whole-object `mut self` accesses use the same tracker; release and
+  shipping compile it out. Two `EXC-6` run-fail cases failed the location
+  expectation before this change; an accept case checks compatible reads.
+  No specification ruling was needed.
+* **`[OBJ-1]` ABI checks (2026-09-26, second feature of the batch):** the
+  runtime header now asserts its 24-byte object-header size and each field
+  offset on 64-bit targets, in C and C++. A layout drift fails at compile
+  time before foreign code can use the wrong ABI. No ODR was needed because
+  VIII.1 fixes the offsets exactly.
+* **`std.mem.keep_alive` (2026-09-26, third feature of the batch):** the
+  public generic function is a borrowed use of its argument at the call
+  site; a class-handle case compiles without a retain and drops its owner at
+  scope end. The conformance case failed with `E1010` before the function
+  existed. This implements the explicit marker in `[RC-3]`; raw-pointer
+  liveness combinations remain in the Phase 3 matrix.
+* **Removed safety settings (2026-09-26, fourth feature, `[EXC-14]`):**
+  the manifest rejects `exclusivity`, `overflow`, `bounds_checks`, and
+  `gpu.validate` with `E9001` and the offending manifest line. The unchecked
+  exclusivity setting is rejected in both `[build]` and a profile; the GPU
+  setting is rejected in dotted and `[gpu]` forms. These settings had been
+  silently accepted. The 0.9.9 hardened target already removes them, so no
+  ODR is needed.
+* **Profile key validation (2026-09-26, fifth feature, `[PRF-3]`):**
+  a key outside the profile table is now `E9001` at its manifest line.
+  A valid custom profile with inheritance and every listed key still checks.
+  The integration case failed before this change. No ODR was needed.
+* **Next task:** continue solo with Phase 3's class work after committing
+  this five-feature batch. `[TYP-13]`'s other niches join at
+  `TypeTable::option_niche` (ADR-056).
 * **Phase table after the five defects (2026-09-26 evening):**
 
   | Phase | % |

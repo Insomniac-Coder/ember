@@ -490,6 +490,51 @@ fn known_manifest_lints_are_accepted() {
     );
 }
 
+/// `[PRF-3]` and `[EXC-14]` — a manifest must not silently revive a removed
+/// safety switch or accept a misspelled profile setting.
+#[test]
+fn removed_safety_switches_and_unknown_profile_keys_are_rejected() {
+    let root = workspace_root();
+    for (name, manifest, key) in [
+        ("unchecked-profile", "[profiles.shipping]\nexclusivity = \"unchecked\"\n", "exclusivity"),
+        ("unchecked-build", "[build]\nexclusivity = \"unchecked\"\n", "exclusivity"),
+        ("overflow", "[profiles.shipping]\noverflow = \"unchecked\"\n", "overflow"),
+        ("bounds", "[profiles.shipping]\nbounds_checks = false\n", "bounds_checks"),
+        ("gpu-validation", "[gpu]\nvalidate = false\n", "gpu.validate"),
+        ("gpu-validation-dotted", "[build]\ngpu.validate = false\n", "gpu.validate"),
+        ("unknown-profile-key", "[profiles.debug]\nbakcend = \"c\"\n", "bakcend"),
+    ] {
+        let package = temporary_directory(name);
+        let source = package.join(ember_branding::source_file("main"));
+        std::fs::write(package.join(MANIFEST), manifest).expect("manifest is writable");
+        std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+        let checked = ember(&["check", &source.to_string_lossy()], &root);
+        let _ = std::fs::remove_dir_all(&package);
+        assert_ne!(checked.exit, 0, "{name} was accepted:\n{}", checked.stderr);
+        assert!(checked.stderr.contains("error[E9001]"), "{name} did not emit E9001:\n{}", checked.stderr);
+        assert!(checked.stderr.contains(key), "{name} did not name {key}:\n{}", checked.stderr);
+        assert!(checked.stderr.contains(MANIFEST), "{name} did not point to the manifest:\n{}", checked.stderr);
+    }
+}
+
+/// `[PRF-3]` — the specified profile settings remain accepted in a custom
+/// profile, including its required inheritance key.
+#[test]
+fn known_profile_keys_are_accepted() {
+    let root = workspace_root();
+    let package = temporary_directory("known-profile-keys");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[profiles.checked]\ninherits = \"debug\"\nopt = 1\ndebug_info = \"lines\"\nstrip = false\nbacktrace = true\ndebug_assert = true\nleak_report = true\nlock_order = true\nsanitizers = []\nlto = \"thin\"\n",
+    )
+    .expect("manifest is writable");
+    std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+    let checked = ember(&["check", &source.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_eq!(checked.exit, 0, "valid profile settings were rejected:\n{}", checked.stderr);
+}
+
 /// `[EXC-7]` — the opt-in `L3013` warning must identify a long-term mutable
 /// class access that remains live across a virtual call in the same open
 /// hierarchy. The warning is advisory, so the otherwise-valid program still

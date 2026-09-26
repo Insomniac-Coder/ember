@@ -2256,24 +2256,41 @@ fn manifest_lint_settings(
                 return ManifestLintSettings::default();
             };
             let text = map.file(manifest_file).text.clone();
-            let mut in_lints = false;
+            let mut section = "";
             let mut settings = ManifestLintSettings::default();
             let mut line_start = 0usize;
             for raw_line in text.lines() {
                 let line = raw_line.split('#').next().unwrap_or("").trim();
                 if line.starts_with('[') && line.ends_with(']') {
-                    in_lints = line == "[lints]";
-                } else if in_lints {
-                    if let Some((key, value)) = line.split_once('=') {
-                        let key = key.trim().trim_matches('"');
+                    section = line[1..line.len() - 1].trim();
+                } else if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim().trim_matches('"');
+                    let location = Span::new(
+                        manifest_file,
+                        line_start as u32,
+                        (line_start + raw_line.len()) as u32,
+                    );
+                    if matches!(key, "exclusivity" | "overflow" | "bounds_checks")
+                        || key == "gpu.validate"
+                        || (section == "gpu" && key == "validate")
+                    {
+                        let removed = if key == "validate" { "gpu.validate" } else { key };
+                        sink.emit(Diagnostic::error(
+                            codes::E9001,
+                            location,
+                            format!("removed manifest setting `{removed}` cannot disable a safety check"),
+                        ));
+                    } else if section.starts_with("profiles.") && !manifest_profile_key_is_known(key) {
+                        sink.emit(Diagnostic::error(
+                            codes::E9001,
+                            location,
+                            format!("unknown profile key `{key}`"),
+                        ));
+                    } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(
                                 codes::E9010,
-                                Span::new(
-                                    manifest_file,
-                                    line_start as u32,
-                                    (line_start + raw_line.len()) as u32,
-                                ),
+                                location,
                                 format!("unknown lint `{key}` in `[lints]`"),
                             ));
                         } else if key.eq_ignore_ascii_case("l3014") {
@@ -2301,6 +2318,14 @@ fn manifest_lint_is_known(key: &str) -> bool {
     ember_diag::codes::lookup(key)
         .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint)
         || matches!(key, "unused" | "potential_cycle" | "large_copy")
+}
+
+fn manifest_profile_key_is_known(key: &str) -> bool {
+    matches!(
+        key,
+        "inherits" | "opt" | "debug_info" | "strip" | "backtrace" | "debug_assert"
+            | "leak_report" | "lock_order" | "sanitizers" | "lto"
+    )
 }
 
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable

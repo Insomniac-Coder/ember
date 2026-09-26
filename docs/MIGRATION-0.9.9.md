@@ -947,3 +947,19 @@ The next number is ODR-027.
   `Span[u8].to_str()` returns `Result[str, Utf8Error]`, validating UTF-8
   without copying. Invalid encodings return `Utf8Error.Invalid`; the text
   view continues to borrow the source buffer.
+
+* **2026-09-26 — debug exclusivity locations (`[EXC-6]`).** A conflicting
+  class-field access now reports where the active access began, including
+  file, line, column and field. Release and shipping retain the previous
+  per-access cost.
+
+* **2026-09-26 — object-header ABI (`[OBJ-1]`).** The 64-bit runtime header
+  now checks its required 24-byte size and field offsets during compilation.
+
+* **2026-09-26 — `std.mem.keep_alive` (`[RC-3]`).** This borrowed generic
+  function marks an explicit use of a handle without consuming or retaining it.
+* **2026-09-26 — removed safety settings and profile keys (`[EXC-14]`, `[PRF-3]`).**
+  Delete `exclusivity`, `overflow`, `bounds_checks`, and `gpu.validate` from
+  `ember.toml`; none can turn off a safety check. A misspelled or unsupported
+  profile key now produces `E9001` at the manifest line. Custom profiles may
+  still use `inherits` and the keys in the profile table.

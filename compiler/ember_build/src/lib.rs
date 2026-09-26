@@ -443,7 +443,7 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
 /// arithmetic (`[CG-C-11]`).
 fn msvc_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
-        Profile::Debug => &["/Od", "/Zi", "/MD"],
+        Profile::Debug => &["/Od", "/Zi", "/MD", "/DEMBER_RT_DEBUG_ACCESS"],
         Profile::Release => &["/O2", "/MD"],
         Profile::Shipping => &["/O2", "/GL", "/MD"],
     };
@@ -456,7 +456,7 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
 /// `a * b + c` fused where the target has the instruction.
 fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
-        Profile::Debug => &["-O0", "-g"],
+        Profile::Debug => &["-O0", "-g", "-DEMBER_RT_DEBUG_ACCESS"],
         Profile::Release => &["-O2"],
         Profile::Shipping => &["-O3"],
     };

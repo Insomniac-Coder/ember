@@ -13,6 +13,12 @@ pub struct UnsafeCell[T]:
 pub fn drop[T](owned value: T):
     pass
 
+## `[RC-3]` — an explicit use at this point. The borrowed parameter neither
+## transfers ownership nor extends a handle beyond the call; it lets code
+## using a raw pointer state where its owner must still be live.
+pub fn keep_alive[T](value: T):
+    pass
+
 ## `[OWN-6]`'s `take`, `replace`, `swap`, and `forget` remain compiler-known while the
 ## standard library is staged; calls through this public module still use
 ## ordinary generic inference, mutable-place checks, borrows, and moves.

@@ -952,11 +952,13 @@ void ember_object_begin_write(ember_obj_header* object, ember_loc loc) {
         uint32_t* word = field_word(object, &type->fields[i]);
         if (*word != 0) {
             char name[256];
-            ember_panic_field_exclusivity(true, *word, field_name(object, &type->fields[i], name, sizeof name), loc);
+            EMBER_FIELD_CONFLICT(true, word, field_name(object, &type->fields[i], name, sizeof name), loc);
         }
     }
     for (uint32_t i = 0; i < type->field_count; ++i) {
-        *field_word(object, &type->fields[i]) = EMBER_ACCESS_WRITER;
+        uint32_t* word = field_word(object, &type->fields[i]);
+        *word = EMBER_ACCESS_WRITER;
+        EMBER_FIELD_TRACK_BEGIN(word, true, loc);
     }
 }
 
@@ -970,6 +972,7 @@ void ember_object_end_write(ember_obj_header* object, ember_loc loc) {
             ember_panic_exclusivity(field_name(object, &type->fields[i], name, sizeof name), loc);
         }
         *word = 0;
+        EMBER_FIELD_TRACK_END(word, true, loc);
     }
 }
 
@@ -980,11 +983,13 @@ void ember_object_begin_read(ember_obj_header* object, ember_loc loc) {
         uint32_t* word = field_word(object, &type->fields[i]);
         if ((*word & EMBER_ACCESS_WRITER) != 0 || (*word & EMBER_ACCESS_READERS) == EMBER_ACCESS_READERS) {
             char name[256];
-            ember_panic_field_exclusivity(false, *word, field_name(object, &type->fields[i], name, sizeof name), loc);
+            EMBER_FIELD_CONFLICT(false, word, field_name(object, &type->fields[i], name, sizeof name), loc);
         }
     }
     for (uint32_t i = 0; i < type->field_count; ++i) {
-        *field_word(object, &type->fields[i]) += 1;
+        uint32_t* word = field_word(object, &type->fields[i]);
+        *word += 1;
+        EMBER_FIELD_TRACK_BEGIN(word, false, loc);
     }
 }
 
@@ -998,6 +1003,7 @@ void ember_object_end_read(ember_obj_header* object, ember_loc loc) {
             ember_panic_exclusivity(field_name(object, &type->fields[i], name, sizeof name), loc);
         }
         *word -= 1;
+        EMBER_FIELD_TRACK_END(word, false, loc);
     }
 }
 
@@ -5156,6 +5162,91 @@ void ember_panic_field_exclusivity(bool writing, uint32_t active, const char* wh
                            (active & EMBER_ACCESS_WRITER) != 0 ? "write" : "read", subject);
     panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
 }
+
+#ifdef EMBER_RT_DEBUG_ACCESS
+typedef struct ember_debug_access_record {
+    const uint32_t* word;
+    bool writing;
+    ember_loc loc;
+} ember_debug_access_record;
+
+#if defined(_MSC_VER)
+#define EMBER_ACCESS_THREAD_LOCAL __declspec(thread)
+#else
+#define EMBER_ACCESS_THREAD_LOCAL _Thread_local
+#endif
+
+static EMBER_ACCESS_THREAD_LOCAL ember_debug_access_record debug_inline_accesses[16];
+static EMBER_ACCESS_THREAD_LOCAL ember_debug_access_record* debug_accesses;
+static EMBER_ACCESS_THREAD_LOCAL size_t debug_access_count;
+static EMBER_ACCESS_THREAD_LOCAL size_t debug_access_capacity;
+
+void ember_debug_field_begin(const uint32_t* word, bool writing, ember_loc loc) {
+    if (debug_accesses == NULL) {
+        debug_accesses = debug_inline_accesses;
+        debug_access_capacity = 16;
+    }
+    if (debug_access_count == debug_access_capacity) {
+        size_t capacity = debug_access_capacity * 2;
+        if (capacity < debug_access_capacity || capacity > SIZE_MAX / sizeof(*debug_accesses)) {
+            ember_panic("debug access stack overflow", sizeof("debug access stack overflow") - 1, loc);
+        }
+        void* grown = debug_accesses == debug_inline_accesses
+            ? malloc(capacity * sizeof(*debug_accesses))
+            : realloc(debug_accesses, capacity * sizeof(*debug_accesses));
+        if (grown == NULL) {
+            ember_panic("debug access stack allocation failed", sizeof("debug access stack allocation failed") - 1, loc);
+        }
+        if (debug_accesses == debug_inline_accesses) {
+            memcpy(grown, debug_inline_accesses, debug_access_count * sizeof(*debug_accesses));
+        }
+        debug_accesses = (ember_debug_access_record*)grown;
+        debug_access_capacity = capacity;
+    }
+    debug_accesses[debug_access_count++] = (ember_debug_access_record){ word, writing, loc };
+}
+
+void ember_debug_field_end(const uint32_t* word, bool writing, ember_loc loc) {
+    for (size_t i = debug_access_count; i != 0; --i) {
+        if (debug_accesses[i - 1].word == word && debug_accesses[i - 1].writing == writing) {
+            if (i < debug_access_count) {
+                memmove(&debug_accesses[i - 1], &debug_accesses[i],
+                        (debug_access_count - i) * sizeof(*debug_accesses));
+            }
+            --debug_access_count;
+            if (debug_access_count == 0 && debug_accesses != debug_inline_accesses) {
+                free(debug_accesses);
+                debug_accesses = debug_inline_accesses;
+                debug_access_capacity = 16;
+            }
+            return;
+        }
+    }
+    ember_panic_exclusivity("unmatched debug field access", loc);
+}
+
+void ember_panic_field_exclusivity_debug(
+    bool writing, uint32_t active, const uint32_t* word, const char* what, ember_loc loc) {
+    const char* subject = what != NULL ? what : "class field";
+    const char* active_kind = (active & EMBER_ACCESS_WRITER) != 0 ? "write" : "read";
+    for (size_t i = debug_access_count; i != 0; --i) {
+        const ember_debug_access_record* prior = &debug_accesses[i - 1];
+        if (prior->word == word) {
+            char buffer[1024];
+            const char* file = prior->loc.file != NULL ? prior->loc.file : "<unknown>";
+            int written = snprintf(buffer, sizeof buffer,
+                "exclusivity violation: %s access to %s while a %s access to %s is active; "
+                "active %s of %s began at %s:%u:%u",
+                writing ? "write" : "read", subject, active_kind, subject,
+                prior->writing ? "write" : "read", subject,
+                file, prior->loc.line, prior->loc.column);
+            size_t length = written < 0 ? 0 : (size_t)written < sizeof buffer ? (size_t)written : sizeof buffer - 1;
+            panic_with(buffer, length, loc);
+        }
+    }
+    ember_panic_field_exclusivity(writing, active, what, loc);
+}
+#endif
 
 void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc) {
     char buffer[512];
