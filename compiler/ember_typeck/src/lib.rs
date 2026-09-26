@@ -223,8 +223,7 @@ pub fn check(
     checker.bounds_known = true;
     for (name, params, args, span) in std::mem::take(&mut checker.pending_struct_bounds) {
         if !checker.struct_bounds_met(name, &params, &args, span) {
-            let stem: Vec<String> = args.iter().map(|&t| type_stem(&checker.types.symbol_name(t))).collect();
-            if let Some(&ty) = checker.named_types.get(&Symbol::intern(&format!("{name}_{}", stem.join("_")))) {
+            if let Some(&ty) = checker.named_types.get(&checker.generic_instance_name(name, &args)) {
                 checker.unmet_instances.insert(ty);
             }
         }
@@ -278,6 +277,23 @@ struct Signature {
     /// `[TYP-16]` — the generic parameters this function declares, with the
     /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
     generics: Vec<GenericParam>,
+}
+
+/// The names the compiler knows as types before any module declares them
+/// (`[MOD-5]`'s prelude types that no `std` file declares).
+const COMPILER_KNOWN_TYPES: [&str; 13] = [
+    "Option", "Result", "Box", "Shared", "Weak", "Cell", "RefCell", "MaybeUninit", "Ref", "RefMut", "Span",
+    "MutSpan", "Array",
+];
+
+/// A root-module item's qualified name. The root module's names are not
+/// prefixed, so one it declares under a compiler-known type's name would be
+/// that very name: `Box` would key the compiler's `Box` lookups, share its
+/// instances' names (`Box_i64`, also their C names) and be taken for it by
+/// origin (D-305). That one is `root.Box` instead, which only the root
+/// module's own `Box` resolves to; its diagnostics still say `Box`.
+fn root_qualified(name: Symbol) -> Symbol {
+    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) { Symbol::intern(&format!("root.{name}")) } else { name }
 }
 
 /// One declared type parameter and what it is allowed to do.
@@ -2320,11 +2336,7 @@ impl<'a> Checker<'a> {
 
     /// The qualified form of a name declared in the module being walked.
     fn qualified(&self, name: Symbol) -> Symbol {
-        let prefix = &self.prefixes[self.current_module];
-        if prefix.is_empty() {
-            return name;
-        }
-        Symbol::intern(&format!("{prefix}.{name}"))
+        self.qualified_in_module(self.current_module, name)
     }
 
     /// What a written name means here: an item of this module, or something it
@@ -2340,7 +2352,7 @@ impl<'a> Checker<'a> {
             return name;
         }
         let prefix = &self.prefixes[self.current_module];
-        if prefix.is_empty() { name } else { Symbol::intern(&format!("{prefix}.{name}")) }
+        if prefix.is_empty() { root_qualified(name) } else { Symbol::intern(&format!("{prefix}.{name}")) }
     }
 
     /// `a.b` where `a` was bound by `import x.y.a` — the qualified name of
@@ -2427,7 +2439,7 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Iterator", "Range", "RangeInclusive", "RangeFrom",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
@@ -2713,7 +2725,7 @@ impl<'a> Checker<'a> {
     fn qualified_in_module(&self, module: usize, name: Symbol) -> Symbol {
         let prefix = &self.prefixes[module];
         if prefix.is_empty() {
-            name
+            root_qualified(name)
         } else {
             Symbol::intern(&format!("{prefix}.{name}"))
         }
@@ -3693,7 +3705,7 @@ impl<'a> Checker<'a> {
     fn implements_or_blanket(&mut self, ty: Ty, interface: Symbol) -> bool {
         // A built-in instance takes its extensions, and so their
         // implementations, when first used (`Array[f32]`'s `Index[int]`).
-        self.extend_builtin_instance(ty);
+        self.extend_instance_at_use(ty);
         self.implements(ty, interface) || self.apply_blanket(ty, interface)
     }
 
@@ -3701,7 +3713,7 @@ impl<'a> Checker<'a> {
     /// `origin` (`std.core.Index`), written or through a blanket
     /// implementation.
     fn implements_origin(&mut self, ty: Ty, origin: &str) -> bool {
-        self.extend_builtin_instance(ty);
+        self.extend_instance_at_use(ty);
         let origin_of = |this: &Self, name: Symbol| this.open_interface_origin.get(&name).map_or(name, |(origin, _)| *origin);
         if self.implemented.iter().any(|&(t, name, _)| t == ty && origin_of(self, name).as_str() == origin) {
             return true;
@@ -3760,9 +3772,28 @@ impl<'a> Checker<'a> {
 
     /// `[GRM-34]` — a built-in generic type has no instantiation step to take
     /// its extensions at, so an instance takes them when a method is first
-    /// looked up on it.
-    fn extend_builtin_instance(&mut self, ty: Ty) {
+    /// looked up on it. An instance over a type parameter (`Inner[T, bool]`
+    /// in a generic body) is offered again each extension it lacks (D-340):
+    /// it was made while the types were collected, when no declaration's
+    /// bounds were in scope, so an extension bounded `K: Eq` was refused to
+    /// a `T: Eq`. Here the body's own bounds are (`implements`).
+    fn extend_instance_at_use(&mut self, ty: Ty) {
         if let Some((name, args)) = self.builtin_generic_origin(ty) {
+            self.apply_generic_extensions(ty, name, &args);
+            return;
+        }
+        if self.current_generics.is_empty() {
+            return;
+        }
+        let origin = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
+            _ => None,
+        };
+        if let Some((name, args)) = origin
+            && args.iter().any(|&arg| self.types.is_generic(arg))
+        {
             self.apply_generic_extensions(ty, name, &args);
         }
     }
@@ -4492,6 +4523,100 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         self.synth_associated_call(instance, name, generic_args, args, span)
+    }
+
+    /// `[TYP-18]`, `[ENM-1]` (D-341) — `Maybe.Just(3)`: a variant of a generic
+    /// enum named without its arguments. They are found as a generic
+    /// struct's are at `Pair.make(5)` (D-334): from the type the context
+    /// expects, then from the payload's values, a literal taking its default
+    /// type. `Maybe.Nothing` has no payload, so the context must say.
+    fn synth_inferred_variant(
+        &mut self,
+        generic: Symbol,
+        name: ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let Some(decl) = self.generic_enums.get(&generic).cloned() else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let shown = generic.as_str().rsplit('.').next().unwrap_or(generic.as_str()).to_string();
+        let opaque = self.opaque_arguments(&decl.generic_params);
+        let owner = self.instantiate_enum(generic, &decl, &opaque, decl.decl_span);
+        let TyKind::Enum(opaque_id) = *self.types.kind(owner) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let Some((_, variant)) = self.types.enum_def(opaque_id).variant(name.name) else {
+            self.error(codes::E1010, name.span, format!("`{shown}` has no variant `{}`", name.name));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let fields: Vec<Ty> = variant.fields.iter().map(|field| field.ty).collect();
+        let mut bindings: Vec<Option<Ty>> = vec![None; decl.generic_params.len()];
+        if let Some(expected) = expected {
+            let mut trial = bindings.clone();
+            if self.match_generic_extension_type(owner, expected, &mut trial) {
+                bindings = trial;
+            }
+        }
+        // The values are checked again, against the instance, below; what
+        // this look says is taken back.
+        let mark = self.sink.mark();
+        for (arg, &field) in args.iter().zip(&fields) {
+            if bindings.iter().all(Option::is_some) {
+                break;
+            }
+            if !self.types.is_generic(field) || matches!(arg.value.kind, ast::ExprKind::Lambda { .. }) {
+                continue;
+            }
+            let value = self.synth(&arg.value);
+            let value = self.commit(value);
+            let mut trial = bindings.clone();
+            if self.match_generic_extension_type(field, value.ty, &mut trial) {
+                bindings = trial;
+            }
+        }
+        self.sink.rollback(mark);
+        let unsolved: Vec<String> = decl
+            .generic_params
+            .iter()
+            .zip(&bindings)
+            .filter(|(_, found)| found.is_none())
+            .map(|(param, _)| format!("`{}`", param.name))
+            .collect();
+        if !unsolved.is_empty() {
+            let written = if fields.is_empty() { format!("{shown}[…].{}", name.name) } else { format!("{shown}[…].{}(…)", name.name) };
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    span,
+                    format!("cannot tell `{shown}`'s {} from `{shown}.{}`", unsolved.join(", "), name.name),
+                )
+                .help(format!("name the type's arguments, `{written}`, or give the value a type")),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let solved: Vec<Ty> = bindings.into_iter().flatten().collect();
+        let instance = self.instantiate_enum(generic, &decl, &solved, span);
+        let TyKind::Enum(id) = *self.types.kind(instance) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        self.synth_variant(id, name, args, span)
+    }
+
+    /// The generic enum a path names, for `Maybe.Just(3)`: a name that is not
+    /// a local, and names no instance.
+    fn generic_enum_named(&self, expr: &ast::Expr) -> Option<Symbol> {
+        let qualified = match &expr.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                if self.lookup(segments[0].name).is_some() {
+                    return None;
+                }
+                self.resolve_name(segments[0].name)
+            }
+            _ => self.item_through_module(expr)?,
+        };
+        self.generic_enums.contains_key(&qualified).then_some(qualified)
     }
 
     /// The generic struct a path names, for `Pair.make(5)`: a name that is
@@ -6157,7 +6282,7 @@ impl<'a> Checker<'a> {
     ) -> Option<Vec<Option<hir::InterfaceAdapterSlot>>> {
         // `[GRM-34]` — an `Option` or `Result` may implement the interface
         // through an extension it has not been given yet.
-        self.extend_builtin_instance(concrete);
+        self.extend_instance_at_use(concrete);
         if !self.types.is_primitive_scalar(concrete) {
             match self.types.kind(concrete) {
                 TyKind::Class(_) => {}
@@ -7046,6 +7171,26 @@ impl<'a> Checker<'a> {
             }
         };
 
+        // `[MOD-5]` — a type the program declares or imports shadows a prelude
+        // name (D-305): with `class Cell[T]` declared, `Cell[int]` is that
+        // class. `std`'s own declarations of compiler-known types
+        // (`std.mem.UnsafeCell`) keep the compiler's meaning, below.
+        let resolved_name = self.resolve_name(name);
+        if self.declared_by_program(name, resolved_name) {
+            self.collect_generic_struct_on_demand(resolved_name);
+            if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
+                let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+                return self.instantiate_struct(resolved_name, &decl, &resolved, span);
+            }
+            if let Some(decl) = self.generic_enums.get(&resolved_name).cloned() {
+                let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+                return self.instantiate_enum(resolved_name, &decl, &resolved, span);
+            }
+            if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
+                let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
+                return self.instantiate_class(resolved_name, &decl, &resolved, span);
+            }
+        }
         // Compiler-known generic types share ordinary type-application
         // semantics; only their representation and invariants are special.
         if name.is("Span") || name.is("MutSpan") {
@@ -7118,7 +7263,6 @@ impl<'a> Checker<'a> {
             }
             return self.ref_guard_of(args[0].0, name.is("RefMut"));
         }
-        let resolved_name = self.resolve_name(name);
         // D-279 — a generic struct declared later is collected now.
         self.collect_generic_struct_on_demand(resolved_name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
@@ -8804,6 +8948,20 @@ impl<'a> Checker<'a> {
     /// `[TYP-16]` — one struct per set of type arguments. `Pair[i32, f32]`
     /// and `Pair[f32, i32]` are different types with different layouts, built
     /// once each and named after the arguments.
+    /// D-305 — whether `name` names a type the program declares or imports:
+    /// it resolved to something other than itself, outside `std`. The root
+    /// module's own `Box` is `root.Box` (`root_qualified`).
+    fn declared_by_program(&self, name: Symbol, resolved: Symbol) -> bool {
+        resolved != name && !resolved.as_str().starts_with(&format!("{}.", ember_branding::STD_PACKAGE))
+    }
+
+    /// The name of `name`'s instance over `args`: `Pair_i64`, which is also
+    /// the instance's C name.
+    fn generic_instance_name(&self, name: Symbol, args: &[Ty]) -> Symbol {
+        let stem: Vec<String> = args.iter().map(|&t| type_stem(&self.types.symbol_name(t))).collect();
+        Symbol::intern(&format!("{name}_{}", stem.join("_")))
+    }
+
     fn instantiate_struct(
         &mut self,
         name: Symbol,
@@ -8858,9 +9016,7 @@ impl<'a> Checker<'a> {
                 return self.common.error;
             }
         }
-        let stem: Vec<String> =
-            args.iter().map(|&t| type_stem(&self.types.symbol_name(t))).collect();
-        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
         }
@@ -8980,9 +9136,7 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
-        let stem: Vec<String> =
-            args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
-        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
         }
@@ -9106,9 +9260,7 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
-        let stem: Vec<String> =
-            args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
-        let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+        let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
         }
@@ -9354,7 +9506,7 @@ impl<'a> Checker<'a> {
             has_drop: true,
             drops_fields: false,
             origin: Some((Symbol::intern("Box"), vec![inner])),
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -9398,7 +9550,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: false,
             origin: Some((Symbol::intern("Shared"), vec![inner])),
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -9456,7 +9608,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: false,
             origin: Some((Symbol::intern("Weak"), vec![inner])),
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -9558,7 +9710,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         self.types.set_written_as(id, "Cell", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
@@ -9609,7 +9761,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: false,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         self.types.set_written_as(id, "MaybeUninit", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
@@ -9659,7 +9811,7 @@ impl<'a> Checker<'a> {
             // Preserve the generic family structurally so ordinary call-site
             // unification can infer T through `UnsafeCell[T]`.
             origin: Some((Symbol::intern("std.mem.UnsafeCell"), vec![inner])),
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -9819,7 +9971,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         self.types.set_written_as(id, "RefCell", vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
@@ -9871,7 +10023,7 @@ impl<'a> Checker<'a> {
             has_drop: true,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         self.types.set_written_as(id, prefix, vec![inner]);
         let ty = self.types.intern(TyKind::Struct(id));
@@ -9932,7 +10084,7 @@ impl<'a> Checker<'a> {
             has_drop: true,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -9984,7 +10136,7 @@ impl<'a> Checker<'a> {
             has_drop: false,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -10059,7 +10211,7 @@ impl<'a> Checker<'a> {
             has_drop: true,
             drops_fields: true,
             origin: None,
-            declaring_module: usize::MAX,
+            declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
@@ -17287,7 +17439,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let ord = self.implements(elem, Symbol::intern("std.core.Ord"));
             let routed = ast::Ident { name: Symbol::intern("sorted_ord"), span };
             if ord && matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
-                self.extend_builtin_instance(value.ty);
+                self.extend_instance_at_use(value.ty);
                 if self.lookup_method(value.ty, routed.name).is_some() {
                     let value_span = value.span;
                     return self.synth_registered_method(value, value_span, routed, &[], Vec::new(), span);
@@ -18427,7 +18579,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
-        let iterable = self.synth_committed(iter);
+        // `[CTL-1]` — `for x in owned e:` consumes `e`. Its `into_iter()`
+        // (`IntoIterator`) is the iterator, and the loop takes what that
+        // iterator's `next` gives: an `Array`'s or a `Set`'s elements, a
+        // `Map`'s keys, owned.
+        let iterable = match &iter.kind {
+            // Checked as the call `e.into_iter()` is, so an extension of a
+            // built-in type (`Array`'s) is found as for any other call; the
+            // `owned` node is not checked itself, so the call takes its id.
+            ast::ExprKind::Owned(inner) => {
+                let call = ast::Expr {
+                    id: iter.id,
+                    kind: ast::ExprKind::MethodCall {
+                        recv: inner.clone(),
+                        name: ast::Ident { name: Symbol::intern("into_iter"), span: iter.span },
+                        generic_args: Vec::new(),
+                        args: Vec::new(),
+                    },
+                    span: iter.span,
+                };
+                self.synth_committed(&call)
+            }
+            _ => self.synth_committed(iter),
+        };
         if iterable.ty == self.common.error {
             return None;
         }
@@ -19934,6 +20108,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let id = self.enum_named(base).expect("just checked");
                 self.synth_variant(id, *name, &[], span)
             }
+            // `Maybe.Nothing` — a generic enum's, its arguments from the
+            // context (D-341).
+            ast::ExprKind::Field { base, name }
+                if self.generic_enum_named(base).is_some() =>
+            {
+                let generic = self.generic_enum_named(base).expect("just checked");
+                self.synth_inferred_variant(generic, *name, &[], expected, span)
+            }
 
             ast::ExprKind::Field { base, name } => {
                 // `[STD-20]` (ODR-039) — `i64.MAX`, `f64.INF`: a constant named
@@ -20354,6 +20536,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 self.reject_method_type_args(name.name, generic_args, span);
                 self.synth_variant(id, *name, args, span)
+            }
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if self.generic_enum_named(recv).is_some() =>
+            {
+                let generic = self.generic_enum_named(recv).expect("just checked");
+                self.reject_method_type_args(name.name, generic_args, span);
+                self.synth_inferred_variant(generic, *name, args, expected, span)
             }
 
             // `[ARN-4]` — `Arena.with_capacity(bytes)` is an associated
@@ -20781,6 +20970,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 return self.synth_variant(id, *name, args, span);
             }
+            if let Some(generic) = self.generic_enum_named(base) {
+                return self.synth_inferred_variant(generic, *name, args, expected, span);
+            }
             // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
             // `Roughness.clamped(x)`, `unsafe Roughness.new_unchecked(x)`.
             // These parse the same way a variant constructor does.
@@ -20980,6 +21172,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // which needs an annotation.
         if let Some(built) = self.synth_wrapper(name, args, expected, span) {
             return built;
+        }
+
+        // `[MOD-5]` — a generic type the program declares or imports shadows a
+        // compiler-known constructor: a declared `Box[T]` is built by
+        // `Box(5)` (D-305).
+        let resolved_name = self.resolve_name(name);
+        if self.declared_by_program(name, resolved_name) {
+            if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
+                return self.synth_generic_struct_literal(resolved_name, &decl, args, &explicit, expected, span);
+            }
+            if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
+                return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, expected, span);
+            }
         }
 
         // IX.1 — `Box(owned v)`, or `Box[T](owned v)`. The allocation is an
@@ -21203,7 +21408,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
 
         // `Pair(1, 2.5)` — a generic struct's constructor, with the type
         // arguments inferred from the values, or written as `Pair[i32, f32]`.
-        let resolved_name = self.resolve_name(name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
             return self.synth_generic_struct_literal(
                 resolved_name,
@@ -23247,7 +23451,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         // A built-in generic instance takes its extensions at first use, an
         // associated function's as a method's (`[GRM-34]`).
-        self.extend_builtin_instance(owner);
+        self.extend_instance_at_use(owner);
         let Some(entry) = self.associated.get(&(owner, name.name)) else {
             let shown = self.types.display(owner);
             self.error(
@@ -24282,7 +24486,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             receiver = self.read_through(receiver);
         }
-        self.extend_builtin_instance(receiver.ty);
+        self.extend_instance_at_use(receiver.ty);
         let explicit = self.resolve_method_type_args(generic_args);
         // `[TYP-24]` — `I.m(recv)` names the interface's method, which an
         // extension may give a type the compiler knows a method `m` of. So
@@ -27601,7 +27805,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// representation, and `void` nothing.
     fn synth_hash_of(&mut self, receiver: Expr, recv_span: Span, args: &[ast::Arg], span: Span) -> Expr {
         let name = ast::Ident { name: Symbol::intern("hash"), span };
-        self.extend_builtin_instance(receiver.ty);
+        self.extend_instance_at_use(receiver.ty);
         if self.lookup_method(receiver.ty, name.name).is_some() || !self.hash_provided(receiver.ty) {
             return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
         }
@@ -27807,7 +28011,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if let TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
             let view = self.types.intern(TyKind::Span { elem, mutable: false });
             let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
-            self.extend_builtin_instance(view);
+            self.extend_instance_at_use(view);
             return self.call_operator("eq_elements", lhs, rhs, span);
         }
         // Each side is evaluated once and read part by part.
@@ -30789,7 +30993,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn operator_implemented(&mut self, ty: Ty, method: &str) -> bool {
         let Some(interface) = operator_interface(method) else { return false };
         // A built-in generic instance takes its extensions when first used.
-        self.extend_builtin_instance(ty);
+        self.extend_instance_at_use(ty);
         if !self.methods.contains_key(&(ty, Symbol::intern(method))) {
             return false;
         }

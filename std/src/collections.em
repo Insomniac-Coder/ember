@@ -467,6 +467,35 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
                     pass
         return out
 
+## `for k in owned m:` (`[CTL-1]`): the keys in insertion order, owned. Each
+## value is dropped as its key is taken, and the entries left when a loop ends
+## early are dropped with the iterator.
+pub struct MapIntoKeys[K, V]:
+    entries: Array[Option[MapSlot[K, V]]]
+    at: int
+
+    pub fn next(mut self) -> Option[K]:
+        while self.at < self.entries.len():
+            i = self.at
+            self.at += 1
+            slot = mem.replace(self.entries[i], None)
+            match owned slot:
+                Some(e):
+                    return Some(e.key)
+                None:
+                    pass
+        return None
+
+extend[K, V] MapIntoKeys[K, V] implements Iterator:
+    type Item = K
+
+extend[K: Eq + Hash, V, H: Hasher + Default] Map[K, V, H] implements IntoIterator:
+    type Item = K
+    type Iter = MapIntoKeys[K, V]
+
+    fn into_iter(owned self) -> MapIntoKeys[K, V]:
+        return MapIntoKeys(self.entries, 0)
+
 ## `m[q]`, `m[q] op= v` and `m[q] = v` (`[STD-12]`, `[STD-17]`): a map is
 ## indexed by anything that is its key, `Q: AsKey[K]`, each such `Q` giving it
 ## an implementation (a blanket one, `[TYP-19]`).
@@ -847,6 +876,14 @@ extend[T: Eq + Hash + Ord + Clone, H: Hasher + Default] Set[T, H]:
             out.push(x.clone())
         out.sort()
         return out
+
+## `for x in owned s:` (`[CTL-1]`): the elements in insertion order, owned.
+extend[T: Eq + Hash, H: Hasher + Default] Set[T, H] implements IntoIterator:
+    type Item = T
+    type Iter = MapIntoKeys[T, bool]
+
+    fn into_iter(owned self) -> MapIntoKeys[T, bool]:
+        return self.map.into_iter()
 
 extend[T: Eq + Hash, H: Hasher + Default] Set[T, H] implements Eq:
     fn eq(self, other: Set[T, H]) -> bool:

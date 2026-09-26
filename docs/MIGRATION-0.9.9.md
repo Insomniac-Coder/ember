@@ -805,3 +805,12 @@ The next number is ODR-027.
   * `x.rem(y)` on a number stays `%` beside another instance of `Rem` (D-338).
   * The standard library's unused extensions of the built-in types are no longer emitted into every
     program (D-339).
+* **2026-09-26 — `for x in owned e:` (`[CTL-1]`).** A loop consumes an `Array`, a `Set` or a `Map`
+  and yields owned values: the elements, or a map's keys in insertion order with each value dropped
+  as its key is taken. `std.core` declares `IntoIterator` (a prelude name, `[MOD-5]`); `Array`,
+  `Set` and `Map` implement it. Fixed on the way:
+  * A program's own `Cell`, `Box`, `Option` and the other compiler-known names shadow the prelude's
+    in type position and in construction, and no longer clash with them inside the compiler
+    (D-305).
+  * A generic body gets a bounded extension of an instance over its own parameter (D-340).
+  * `Maybe.Just(3)` and `Maybe.Nothing` find a generic enum's arguments (D-341).

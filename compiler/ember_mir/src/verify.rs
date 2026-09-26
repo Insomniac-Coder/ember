@@ -1286,12 +1286,12 @@ pub fn verify_interface_upcasts(body: &Body, types: &TypeTable) -> Vec<Violation
         };
         let at = format!("bb{block_index}: dynamic interface box");
         let valid_box = match types.kind(*boxed) {
-            TyKind::Struct(id) => match &types.struct_def(*id).origin {
-                Some((name, box_args)) if name.is("Box") && box_args.len() == 1 => {
-                    matches!(types.kind(box_args[0]), TyKind::Dyn { interfaces: target_interfaces }
+            TyKind::Struct(id) => match types.compiler_box_inner(*id) {
+                Some(inner) => {
+                    matches!(types.kind(inner), TyKind::Dyn { interfaces: target_interfaces }
                         if target_interfaces == interfaces)
                 }
-                _ => false,
+                None => false,
             },
             _ => false,
         };

@@ -10732,18 +10732,19 @@ the running narrative behind it.
     `std.math`'s vectors to `KahanSum`, ODR-043 to ODR-045, D-322 to D-326;
     CI green), `a79e1a5` (`std.math.det`, ODR-046, D-327 to D-329; both
     Windows jobs failed, D-330), `bc6d6c8` (D-330's fix; CI green), then
-    `NonZero[T]` (ODR-047, Hardened_22, D-332 to D-339). From the `NonZero`
-    commit on, each commit's author is the owner and its committer Claude
-    (the owner's instruction, below).
+    `NonZero[T]` (`e663590`: ODR-047, Hardened_22, D-332 to D-339; CI
+    green), then D-305 and `for x in owned e` (D-340, D-341). From the
+    `NonZero` commit on, each commit's author is the owner and its committer
+    Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_22.md`
   (ODR-047), pinned in `docs/spec-source/development-target.json`. The spec's
   working sources are `tasks/spec-0.9.9/parts/`; `parts-h22/` is frozen.
-* **Next numbers:** ODR-048, D-340, ADR-057.
-* **Next task:** A1 to A4 are done. AUTOPILOT's B list, in its order: D-284,
-  `for k in owned m`, D-305; then the open defects, where D-328 (method
+* **Next numbers:** ODR-048, D-342, ADR-057.
+* **Next task:** A1 to A4 are done, and B1's D-305 and `for k in owned m`.
+  B1's D-284 is next; then the open defects, where D-328 (method
   visibility, after a `std` audit) and D-331 (a nesting limit with a
   diagnostic, which needs an ODR) also belong; then the rest of the list.
   `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
@@ -10977,6 +10978,30 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   is one error: `missed_bounds`), D-338 (`x.rem(y)` beside `Rem[NonZero]`:
   `method_claims_operator`), D-339 (`std` bodies are recognised by file as
   well as by symbol, so unused extensions of built-in types are not emitted).
+* **Then B1: D-305 and `for x in owned e`.**
+  * **D-305.** The root module's names are unqualified, so a program's `Box`
+    was the very symbol the compiler's `Box` is looked up by. `root_qualified`
+    makes a root declaration named like a compiler-known type (the
+    `COMPILER_KNOWN_TYPES` list) `root.Box`; `render_named` strips `root.`
+    for diagnostics. `declared_by_program` lets a program's or an imported
+    package's type go before the compiler-known names in
+    `resolve_type_application` and in construction, but not `std`'s
+    (`std.mem.UnsafeCell` is declared in `std` and built by the compiler).
+    `COMPILER_MODULE` marks the types the compiler makes;
+    `TypeTable::compiler_box_inner` checks it.
+  * **Owned iteration (`[CTL-1]`).** `check_for_iterator` checks `for x in
+    owned e` as the call `e.into_iter()` (so a built-in type's extension is
+    found as for any call) and drives what it returns with `next`.
+    `std.core` declares `IntoIterator` (exported by `bind_prelude`) and
+    `ArrayIntoIter` (reverse once, then `pop`); `std.collections` has
+    `MapIntoKeys` (takes each entry with `mem.replace`, returns the key, the
+    value dropped); `Set` delegates to its map.
+  * **D-340.** `extend_instance_at_use` (was `extend_builtin_instance`) also
+    offers an instance over a type parameter the extensions it lacks, inside
+    a generic body, where `implements` sees that body's bounds. `Set`'s
+    `into_iter` needs it.
+  * **D-341.** `synth_inferred_variant`: `Maybe.Just(3)`, D-334's solving
+    for a generic enum's variant.
 
 **The owner's standing instructions (all still in force)**
 

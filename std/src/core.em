@@ -165,6 +165,13 @@ pub interface Iterator:
     type Item
     fn next(mut self) -> Option[Item]
 
+## `[CTL-1]` — what `for x in owned e:` consumes: `e.into_iter()` is the
+## iterator, and the loop takes what its `next` gives, owned.
+pub interface IntoIterator:
+    type Item
+    type Iter: Iterator[Item = Item]
+    fn into_iter(owned self) -> Iter
+
 ## `[CTL-3]` (ODR-027) — the range types. `a..b` is a `Range`, `a..=b` a
 ## `RangeInclusive`, `a..` a `RangeFrom` and `..b` a `RangeTo`. Each is a plain
 ## value, `Copy` when its bound is, with public bounds. A `for` over one of the
@@ -367,6 +374,27 @@ extend[T] Option[T] implements Default:
 ## `[STD-15]` — the `Array` methods written in Ember (`[GRM-34]`). A method
 ## the compiler knows by a name comes first (`[TYP-24]`); these are found
 ## after it, and one a program never calls is not emitted (`[COST-1]`).
+## `for x in owned xs:` (`[CTL-1]`): the elements in order, owned. The array
+## is reversed once and popped, so each element is taken without a copy, and
+## those left when a loop ends early are dropped with the iterator.
+pub struct ArrayIntoIter[T]:
+    rest: Array[T]
+
+    pub fn next(mut self) -> Option[T]:
+        return self.rest.pop()
+
+extend[T] ArrayIntoIter[T] implements Iterator:
+    type Item = T
+
+extend[T] Array[T] implements IntoIterator:
+    type Item = T
+    type Iter = ArrayIntoIter[T]
+
+    fn into_iter(owned self) -> ArrayIntoIter[T]:
+        rest = self
+        rest.reverse()
+        return ArrayIntoIter(rest)
+
 extend[T] Array[T]:
     ## Keeps the elements `keep` is true of, in their order.
     pub fn retain(mut self, keep: fn(T) -> bool):

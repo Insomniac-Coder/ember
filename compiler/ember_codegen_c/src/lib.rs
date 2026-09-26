@@ -2443,15 +2443,11 @@ impl Emitter<'_> {
         }
     }
 
-    /// The payload of the compiler-known `Box[T]` structural wrapper. The
-    /// generic origin is canonical metadata; unlike a generated name prefix,
-    /// it cannot be forged by an unrelated source declaration.
+    /// The payload of the compiler-known `Box[T]` structural wrapper, by its
+    /// origin and the compiler's own module: a root module may declare a
+    /// `Box[T]` of its own (D-305).
     fn box_inner_id(&self, id: StructId) -> Option<Ty> {
-        let def = self.types.struct_def(id);
-        match &def.origin {
-            Some((name, args)) if name.is("Box") && args.len() == 1 => Some(args[0]),
-            _ => None,
-        }
+        self.types.compiler_box_inner(id)
     }
 
     /// The payload of a compiler-known `Shared[T]` counted handle. The C
@@ -2739,10 +2735,7 @@ impl Emitter<'_> {
                 // behind its private pointer. Its drop order is observable:
                 // destroy `T` first, then release exactly that allocation.
                 // `drops_fields` is false, so this is the sole ownership walk.
-                let compiler_box = matches!(
-                    &def.origin,
-                    Some((name, args)) if name.is("Box") && args.len() == 1
-                );
+                let compiler_box = self.types.compiler_box_inner(*id).is_some();
                 if compiler_box && def.fields.len() == 1 {
                     if let TyKind::Ptr { inner, .. } = self.types.kind(def.fields[0].ty) {
                         if self.types.needs_drop(*inner) {

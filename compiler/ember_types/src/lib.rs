@@ -488,6 +488,10 @@ pub struct CommonTypes {
 /// reaches it, so a substitution over one cannot collide with `Self`.
 pub const SELF_PARAM: u32 = u32::MAX;
 
+/// The `declaring_module` of a type the compiler makes (`Box`, `Cell`,
+/// `Shared`, the arenas) rather than a program declares.
+pub const COMPILER_MODULE: usize = usize::MAX;
+
 /// `[TYP-13]` — how an `Option` keeps `None` in its payload's niche: the
 /// variants' indices, and the payload type, which is the `Option`'s layout.
 #[derive(Clone, Copy, Debug)]
@@ -1251,6 +1255,19 @@ impl TypeTable {
         self.is_nonzero(payload).then_some(Niche { none, some, payload })
     }
 
+    /// The payload of the compiler-known `Box[T]` struct `id`. Its origin is
+    /// `Box`, and the compiler made it: a root module's own `Box[T]` has the
+    /// same origin name (D-305).
+    pub fn compiler_box_inner(&self, id: StructId) -> Option<Ty> {
+        let def = self.struct_def(id);
+        match &def.origin {
+            Some((name, args)) if name.is("Box") && args.len() == 1 && def.declaring_module == COMPILER_MODULE => {
+                Some(args[0])
+            }
+            _ => None,
+        }
+    }
+
     /// `[STD-4]` — `std.core.NonZero[T]`, whose one field is never 0: only
     /// `NonZero.new` makes one, after testing.
     pub fn is_nonzero(&self, ty: Ty) -> bool {
@@ -1561,9 +1578,11 @@ impl TypeTable {
         if !user {
             return name.to_string();
         }
+        // `root.` marks a root module's type named like a compiler-known one
+        // (D-305); it is written `Box`.
         let source = |name: Symbol| {
             let name = name.as_str();
-            name.strip_prefix("std.core.").unwrap_or(name).to_string()
+            name.strip_prefix("std.core.").or_else(|| name.strip_prefix("root.")).unwrap_or(name).to_string()
         };
         match origin {
             Some((generic, args)) => {
