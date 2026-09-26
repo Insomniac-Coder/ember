@@ -113,6 +113,8 @@ pub fn check(
     // every later pass sees one shape (`desugar_blanket_extensions`).
     let desugared = desugar_blanket_extensions(modules);
     let modules: &[LoadedModule] = desugared.as_deref().unwrap_or(modules);
+    let expanded_foreign = expand_extern_blocks(modules, sink);
+    let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
@@ -820,6 +822,8 @@ struct Checker<'a> {
     /// Every named type in scope — structs, classes, and enums.
     named_types: HashMap<Symbol, Ty>,
     fn_ids: HashMap<Symbol, DefId>,
+    /// A hand-written foreign declaration and whether it asserts a safe call.
+    foreign_declarations: HashMap<DefId, bool>,
     signatures: Vec<Signature>,
     /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
     /// no name in source, so they are collected here and appended to the
@@ -1266,6 +1270,7 @@ impl<'a> Checker<'a> {
             enum_ids: HashMap::new(),
             named_types: HashMap::new(),
             fn_ids: HashMap::new(),
+            foreign_declarations: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
@@ -5106,6 +5111,9 @@ impl<'a> Checker<'a> {
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
+                    if decl.is_foreign_decl {
+                        self.foreign_declarations.insert(def, decl.is_safe);
+                    }
                     self.signatures.push(Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), generics, borrows });
                     self.record_defaults(def, decl);
                 }
@@ -10613,6 +10621,12 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            if decl.is_safe && !decl.is_foreign_decl {
+                self.error(codes::E0104, decl.name.span, "`safe fn` is only valid inside `unsafe extern` declarations");
+            }
+            if decl.abi.is_some() && decl.body.is_none() && !decl.is_foreign_decl {
+                self.error(codes::E0100, decl.name.span, "a bodyless foreign declaration belongs in an `unsafe extern` block");
+            }
             self.check_foreign_signature(decl, def);
 
             // `[TYP-17]` — a generic body is checked **once**, with its
@@ -10731,6 +10745,7 @@ impl<'a> Checker<'a> {
             }
 
             self.check_declared_defaults(def, decl, &signature_params);
+            let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
             let body = match &decl.body {
                 Some(block) => {
                     let body = self.check_body(block);
@@ -10738,6 +10753,7 @@ impl<'a> Checker<'a> {
                 }
                 None => Block { stmts: Vec::new(), span: item.span },
             };
+            self.in_unsafe = outer_unsafe;
             self.in_static_safe = outer_static_safe;
             self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
 
@@ -10746,7 +10762,7 @@ impl<'a> Checker<'a> {
             // entry point; another module's is `a.main`, which is not it.
             let name = self.qualified(decl.name.name);
             let is_main = name.is("main");
-            if is_main {
+            if is_main && !decl.is_foreign_decl {
                 main = Some(def);
             }
             let overflow = self.overflow_policy(&item.attrs, item.span);
@@ -10780,6 +10796,7 @@ impl<'a> Checker<'a> {
                 class_owner: None,
                 class_virtual_slot: None,
                 is_abstract: false,
+                is_extern_declaration: decl.is_foreign_decl,
             });
         }
 
@@ -10977,6 +10994,7 @@ impl<'a> Checker<'a> {
                     class_owner: Some(class_owner),
                     class_virtual_slot: self.class_virtual_slots.get(&job.def).copied(),
                     is_abstract: true,
+                    is_extern_declaration: false,
                 });
             }
 
@@ -11123,6 +11141,10 @@ impl<'a> Checker<'a> {
         if decl.abi.is_none() {
             return;
         }
+        if !decl.is_foreign_decl && decl.abi.as_deref() != Some("C") {
+            self.error(codes::E0900, decl.name.span,
+                "only the `extern \"C\"` function ABI is implemented yet");
+        }
         if decl.dispatch != ast::Dispatch::Static {
             self.error(
                 codes::E0104,
@@ -11130,10 +11152,10 @@ impl<'a> Checker<'a> {
                 "`virtual` and `override` are not admitted on an `extern` function",
             );
         }
-        let signature: Vec<(Symbol, Ty, Span)> = self.signatures[def.0 as usize]
+        let signature: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
             .iter()
-            .map(|(n, t, _, s)| (*n, *t, *s))
+            .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
@@ -11181,11 +11203,46 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
             }
         };
-        for (name, ty, span) in signature {
+        for (name, ty, mode, span) in signature {
             check(self, ty, span, format!("`{name}` is this parameter"));
+            if mode == Mode::Borrow && self.types.is_ffi_safe(ty) && self.types.passed_by_address(ty) {
+                self.error(codes::E0900, span,
+                    "a borrowed aggregate at a C boundary needs by-value ABI lowering, which is not implemented yet");
+            }
         }
         if ret != self.common.void {
             check(self, ret, decl.name.span, "this is the return type".to_string());
+        }
+        if decl.is_foreign_decl && decl.is_safe {
+            let params = self.signatures[def.0 as usize].params.clone();
+            for (name, ty, _, span) in params {
+                if self.foreign_pointer_contract_required(ty) {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` contract for pointer parameter `{name}`"));
+                }
+            }
+            if self.foreign_pointer_contract_required(ret) {
+                self.error(codes::E5002, decl.name.span,
+                    "`safe fn` needs an `@ffi` contract for its pointer result");
+            }
+        }
+    }
+
+    fn foreign_pointer_contract_required(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Ptr { .. } | TyKind::Fn { .. } => true,
+            TyKind::Enum(id) => self.types.option_niche(*id).is_some_and(|niche| {
+                self.foreign_pointer_contract_required(niche.payload)
+            }),
+            _ => false,
+        }
+    }
+
+    fn check_foreign_call(&mut self, def: DefId, span: Span) {
+        if self.foreign_declarations.get(&def) == Some(&false) && !self.in_unsafe {
+            self.sink.emit(Diagnostic::error(codes::E5002, span,
+                "a foreign call without a complete safe contract requires `unsafe`")
+                .help("wrap the call in `unsafe:` or declare a scalar-only `safe fn`"));
         }
     }
 
@@ -11277,6 +11334,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            is_extern_declaration: false,
         }
     }
 
@@ -11609,6 +11667,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     class_owner,
                     class_virtual_slot: None,
                     is_abstract: false,
+                    is_extern_declaration: false,
                 })
             })
             .collect()
@@ -11991,6 +12050,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             },
             class_virtual_slot: self.class_virtual_slots.get(&def).copied(),
             is_abstract: false,
+            is_extern_declaration: false,
         })
     }
 
@@ -22148,6 +22208,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
+        self.check_foreign_call(def, span);
+
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
         // arguments say what its parameters are, and the instance gets its own
         // symbol.
@@ -23661,6 +23723,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
         let site = match &item.kind {
             _ if in_extern => "extern item",
+            ast::ItemKind::Fn(decl) if decl.is_foreign_decl => "extern item",
             ast::ItemKind::Fn(_) => "fn",
             ast::ItemKind::Struct(_) => "struct",
             ast::ItemKind::Class(_) => "class",
@@ -23877,6 +23940,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        self.check_foreign_call(def, span);
         if !self.signatures[def.0 as usize].generics.is_empty() {
             return self.synth_generic_call(def, qualified, args, explicit, None, span);
         }
@@ -26923,6 +26987,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            is_extern_declaration: false,
         });
         def
     }
@@ -27405,6 +27470,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn function_value(&mut self, name: Symbol, span: Span) -> Option<Expr> {
         let qualified = self.resolve_name(name);
         let def = *self.fn_ids.get(&qualified)?;
+        if self.foreign_declarations.get(&def) == Some(&false) {
+            self.error(codes::E0900, span,
+                "an unsafe foreign declaration cannot become a safe callable value yet");
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
         let signature = &self.signatures[def.0 as usize];
         if !signature.generics.is_empty() {
             self.sink.emit(
@@ -33100,6 +33170,52 @@ fn is_literal_expr(expr: &ast::Expr) -> bool {
 /// parameters as its own first generic parameters (`fn index[Q: AsKey[K]](self,
 /// q: Q)`), and the extension keeps them in `blanket` for the implementation's
 /// record. `None` when no module has one.
+/// `[FFI-10]` — foreign block members live in the enclosing module's item
+/// namespace. Expand them before any of the multi-module name and signature
+/// passes; retain the declaration marker so no C definition is synthesized.
+fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec<LoadedModule>> {
+    if !modules.iter().any(|loaded| loaded.module.items.iter().any(|item| matches!(item.kind, ast::ItemKind::ExternBlock(_)))) {
+        return None;
+    }
+    let mut expanded = modules.to_vec();
+    for loaded in &mut expanded {
+        let mut items = Vec::new();
+        for item in std::mem::take(&mut loaded.module.items) {
+            let ast::ItemKind::ExternBlock(block) = &item.kind else {
+                items.push(item);
+                continue;
+            };
+            if !block.is_unsafe {
+                sink.emit(Diagnostic::error(codes::E5002, item.span, "a foreign declaration block must be `unsafe extern`"));
+            }
+            if block.abi != "C" {
+                sink.emit(Diagnostic::error(codes::E0900, item.span, "only `unsafe extern \"C\"` declaration blocks are implemented yet"));
+            }
+            for inner in &block.items {
+                let ast::ItemKind::Fn(decl) = &inner.kind else {
+                    sink.emit(Diagnostic::error(codes::E0900, inner.span, "foreign static and opaque type declarations are not implemented yet"));
+                    continue;
+                };
+                if decl.body.is_some() {
+                    sink.emit(Diagnostic::error(codes::E0100, inner.span, "a foreign function declaration has no body"));
+                }
+                if !decl.generics.is_empty() || decl.is_gen {
+                    sink.emit(Diagnostic::error(codes::E5050, inner.span, "a foreign function declaration cannot be generic or a generator"));
+                }
+                let mut declaration = inner.clone();
+                if let ast::ItemKind::Fn(function) = &mut declaration.kind {
+                    function.abi = Some(block.abi.clone());
+                    function.is_unsafe = !function.is_safe;
+                    function.is_foreign_decl = true;
+                }
+                items.push(declaration);
+            }
+        }
+        loaded.module.items = items;
+    }
+    Some(expanded)
+}
+
 fn desugar_blanket_extensions(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
     let has_one = modules.iter().any(|loaded| {
         loaded.module.items.iter().any(|item| matches!(&item.kind, ast::ItemKind::Extend(decl) if !blanket_params(decl).is_empty()))

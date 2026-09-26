@@ -467,7 +467,7 @@ impl Emitter<'_> {
         self.emit_shared_type_infos();
 
         for body in bodies {
-            if body.is_abstract {
+            if body.is_abstract || body.is_extern_declaration {
                 continue;
             }
             self.emit_body(body);
@@ -3286,6 +3286,12 @@ impl Emitter<'_> {
         }
         self.line("/* prototypes */");
         for body in bodies {
+            if body.is_extern_declaration {
+                // The C linker supplies this body; keep a declaration in the
+                // generated translation unit for type-checked direct calls.
+                self.line(&format!("extern {};", self.signature(body)));
+                continue;
+            }
             if body.is_abstract {
                 continue;
             }

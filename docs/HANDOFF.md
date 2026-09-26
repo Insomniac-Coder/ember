@@ -10768,7 +10768,7 @@ the running narrative behind it.
     after substitution. `E7001` and `E7003` have executable error pages.
     Focused conformance cases cover accepted and rejected forms. No ODR was
     needed; Hardened_29 already settles these rules.
-  * The next solo batch adds a distinct C-ABI function pointer type,
+  * `083400c` adds a distinct C-ABI function pointer type,
     capture-free function and lambda coercion, indirect calls, the nullable
     `Option` niche, and nullable callback parameters at an exported C
     boundary. `FFI-9/`, `FN-6/`, and `TYP-13/` cover these forms, including
@@ -10777,7 +10777,19 @@ the running narrative behind it.
     aggregate borrowed by an extern function pointer is explicitly `E0900`
     until its by-value C ABI and Ember borrow semantics are reconciled;
     `owned` aggregates already use the by-value ABI. Hardened_29
-    specifies the behavior; no ODR was needed.
+    specifies the behavior; no ODR was needed. The workspace suite and all
+    repository gates passed locally, and CI finished green.
+  * The following solo batch starts `[FFI-10]`: `unsafe extern "C":` function
+    declarations now enter the enclosing module's names and emit external C
+    prototypes, with no synthesized body. Scalar-only `safe fn` calls and
+    capture-free values link to libc; declarations without `safe fn` require
+    `unsafe:` or an `unsafe fn` at the call. Safe pointer signatures without a
+    contract, borrowed aggregate ABI mismatches, unsupported ABIs, duplicate
+    names, and malformed block forms fail explicitly. `FFI-10/` has run-pass
+    and compile-fail cases. Foreign statics/types, `@ffi` contracts,
+    `link_name`, and header import remain. The full workspace suite, annotation
+    sweep, and repository gates passed; `E5002` now has an executable error
+    page. No ODR was needed.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10941,8 +10953,9 @@ the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** continue solo with another Phase 3 or Phase 5 gap after
-  committing this batch. Audit rows for
+* **Next task:** continue Phase 5 with `@ffi(link_name=...)` and contract
+  support after this `[FFI-10]` batch is committed and pushed.
+  Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**

@@ -146,6 +146,9 @@ pub struct Function {
     /// checked callable and vtable signature but is never emitted as a C
     /// function; a concrete override supplies its slot implementation.
     pub is_abstract: bool,
+    /// A bodyless declaration in `unsafe extern`: emit a C prototype and
+    /// resolve calls against the foreign linker symbol, never a C body.
+    pub is_extern_declaration: bool,
 }
 
 impl Function {

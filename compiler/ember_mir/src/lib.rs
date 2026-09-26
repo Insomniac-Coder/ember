@@ -114,6 +114,8 @@ pub struct Body {
     /// See `ember_hir::Function::is_abstract`. This body is declaration
     /// metadata for virtual-table layout, not executable code.
     pub is_abstract: bool,
+    /// See `ember_hir::Function::is_extern_declaration`.
+    pub is_extern_declaration: bool,
     /// `[EXC-15]` — a class `mut self` method: its caller holds a write
     /// access to every field of `*self` (local 1) for the call, so accesses
     /// to `self`'s fields here are covered and not checked again (`[EXC-5]`).

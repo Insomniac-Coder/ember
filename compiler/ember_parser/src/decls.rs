@@ -219,6 +219,7 @@ impl Parser<'_> {
                 self.at_kw_at(1, Kw::Fn) || self.at_kw_at(1, Kw::Extern)
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
+            TokenKind::Ident(s) if s.is("safe") => self.at_kw_at(1, Kw::Fn),
             TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl(),
             _ => false,
         }
@@ -291,6 +292,9 @@ impl Parser<'_> {
             }
             // `[GRM-21]` — a `gen fn` is admitted wherever `fn_decl` is.
             TokenKind::Ident(_) if self.at_gen_fn() => Some(ItemKind::Fn(self.parse_fn())),
+            TokenKind::Ident(s) if s.is("safe") && self.at_kw_at(1, Kw::Fn) => {
+                Some(ItemKind::Fn(self.parse_fn()))
+            }
             TokenKind::Keyword(Kw::Struct) => Some(ItemKind::Struct(self.parse_struct())),
             TokenKind::Keyword(Kw::Class | Kw::Open) => Some(ItemKind::Class(self.parse_class())),
             TokenKind::Keyword(Kw::Enum) => Some(ItemKind::Enum(self.parse_enum())),
@@ -563,6 +567,10 @@ impl Parser<'_> {
         if is_gen {
             self.bump();
         }
+        let is_safe = matches!(self.peek(), TokenKind::Ident(s) if s.is("safe"));
+        if is_safe {
+            self.bump();
+        }
         let is_unsafe = self.eat_kw(Kw::Unsafe);
         // `["extern" string_lit]` — the ABI a definition uses. It sits after
         // `unsafe`, matching `unsafe extern "C":` for the block form.
@@ -602,7 +610,7 @@ impl Parser<'_> {
             self.expect_newline();
         }
 
-        FnDecl { name, is_unsafe, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
+        FnDecl { name, is_unsafe, is_safe, is_foreign_decl: false, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
     }
 
     fn parse_param(&mut self) -> Param {

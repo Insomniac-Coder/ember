@@ -186,6 +186,11 @@ pub struct ExternClass {
 pub struct FnDecl {
     pub name: Ident,
     pub is_unsafe: bool,
+    /// `safe fn` is admitted only for a hand-written foreign declaration.
+    pub is_safe: bool,
+    /// The enclosing `unsafe extern` block declares, rather than defines,
+    /// this function. Set when that block is expanded for name resolution.
+    pub is_foreign_decl: bool,
     /// `extern "C" fn f(...)` at item level — the ABI its definition uses, and
     /// what `@export` (XVI.10) attaches to. `None` for an ordinary function.
     ///

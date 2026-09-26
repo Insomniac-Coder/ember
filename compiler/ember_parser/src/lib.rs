@@ -512,6 +512,8 @@ impl<'a> Parser<'a> {
             let decl = FnDecl {
                 name,
                 is_unsafe: false,
+                is_safe: false,
+                is_foreign_decl: false,
                 abi: None,
                 is_gen: false,
                 dispatch: Dispatch::Static,

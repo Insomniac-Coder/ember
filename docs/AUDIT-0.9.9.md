@@ -161,9 +161,9 @@ are migrated or retired with the construct, each named in the progress log.
 | `[DRV-1]` | XIV | `@derive(…)` requests generated implementations. The built-in … | not yet probed | |
 | `[TXT-4]` | XV | Slicing a string, `s[a..b]`, is by byte offset and panics in every … | not yet probed | |
 | `[STD-5]` | XV | `sum` and `product` combine elements left to right in the element … | not yet probed | |
-| `[FFI-1]` | XVI | Every foreign declaration has a contract: for each pointer-typed … | not yet probed | |
-| `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … | not yet probed | |
-| `[FFI-10]` | XVI | An `unsafe extern "C":` block declares foreign functions, statics and … | not yet probed | |
+| `[FFI-1]` | XVI | Every foreign declaration has a contract: for each pointer-typed … | partial | A `safe fn` with a pointer parameter or result is rejected with `E5002` until `@ffi` contract vocabulary is implemented; scalar-only `safe fn` is accepted. |
+| `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … | partial | Hand-declared functions without `safe fn` require an enclosing `unsafe:` or `unsafe fn`; `FFI-10/` checks both sides. Full pointer contracts and header overlays remain. |
+| `[FFI-10]` | XVI | An `unsafe extern "C":` block declares foreign functions, statics and … | partial | Functions are module items and link through the C ABI, including safe scalar calls, unsafe calls, and capture-free function values. Duplicate names, non-unsafe blocks, unsupported ABIs, and borrowed aggregate ABI mismatches are rejected. Foreign statics, opaque types, `@ffi` contracts, `link_name`, and importer integration remain. |
 | `[FFI-8]` | XVI | Type mapping. | not yet probed | |
 | `[FFI-11]` | XVI | Contract vocabulary. A pointer contract has five axes; mutability … | not yet probed | |
 | `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … | not yet probed | |

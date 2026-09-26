@@ -375,6 +375,7 @@ impl<'a> Builder<'a> {
             class_owner: self.function.class_owner,
             class_virtual_slot: self.function.class_virtual_slot,
             is_abstract: self.function.is_abstract,
+            is_extern_declaration: self.function.is_extern_declaration,
             mut_self: self.class_access.is_some(),
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
