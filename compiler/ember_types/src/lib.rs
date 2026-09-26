@@ -2024,6 +2024,110 @@ pub fn f16_bits(value: f64) -> u16 {
     sign | ((exponent as u16) << 10) | (q & 0x3FF) as u16
 }
 
+/// D-319, `[LEX-17]` — the `f16` nearest the decimal literal `text` (digits,
+/// an optional fraction and exponent, no sign), ties to even, rounded once.
+/// Rounding the literal's `f64` again can go wrong only where that `f64` is
+/// exactly halfway between two `f16`s while the decimal is not; then the
+/// decimal is compared with the midpoint exactly.
+pub fn f16_bits_of_decimal(text: &str) -> u16 {
+    let Ok(value) = text.parse::<f64>() else { return f16_bits(0.0) };
+    let bits = f16_bits(value);
+    if !value.is_finite() || value < 0.0 || bits & 0x7FFF == 0 && value == 0.0 {
+        return bits;
+    }
+    let rounded = f16_value(bits);
+    if rounded == value {
+        return bits;
+    }
+    // The two `f16`s either side of `value` (the one past the largest finite
+    // is 65536, which rounds to infinity).
+    let (low, high) = if rounded < value {
+        (bits, bits + 1)
+    } else {
+        (bits - 1, bits)
+    };
+    let value_of = |b: u16| if b == 0x7C00 { 65536.0 } else { f16_value(b) };
+    if value - value_of(low) != value_of(high) - value {
+        return bits;
+    }
+    match compare_decimal(text, value) {
+        Some(std::cmp::Ordering::Greater) => high,
+        Some(std::cmp::Ordering::Less) => low,
+        _ => bits,
+    }
+}
+
+/// The decimal `text` compared with `value` exactly (both non-negative).
+fn compare_decimal(text: &str, value: f64) -> Option<std::cmp::Ordering> {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], text[at + 1..].parse::<i64>().ok()?),
+        None => (text, 0),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let mut decimal = BigNat::default();
+    for c in whole.chars().chain(fraction.chars()) {
+        decimal.mul_add(10, c.to_digit(10)?);
+    }
+    let ten_power = exponent - fraction.len() as i64;
+    // `value` is `significand * 2^two_power` exactly.
+    let raw = value.to_bits();
+    let biased = ((raw >> 52) & 0x7FF) as i64;
+    let (significand, two_power) = if biased == 0 {
+        (raw & 0x000F_FFFF_FFFF_FFFF, -1074)
+    } else {
+        ((raw & 0x000F_FFFF_FFFF_FFFF) | (1 << 52), biased - 1075)
+    };
+    let mut binary = BigNat::default();
+    binary.mul_add(1 << 26, (significand >> 26) as u32);
+    binary.mul_add(1 << 26, (significand & ((1 << 26) - 1)) as u32);
+    // decimal * 10^ten_power against binary * 2^two_power, in integers.
+    if ten_power >= 0 {
+        decimal.mul_pow(10, ten_power as u64);
+    } else {
+        binary.mul_pow(10, (-ten_power) as u64);
+    }
+    if two_power >= 0 {
+        binary.mul_pow(2, two_power as u64);
+    } else {
+        decimal.mul_pow(2, (-two_power) as u64);
+    }
+    Some(decimal.cmp_with(&binary))
+}
+
+/// Just enough of an unbounded natural number for [`compare_decimal`].
+#[derive(Default)]
+struct BigNat {
+    /// Base 2^32, least significant first.
+    limbs: Vec<u32>,
+}
+
+impl BigNat {
+    fn mul_add(&mut self, factor: u32, addend: u32) {
+        let mut carry = u64::from(addend);
+        for limb in &mut self.limbs {
+            let product = u64::from(*limb) * u64::from(factor) + carry;
+            *limb = product as u32;
+            carry = product >> 32;
+        }
+        if carry != 0 {
+            self.limbs.push(carry as u32);
+        }
+    }
+
+    fn mul_pow(&mut self, base: u32, mut times: u64) {
+        while times > 0 {
+            self.mul_add(base, 0);
+            times -= 1;
+        }
+    }
+
+    fn cmp_with(&self, other: &BigNat) -> std::cmp::Ordering {
+        let trim = |limbs: &[u32]| limbs.len() - limbs.iter().rev().take_while(|&&limb| limb == 0).count();
+        let (a, b) = (trim(&self.limbs), trim(&other.limbs));
+        a.cmp(&b).then_with(|| self.limbs[..a].iter().rev().cmp(other.limbs[..b].iter().rev()))
+    }
+}
+
 /// D-316 — the value of the `f16` whose bits are `bits`, exactly.
 pub fn f16_value(bits: u16) -> f64 {
     let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
@@ -2067,6 +2171,24 @@ mod tests {
             let back: f64 = f16_text(bits).parse().unwrap();
             assert_eq!(f16_bits(back), bits, "{bits:#06x}");
         }
+    }
+
+    #[test]
+    fn f16_of_a_decimal_is_rounded_once() {
+        // 1 + 2^-11 is halfway between 1 and the next `f16`, 1 + 2^-10.
+        assert_eq!(f16_bits_of_decimal("1.00048828125"), 0x3C00);
+        // Just above the midpoint, but not by enough for an `f64` to tell:
+        // its `f64` is the midpoint itself, which rounds to even (down).
+        assert_eq!(f16_bits("1.00048828125000000000001".parse().unwrap()), 0x3C00);
+        assert_eq!(f16_bits_of_decimal("1.00048828125000000000001"), 0x3C01);
+        assert_eq!(f16_bits_of_decimal("1.00048828124999999999999"), 0x3C00);
+        // Halfway between the largest finite `f16` and 65536: infinity only
+        // at or past the midpoint.
+        assert_eq!(f16_bits_of_decimal("65520"), 0x7C00);
+        assert_eq!(f16_bits_of_decimal("65519.99999999999999999"), 0x7BFF);
+        assert_eq!(f16_bits_of_decimal("0.1"), f16_bits(0.1));
+        assert_eq!(f16_bits_of_decimal("2.5e-1"), f16_bits(0.25));
+        assert_eq!(f16_bits_of_decimal("0"), 0);
     }
 
     #[test]

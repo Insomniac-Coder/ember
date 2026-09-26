@@ -128,6 +128,7 @@ NEW = {
     'E0008': ('unterminated character literal', ['LEX-22']),
     'E0110': ('function declared without a body outside an interface, extern block or abstract class', ['GRM-33']),
     'E0111': ('`ref` of an expression that is not a place', ['GRM-36']),
+    'E0112': ('nested more deeply than the compiler accepts', ['GRM-39']),
     'E0900': ('construct not implemented by this compiler', ['PHIL-12', 'CLI-19']),
     'E0901': ('construct this specification leaves unspecified', ['PHIL-12']),
     'E1031': ('a name bound by two glob imports is used', ['MOD-8']),

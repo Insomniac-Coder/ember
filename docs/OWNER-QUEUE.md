@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
 | ODR-068 | **CLOSED** — `get_pair_mut(i, j)` on an `Array` or `MutSpan`: two mutable references after checking, or `None` for an index out of range or equal indices (SP-031) | Standard library / borrowing | — | **Yes** — owner, 2026-09-26 |
 | ODR-067 | **CLOSED** — `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` (SP-016) | Standard library / collections | — | **Yes** — owner, 2026-09-26 |
@@ -223,6 +224,43 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-070 — how deeply a program may nest — **CLOSED**
+
+    ID:        ODR-070
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation (the owner asked for the
+               old defect queue to be closed, D-331 among it); incorporated in
+               0.9.9_Hardened_28
+    Category:  LANGUAGE / GRAMMAR / IMPLEMENTATION LIMITS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_27.md Part III, [TOOL-1]
+
+    Question:  Nothing limits how deeply an expression nests, and the compiler walks the tree
+               one level at a time: past what its stack holds (about four thousand levels of an
+               operator chain in a debug build) it ended with "has overflowed its stack" and no
+               diagnostic (D-331). The specification has no implementation limits. What must a
+               compiler accept, and what happens past it?
+
+    Blocks implementation:            YES — D-331
+    Requires owner semantic decision:  delegated to the agent (owner, 2026-09-26: "close the old
+                                       bug queue")
+
+**Options and costs.** (a) No limit, and a stack that grows at each recursion point: every
+pass of the compiler changed, and a program can still exhaust memory. (b) A limit the
+specification states, the same for every compiler: generated code tuned to one compiler stays
+portable, but a better compiler is held to it. (c) A minimum every compiler accepts, a stated
+limit per compiler, and a diagnostic past it, as C does for its translation limits. **(c)**.
+
+**Ruling.** `[GRM-39]`: every compiler accepts expressions, statements, patterns and types
+nested 256 levels deep, an operator or method-call chain counting as deep as it is long; a
+compiler may accept more and states how much. Passing its limit is `E0112`, reported once,
+never a crash. This compiler accepts 1,024.
+
+**Implementation.** The parser counts its nesting and stops the file past the limit; the type
+checker counts expression depth for chains (D-331). Printing a container nested 256 deep does
+not compile with clang yet (D-358, open).
 
 ---
 

@@ -574,6 +574,11 @@ pub enum CompClause {
     If(Expr),
 }
 
+/// `[GRM-39]` (ODR-070, D-331) — the nesting this compiler accepts:
+/// expressions, blocks and types, each level of each. The specification
+/// requires every compiler to accept 256.
+pub const NESTING_LIMIT: u32 = 1024;
+
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub id: NodeId,
@@ -728,7 +733,8 @@ pub enum LambdaBody {
 pub enum Literal {
     /// `[LEX-16]` — untyped until the type checker resolves it.
     Int { value: u128, suffix: Option<ember_lexer_types::IntSuffix> },
-    Float { value: f64, suffix: Option<ember_lexer_types::FloatSuffix>, digits: u32 },
+    /// `text`: as written, for rounding to `f32` or `f16` once (D-319).
+    Float { value: f64, suffix: Option<ember_lexer_types::FloatSuffix>, digits: u32, text: String },
     Bool(bool),
     Char(char),
     Str(String),

@@ -1005,6 +1005,17 @@ impl Parser<'_> {
     // -- types -----------------------------------------------------------------
 
     pub(crate) fn parse_type(&mut self) -> TypeExpr {
+        if !self.enter_nesting() {
+            self.leave_nesting();
+            let span = self.span();
+            return TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span };
+        }
+        let ty = self.parse_type_nested();
+        self.leave_nesting();
+        ty
+    }
+
+    fn parse_type_nested(&mut self) -> TypeExpr {
         let start = self.span();
         let id = self.next_id();
 

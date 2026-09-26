@@ -344,6 +344,8 @@ ODRS = [
      '`[BRW-5]`, `[STD-15]`, `[SPN-5]`'),
     ('ODR-069', 'one storage rule for every owning container: a `Map`, `Set` or `Array` may hold `static` views, checked at each store wherever it happens (through a `mut` parameter or reference, or in a callee, whose callers answer for its parameters); an instance ties a result to a parameter its type names — SP-013 (Hardened_27)',
      '`[TYP-15]`, `[STD-11]`, `[TYP-38]`, `[LT-1]`'),
+    ('ODR-070', 'every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (Hardened_28)',
+     '`[GRM-39]`'),
 ]
 
 H5_HEAD = """
@@ -359,7 +361,8 @@ Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to 
 Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
 ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
 Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
-ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013.
+ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013;
+Hardened_28 adds ODR-070, the nesting limit (D-331).
 
 | ODR | Ruling | Rules |
 |---|---|---|

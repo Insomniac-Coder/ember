@@ -898,3 +898,9 @@ The next number is ODR-027.
     `e` to a view struct is a reborrow, so returning it no longer gives callers `E3065` (D-356).
   * A literal passed to a function whose result has a field-by-field summary no longer crashes
     the compiler (D-357).
+* **2026-09-26 — float literals rounded once; a nesting limit (ODR-070; Hardened_28).**
+  * A float literal that takes `f32` or `f16` is rounded to it once, from what is written: a literal
+    of seventeen or more digits just past a midpoint could be one step off (D-319).
+  * Nesting more than 1,024 levels deep (brackets, blocks, types, or an operator or method-call
+    chain that long) is `E0112`; it ended the compiler with a stack overflow before (D-331). Every
+    compiler accepts 256 (`[GRM-39]`).

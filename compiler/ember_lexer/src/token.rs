@@ -103,7 +103,9 @@ pub enum Lit {
     /// `digits` is the count of significant decimal digits as **written**
     /// (`[LEX-17a]`). It cannot be recovered from `value`, which no longer
     /// knows whether `0.1` was written `0.1` or `0.100000000000000006`.
-    Float { value: f64, suffix: Option<FloatSuffix>, digits: u32 },
+    /// `text` is the literal as written, without `_` or suffix: an `f32` or
+    /// `f16` is rounded from it once, not from `value` again (D-319).
+    Float { value: f64, suffix: Option<FloatSuffix>, digits: u32, text: String },
     Char(char),
     /// Type `str` with static region (`[LEX-20]`).
     Str(String),

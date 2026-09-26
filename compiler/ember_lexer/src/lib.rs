@@ -490,7 +490,7 @@ impl<'a> Lexer<'a> {
             let digits = significant_digits(&text);
             self.finish_number(
                 start,
-                Lit::Float { value, suffix: float_suffix(&suffix), digits },
+                Lit::Float { value, suffix: float_suffix(&suffix), digits, text: text.clone() },
                 &suffix,
                 true,
             );

@@ -1126,6 +1126,13 @@ struct Checker<'a> {
     declared_params: HashMap<DefId, Vec<(Symbol, Ty)>>,
     /// As `declared_params`, the result as declared (ODR-069).
     declared_rets: HashMap<DefId, Ty>,
+    /// D-319 — each float literal's text, by its span, to round it once
+    /// when it takes `f32` or `f16`.
+    float_texts: HashMap<Span, String>,
+    /// `[GRM-39]` (D-331) — how deeply the expression being checked is
+    /// nested, and whether it has passed the limit (reported once for it).
+    expr_depth: u32,
+    too_deep: bool,
     /// `[MOD-2]` (D-328) — each method's and associated function's
     /// visibility and declaring module: its own `pub`, or, implementing an
     /// interface, the interface's.
@@ -1345,6 +1352,9 @@ impl<'a> Checker<'a> {
             generic_method_sources: HashMap::new(),
             declared_params: HashMap::new(),
             declared_rets: HashMap::new(),
+            float_texts: HashMap::new(),
+            expr_depth: 0,
+            too_deep: false,
             method_vis: HashMap::new(),
             routed_call: false,
             member_callable_declarations: Vec::new(),
@@ -19590,7 +19600,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             _ => {}
         }
-        let ast::ExprKind::Lit(ast::Literal::Float { value, suffix: None, digits }) = &expr.kind
+        let ast::ExprKind::Lit(ast::Literal::Float { value, suffix: None, digits, text }) = &expr.kind
         else {
             return;
         };
@@ -19602,9 +19612,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // Its own shortest text would read back as the literal (`0.1`) and
         // show no loss (D-324).
         let rounded = if ty == self.common.f32 {
-            format!("{}", f64::from(*value as f32))
+            format!("{}", text.parse::<f32>().map_or(0.0, f64::from))
         } else {
-            format!("{}", ember_types::f16_value(ember_types::f16_bits(*value)))
+            format!("{}", ember_types::f16_value(ember_types::f16_bits_of_decimal(text)))
         };
         self.sink.emit(
             Diagnostic::warning(
@@ -20155,7 +20165,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             Some(bound) => {
                 // `E2211` — IV.2a's worked example is this diagnostic.
-                let shown = show_bound(bound);
+                // D-319 — a literal at `f32` or `f16` is rounded to it once;
+                // shown as the fewest digits that read back as that value.
+                let shown = match bound {
+                    Bound::Float(v) if def.repr == self.common.f32 && v.fract() != 0.0 => (v as f32).to_string(),
+                    Bound::Float(v) if def.repr == self.common.f16 && v.fract() != 0.0 => {
+                        ember_types::f16_text(ember_types::f16_bits(v))
+                    }
+                    _ => show_bound(bound),
+                };
                 let bounds = show_range(&def, self.types);
                 self.sink.emit(
                     Diagnostic::error(
@@ -20321,6 +20339,20 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.types.is_integral(expected) || float
     }
 
+    /// D-319, `[LEX-17]` — a float literal's value at `ty`: an `f32` or an
+    /// `f16` rounded once from the literal's text, and so exactly
+    /// representable in what C and the evaluator are given.
+    fn float_literal_at(&self, span: Span, value: f64, ty: Ty) -> f64 {
+        let Some(text) = self.float_texts.get(&span) else { return value };
+        if ty == self.common.f32 {
+            text.parse::<f32>().map_or(value, f64::from)
+        } else if ty == self.common.f16 {
+            ember_types::f16_value(ember_types::f16_bits_of_decimal(text))
+        } else {
+            value
+        }
+    }
+
     fn adopt_literal(&mut self, expr: Expr, expected: Ty) -> Expr {
         let span = expr.span;
         match expr.kind {
@@ -20336,11 +20368,22 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     Expr { ty: expected, kind: ExprKind::Int(value), span }
                 } else {
-                    // Integer literal in a float context.
-                    Expr { ty: expected, kind: ExprKind::Float(value as f64), span }
+                    // Integer literal in a float context, rounded once to the
+                    // float type (D-319): `value as f64` first would round twice.
+                    let float = if expected == self.common.f32 {
+                        f64::from(value as f32)
+                    } else if expected == self.common.f16 {
+                        ember_types::f16_value(ember_types::f16_bits_of_decimal(&value.to_string()))
+                    } else {
+                        value as f64
+                    };
+                    Expr { ty: expected, kind: ExprKind::Float(float), span }
                 }
             }
-            ExprKind::Float(value) => Expr { ty: expected, kind: ExprKind::Float(value), span },
+            ExprKind::Float(value) => {
+                let value = self.float_literal_at(span, value, expected);
+                Expr { ty: expected, kind: ExprKind::Float(value), span }
+            }
             // `[LEX-24]` (D-311, D-312) — a minus directly on an integer
             // literal is part of the constant: `-128` is an `i8`, though
             // `128` alone is not, and no unsigned type holds `-1`.
@@ -20380,7 +20423,39 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.synth_with_expectation(expr, None)
     }
 
+    /// `[GRM-39]` (D-331) — every expression is checked through here, one
+    /// level deeper than its parent. An operator chain (`1 + 1 + … + 1`) is
+    /// nested as deeply as it is long without the parser recursing, so the
+    /// limit the parser keeps for brackets and blocks is kept here for it.
     fn synth_with_expectation(&mut self, expr: &ast::Expr, expected: Option<Ty>) -> Expr {
+        self.expr_depth += 1;
+        if self.expr_depth > ast::NESTING_LIMIT {
+            if !self.too_deep {
+                self.too_deep = true;
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E0112,
+                        expr.span,
+                        format!("this is nested more than {} levels deep", ast::NESTING_LIMIT),
+                    )
+                    .primary_label("nested too deeply here")
+                    .help("build the value in steps: bind part of the chain to a local and use the local")
+                    .note("the compiler accepts 1,024 levels of nesting; every compiler accepts at least 256 [GRM-39]"),
+                );
+            }
+            self.expr_depth -= 1;
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
+        }
+        let checked = self.synth_nested(expr, expected);
+        self.expr_depth -= 1;
+        // Reported once for each outermost expression that passes the limit.
+        if self.expr_depth == 0 {
+            self.too_deep = false;
+        }
+        checked
+    }
+
+    fn synth_nested(&mut self, expr: &ast::Expr, expected: Option<Ty>) -> Expr {
         let span = expr.span;
         match &expr.kind {
             ast::ExprKind::Paren(inner) => self.synth_with_expectation(inner, expected),
@@ -21288,12 +21363,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 };
                 Expr { ty, kind: ExprKind::Int(*value), span }
             }
-            ast::Literal::Float { value, suffix, .. } => {
+            ast::Literal::Float { value, suffix, text, .. } => {
                 let ty = match suffix {
                     Some(s) => self.float_suffix_ty(*s),
                     None => self.common.float_lit,
                 };
-                Expr { ty, kind: ExprKind::Float(*value), span }
+                self.float_texts.insert(span, text.clone());
+                let value = self.float_literal_at(span, *value, ty);
+                Expr { ty, kind: ExprKind::Float(value), span }
             }
             ast::Literal::Bool(v) => {
                 Expr { ty: self.common.bool_, kind: ExprKind::Bool(*v), span }

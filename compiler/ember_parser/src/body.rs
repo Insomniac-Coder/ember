@@ -55,6 +55,17 @@ impl Parser<'_> {
     /// `[LEX-9]` — either an indented block, or a single simple statement on
     /// the same line (`if x: return`).
     pub(crate) fn parse_block(&mut self) -> Block {
+        if !self.enter_nesting() {
+            self.leave_nesting();
+            let span = self.span();
+            return Block { id: self.next_id(), stmts: Vec::new(), span };
+        }
+        let block = self.parse_block_nested();
+        self.leave_nesting();
+        block
+    }
+
+    fn parse_block_nested(&mut self) -> Block {
         let start = self.span();
         let id = self.next_id();
         let mut stmts = Vec::new();
@@ -638,6 +649,17 @@ impl Parser<'_> {
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8, allow_block_lambda: bool) -> Expr {
+        if !self.enter_nesting() {
+            self.leave_nesting();
+            let span = self.span();
+            return Expr { id: self.next_id(), kind: ExprKind::Error, span };
+        }
+        let expr = self.parse_expr_bp_nested(min_bp, allow_block_lambda);
+        self.leave_nesting();
+        expr
+    }
+
+    fn parse_expr_bp_nested(&mut self, min_bp: u8, allow_block_lambda: bool) -> Expr {
         if self.at_jump() {
             if min_bp > 0 {
                 let span = self.span();
@@ -1860,7 +1882,7 @@ fn pattern_is_irrefutable(pattern: &Pattern) -> bool {
 fn convert_literal(lit: Lit) -> Literal {
     match lit {
         Lit::Int { value, suffix } => Literal::Int { value, suffix },
-        Lit::Float { value, suffix, digits } => Literal::Float { value, suffix, digits },
+        Lit::Float { value, suffix, digits, text } => Literal::Float { value, suffix, digits, text },
         Lit::Char(c) => Literal::Char(c),
         Lit::Str(s) => Literal::Str(s),
         Lit::Bytes(b) => Literal::Bytes(b),

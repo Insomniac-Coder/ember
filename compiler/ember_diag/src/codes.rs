@@ -153,6 +153,7 @@ codes! {
     E0107 = (Error, 107, Parse, "[GRM-16]", "a jump expression may not be an operand");
     E0108 = (Error, 108, Parse, "[ATT-3]", "attribute is not permitted on this statement");
     E0109 = (Error, 109, Parse, "[GRM-15]", "`owned` is not permitted in expression position");
+    E0112 = (Error, 112, Parse, "[GRM-39]", "nested more deeply than the compiler accepts");
     // 0.9.9 `[CLI-19]`: a construct the specification defines and this
     // compiler does not implement yet is rejected by name, never silently.
     E0900 = (Error, 900, Support, "[CLI-19]", "construct not implemented by this compiler");

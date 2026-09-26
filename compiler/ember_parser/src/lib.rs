@@ -42,7 +42,13 @@ pub(crate) struct Parser<'a> {
     region_errors: u32,
     /// The token index at which the current error region started.
     region_start: usize,
+    /// `[GRM-39]` (D-331) — how deeply the parse is nested now, and whether
+    /// it passed the limit (then the rest of the file is skipped silently).
+    depth: u32,
+    too_deep: bool,
 }
+
+pub use ember_ast::NESTING_LIMIT;
 
 impl<'a> Parser<'a> {
     fn new(file: FileId, src: &'a str, tokens: Vec<Token>, sink: &'a mut Sink) -> Parser<'a> {
@@ -56,7 +62,41 @@ impl<'a> Parser<'a> {
             sink,
             region_errors: 0,
             region_start: usize::MAX,
+            depth: 0,
+            too_deep: false,
         }
+    }
+
+    /// `[GRM-39]` (D-331) — enter one level of nesting. Past the limit it is
+    /// `E0112`, once, and the rest of the file is skipped: the tree is never
+    /// built deeper than the compiler's later passes can walk.
+    pub(crate) fn enter_nesting(&mut self) -> bool {
+        self.depth += 1;
+        if self.too_deep {
+            return false;
+        }
+        if self.depth <= NESTING_LIMIT {
+            return true;
+        }
+        self.too_deep = true;
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E0112,
+                self.span(),
+                format!("this is nested more than {NESTING_LIMIT} levels deep"),
+            )
+            .primary_label("nested too deeply here")
+            .help("build the value in steps: bind the inner part to a local and use the local")
+            .note("the compiler accepts 1,024 levels of nesting; every compiler accepts at least 256 [GRM-39]"),
+        );
+        while !self.at_eof() {
+            self.bump();
+        }
+        false
+    }
+
+    pub(crate) fn leave_nesting(&mut self) {
+        self.depth -= 1;
     }
 
     // -- cursor -------------------------------------------------------------
@@ -277,8 +317,9 @@ impl<'a> Parser<'a> {
     /// Emit a diagnostic, respecting `[AST-2]`'s cascade limit.
     fn report(&mut self, mut diagnostic: Diagnostic) {
         // `[DIA-14]` — the parse stopped at a token the lexer has already
-        // reported: one mistake, one error.
-        if matches!(self.peek(), TokenKind::Error) {
+        // reported: one mistake, one error. After `E0112` the rest of the file
+        // was skipped, and what that leaves unfinished is not a mistake.
+        if matches!(self.peek(), TokenKind::Error) || self.too_deep {
             return;
         }
         // `[LEX-21]` (0.9.9) — there is no `::`; wherever one stops the parse,
