@@ -85,6 +85,15 @@ pub struct FfiCounted {
     pub abi_params: Vec<FfiAbiParam>,
     /// A borrowed fixed-array result arrives as a C element pointer.
     pub result_array_elem: Option<Ty>,
+    /// A counted result's length is supplied by this visible input span.
+    pub result_span: Option<FfiSpanResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FfiSpanResult {
+    pub public_index: usize,
+    pub elem: Ty,
+    pub nullable: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -10911,14 +10911,24 @@ first**; the rest of §0.355 is the running narrative behind it.
     length or shape is `E5002`. `FFI-11/` covers static, parameter-derived,
     nullable, and explicitly aliased results. Hardened_32 already defines
     these contract words and mappings, so no ODR or new hardening is needed.
+  * ODR-077 closes the result-only `count(n)` ambiguity: ODR-074 removes `n`
+    from the safe callable signature, so a borrowed counted result needs an
+    input `Span` or `MutSpan` with the same witness to supply both the C count
+    and result length. Hardened_33 is frozen and pinned. The compiler now
+    converts C `const T*` results to `Span[T]` or nullable
+    `Option[Span[T]]`, preserves `from(p)` and `from(static)` result regions,
+    rejects a result without that input span with `E5002`, and checks shared
+    witness lengths before C. `FFI-11/` covers the direct call, nullable
+    `None` and `Some`, a non-null zero-length `Some`, a static result that
+    outlives its input, and unequal input lengths.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_32.md`
-  (ODR-075 and ODR-076), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` and
-  `parts-h31/` and `parts-h32/` are frozen.
-* **Next numbers:** ODR-077, D-363, ADR-063.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_33.md`
+  (ODR-077), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
+  `parts-h33/` are frozen.
+* **Next numbers:** ODR-078, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed

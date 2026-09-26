@@ -55,6 +55,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-074 | **CLOSED** — `count(n)` on a hand-declared safe C function writes `n` as an ABI-positioned integer witness but removes it from the callable signature; the span length supplies it with checked conversion | Language / C interop / counted pointers | — | **No** — delegated, 2026-09-27, Hardened_31 |
 | ODR-075 | **CLOSED** — both `ref_to_ptr(r)` and a non-strengthening `r as *T` convert a reference to a raw pointer safely; the raw pointer does not keep a loan | Language / raw pointers / source syntax | — | **No** — delegated, 2026-09-27, Hardened_32 |
 | ODR-076 | **CLOSED** — the type argument to `null[P]()` is the complete raw-pointer type `P`, including constness; the result has exactly type `P` | Language / raw pointers / null construction | — | **No** — delegated, 2026-09-27, Hardened_32 |
+| ODR-077 | **CLOSED** — a safe hand-declared `result(borrowed, count(n), ...)` requires an input span also contracted with `count(n)`; its length supplies the hidden C witness and the result length | Language / C interop / counted results | — | **No** — delegated, 2026-09-27, Hardened_33 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -230,6 +231,49 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-077 — the count witness for a borrowed C pointer result — **CLOSED**
+
+    ID:        ODR-077
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_33
+    Category:  LANGUAGE / C INTEROP / COUNTED RESULTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_32.md Part XVI `[FFI-10]`, `[FFI-11]`
+
+    Question:  `count(n)` hides `n` from a safe caller and supplies it from an
+               input span. If the pointer is only a result, where does the
+               caller obtain the C count and the returned span length?
+
+    Blocks implementation:            YES — borrowed counted pointer results
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Require an input `Span` or `MutSpan` sharing `n`;
+its length supplies the C witness and the result length. This preserves
+ODR-074's hidden-count safe API, but a result-only C API remains unsafe or
+needs a separate output-count contract. (b) Make `n` callable only for a
+result-only count; this reverses ODR-074's erasure rule and permits an
+unrelated caller-chosen length. (c) Treat `n` as an output count pointer and
+synthesize storage; this changes the C ABI shape and overlaps `inout_count`.
+**(a)**.
+
+**Ruling.** On a hand-declared `safe fn`, a borrowed result `count(n)` requires
+at least one borrowed input pointer also contracted `count(n)` and mapped to
+`Span[T]` or `MutSpan[T]`. The input span length supplies the integer C
+witness as in ODR-074, and the returned `Span[U]` has that same length. With
+`nullable`, a null result is `None`; a non-null result is `Some(Span[U])` at
+that length. When several inputs share `n`, their lengths must agree before
+calling C. A result-only `count(n)` in a `safe fn` is `E5002`; an unsafe raw
+declaration can retain the written count parameter. The result still needs
+an explicit `from(p)` or `from(static)` lifetime. This ruling does not define
+the separate `inout_count`/output-count API.
+
+**Implementation.** Part XVI `[FFI-10]` and `[FFI-11]` of Hardened_33 state
+the count source and result mapping. The compiler supplies the input length,
+builds the result span, and rejects a result without a shared input witness;
+`FFI-11/` covers both normal and nullable results.
 
 ---
 

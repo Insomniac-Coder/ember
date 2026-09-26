@@ -3326,7 +3326,9 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        let result = if let Some(elem) = counted.result_array_elem {
+        let result = if let Some(span) = &counted.result_span {
+            format!("const {}*", self.c_type(span.elem))
+        } else if let Some(elem) = counted.result_array_elem {
             format!("const {}*", self.c_type(elem))
         } else {
             match self.types.kind(body.return_ty()) {
@@ -3416,7 +3418,16 @@ impl Emitter<'_> {
             }
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
-        if self.is_void(body.return_ty()) {
+        if let Some(result) = &counted.result_span {
+            self.line(&format!("    const {}* _ffi_result = {call};", self.c_type(result.elem)));
+            let source = &args[result.public_index];
+            let len = if result.nullable {
+                format!("(_ffi_result == NULL ? SIZE_MAX : ({source}).len)")
+            } else {
+                format!("({source}).len")
+            };
+            self.line(&format!("    return ({}){{ _ffi_result, {len} }};", self.c_type(body.return_ty())));
+        } else if self.is_void(body.return_ty()) {
             self.line(&format!("    {call};"));
             self.line("    return;");
         } else {

@@ -358,6 +358,8 @@ ODRS = [
      '§IV.5, `[TYP-7]`'),
     ('ODR-076', '`null[P]()` takes a complete raw-pointer type and returns that exact pointer type, including its mutability (Hardened_32)',
      '§IV.5'),
+    ('ODR-077', 'a safe hand-declared borrowed `count(n)` result requires an input span sharing `n`; its length supplies the hidden C count and result length (Hardened_33)',
+     '`[FFI-10]`, `[FFI-11]`'),
 ]
 
 H5_HEAD = """
@@ -378,7 +380,8 @@ Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 an
 closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand-declared C pointer
 contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for a hand-declared
 counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
-the exact pointer type of `null[P]()`.
+the exact pointer type of `null[P]()`; Hardened_33 adds ODR-077, the input length source for a
+borrowed counted C pointer result.
 
 | ODR | Ruling | Rules |
 |---|---|---|
