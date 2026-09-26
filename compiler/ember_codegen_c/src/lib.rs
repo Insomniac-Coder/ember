@@ -5809,6 +5809,9 @@ impl Emitter<'_> {
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("({access}) == NULL");
         }
+        if matches!(self.types.kind(niche.payload), TyKind::Fn { abi: Some(_), .. }) {
+            return format!("({access}) == 0");
+        }
         if let TyKind::Enum(id) = *self.types.kind(niche.payload) {
             let sentinel = self.types.enum_unused_discriminant(id).expect("enum niche has an unused discriminant");
             let repr = self.types.enum_def(id).repr;
@@ -5862,6 +5865,9 @@ impl Emitter<'_> {
         }
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("(({})NULL)", self.c_type(niche.payload));
+        }
+        if matches!(self.types.kind(niche.payload), TyKind::Fn { abi: Some(_), .. }) {
+            return format!("(({})0)", self.c_type(niche.payload));
         }
         if let TyKind::Enum(id) = *self.types.kind(niche.payload) {
             let sentinel = self.types.enum_unused_discriminant(id).expect("enum niche has an unused discriminant");

@@ -270,6 +270,7 @@ pub fn check(
 struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
+    abi: Option<Symbol>,
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
@@ -2140,7 +2141,7 @@ impl<'a> Checker<'a> {
         index_base: usize,
     ) -> Ty {
         let resolved = self.resolve_type(ty);
-        let TyKind::Fn { latebound, params, ret } = self.types.kind(resolved) else { return resolved };
+        let TyKind::Fn { abi: None, latebound, params, ret } = self.types.kind(resolved) else { return resolved };
         let bound = CallableBound {
             params: params.clone(),
             ret: *ret,
@@ -4328,6 +4329,7 @@ impl<'a> Checker<'a> {
         let signature = Signature {
             params,
             ret: self.substitute_self(ret, ty),
+            abi: None,
             generics,
             borrows: method.borrows.clone(),
         };
@@ -4492,10 +4494,10 @@ impl<'a> Checker<'a> {
                 self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
             }
             (
-                TyKind::Fn { latebound: pattern_latebound, params: pattern_params, ret: pattern_ret },
-                TyKind::Fn { latebound: actual_latebound, params: actual_params, ret: actual_ret },
+                TyKind::Fn { abi: pattern_abi, latebound: pattern_latebound, params: pattern_params, ret: pattern_ret },
+                TyKind::Fn { abi: actual_abi, latebound: actual_latebound, params: actual_params, ret: actual_ret },
             ) => {
-                pattern_latebound == actual_latebound
+                pattern_abi == actual_abi && pattern_latebound == actual_latebound
                     && pattern_params.len() == actual_params.len()
                     && pattern_params.iter().zip(actual_params).all(|(pattern, actual)| {
                         pattern.mode == actual.mode
@@ -5104,7 +5106,7 @@ impl<'a> Checker<'a> {
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
-                    self.signatures.push(Signature { params, ret, generics, borrows });
+                    self.signatures.push(Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -6354,7 +6356,7 @@ impl<'a> Checker<'a> {
                 .map(|param| self.substitute_generic_param(param, args))
                 .collect();
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, generics, borrows: signature.borrows });
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
         }
@@ -6745,7 +6747,7 @@ impl<'a> Checker<'a> {
             self.lint_rule_3(&params, ret, &borrows, span);
         }
         self.type_params = saved_type_params;
-        Some((receiver, Signature { params, ret, generics, borrows }))
+        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -7049,6 +7051,7 @@ impl<'a> Checker<'a> {
             let signature = Signature {
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
+                abi: None,
                 generics: Vec::new(),
                 borrows: None,
             };
@@ -7189,17 +7192,15 @@ impl<'a> Checker<'a> {
             // coercion target, which every named function fits and which
             // `[CLO-3]`'s closure parameter is a generic over.
             ast::TypeKind::Fn { abi, latebound, params, ret } => {
-                if abi.is_some() {
-                    // `extern "C" fn(…)` is `[FFI-9]`'s raw function pointer,
-                    // which arrives with the rest of the boundary in Phase 5.
+                if abi.as_deref().is_some_and(|abi| abi != "C") {
                     self.error(
                         codes::E1010,
                         ty.span,
-                        "an `extern` function type is not supported yet in this phase",
+                        "only the `extern \"C\"` function-pointer ABI is supported in this phase",
                     );
                     return self.common.error;
                 }
-                let params = params
+                let params: Vec<FnParam> = params
                     .iter()
                     .map(|param| FnParam {
                         ty: self.resolve_type(&param.ty),
@@ -7210,7 +7211,24 @@ impl<'a> Checker<'a> {
                     .as_ref()
                     .map(|t| self.resolve_type(t))
                     .unwrap_or(self.common.void);
-                self.types.intern(TyKind::Fn { latebound: *latebound, params, ret })
+                if abi.is_some() && (!self.types.is_ffi_safe(ret)
+                    || params.iter().any(|param: &FnParam| !self.types.is_ffi_safe(param.ty))) {
+                    self.error(codes::E5050, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
+                    return self.common.error;
+                }
+                if abi.is_some() && (self.types.needs_drop(ret)
+                    || params.iter().any(|param| self.types.needs_drop(param.ty)
+                        || (param.mode == FnParamMode::Borrow && self.types.passed_by_address(param.ty)))) {
+                    self.error(codes::E0900, ty.span,
+                        "`extern \"C\" fn` pointers with drop-bearing values or borrowed aggregates are not implemented yet");
+                    return self.common.error;
+                }
+                self.types.intern(TyKind::Fn {
+                    abi: abi.as_ref().map(|abi| Symbol::intern(abi)),
+                    latebound: *latebound,
+                    params,
+                    ret,
+                })
             }
             ast::TypeKind::Dyn(bounds) => {
                 let mut interfaces = Vec::with_capacity(bounds.len());
@@ -8446,7 +8464,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -8455,7 +8473,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 let ret = self.substitute_ty(ret, args);
-                self.types.intern(TyKind::Fn { latebound, params, ret })
+                self.types.intern(TyKind::Fn { abi, latebound, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
@@ -10595,6 +10613,7 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            self.check_foreign_signature(decl, def);
 
             // `[TYP-17]` — a generic body is checked **once**, with its
             // parameters opaque, so that using an operation its bounds do not
@@ -10738,7 +10757,6 @@ impl<'a> Checker<'a> {
                 Some(_) => decl.name.name.to_string(),
                 None => mangle(name, is_main),
             };
-            self.check_foreign_signature(decl, def);
             functions.push(Function {
                 def,
                 name,
@@ -11119,6 +11137,18 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
+            if let TyKind::Param { index, .. } = this.types.kind(ty)
+                && this.signatures[def.0 as usize].generics.get(*index as usize)
+                    .is_some_and(|param| param.callable.is_some())
+            {
+                this.sink.emit(
+                    Diagnostic::error(codes::E5050, span,
+                        "a native `fn` callable parameter has no foreign representation")
+                        .primary_label(what)
+                        .help("write `extern \"C\" fn(…)` for a C function pointer"),
+                );
+                return;
+            }
             if matches!(this.types.kind(ty), TyKind::Range(_)) {
                 let shown = this.types.display(ty);
                 this.sink.emit(
@@ -11632,7 +11662,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, generics: own.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, generics: own.clone(), borrows: signature.borrows.clone() });
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
             let saved_generics = std::mem::take(&mut self.current_generics);
@@ -19824,8 +19854,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // ordinary identity or declaration semantics. The resulting HIR type
         // is the expected boundary so calls through a local retain it.
         if let (
-            TyKind::Fn { latebound: false, params: found_params, ret: found_ret },
-            TyKind::Fn { latebound: true, params: expected_params, ret: expected_ret },
+            TyKind::Fn { abi: None, latebound: false, params: found_params, ret: found_ret },
+            TyKind::Fn { abi: None, latebound: true, params: expected_params, ret: expected_ret },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_params.len() == expected_params.len()
             && found_params
@@ -19833,6 +19863,16 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .zip(expected_params)
                 .all(|(found, wanted)| found.mode == wanted.mode && found.ty == wanted.ty)
             && found_ret == expected_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[FN-6]` — a plain `fn` value has no capture environment, so it
+        // can use the C calling convention when every type is FFI-safe.
+        if let (
+                TyKind::Fn { abi: None, latebound: false, params: found, ret: found_ret },
+                TyKind::Fn { abi: Some(abi), latebound: false, params: wanted, ret: wanted_ret },
+            ) = (self.types.kind(expr.ty), self.types.kind(expected))
+            && abi.is("C") && found == wanted && found_ret == wanted_ret
         {
             return Expr { ty: expected, ..expr };
         }
@@ -20129,6 +20169,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     })
                     .collect();
                 Some(self.types.intern(TyKind::Fn {
+                    abi: None,
                     latebound: false,
                     params,
                     ret: signature.ret,
@@ -23011,6 +23052,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
         let signature = self.types.intern(TyKind::Fn {
+            abi: None,
             latebound: bound.latebound,
             params: bound.params,
             ret: bound.ret,
@@ -23151,6 +23193,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .collect();
         let ret = self.substitute_ty(bound.ret, &substitution);
         Some(self.types.intern(TyKind::Fn {
+            abi: None,
             latebound: bound.latebound,
             params,
             ret,
@@ -23509,6 +23552,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.signatures.push(Signature {
             params: concrete_params,
             ret: concrete_ret,
+            abi: self.signatures[def.0 as usize].abi,
             generics: Vec::new(),
             borrows,
         });
@@ -23564,6 +23608,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.signatures.push(Signature {
             params: concrete_params,
             ret: concrete_ret,
+            abi: self.signatures[def.0 as usize].abi,
             generics: Vec::new(),
             borrows,
         });
@@ -26284,7 +26329,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { latebound, params, ret } = self.types.kind(callee.ty).clone() else {
+        let TyKind::Fn { latebound, params, ret, .. } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
         let latebound = latebound || latebound_override;
@@ -26513,6 +26558,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let ret = ret.unwrap_or(body_ty);
             let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before);
             let ty = self.types.intern(TyKind::Fn {
+                abi: None,
                 latebound: false,
                 params: params
                     .iter()
@@ -26849,6 +26895,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.signatures.push(Signature {
             params: signature_params,
             ret,
+            abi: None,
             borrows: None,
             generics: Vec::new(),
         });
@@ -27401,7 +27448,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             _ => Vec::new(),
         };
-        let ty = self.types.intern(TyKind::Fn { latebound: false, params, ret });
+        let ty = self.types.intern(TyKind::Fn { abi: signature.abi, latebound: false, params, ret });
         // D-284 (ODR-048) — an instance may take a parameter by address, as
         // its generic's declaration does, where a callable type of the same
         // parameters takes a copy; the two calls would disagree.
@@ -28139,6 +28186,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return error;
                 }
                 let fn_ty = self.types.intern(TyKind::Fn {
+                    abi: None,
                     latebound: false,
                     params: vec![FnParam { ty: inner, mode: FnParamMode::Borrow }],
                     ret: inner,

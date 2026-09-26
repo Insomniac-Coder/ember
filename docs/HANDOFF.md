@@ -10760,7 +10760,7 @@ the running narrative behind it.
     `std.mem.keep_alive`, stricter manifest/profile checking, and ten
     `Option[T]` payload niches. Their workspace suites and project gates
     passed; all three CI runs finished green.
-  * This batch adds the compact `Option[ref dyn I]` representation and the
+  * `ff5d863` adds the compact `Option[ref dyn I]` representation and the
     explicit `@sync` class contract: atomic object counts, structural
     `Send`/`Sync` field checks, no field writes after initialization or
     whole-`self` publication, no declared `mut self` methods, and matching
@@ -10768,6 +10768,16 @@ the running narrative behind it.
     after substitution. `E7001` and `E7003` have executable error pages.
     Focused conformance cases cover accepted and rejected forms. No ODR was
     needed; Hardened_29 already settles these rules.
+  * The next solo batch adds a distinct C-ABI function pointer type,
+    capture-free function and lambda coercion, indirect calls, the nullable
+    `Option` niche, and nullable callback parameters at an exported C
+    boundary. `FFI-9/`, `FN-6/`, and `TYP-13/` cover these forms, including
+    rejected captures and non-FFI-safe types. Other calling conventions and
+    importing foreign function declarations remain for Phase 5. A non-`Copy`
+    aggregate borrowed by an extern function pointer is explicitly `E0900`
+    until its by-value C ABI and Ember borrow semantics are reconciled;
+    `owned` aggregates already use the by-value ABI. Hardened_29
+    specifies the behavior; no ODR was needed.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10931,8 +10941,8 @@ the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** continue solo with the extern function pointer niche and
-  another Phase 3 gap after committing this batch. Audit rows for
+* **Next task:** continue solo with another Phase 3 or Phase 5 gap after
+  committing this batch. Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**

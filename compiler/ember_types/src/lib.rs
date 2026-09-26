@@ -169,7 +169,7 @@ pub enum TyKind {
     Vec { elem: Ty, text: bool },
     /// A mode-bearing callable type. `latebound` is a compile-time callable
     /// boundary fact; it is not runtime metadata or an ABI field.
-    Fn { latebound: bool, params: Vec<FnParam>, ret: Ty },
+    Fn { abi: Option<Symbol>, latebound: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -732,7 +732,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -741,7 +741,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { latebound, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, params, ret })
             }
             _ => ty,
         }
@@ -776,7 +776,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -785,7 +785,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { latebound, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, params, ret })
             }
             _ => ty,
         }
@@ -906,9 +906,10 @@ impl TypeTable {
             // type's identity.  Inference may solve the nested types, but it
             // must never erase `borrow`/`mut`/`owned` on its way there.
             (
-                TyKind::Fn { latebound: a_latebound, params: a, ret: a_ret },
-                TyKind::Fn { latebound: b_latebound, params: b, ret: b_ret },
+                TyKind::Fn { abi: a_abi, latebound: a_latebound, params: a, ret: a_ret },
+                TyKind::Fn { abi: b_abi, latebound: b_latebound, params: b, ret: b_ret },
             ) if a.len() == b.len()
+                    && a_abi == b_abi
                     && a_latebound == b_latebound
                     && a.iter().zip(&b).all(|(left, right)| left.mode == right.mode) =>
             {
@@ -1364,6 +1365,7 @@ impl TypeTable {
             || matches!(self.kind(payload), TyKind::Bool | TyKind::Char)
             || matches!(self.kind(payload), TyKind::Span { .. } | TyKind::Str)
             || matches!(self.kind(payload), TyKind::Ref { .. })
+            || matches!(self.kind(payload), TyKind::Fn { abi: Some(_), .. })
             || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some())
             || matches!(self.kind(payload), TyKind::Enum(id) if self.enum_unused_discriminant(*id).is_some())
             || matches!(self.kind(payload), TyKind::Range(id) if self.range_unused_integer(*id).is_some()
@@ -1685,8 +1687,11 @@ impl TypeTable {
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::Void
-            | TyKind::Ptr { .. }
-            | TyKind::Fn { .. } => true,
+            | TyKind::Ptr { .. } => true,
+            TyKind::Fn { abi: Some(_), .. } => true,
+            TyKind::Enum(id) => self.option_niche(*id).is_some_and(|niche| {
+                matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. })
+            }),
             TyKind::Array { elem, .. } => self.is_ffi_safe(*elem),
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().all(|f| self.is_ffi_safe(f.ty))
@@ -1882,7 +1887,7 @@ impl TypeTable {
                 format!("{kw}{}", self.render(*inner, user))
             }
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
-            TyKind::Fn { latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, params, ret } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -1896,7 +1901,8 @@ impl TypeTable {
                     .collect();
                 format!(
                     "{}fn({}) -> {}",
-                    if *latebound { "@latebound " } else { "" },
+                    if let Some(abi) = abi { format!("extern \"{abi}\" ") }
+                    else if *latebound { "@latebound ".to_string() } else { String::new() },
                     inner.join(", "),
                     self.render(*ret, user)
                 )
@@ -1994,8 +2000,10 @@ impl TypeTable {
             }
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { latebound, params, ret } => {
-                let mut out = if *latebound {
+            TyKind::Fn { abi, latebound, params, ret } => {
+                let mut out = if let Some(abi) = abi {
+                    format!("extern \"{abi}\" fn(")
+                } else if *latebound {
                     String::from("@latebound fn(")
                 } else {
                     String::from("fn(")
