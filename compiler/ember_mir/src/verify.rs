@@ -1059,6 +1059,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                 which,
                 Builtin::SpanFrom { .. }
                     | Builtin::StringAsStr
+                    | Builtin::CStringAsCStr
                     | Builtin::ArenaArrayWithCapacity { .. }
                     | Builtin::ArenaMapWithCapacity { .. }
                     | Builtin::ArenaAlloc { .. }

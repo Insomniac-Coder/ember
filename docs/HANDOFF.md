@@ -10986,13 +10986,37 @@ first**; the rest of §0.355 is the running narrative behind it.
     The H36 document and frozen parts match, its target pin is updated, and
     the full annotation sweep, workspace suite, and repository gates pass
     locally. The newest `main` run is the remote CI record for this batch.
+  * Commit `474b258` contains ODR-080/Hardened_36 and the five nullable C
+    string capabilities. The previous commit's CI run `36275088850` passed;
+    the run for this commit is `36275903393`.
+  * The next slice adds `cstr.to_str()`: it measures the NUL-terminated bytes,
+    validates UTF-8, and returns a borrowed `Result[str, Utf8Error]` without
+    copying. The new valid/invalid and source-lifetime cases failed before
+    implementation and pass in focused annotations. No ODR was needed.
+  * ODR-081 resolves the genuine owned C-string ambiguity: the former
+    `.to_cstring()` wording omitted its failure type, and its diagnostic
+    suggestion conflicted with `[TYP-5]`'s complete coercion list.
+    Hardened_37 now defines a fallible `Result[CString, NulError]`, with the
+    first interior-NUL byte offset, and an explicit owner-bound
+    `.as_cstr()` borrow. H37 is frozen and pinned. `std/src/ffi.em` now holds
+    `CString`, `NulError`, and the checked `str` and `String` conversions;
+    compiler synthesis supplies `.as_cstr()` as an explicit owner loan.
+    The E5020 suggestion now describes error handling and the borrow.
+    `FFI-15/` covers successful C calls, first-NUL errors, `String`
+    read-through, missing implicit conversion, and owner-bound lifetime.
+    The lifetime test exposed an existing missing `cstr` region slot; adding
+    it also rejects a decoded `str` escaping a local `CString`. These tests
+    failed before the relevant fixes. The full conformance annotation sweep
+    reports zero failures, the workspace suite passes, and all repository
+    gates pass locally. Remote CI for this batch is pending.
 
-  Check CI for the newest first. Runs through `19550ec` passed remotely.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_36.md`
-  (ODR-080), pinned in `docs/spec-source/development-target.json`. The
+  Check CI for the newest first. Runs through `474b258` passed remotely;
+  its H36 run is `36275903393`.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_37.md`
+  (ODR-081), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h36/` are frozen.
-* **Next numbers:** ODR-081, D-363, ADR-063.
+  `parts-h37/` are frozen.
+* **Next numbers:** ODR-082, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11148,8 +11172,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** implement owned `CString` and its checked conversions, then
-  foreign statics. Check the newest CI run before pushing further work.
+* **Next task:** finish validation and push the H37 `CString` batch, then
+  implement foreign statics. Check the newest CI run before pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

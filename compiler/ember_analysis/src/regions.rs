@@ -2203,7 +2203,7 @@ fn view_region_paths(types: &TypeTable, ty: Ty) -> Vec<Vec<Projection>> {
                     .collect()
             }
         }
-        TyKind::Str | TyKind::Span { .. } => vec![Vec::new()],
+        TyKind::Str | TyKind::CStr | TyKind::Span { .. } => vec![Vec::new()],
         TyKind::Struct(id) => types
             .struct_def(*id)
             .fields

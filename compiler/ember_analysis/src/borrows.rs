@@ -1569,6 +1569,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::Slice { .. }
                 | Builtin::StrAsBytes
                 | Builtin::SpanToStr
+                | Builtin::CStrToSpan
                 | Builtin::SpanReborrow
                 | Builtin::SpanSharedReborrow
                 | Builtin::SpanChunksNew { .. }
@@ -1584,7 +1585,8 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // a `Span` built by `as_span()` points into its container: without
         // this the view dangles across the next mutation (D-037).
         FuncRef::Builtin {
-            which: Builtin::SpanGet | Builtin::SpanGetUnchecked | Builtin::StringAsStr,
+            which: Builtin::SpanGet | Builtin::SpanGetUnchecked | Builtin::StringAsStr
+                | Builtin::CStringAsCStr,
             ..
         } => Elision::Named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
@@ -2750,6 +2752,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StringPushChar
             | Builtin::StringLen
             | Builtin::StringAsStr
+            | Builtin::CStringAsCStr
             | Builtin::StrCharCount
             | Builtin::StrStartsWith
             | Builtin::StrEndsWith
@@ -2772,6 +2775,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StrAsBytes
             | Builtin::Utf8Valid
             | Builtin::SpanToStr
+            | Builtin::CStrToSpan
             | Builtin::Slice { .. }
             | Builtin::SpanLen
             | Builtin::SpanGet

@@ -832,6 +832,10 @@ pub enum Builtin {
     Utf8Valid,
     /// `[TXT-5]` — view already validated bytes as text without copying.
     SpanToStr,
+    /// `[FFI-15]` — view the bytes before a C string's terminator.
+    CStrToSpan,
+    /// `[FFI-15]` — borrow an owned C string's terminated buffer.
+    CStringAsCStr,
     /// `[TXT-10]` (ODR-029) — `parse`: the status (0 when the text is a
     /// literal of the kind that fits) and, once it is 0, the value.
     ParseStatus { kind: ParseKind },
@@ -1227,7 +1231,8 @@ impl Builtin {
             Builtin::StrTrimEnd => "trim_end",
             Builtin::StrSliceOk => "slice_ok",
             Builtin::StrToUpper => "to_upper",
-            Builtin::Utf8Valid | Builtin::SpanToStr => "to_str",
+            Builtin::Utf8Valid | Builtin::SpanToStr | Builtin::CStrToSpan => "to_str",
+            Builtin::CStringAsCStr => "as_cstr",
             Builtin::ParseStatus { .. } | Builtin::ParseValue { .. } => "parse",
             Builtin::StrToLower => "to_lower",
             Builtin::StrCharAt => "char_at",

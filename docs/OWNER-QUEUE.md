@@ -59,6 +59,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-078 | **CLOSED** — `exclusive` on a borrowed counted result yields `MutSpan[T]` (or `Option[MutSpan[T]]` with `nullable`), at the shared input witness length, through a mutable C pointer | Language / C interop / counted mutable results | — | **No** — delegated, 2026-09-27, Hardened_34 |
 | ODR-079 | **CLOSED** — nullable borrowed `count(n)` inputs map `None` to `(NULL, 0)` and `Some(empty)` to `(non-null, 0)`, synthesizing a call-safe aligned sentinel when its data pointer is null | Language / C interop / nullable counted inputs | — | **No** — delegated, 2026-09-27, Hardened_35 |
 | ODR-080 | **CLOSED** — `Option[cstr]` has a null-pointer niche and nullable borrowed NUL-terminated inputs/results use it | Language / C interop / nullable strings | — | **No** — delegated, 2026-09-27, Hardened_36 |
+| ODR-081 | **CLOSED** — `str.to_cstring()` returns `Result[CString, NulError]`; `.as_cstr()` is an explicit owner-bound borrow | Language / C interop / owned strings | — | **No** — delegated, 2026-09-27, Hardened_37 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -234,6 +235,57 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-081 — owned C-string conversion and borrowing — **CLOSED**
+
+    ID:        ODR-081
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_37
+    Category:  LANGUAGE / C INTEROP / OWNED STRINGS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_36.md `[TYP-5]`, `[TXT-3]`,
+               `[TXT-5]`, `[FFI-15]`, `E5020`, `E5064`
+
+    Question:  `[FFI-15]` says `s.to_cstring()` allocates and fails on an
+               interior NUL, but gives no failure type or behavior. It also
+               calls `.to_cstring()` a fix for passing `str` to `cstr`,
+               while `[TYP-5]` calls its coercion list complete and does
+               not include `CString` to `cstr`. An owning value must keep
+               its storage alive for every borrowed C pointer.
+
+    Blocks implementation:            YES — owned C strings and safe calls
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Return `Result[CString, NulError]`, with the first
+NUL byte offset, and require an explicit `.as_cstr()` borrow after handling
+the error. Call sites are longer, but failure is recoverable, allocation
+happens only for valid input, and a named owner bounds the C pointer. (b)
+Return `CString` and panic on an interior NUL, with an implicit borrow
+coercion. This makes the old diagnostic suggestion directly usable, but
+ordinary runtime input can abort a program and the temporary owner's
+lifetime is less visible. (c) Return a result and add implicit borrowing
+of `CString` after the error is handled. This is recoverable and concise,
+but extends the complete coercion list and hides an FFI lifetime edge.
+**(a)**.
+
+**Ruling.** `str.to_cstring() -> Result[CString, NulError]` scans for the
+first interior NUL. `NulError` exposes that byte index. On `Err` it has
+not allocated a C string; on `Ok` the `CString` owns copied bytes followed
+by exactly one NUL terminator. `CString.as_cstr() -> cstr` is a zero-copy,
+non-null borrow whose region is bounded by the `CString` owner. A `String`
+may use the same method by read-through to `str`. Neither `CString` nor
+`Result[CString, NulError]` implicitly coerces to `cstr`; `[TYP-5]` stays
+complete. `E5020` must suggest a literal or an owned local, error handling,
+and `.as_cstr()`, rather than a replacement that fails to type-check.
+`E5064` remains the diagnostic for an interior NUL in a C-string literal;
+runtime text reports `NulError` instead of truncating or panicking.
+
+**Implementation.** Hardened_37 updates `[TXT-5]` and `[FFI-15]`.
+Conformance must cover the success and interior-NUL paths, the terminating
+byte at the C ABI, the borrow's lifetime, and the absence of an implicit
+`CString` to `cstr` conversion.
 
 ---
 

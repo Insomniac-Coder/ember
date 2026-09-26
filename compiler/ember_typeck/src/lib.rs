@@ -20785,7 +20785,7 @@ impl<'a> Checker<'a> {
             let span = expr.span;
             self.sink.emit(Diagnostic::error(codes::E5020, span,
                 "expected `cstr`, found `str`")
-                .help("use a `c\"…\"` literal or convert with `.to_cstring()`"));
+                .help("use a `c\"…\"` literal, or handle `.to_cstring()` and pass the owned value's `.as_cstr()`"));
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
         let found = self.types.display(expr.ty);
@@ -26482,6 +26482,35 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_span_method(receiver, recv.span, elem, mutable, name, args, span);
+        }
+        if receiver.ty == self.common.cstr && name.name.is("to_str")
+            && explicit.is_empty() && !extension_generic
+        {
+            let bytes_ty = self.types.intern(TyKind::Span { elem: self.common.u8, mutable: false });
+            let bytes = Expr {
+                ty: bytes_ty,
+                kind: ExprKind::Builtin {
+                    which: Builtin::CStrToSpan,
+                    args: vec![self.read_through(receiver)],
+                },
+                span,
+            };
+            return self.synth_span_method(bytes, recv.span, self.common.u8, false, name, args, span);
+        }
+        if matches!(self.types.kind(receiver.ty), TyKind::Struct(id)
+            if self.types.struct_def(*id).name.is("std.ffi.CString"))
+            && name.name.is("as_cstr") && explicit.is_empty() && !extension_generic
+        {
+            if !args.is_empty() {
+                self.error(codes::E2020, span,
+                    format!("`as_cstr` takes 0 arguments, found {}", args.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !is_place(&receiver.kind) {
+                self.error(codes::E2140, span, "`as_cstr` needs an owned C-string variable to borrow");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.view_of(receiver, self.common.cstr, false, Builtin::CStringAsCStr);
         }
         // `[ERR-4]` (ODR-025) — the methods that take a function are
         // `std.core`'s `option_*`/`result_*` generics.

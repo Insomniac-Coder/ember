@@ -4874,6 +4874,12 @@ impl Emitter<'_> {
                         let source = self.span_value_expression(&rendered[0], *arg_ty);
                         return format!("(({RT}str){{ (const unsigned char*){source}.ptr, {source}.len }})");
                     }
+                    Builtin::CStrToSpan => {
+                        return format!("(({RT}span){{ (const void*){}, strlen({}) }})", rendered[0], rendered[0]);
+                    }
+                    Builtin::CStringAsCStr => {
+                        return format!("((const char*)({})->bytes.ptr)", rendered[0]);
+                    }
                     Builtin::StrToLower => {
                         return format!("{RT}str_to_lower({})", rendered[0]);
                     }
