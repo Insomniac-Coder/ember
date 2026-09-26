@@ -963,3 +963,8 @@ The next number is ODR-027.
   `ember.toml`; none can turn off a safety check. A misspelled or unsupported
   profile key now produces `E9001` at the manifest line. Custom profiles may
   still use `inherits` and the keys in the profile table.
+
+* **2026-09-26 — compact `Option` layouts (`[TYP-13]`).**
+  `Option[Class]`, `Option[Box[T]]`, `Option[ref T]`, `Option[char]`, and
+  `Option[bool]` now occupy the same number of bytes as their payloads.
+  Programs still distinguish `Some` and `None` and drop owned payloads once.

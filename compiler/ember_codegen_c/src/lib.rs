@@ -2811,6 +2811,11 @@ impl Emitter<'_> {
                 }
                 // `[TYP-13]` — an `Option` with a niche is its payload.
                 if let Some(niche) = self.types.option_niche(id) {
+                    if matches!(self.types.kind(niche.payload), TyKind::Bool) {
+                        // C's `bool` canonicalises every nonzero value to 1;
+                        // keep None's third bit pattern in an integer byte.
+                        return Definition::Alias("uint8_t".to_string());
+                    }
                     return Definition::Alias(self.c_type(niche.payload));
                 }
                 let mut members = vec![format!("{} tag", self.c_type(def.repr))];
@@ -5786,12 +5791,27 @@ impl Emitter<'_> {
         format!("({access}).payload.{}.{}", variant.name, variant.fields[field].name)
     }
 
-    /// True when the niche `Option` at `access` is `None`: `NonZero`'s one
-    /// field is 0, which no `NonZero` holds (`[STD-4]`).
+    /// True when the niche `Option` at `access` is `None`.
     fn niche_holds(&self, niche: &Niche, access: &str) -> String {
+        if matches!(self.types.kind(niche.payload), TyKind::Bool) {
+            return format!("({access}) == UINT8_C(2)");
+        }
+        if matches!(self.types.kind(niche.payload), TyKind::Char) {
+            return format!("({access}) == UINT32_C(0x110000)");
+        }
+        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
+            return format!("({access}) == NULL");
+        }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
-            unreachable!("a niche is a NonZero's")
+            unreachable!("struct niche payload expected")
         };
+        if let Some(inner) = self.types.compiler_box_inner(id) {
+            return if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                format!("({access}).data == NULL")
+            } else {
+                format!("({access}) == NULL")
+            };
+        }
         let field = &self.types.struct_def(id).fields[0];
         let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
         self.eq_expr(&format!("({access}).{}", field.name), &zero, field.ty)
@@ -5799,9 +5819,25 @@ impl Emitter<'_> {
 
     /// A niche `Option`'s `None`: its payload holding the niche.
     fn niche_none(&self, niche: &Niche) -> String {
+        if matches!(self.types.kind(niche.payload), TyKind::Bool) {
+            return "UINT8_C(2)".to_string();
+        }
+        if matches!(self.types.kind(niche.payload), TyKind::Char) {
+            return "UINT32_C(0x110000)".to_string();
+        }
+        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
+            return format!("(({})NULL)", self.c_type(niche.payload));
+        }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
-            unreachable!("a niche is a NonZero's")
+            unreachable!("struct niche payload expected")
         };
+        if let Some(inner) = self.types.compiler_box_inner(id) {
+            return if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                format!("(({}){{ .data = NULL, .vtable = NULL }})", self.c_type(niche.payload))
+            } else {
+                format!("(({})NULL)", self.c_type(niche.payload))
+            };
+        }
         let field = &self.types.struct_def(id).fields[0];
         let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
         format!("(({}){{ .{} = {zero} }})", self.c_type(niche.payload), field.name)

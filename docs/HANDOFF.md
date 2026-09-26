@@ -10896,9 +10896,20 @@ the running narrative behind it.
   a key outside the profile table is now `E9001` at its manifest line.
   A valid custom profile with inheritance and every listed key still checks.
   The integration case failed before this change. No ODR was needed.
-* **Next task:** continue solo with Phase 3's class work after committing
-  this five-feature batch. `[TYP-13]`'s other niches join at
-  `TypeTable::option_niche` (ADR-056).
+* **`[TYP-13]` five niche layouts (2026-09-26, next five-feature batch):**
+  `Option` now uses one payload-sized representation for a class handle,
+  `Box`, ordinary `ref`, `char`, and `bool`, in addition to the existing
+  `NonZero[T]` case. The pointer-like types use null for `None`; `char` uses
+  invalid scalar U+110000; `bool` uses byte 2 and its C alias is `uint8_t`
+  because C `bool` would normalise that value to true. Each conformance case
+  was red on size before its implementation, then passed with `Some` and
+  `None`; the class case also checks its one destructor run. `Box[dyn]` uses
+  the null data pointer of its two-word carrier; `ref dyn` remains outside
+  this slice because its layout and lowering need separate work. Still open
+  under `[TYP-13]`: `Span`, `str`, extern function, range and enum niches.
+* **Next task:** continue solo with the remaining `[TYP-13]` niches and
+  Phase 3 work after committing this batch. Audit rows for `[CLS-2]` and
+  `[CLS-7]` were stale: the existing code and tests cover their stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**
 
   | Phase | % |

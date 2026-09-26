@@ -1179,9 +1179,12 @@ impl TypeTable {
     }
 
     /// `[TYP-12]` — a unit-only enum is its discriminant. A payload enum is
-    /// `{tag, union of variants}`, tag first. `[TYP-13]`'s niche optimisation
-    /// is not applied yet, so `Option[T]` is still tag-plus-payload.
+    /// `{tag, union of variants}`, tag first. A niche `Option[T]` has the
+    /// same layout as `T` and keeps `None` in a value unavailable to `T`.
     fn enum_layout(&self, id: EnumId) -> Layout {
+        if let Some(niche) = self.option_niche(id) {
+            return self.layout(niche.payload);
+        }
         let def = self.enum_def(id);
         let tag = self.layout(def.repr);
         if def.is_unit_only() {
@@ -1264,8 +1267,9 @@ impl TypeTable {
     }
 
     /// `[TYP-13]`, `[STD-4]` — an `Option[T]` that keeps `None` inside a
-    /// `T`, when `T` has a niche: a value no `T` ever holds. So far the one
-    /// such `T` is `NonZero[T]`, whose niche is 0.
+    /// `T`, when `T` has a niche: a value no `T` ever holds. A class handle,
+    /// `Box` and an ordinary reference are non-null, `bool` has only two
+    /// values, `char` cannot hold U+110000, and `NonZero[T]` never holds zero.
     pub fn option_niche(&self, id: EnumId) -> Option<Niche> {
         let def = self.enum_def(id);
         if !def.name.as_str().starts_with("Option_") || def.variants.len() != 2 {
@@ -1274,7 +1278,12 @@ impl TypeTable {
         let none = def.variants.iter().position(|v| v.fields.is_empty())?;
         let some = def.variants.iter().position(|v| v.fields.len() == 1)?;
         let payload = def.variants[some].fields[0].ty;
-        self.is_nonzero(payload).then_some(Niche { none, some, payload })
+        (self.is_nonzero(payload)
+            || matches!(self.kind(payload), TyKind::Class(_) | TyKind::ClassInterface(_))
+            || matches!(self.kind(payload), TyKind::Bool | TyKind::Char)
+            || matches!(self.kind(payload), TyKind::Ref { inner, .. } if !matches!(self.kind(*inner), TyKind::Dyn { .. }))
+            || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some()))
+        .then_some(Niche { none, some, payload })
     }
 
     /// The payload of the compiler-known `Box[T]` struct `id`. Its origin is
