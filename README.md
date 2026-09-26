@@ -1,4 +1,6 @@
-# Ember
+<p align="center">
+  <img src="docs/brand/ember-banner.svg" alt="Ember" width="100%">
+</p>
 
 Ember is an experimental, statically typed, ahead-of-time compiled language for systems and
 application code. It aims for memory safety without a garbage collector, C-like speed, and
@@ -210,6 +212,7 @@ tasks/spec-0.9.9/    the 0.9.9 specification's sources and their build tools
 docs/spec-source/    each Hardened_N, the adopted spec, and the pinned development target
 docs/errors/         one page per diagnostic code
 docs/proposals/      the owner's design proposals
+docs/brand/          the logo: mark, icon, lockups and banner
 examples/            standalone programs
 ```
 
