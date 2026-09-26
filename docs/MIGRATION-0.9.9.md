@@ -814,3 +814,9 @@ The next number is ODR-027.
     (D-305).
   * A generic body gets a bounded extension of an instance over its own parameter (D-340).
   * `Maybe.Just(3)` and `Maybe.Nothing` find a generic enum's arguments (D-341).
+* **2026-09-26 — a generic body means the same for every instance (D-284, ODR-048; Hardened_23).**
+  A generic method or function that returns a reference into a parameter (`fn first(self) -> ref T:
+  return ref self.item`) compiles for every type argument, a view such as `str` included: the
+  instance passes that parameter as the declaration does. A parameter an instance's type makes a
+  view is a source of that instance. Found and open: a temporary without a destructor may be
+  borrowed past its statement (D-342).

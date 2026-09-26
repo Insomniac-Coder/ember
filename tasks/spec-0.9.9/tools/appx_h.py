@@ -298,6 +298,10 @@ ODRS = [
                 'integer type, through a private `Integer`; `x // d` and `x % d` take a `NonZero` of `x`\'s type '
                 'and answer in it (Hardened_22)',
      '`[STD-4]`, `[TYP-13]`'),
+    ('ODR-048', 'an instance of a generic passes a parameter its result may point into as the declaration does '
+                '(`Holder[str]`\'s receiver by address, as `Holder[T]`\'s); a parameter an instance\'s type makes a '
+                'view is a source of that instance (Hardened_23)',
+     '`[BRW-8]`, `[LT-1]`'),
 ]
 
 H5_HEAD = """
@@ -310,7 +314,7 @@ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
 Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
 Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
 Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
-Hardened_21 adds ODR-046; Hardened_22 adds ODR-047.
+Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048.
 
 | ODR | Ruling | Rules |
 |---|---|---|

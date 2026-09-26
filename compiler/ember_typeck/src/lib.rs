@@ -1109,6 +1109,11 @@ struct Checker<'a> {
     /// Source declarations for generic methods, keyed by their uninstantiated
     /// method `DefId`.
     generic_method_sources: HashMap<DefId, MethodSource>,
+    /// D-284 — a method made from a generic type's recipe for a concrete
+    /// owner: its parameters as declared, over the owner's own parameters
+    /// (`self: Holder[T]` for `Holder[str]`'s), which its body was checked
+    /// with.
+    declared_params: HashMap<DefId, Vec<(Symbol, Ty)>>,
     /// Import-visible member declarations collected from resolved source
     /// signatures. This is distinct from HIR/MIR bodies because interface and
     /// generic members can be semantically visible without an emitted body.
@@ -1318,6 +1323,7 @@ impl<'a> Checker<'a> {
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
+            declared_params: HashMap::new(),
             member_callable_declarations: Vec::new(),
             pending_generic_methods: Vec::new(),
             pending_generic_method_validations: Vec::new(),
@@ -4268,6 +4274,16 @@ impl<'a> Checker<'a> {
         // type itself (`check_generic_type_methods`), with the right bounds
         // in scope, and again for each concrete instance. D-250.
         let opaque = owner_bindings.iter().any(|&(_, bound)| self.types.is_generic(bound));
+        if !opaque && let Some(owner) = self.opaque_owner(ty) {
+            let mut declared = Vec::new();
+            if method.receiver.is_some() {
+                declared.push((Symbol::intern("self"), owner));
+            }
+            for &(param_name, param_ty, _, _) in &method.params {
+                declared.push((param_name, self.substitute_self(param_ty, owner)));
+            }
+            self.declared_params.insert(def, declared);
+        }
         if !method.has_body && matches!(self.types.kind(ty), TyKind::Class(_)) {
             self.abstract_methods.insert(def);
             self.pending_abstract_methods.push(PendingAbstractMethod {
@@ -10369,7 +10385,7 @@ impl<'a> Checker<'a> {
                     {
                         let local_ty = match mode {
                             Mode::Mut => self.mut_param_ty(ty),
-                            Mode::Borrow => self.borrow_param_ty(ty),
+                            Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                             _ => ty,
                         };
                         let local = self.declare(Some(name), local_ty, param_span);
@@ -10426,7 +10442,7 @@ impl<'a> Checker<'a> {
                 // never sees it.
                 let local_ty = match mode {
                     Mode::Mut => self.mut_param_ty(ty),
-                    Mode::Borrow => self.borrow_param_ty(ty),
+                    Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                     _ => ty,
                 };
                 let local = self.declare(Some(name), local_ty, span);
@@ -10923,7 +10939,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
-                Mode::Borrow => self.borrow_param_ty(ty),
+                Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -11480,7 +11496,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 Mode::Borrow if index == 0 && name.is("self") && self.receiver_by_address(ty, def) => {
                     self.types.intern(TyKind::Ref { mutable: false, inner: ty })
                 }
-                Mode::Borrow => self.borrow_param_ty(ty),
+                // D-284 — as the generic's declaration passes it.
+                Mode::Borrow if self.param_by_address(def, name, ty) => {
+                    self.types.intern(TyKind::Ref { mutable: false, inner: ty })
+                }
+                Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                 _ => ty,
             };
             let local = self.declare(Some(name), local_ty, param_span);
@@ -22124,12 +22144,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // re-check exists so an untyped literal can adopt the substituted
             // parameter type; a closure has nothing to adopt.
             let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
+            // D-284 — as the generic's declaration passes it.
+            let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument(value, param_ty, mode);
+                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
                     checked.push(value)
                 }
-                None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
+                None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
             }
         }
         let ret = self.substitute_ty(ret, &substitution);
@@ -22389,12 +22411,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let Some(arg_index) = arg_for_param[index] else { continue };
             let arg = &args[arg_index];
             let already = matches!(arg.value.kind, ast::ExprKind::Lambda(_));
+            // D-284 — as the generic's declaration passes it.
+            let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument(value, param_ty, mode);
+                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
                     checked.push(value)
                 }
-                None => checked.push(self.check_argument(&arg.value, param_ty, mode)),
+                None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
             }
         }
         let ret = self.substitute_ty(ret, &substitution);
@@ -23792,10 +23816,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.types.is_source_parameter(ty, matches!(mode, Mode::Borrow | Mode::Mut))
     }
 
-    /// `sources_of` the declared signature: an instantiation's generic one.
+    /// `sources_of` the declared signature (ODR-024): an instantiation's
+    /// generic one, or a recipe method's over its owner's own parameters
+    /// (D-284), each type parameter taken to be `Copy`. And, by `[LT-1]`'s
+    /// "a reference or view", each parameter the instance's own type makes a
+    /// view: `Tree[str].leaf(v: str)` returns a view of what `v` views, and
+    /// its callers, which see the instance, know it.
     fn declared_sources(&self, def: DefId) -> Vec<usize> {
         let declared = self.generic_of.get(&def).copied().unwrap_or(def);
-        self.sources_of(&self.signatures[declared.0 as usize].params)
+        let written = self.declared_params.get(&declared).or_else(|| self.declared_params.get(&def));
+        let params = &self.signatures[declared.0 as usize].params;
+        let instance = &self.signatures[def.0 as usize].params;
+        params
+            .iter()
+            .enumerate()
+            .filter(|&(index, (name, ty, mode, _))| {
+                let ty = written.and_then(|written| written.iter().find(|(param, _)| param == name)).map_or(*ty, |&(_, ty)| ty);
+                self.is_source_parameter(ty, *mode)
+                    || instance.get(index).is_some_and(|(_, own, _, _)| self.types.is_view(*own))
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// A borrowed parameter's local: `ref T` where `def` passes it by address
+    /// (`[BRW-8]`), as its declaration decides (D-284).
+    fn borrow_param_ty_of(&mut self, def: DefId, name: Symbol, ty: Ty) -> Ty {
+        if self.param_by_address(def, name, ty) {
+            self.types.intern(TyKind::Ref { mutable: false, inner: ty })
+        } else {
+            ty
+        }
     }
 
     fn borrow_param_ty(&mut self, ty: Ty) -> Ty {
@@ -24637,7 +24688,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 );
             }
             let slots = self.call_argument_slots(name.name, args, &signature.params);
-            let checked = self.check_bound_call_arguments(args, &signature.params, &slots);
+            let checked = self.check_bound_call_arguments(args, &signature.params, &slots, None);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
             let layout = self.dyn_vtable_layout(&interfaces);
             return Expr {
@@ -25480,7 +25531,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
-        checked.extend(self.check_bound_call_arguments(args, &params, &slots));
+        checked.extend(self.check_bound_call_arguments(args, &params, &slots, Some(def)));
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -26743,6 +26794,37 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             _ => Vec::new(),
         };
         let ty = self.types.intern(TyKind::Fn { latebound: false, params, ret });
+        // D-284 (ODR-048) — an instance may take a parameter by address, as
+        // its generic's declaration does, where a callable type of the same
+        // parameters takes a copy; the two calls would disagree.
+        let by_address: Option<Symbol> = signature
+            .params
+            .iter()
+            .enumerate()
+            .find(|&(index, &(param, param_ty, mode, _))| {
+                mode == Mode::Borrow
+                    && !self.types.passed_by_address(param_ty)
+                    && if index == 0 && param.is("self") {
+                        self.receiver_by_address(param_ty, def)
+                    } else {
+                        self.param_by_address(def, param, param_ty)
+                    }
+            })
+            .map(|(_, &(param, ..))| param);
+        if let Some(parameter) = by_address {
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(
+                    codes::E2020,
+                    span,
+                    format!("`{name}` is not a value of type `{shown}`: it takes `{parameter}` by address"),
+                )
+                .primary_label(format!("`{name}` used as a value here"))
+                .help(format!("call `{name}` directly"))
+                .note("an instance passes a parameter its result may point into as its generic declares it, and a callable type of the same parameters passes a copy (BRW-8, ODR-048)"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         if let Some(parameter) = beyond.first() {
             let shown = self.types.display(ty);
             self.sink.emit(
@@ -30154,9 +30236,82 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return true;
         }
         let ret = self.signatures[callee.0 as usize].ret;
-        self.types.is_view(ret)
+        (self.types.is_view(ret)
             && !self.types.is_view(ty)
-            && !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error)
+            && !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error))
+            || self.param_by_address(callee, Symbol::intern("self"), ty)
+    }
+
+    /// `[BRW-8]` (ODR-024), D-284 — whether `callee`'s borrowed parameter
+    /// `name`, of type `ty`, is passed by address. An instance of a generic
+    /// passes a parameter the result may point into as the declaration does:
+    /// `fn inner[T](w: Wrap[T]) -> ref T` takes `w` by address, so
+    /// `Wrap[str]`, a view that would otherwise be copied, is taken by
+    /// address too, and `return ref w.item` means for every `T` what the
+    /// generic body means. A parameter the result may point into is the
+    /// receiver, or a source by the declared signature (a type that is not
+    /// `Copy` with each type parameter taken to be `Copy`, ODR-024). Where
+    /// the result is not a view nothing can tell, and the instance's own type
+    /// decides.
+    fn param_by_address(&self, callee: DefId, name: Symbol, ty: Ty) -> bool {
+        if self.types.passed_by_address(ty) {
+            return true;
+        }
+        if !self.types.is_view(self.signatures[callee.0 as usize].ret) {
+            return false;
+        }
+        let Some(declared) = self.declared_param_ty(callee, name) else { return false };
+        if declared == ty || self.types.is_view(declared) {
+            return false;
+        }
+        if name.is("self") {
+            // As `receiver_by_address` passes the declared receiver.
+            return !matches!(self.types.kind(declared), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error);
+        }
+        !self.types.is_copy_for_elision(declared)
+    }
+
+    /// D-284 — `callee`'s parameter `name` as its declaration wrote it: an
+    /// instance's generic's, or a recipe method's over the owner's own
+    /// parameters.
+    fn declared_param_ty(&self, callee: DefId, name: Symbol) -> Option<Ty> {
+        if let Some(declared) = self.declared_params.get(&callee) {
+            return declared.iter().find(|(param, _)| *param == name).map(|&(_, ty)| ty);
+        }
+        let generic = *self.generic_of.get(&callee)?;
+        self.declared_param_ty(generic, name).or_else(|| {
+            self.signatures[generic.0 as usize].params.iter().find(|(param, ..)| *param == name).map(|&(_, ty, ..)| ty)
+        })
+    }
+
+    /// D-284 — the instance of `ty`'s generic type over its own parameters,
+    /// `Holder[T]` for `Holder[str]`: what the generic's methods were checked
+    /// with.
+    fn opaque_owner(&mut self, ty: Ty) -> Option<Ty> {
+        let (name, args) = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone()?,
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone()?,
+            TyKind::Class(id) => self.types.class_def(id).origin.clone()?,
+            _ => self.builtin_generic_origin(ty)?,
+        };
+        let names: Vec<Symbol> = if let Some(recipe) = self.generic_structs.get(&name) {
+            recipe.params.clone()
+        } else if let Some(recipe) = self.generic_enums.get(&name) {
+            recipe.params.clone()
+        } else if let Some(recipe) = self.generic_classes.get(&name) {
+            recipe.params.clone()
+        } else {
+            (0..args.len()).map(|index| Symbol::intern(&format!("T{index}"))).collect()
+        };
+        if names.len() != args.len() {
+            return None;
+        }
+        let params: Vec<Ty> = names
+            .iter()
+            .enumerate()
+            .map(|(index, &name)| self.types.intern(TyKind::Param { index: index as u32, name }))
+            .collect();
+        self.generic_target_instance(name, &params, Span::DUMMY)
     }
 
     /// `pass_receiver` for a call whose callee is known.
@@ -30203,7 +30358,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// An already-checked argument, passed in its parameter's mode: borrowed
     /// where the parameter is passed by address (`[BRW-8]`).
     fn pass_argument(&mut self, value: Expr, param_ty: Ty, mode: Mode) -> Expr {
-        if mode == Mode::Borrow && self.types.passed_by_address(param_ty) {
+        let by_address = self.types.passed_by_address(param_ty);
+        self.pass_argument_by(value, param_ty, mode, by_address)
+    }
+
+    fn pass_argument_by(&mut self, value: Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        if mode == Mode::Borrow && by_address {
             self.borrow_argument(value, param_ty)
         } else {
             value
@@ -30383,7 +30543,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         slots: &[Option<usize>],
         span: Span,
     ) -> (Vec<Expr>, Vec<Option<usize>>) {
-        let written = self.check_bound_call_arguments(args, params, slots);
+        let written = self.check_bound_call_arguments(args, params, slots, Some(def));
         let mut given = vec![false; params.len()];
         for slot in slots.iter().flatten() {
             given[*slot] = true;
@@ -30425,8 +30585,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.scopes = scopes;
                 if self.sink.rollback(mark) {
                     Expr { ty, kind: ExprKind::Error, span }
-                } else if mode == Mode::Borrow && self.types.passed_by_address(ty) {
-                    // Passed as any argument would be (`[BRW-8]`).
+                } else if mode == Mode::Borrow && self.param_by_address(def, name, ty) {
+                    // Passed as any argument would be (`[BRW-8]`, D-284).
                     self.borrow_argument(value, ty)
                 } else {
                     value
@@ -30460,12 +30620,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         params: &[(Symbol, Ty, Mode, Span)],
         slots: &[Option<usize>],
+        callee: Option<DefId>,
     ) -> Vec<Expr> {
         let mut checked: Vec<Option<Expr>> = (0..params.len()).map(|_| None).collect();
         for (arg, slot) in args.iter().zip(slots.iter().copied()) {
             let Some(slot) = slot else { continue };
-            let (_, param_ty, mode, _) = params[slot];
-            checked[slot] = Some(self.check_argument(&arg.value, param_ty, mode));
+            let (name, param_ty, mode, _) = params[slot];
+            // D-284 — as the callee's declaration passes it.
+            let by_address = match callee {
+                Some(callee) => self.param_by_address(callee, name, param_ty),
+                None => self.types.passed_by_address(param_ty),
+            };
+            checked[slot] = Some(self.check_argument_by(&arg.value, param_ty, mode, by_address));
         }
         checked.into_iter().flatten().collect()
     }
@@ -30474,7 +30640,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// address of a place, so the callee writes through to the caller's
     /// variable; everything else is passed by value.
     fn check_argument(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode) -> Expr {
-        if mode == Mode::Borrow && self.types.passed_by_address(param_ty) {
+        let by_address = self.types.passed_by_address(param_ty);
+        self.check_argument_by(arg, param_ty, mode, by_address)
+    }
+
+    /// `check_argument` for a parameter whose passing the callee decides
+    /// (`param_by_address`, D-284).
+    fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        if mode == Mode::Borrow && by_address {
             let value = self.check_expr(arg, param_ty);
             return self.borrow_argument(value, param_ty);
         }
@@ -30736,7 +30909,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let slots = self.call_argument_slots(name, args, params);
-                let values = self.check_bound_call_arguments(args, params, &slots);
+                let values = self.check_bound_call_arguments(args, params, &slots, Some(init));
                 (init, values, Self::call_eval_order(&slots))
             } else {
                 // D-235 — an `init` with a callable parameter is generic

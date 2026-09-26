@@ -10733,18 +10733,20 @@ the running narrative behind it.
     CI green), `a79e1a5` (`std.math.det`, ODR-046, D-327 to D-329; both
     Windows jobs failed, D-330), `bc6d6c8` (D-330's fix; CI green), then
     `NonZero[T]` (`e663590`: ODR-047, Hardened_22, D-332 to D-339; CI
-    green), then D-305 and `for x in owned e` (D-340, D-341). From the
+    green), `4883eab` (D-305 and `for x in owned e`, D-340, D-341; CI
+    green), then D-284 (ODR-048, Hardened_23; D-342 open). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_22.md`
-  (ODR-047), pinned in `docs/spec-source/development-target.json`. The spec's
-  working sources are `tasks/spec-0.9.9/parts/`; `parts-h22/` is frozen.
-* **Next numbers:** ODR-048, D-342, ADR-057.
-* **Next task:** A1 to A4 are done, and B1's D-305 and `for k in owned m`.
-  B1's D-284 is next; then the open defects, where D-328 (method
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_23.md`
+  (ODR-048), pinned in `docs/spec-source/development-target.json`. The spec's
+  working sources are `tasks/spec-0.9.9/parts/`; `parts-h23/` is frozen.
+* **Next numbers:** ODR-049, D-343, ADR-057.
+* **Next task:** A1 to A4 and B1 are done. B2, the open defects: D-270,
+  D-273, D-218, D-220, D-202, D-201, D-198, D-342 (a temporary's end for
+  the region check), then D-328 (method
   visibility, after a `std` audit) and D-331 (a nesting limit with a
   diagnostic, which needs an ODR) also belong; then the rest of the list.
   `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
@@ -11002,6 +11004,23 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
     `into_iter` needs it.
   * **D-341.** `synth_inferred_variant`: `Maybe.Just(3)`, D-334's solving
     for a generic enum's variant.
+* **Then D-284 (ODR-048).** `param_by_address(callee, name, ty)` decides a
+  borrowed parameter's passing for a known callee: by its type, or, where the
+  result is a reference or view, as the declared parameter would be (the
+  receiver unless the declared one is a view or a class; another parameter
+  when the declared type is a source by `is_copy_for_elision`).
+  `declared_param_ty` finds the declared type through `generic_of`, or in
+  `declared_params`, which `register_recipe_method` fills for a concrete
+  owner from the method's own types with `Self` as `opaque_owner(ty)`
+  (`Holder[T]` for `Holder[str]`). Keyed by parameter name, since a method's
+  call sites count positions with or without the receiver. Used by
+  `borrow_param_ty_of` (every body's parameter locals but a lambda's),
+  `receiver_by_address`, `check_bound_call_arguments` (now given the
+  callee), the generic call paths and default arguments; a call through a
+  function value keeps the type's rule, as the function-pointer type does.
+  `declared_sources` adds each parameter the instance's type makes a view.
+  `fn_value_of` refuses such an instance as a function value (`E2020`).
+  D-342 (open) was found on the way.
 
 **The owner's standing instructions (all still in force)**
 

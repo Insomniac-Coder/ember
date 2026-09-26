@@ -50,6 +50,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-048 | **CLOSED** — an instance of a generic passes a parameter its result may point into (the receiver, or a declared source) as the declaration does, whatever the type arguments; a parameter an instance's type makes a reference or view is a source of that instance | Language / regions / generics | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_23 |
 | ODR-047 | **CLOSED** — `NonZero[T]` is `std.core`'s, imported by name; `get()` reads it and its field and memberwise constructor are private; `T` is one of the integer types (a private `std.core.Integer`); `x // d` and `x % d` take a `NonZero` of `x`'s type and answer in it, still panicking on overflow; `Option[NonZero[T]]` keeps `None` as 0 | Standard library / types | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_22 |
 | ODR-046 | **CLOSED** — `std.math.det`'s functions take `f32` or `f64` and answer in it (an `f32`'s result is the `f64` one rounded once), within one unit in the last place (`atan2` 1.3); an integer is converted by the program | Standard library / determinism | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_21 |
 | ODR-045 | **CLOSED** — a type's `const` is named `T.NAME` (`Self.NAME` inside it) and is private to its module unless `pub`; constants name one another in any order, one whose value depends on itself is `E6001`, and a panic while one is evaluated is `E6004` | Language / declarations | — | Delegated for 0.9.9 — ruled 2026-09-26, 0.9.9_Hardened_20 |
@@ -201,6 +202,51 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-048 — how an instance of a generic passes and elides its parameters — **CLOSED**
+
+    ID:        ODR-048
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation for 0.9.9;
+               incorporated in 0.9.9_Hardened_23
+    Category:  LANGUAGE / REGIONS / GENERICS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_22.md [BRW-8], [LT-1], [TYP-16], ODR-024
+
+    Question:  `[BRW-8]` and `[LT-1]` fix a parameter's passing and whether it
+               is a source "by the declared signature". A generic's body is
+               checked with its type parameters opaque, and each instance's
+               again with its arguments. When an argument is a view or `Copy`
+               (`Holder[str]`, `Wrap[i64]` made `Copy`), the instance's
+               parameter types say "passed as a copy" where the generic's said
+               "by address", and `return ref self.item`, valid in the generic,
+               is `E3060` in that instance only (D-284). Which signature is an
+               instance's declared one? And is a parameter an instance's type
+               makes a view (`v: T` with `T = str`) a source?
+
+    Blocks implementation:            YES — D-284
+    Requires owner semantic decision:  delegated to the agent for 0.9.9 (owner, 2026-09-23)
+
+**Options and costs.**
+- **Passing.** (a) The instance's own types decide, as now: a generic body
+  valid for `T` can fail for one argument, found only where that argument
+  is used. (b) The generic's declaration decides for every parameter: every
+  instance over `i64` passes its `T`s by address, losing register passing
+  for all generic code. (c) The declaration decides for a parameter the
+  result may point into (the receiver, or a source of `[LT-1]`'s second
+  kind), wherever the result is a reference or view; elsewhere nothing can
+  tell, and the instance passes as its types say. **(c)**: the body means one
+  thing for every instance, and scalars keep their registers.
+- **Views.** (i) Only the declaration's sources: `Tree[str].leaf(v: T)`
+  returns a view of what `v` views, which the declaration says it cannot,
+  so the instance is `E3062`, although nothing in `leaf` is wrong for
+  `str`. (ii) Also each parameter whose type in the instance is a reference
+  or view, which `[LT-1]`'s first kind names by its type: a caller calls a
+  given instance, and keeps what it passed borrowed accordingly, so it is
+  never told less than the result holds. **(ii)**.
+
+**Ruling.** (c) and (ii). `[BRW-8]` and `[LT-1]` say so.
 
 ---
 
