@@ -10973,14 +10973,26 @@ first**; the rest of §0.355 is the running narrative behind it.
     and `FFI-15/` exercise C calls, non-UTF-8 bytes, constants, malformed
     declarations, missing contracts, and incomplete-layout rejection.
     Hardened_35 already specifies these surfaces, so no ODR or new cut was
-    needed. The full annotation sweep and workspace suite pass locally.
+    needed. The full annotation sweep and workspace suite passed locally;
+    commit `f989c1b` was pushed to `main`. Its CI run is `36275088850`.
+  * ODR-080 resolves a real mismatch: `[FFI-11]` promises optional nullable
+    C strings but `[TYP-13]` did not give `cstr` a null-pointer niche.
+    Hardened_36 now guarantees pointer-sized `Option[cstr]`, with null for
+    `None` and non-null for `Some`; nullable NUL-terminated input and result
+    contracts retain the result's asserted lifetime. Conformance cases
+    exercise the niche, C input carriers, static and input-derived optional
+    results (including an optional source), and mismatched or absent
+    contracts. The niche and nullable cases failed before implementation.
+    The H36 document and frozen parts match, its target pin is updated, and
+    the full annotation sweep, workspace suite, and repository gates pass
+    locally. The newest `main` run is the remote CI record for this batch.
 
   Check CI for the newest first. Runs through `19550ec` passed remotely.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_35.md`
-  (ODR-079), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_36.md`
+  (ODR-080), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h35/` are frozen.
-* **Next numbers:** ODR-080, D-363, ADR-063.
+  `parts-h36/` are frozen.
+* **Next numbers:** ODR-081, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11136,9 +11148,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** finish the remaining Phase 5 pointer contract shapes,
-  nullable C strings and owned `CString`, then foreign statics. Check the newest CI run before pushing
-  further work.
+* **Next task:** implement owned `CString` and its checked conversions, then
+  foreign statics. Check the newest CI run before pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

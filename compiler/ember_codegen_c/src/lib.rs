@@ -5987,7 +5987,7 @@ impl Emitter<'_> {
         {
             return format!("({access}).data == NULL");
         }
-        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
+        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. } | TyKind::CStr) {
             return format!("({access}) == NULL");
         }
         if matches!(self.types.kind(niche.payload), TyKind::Fn { abi: Some(_), .. }) {
@@ -6044,7 +6044,7 @@ impl Emitter<'_> {
         {
             return format!("(({}){{ .data = NULL, .vtable = NULL }})", self.c_type(niche.payload));
         }
-        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
+        if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. } | TyKind::CStr) {
             return format!("(({})NULL)", self.c_type(niche.payload));
         }
         if matches!(self.types.kind(niche.payload), TyKind::Fn { abi: Some(_), .. }) {

@@ -5160,14 +5160,14 @@ impl<'a> Checker<'a> {
                     let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
-                            Some(FfiResultContract::CStrStatic
+                            Some(FfiResultContract::CStrStatic | FfiResultContract::NullableCStrStatic
                                 | FfiResultContract::SharedOneStatic | FfiResultContract::NullableSharedOneStatic
                                 | FfiResultContract::ExclusiveOneStatic | FfiResultContract::NullableExclusiveOneStatic
                                 | FfiResultContract::SharedFixedStatic { .. } | FfiResultContract::NullableSharedFixedStatic { .. }
                                 | FfiResultContract::ExclusiveFixedStatic { .. } | FfiResultContract::NullableExclusiveFixedStatic { .. }
                                 | FfiResultContract::SharedCountStatic { .. } | FfiResultContract::NullableSharedCountStatic { .. }
                                 | FfiResultContract::ExclusiveCountStatic { .. } | FfiResultContract::NullableExclusiveCountStatic { .. }) => Some(Vec::new()),
-                            Some(FfiResultContract::CStrFrom(name)
+                            Some(FfiResultContract::CStrFrom(name) | FfiResultContract::NullableCStrFrom(name)
                                 | FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
                                 | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                                 | FfiResultContract::SharedFixedFrom { source: name, .. }
@@ -11476,7 +11476,8 @@ impl<'a> Checker<'a> {
                         format!("`@ffi` names no parameter `{contract_name}`")),
                     Some(&(_, ty, mode, _)) if !self.foreign_pointer_contract_required(ty) => {
                         let matches_safe_form = match kind {
-                            FfiPointerContract::NulTerminated => mode == Mode::Borrow && ty == self.common.cstr,
+                            FfiPointerContract::NulTerminated { nullable } => mode == Mode::Borrow &&
+                                if nullable { self.foreign_nullable_cstr(ty) } else { ty == self.common.cstr },
                             FfiPointerContract::MutOne => mode == Mode::Mut && self.types.is_ffi_safe(ty),
                             FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
                                 self.types.kind(ty), TyKind::Ref { mutable: false, inner }
@@ -11556,6 +11557,10 @@ impl<'a> Checker<'a> {
                     if ret != self.common.cstr =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` NUL-terminated result contract needs `cstr`"),
+                Some(FfiResultContract::NullableCStrStatic | FfiResultContract::NullableCStrFrom(_))
+                    if !self.foreign_nullable_cstr(ret) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` nullable NUL-terminated result contract needs `Option[cstr]`"),
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
                         if self.types.is_ffi_safe(*inner)) =>
@@ -11639,7 +11644,7 @@ impl<'a> Checker<'a> {
                 self.error(codes::E5002, decl.name.span,
                     format!("result `count({witness})` needs an input span sharing `{witness}`"));
             }
-            if let Some(FfiResultContract::CStrFrom(name)
+            if let Some(FfiResultContract::CStrFrom(name) | FfiResultContract::NullableCStrFrom(name)
                 | FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)
                 | FfiResultContract::ExclusiveOneFrom(name) | FfiResultContract::NullableExclusiveOneFrom(name)
                 | FfiResultContract::SharedFixedFrom { source: name, .. }
@@ -11668,9 +11673,15 @@ impl<'a> Checker<'a> {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
                 }
-                if ty == self.common.cstr && contract != Some(FfiPointerContract::NulTerminated) && unknown.is_empty() {
+                if ty == self.common.cstr && contract != Some(FfiPointerContract::NulTerminated { nullable: false }) && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` NUL-terminated contract for `{name}`"));
+                }
+                if self.foreign_nullable_cstr(ty)
+                    && contract != Some(FfiPointerContract::NulTerminated { nullable: true })
+                    && unknown.is_empty() {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` nullable NUL-terminated contract for `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
                     && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::Fixed { nullable: false, .. }))
@@ -11723,6 +11734,9 @@ impl<'a> Checker<'a> {
             } else if ret == self.common.cstr && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
                     "`safe fn` needs an `@ffi` contract for its `cstr` result");
+            } else if self.foreign_nullable_cstr(ret) && result_contract.is_none() && unknown_result.is_empty() {
+                self.error(codes::E5002, decl.name.span,
+                    "`safe fn` needs an `@ffi` contract for its `Option[cstr]` result");
             } else if matches!(self.types.kind(ret), TyKind::Ref { .. })
                 && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
@@ -11752,6 +11766,11 @@ impl<'a> Checker<'a> {
             TyKind::Ref { mutable, inner } => Some((*inner, *mutable)),
             _ => None,
         }
+    }
+
+    fn foreign_nullable_cstr(&self, ty: Ty) -> bool {
+        let TyKind::Enum(id) = self.types.kind(ty) else { return false };
+        self.types.option_niche(*id).is_some_and(|niche| niche.payload == self.common.cstr)
     }
 
     fn foreign_nullable_span_elem(&self, ty: Ty) -> Option<(Ty, bool)> {
@@ -34820,7 +34839,7 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FfiPointerContract {
-    NulTerminated,
+    NulTerminated { nullable: bool },
     SharedOne,
     MutOne,
     NullableSharedOne,
@@ -34833,6 +34852,8 @@ enum FfiPointerContract {
 enum FfiResultContract {
     CStrStatic,
     CStrFrom(Symbol),
+    NullableCStrStatic,
+    NullableCStrFrom(Symbol),
     SharedOneStatic,
     NullableSharedOneStatic,
     SharedOneFrom(Symbol),
@@ -34900,11 +34921,12 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     let source = source?;
     if exclusive && aliased { return None; }
     if nul_terminated {
-        if nullable || exclusive { return None; }
-        return Some(if source.is("static") {
-            FfiResultContract::CStrStatic
-        } else {
-            FfiResultContract::CStrFrom(source)
+        if exclusive { return None; }
+        return Some(match (nullable, source.is("static")) {
+            (false, true) => FfiResultContract::CStrStatic,
+            (false, false) => FfiResultContract::CStrFrom(source),
+            (true, true) => FfiResultContract::NullableCStrStatic,
+            (true, false) => FfiResultContract::NullableCStrFrom(source),
         });
     }
     Some(match (source.is("static"), nullable, exclusive, fixed, count) {
@@ -34978,7 +35000,7 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         return None;
     }
     let kind = match (count, fixed, nullable, exclusive) {
-        (None, None, false, false) if nul_terminated => FfiPointerContract::NulTerminated,
+        (None, None, nullable, false) if nul_terminated => FfiPointerContract::NulTerminated { nullable },
         (None, Some(len), nullable, exclusive) => FfiPointerContract::Fixed { len, exclusive, nullable },
         (Some(witness), None, nullable, exclusive) => FfiPointerContract::Count { witness, exclusive, nullable },
         (None, None, false, false) => FfiPointerContract::SharedOne,

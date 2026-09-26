@@ -364,6 +364,8 @@ ODRS = [
      '`[FFI-10]`, `[FFI-11]`'),
     ('ODR-079', 'a nullable hand-declared borrowed `count(n)` input sends `None` as null pointer and zero, but preserves `Some(empty)` with a non-null aligned static sentinel and zero (Hardened_35)',
      '`[FFI-10]`, `[FFI-11]`'),
+    ('ODR-080', '`Option[cstr]` has a null-pointer niche; nullable borrowed NUL-terminated C inputs and results use it without changing their lifetime contract (Hardened_36)',
+     '`[TYP-13]`, `[FFI-11]`, `[FFI-15]`'),
 ]
 
 H5_HEAD = """
@@ -387,7 +389,8 @@ counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-poi
 the exact pointer type of `null[P]()`; Hardened_33 adds ODR-077, the input length source for a
 borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive counted result's
 mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
-between absent and present-empty views.
+between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
+their null-pointer niche.
 
 | ODR | Ruling | Rules |
 |---|---|---|

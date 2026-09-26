@@ -58,6 +58,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-077 | **CLOSED** — a safe hand-declared `result(borrowed, count(n), ...)` requires an input span also contracted with `count(n)`; its length supplies the hidden C witness and the result length | Language / C interop / counted results | — | **No** — delegated, 2026-09-27, Hardened_33 |
 | ODR-078 | **CLOSED** — `exclusive` on a borrowed counted result yields `MutSpan[T]` (or `Option[MutSpan[T]]` with `nullable`), at the shared input witness length, through a mutable C pointer | Language / C interop / counted mutable results | — | **No** — delegated, 2026-09-27, Hardened_34 |
 | ODR-079 | **CLOSED** — nullable borrowed `count(n)` inputs map `None` to `(NULL, 0)` and `Some(empty)` to `(non-null, 0)`, synthesizing a call-safe aligned sentinel when its data pointer is null | Language / C interop / nullable counted inputs | — | **No** — delegated, 2026-09-27, Hardened_35 |
+| ODR-080 | **CLOSED** — `Option[cstr]` has a null-pointer niche and nullable borrowed NUL-terminated inputs/results use it | Language / C interop / nullable strings | — | **No** — delegated, 2026-09-27, Hardened_36 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -233,6 +234,50 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-080 — nullable borrowed C strings — **CLOSED**
+
+    ID:        ODR-080
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_36
+    Category:  LANGUAGE / C INTEROP / NULLABLE STRINGS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_35.md `[TYP-13]`, `[FFI-11]`, `[FFI-15]`
+
+    Question:  `[FFI-11]` maps a nullable pointer to `Option[…]` and maps
+               `nul_terminated` to `cstr`, but `[TYP-13]` omits `cstr` from
+               the guaranteed niche list. Thus the surface and C carrier
+               of a nullable borrowed C string are not determined together.
+
+    Blocks implementation:            YES — nullable C string contracts
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Give `cstr` a non-null invariant and reserve the
+null C pointer for `Option[cstr].None`, making the optional value pointer-sized
+and letting nullable input and result contracts map directly. This extends
+the niche guarantee by one type and obliges safe constructors and nonnullable
+foreign results to uphold it. (b) Use a tagged `Option[cstr]` and insert
+wrapper conversions at every C boundary. This retains the old niche list but
+makes the ordinary optional string larger and requires a distinct ABI shape
+even though the underlying pointer has a natural null sentinel. (c) Keep
+nullable NUL-terminated strings unsafe only. This leaves an explicit FFI
+contract axis unusable for a common C API.
+
+**Ruling.** Option (a). A safe `cstr` is non-null and points to a
+NUL-terminated byte sequence for its region. `Option[cstr]` has C pointer
+size and alignment; `None` is null, and `Some` is its non-null pointer.
+`@ffi(param(p, borrowed, nul_terminated, nullable))` admits a borrowed
+`Option[cstr]` and sends that carrier. A nullable result with the same
+count word and `from(p)` or `from(static)` returns `Option[cstr]`, decoding
+null to `None` and retaining the stated region for `Some`. Nullability does
+not excuse NUL termination or a missing lifetime fact. A nonnullable safe
+foreign result that returns null breaches its declared contract.
+
+**Implementation.** Hardened_36 adds the rule to `[TYP-13]` and `[FFI-15]`.
+Conformance checks the pointer-sized niche, nullable input carriers, null
+and non-null results, and rejection of mismatched or incomplete contracts.
 
 ---
 

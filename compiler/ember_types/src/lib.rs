@@ -1371,7 +1371,7 @@ impl TypeTable {
         (self.is_nonzero(payload)
             || matches!(self.kind(payload), TyKind::Class(_) | TyKind::ClassInterface(_))
             || matches!(self.kind(payload), TyKind::Bool | TyKind::Char)
-            || matches!(self.kind(payload), TyKind::Span { .. } | TyKind::Str)
+            || matches!(self.kind(payload), TyKind::Span { .. } | TyKind::Str | TyKind::CStr)
             || matches!(self.kind(payload), TyKind::Ref { .. })
             || matches!(self.kind(payload), TyKind::Fn { abi: Some(_), .. })
             || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some())
@@ -1702,7 +1702,7 @@ impl TypeTable {
             TyKind::CStr => true,
             TyKind::Fn { abi: Some(_), .. } => true,
             TyKind::Enum(id) => self.option_niche(*id).is_some_and(|niche| {
-                matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. })
+                matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. } | TyKind::CStr)
             }),
             TyKind::Array { elem, .. } => self.is_ffi_safe(*elem),
             TyKind::Struct(id) => {
