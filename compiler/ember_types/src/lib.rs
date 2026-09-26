@@ -298,6 +298,8 @@ pub struct ClassDef {
     pub name: Symbol,
     pub fields: Vec<FieldDef>,
     pub span: Span,
+    /// `[THR-1]`: handles may cross threads only for an explicitly `@sync` class.
+    pub is_sync: bool,
     pub openness: ClassOpenness,
     pub base: Option<ClassId>,
     pub has_drop: bool,
@@ -1037,9 +1039,10 @@ impl TypeTable {
     /// `[EXC-19]` — whether field `index` of class `id` (object layout, bases
     /// first) has its own access word: every non-`Copy` field. A `Copy`
     /// field's reads and writes are instantaneous and never checked
-    /// (`[EXC-17]`). (`@sync` classes, which need none, are not built.)
+    /// (`[EXC-17]`). Immutable `@sync` objects need no access words.
     pub fn class_field_has_access_word(&self, id: ClassId, index: usize) -> bool {
-        self.class_field_at(id, index).is_some_and(|field| !self.is_copy(field.ty))
+        !self.class_def(id).is_sync
+            && self.class_field_at(id, index).is_some_and(|field| !self.is_copy(field.ty))
     }
 
     /// Number of fields physically present in the object, including bases.
@@ -1143,6 +1146,15 @@ impl TypeTable {
                 align: self.pointer_size,
                 field_offsets: vec![0, self.pointer_size],
             },
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }
+                if matches!(self.kind(*inner), TyKind::Dyn { .. }) =>
+            {
+                Layout {
+                    size: self.pointer_size * 2,
+                    align: self.pointer_size,
+                    field_offsets: vec![0, self.pointer_size],
+                }
+            }
             TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } => {
                 Layout::scalar(self.pointer_size)
             }
@@ -1266,6 +1278,75 @@ impl TypeTable {
         self.copy_with(ty, false)
     }
 
+    /// `[THR-8]`/`[THR-9]` — structural thread properties. Compiler-owned
+    /// wrappers use their logical payload, not their private pointer field.
+    pub fn is_send(&self, ty: Ty) -> bool {
+        self.thread_properties(ty, &mut HashSet::new()).0
+    }
+
+    pub fn is_sync(&self, ty: Ty) -> bool {
+        self.thread_properties(ty, &mut HashSet::new()).1
+    }
+
+    fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>) -> (bool, bool) {
+        if !visiting.insert(ty) {
+            // Recursive value storage is impossible without indirection. A
+            // recursive @sync handle is safe once its declaration is checked.
+            return (true, true);
+        }
+        let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting);
+        let result = match self.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
+            | TyKind::Float(_) | TyKind::Void | TyKind::Never | TyKind::Str
+            | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
+            TyKind::Class(id) => {
+                let safe = self.class_def(*id).is_sync;
+                (safe, safe)
+            }
+            TyKind::Ref { mutable, inner } | TyKind::Span { mutable, elem: inner } => {
+                let (send, sync) = both(*inner, visiting);
+                if *mutable { (send, false) } else { (sync, sync) }
+            }
+            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Dyn { .. }
+            | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_)
+            | TyKind::IntLit | TyKind::FloatLit => (false, false),
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                if let Some((name, args)) = &def.origin {
+                    if name.is("Shared") || name.is("SyncShared") {
+                        (false, false) // SyncShared is not lowered yet.
+                    } else if name.is("Box") && args.len() == 1 {
+                        both(args[0], visiting)
+                    } else if name.is("Weak") && args.len() == 1 {
+                        let (_, sync) = both(args[0], visiting);
+                        (sync, sync)
+                    } else if name.is("std.mem.UnsafeCell") && args.len() == 1 {
+                        (both(args[0], visiting).0, false)
+                    } else {
+                        def.fields.iter().map(|field| both(field.ty, visiting))
+                            .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1))
+                    }
+                } else if def.name.as_str().starts_with("Cell_")
+                    || def.name.as_str().starts_with("RefCell_")
+                {
+                    (def.fields.iter().all(|field| both(field.ty, visiting).0), false)
+                } else {
+                    def.fields.iter().map(|field| both(field.ty, visiting))
+                        .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1))
+                }
+            }
+            TyKind::Enum(id) => self.enum_def(*id).variants.iter()
+                .flat_map(|variant| &variant.fields)
+                .map(|field| both(field.ty, visiting))
+                .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1)),
+            TyKind::Tuple(items) => items.iter().map(|&item| both(item, visiting))
+                .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => both(*elem, visiting),
+        };
+        visiting.remove(&ty);
+        result
+    }
+
     /// `[TYP-13]`, `[STD-4]` — an `Option[T]` that keeps `None` inside a
     /// `T`, when `T` has a niche: a value no `T` ever holds. This covers
     /// non-null pointers, spare scalar and enum values, constrained ranges,
@@ -1282,7 +1363,7 @@ impl TypeTable {
             || matches!(self.kind(payload), TyKind::Class(_) | TyKind::ClassInterface(_))
             || matches!(self.kind(payload), TyKind::Bool | TyKind::Char)
             || matches!(self.kind(payload), TyKind::Span { .. } | TyKind::Str)
-            || matches!(self.kind(payload), TyKind::Ref { inner, .. } if !matches!(self.kind(*inner), TyKind::Dyn { .. }))
+            || matches!(self.kind(payload), TyKind::Ref { .. })
             || matches!(self.kind(payload), TyKind::Struct(id) if self.compiler_box_inner(*id).is_some())
             || matches!(self.kind(payload), TyKind::Enum(id) if self.enum_unused_discriminant(*id).is_some())
             || matches!(self.kind(payload), TyKind::Range(id) if self.range_unused_integer(*id).is_some()
@@ -2367,6 +2448,30 @@ mod tests {
     }
 
     #[test]
+    fn explicit_sync_handle_has_thread_properties_and_no_access_words() {
+        let (mut table, c) = TypeTable::new();
+        let array = table.intern(TyKind::Vec { elem: c.i64, text: false });
+        let local = table.add_class(ClassDef {
+            name: Symbol::intern("Local"), fields: vec![field("value", array)],
+            span: Span::DUMMY, is_sync: false, openness: ClassOpenness::Final,
+            base: None, has_drop: false, origin: None, declaring_module: 0,
+        });
+        let shared = table.add_class(ClassDef {
+            name: Symbol::intern("Shared"), fields: vec![field("value", array)],
+            span: Span::DUMMY, is_sync: true, openness: ClassOpenness::Final,
+            base: None, has_drop: false, origin: None, declaring_module: 0,
+        });
+        let local_ty = table.intern(TyKind::Class(local));
+        let shared_ty = table.intern(TyKind::Class(shared));
+        let ptr = table.intern(TyKind::Ptr { mutable: false, inner: c.i64 });
+        assert!(!table.is_send(local_ty) && !table.is_sync(local_ty));
+        assert!(table.is_send(shared_ty) && table.is_sync(shared_ty));
+        assert!(!table.is_send(ptr) && !table.is_sync(ptr));
+        assert!(table.class_field_has_access_word(local, 0));
+        assert!(!table.class_field_has_access_word(shared, 0));
+    }
+
+    #[test]
     fn canonical_artifact_names_are_resolved_and_not_diagnostic_aliases() {
         let (mut table, common) = TypeTable::new();
         let bytes = table.intern(TyKind::Vec { elem: common.u8, text: false });
@@ -2430,6 +2535,7 @@ mod tests {
         // folded into the handle layout or mistaken for a raw pointer.
         let (mut table, c) = TypeTable::new();
         let base = table.add_class(ClassDef {
+            is_sync: false,
             name: Symbol::intern("Entity"),
             fields: vec![field("id", c.u64)],
             span: Span::DUMMY,
@@ -2440,6 +2546,7 @@ mod tests {
             declaring_module: 0,
         });
         let derived = table.add_class(ClassDef {
+            is_sync: false,
             name: Symbol::intern("Player"),
             fields: vec![field("health", c.f32)],
             span: Span::DUMMY,

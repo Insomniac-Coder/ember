@@ -10755,6 +10755,19 @@ the running narrative behind it.
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
   * `7ec3cce` (D-360: deep equality and clone; CI running at this checkpoint).
+  * The solo five-feature batches `610996b`, `338ad52`, and `b432e0e`
+    added debug access-conflict locations, object ABI assertions,
+    `std.mem.keep_alive`, stricter manifest/profile checking, and ten
+    `Option[T]` payload niches. Their workspace suites and project gates
+    passed; all three CI runs finished green.
+  * This batch adds the compact `Option[ref dyn I]` representation and the
+    explicit `@sync` class contract: atomic object counts, structural
+    `Send`/`Sync` field checks, no field writes after initialization or
+    whole-`self` publication, no declared `mut self` methods, and matching
+    synchronization across class inheritance. Generic instances are checked
+    after substitution. `E7001` and `E7003` have executable error pages.
+    Focused conformance cases cover accepted and rejected forms. No ODR was
+    needed; Hardened_29 already settles these rules.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10918,8 +10931,8 @@ the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** continue solo with extern function pointer and `ref dyn`
-  niches or another Phase 3 gap after committing this batch. Audit rows for
+* **Next task:** continue solo with the extern function pointer niche and
+  another Phase 3 gap after committing this batch. Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**

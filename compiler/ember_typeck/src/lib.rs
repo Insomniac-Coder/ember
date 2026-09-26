@@ -450,6 +450,7 @@ struct GenericClass {
     implements: Vec<ast::TypeExpr>,
     methods: Vec<GenericMethod>,
     openness: ClassOpenness,
+    is_sync: bool,
     declaring_module: usize,
 }
 
@@ -674,6 +675,7 @@ struct ClassInitState {
     owner: ClassId,
     receiver: LocalId,
     initialized: Vec<ClassFieldInit>,
+    whole_used: bool,
     /// `[CLS-4]` — inherited storage is unavailable to the derived body until
     /// its direct base constructor has run on the same object.
     base_initialized: bool,
@@ -2669,6 +2671,7 @@ impl<'a> Checker<'a> {
                         name,
                         fields: Vec::new(),
                         span: item.span,
+                        is_sync: has_attribute(&item.attrs, "sync"),
                         openness: class_openness(decl.openness),
                         base: None,
                         has_drop: false,
@@ -2719,7 +2722,9 @@ impl<'a> Checker<'a> {
                 // Generic classes are outside the current collection path.
                 continue;
             };
+            self.validate_sync_class(id);
             let Some(base) = self.types.class_def(id).base else { continue };
+            self.validate_sync_base(id, base, decl.base.as_ref().map_or(decl.name.span, |b| b.span));
             // `[CLS-10]` — with no `init`, the base's constructor builds the
             // object, so every field this class adds needs a default.
             let declares_init = decl.members.iter().any(|member| {
@@ -2761,6 +2766,42 @@ impl<'a> Checker<'a> {
                     ),
                 );
             }
+        }
+    }
+
+    fn validate_sync_base(&mut self, id: ClassId, base: ClassId, span: Span) {
+        let derived = self.types.class_def(id);
+        let parent = self.types.class_def(base);
+        if derived.is_sync != parent.is_sync {
+            self.error(
+                codes::E7001,
+                span,
+                format!("class `{}` and its base `{}` must both be `@sync` or both be non-`@sync`", derived.name, parent.name),
+            );
+        }
+    }
+
+    fn validate_sync_class(&mut self, id: ClassId) {
+        let def = self.types.class_def(id);
+        if !def.is_sync { return; }
+        let name = def.name.as_str().rsplit('.').next().unwrap_or(def.name.as_str()).to_string();
+        let offenders = def.fields.iter().filter_map(|field| {
+            let send = self.types.is_send(field.ty);
+            let sync = self.types.is_sync(field.ty);
+            (!send || !sync).then_some((field.name, field.ty, field.ty_span, send, sync))
+        }).collect::<Vec<_>>();
+        for (field, ty, span, send, sync) in offenders {
+            let property = match (send, sync) {
+                (false, false) => "Send or Sync",
+                (false, true) => "Send",
+                (true, false) => "Sync",
+                (true, true) => unreachable!(),
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E7001, span,
+                    format!("field `{name}.{field}` has type `{}`, which is not {property}", self.types.display(ty)))
+                    .help(format!("give `{field}` a Send and Sync type before declaring `{name}` `@sync`")),
+            );
         }
     }
 
@@ -3300,6 +3341,7 @@ impl<'a> Checker<'a> {
                     implements: decl.implements.clone(),
                     methods,
                     openness: class_openness(decl.openness),
+                    is_sync: has_attribute(&item.attrs, "sync"),
                     declaring_module: self.current_module,
                 },
             );
@@ -9517,6 +9559,7 @@ impl<'a> Checker<'a> {
             name: instance,
             fields: Vec::new(),
             span,
+            is_sync: decl.is_sync,
             openness: decl.openness,
             base,
             has_drop: false,
@@ -9541,6 +9584,12 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.class_def_mut(id).fields = fields;
+        if !args.iter().any(|&arg| self.types.is_generic(arg)) {
+            self.validate_sync_class(id);
+            if let Some(base) = base {
+                self.validate_sync_base(id, base, span);
+            }
+        }
         self.class_default_exprs.insert(id, decl.defaults.clone());
         // Generic classes are materialized after the ordinary class-collection
         // pass, so they cannot use `record_class_virtual_methods`. Preserve the
@@ -11711,6 +11760,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         attrs: &[ast::Attribute],
         span: Span,
     ) -> Option<Function> {
+        if let TyKind::Class(id) = self.types.kind(owner)
+            && self.types.class_def(*id).is_sync
+            && !decl.name.name.is("init")
+            && self.signatures[def.0 as usize].params.first()
+                .is_some_and(|(name, _, mode, _)| name.is("self") && *mode == Mode::Mut)
+        {
+            self.error(codes::E7003, decl.name.span,
+                format!("`@sync` class `{}` cannot declare a `mut self` method", self.types.display(owner)));
+        }
         self.locals = Vec::new();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
@@ -11838,6 +11896,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         receiver,
                         initialized,
                         base_initialized: def.base.is_none(),
+                        whole_used: false,
                     })
                 }
             }
@@ -12079,10 +12138,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// expression boundaries rather than in `synth(SelfExpr)`: a direct
     /// `self.field` projection is a field access and is checked separately.
     fn check_class_init_whole_self_use(&mut self, expr: &ast::Expr) {
-        if self.class_init.is_some()
-            && !self.class_init_is_complete()
-            && Self::class_init_uses_whole_self(expr)
-        {
+        if self.class_init.is_some() && Self::class_init_uses_whole_self(expr) {
+            let complete = self.class_init_is_complete();
+            if let Some(state) = self.class_init.as_mut() { state.whole_used = true; }
+            if complete { return; }
             self.error(
                 codes::E2100,
                 expr.span,
@@ -12135,6 +12194,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     *left = left.join(right);
                 }
                 left.base_initialized &= right.base_initialized;
+                left.whole_used |= right.whole_used;
                 Some(left)
             }
             (left, _) => left,
@@ -24604,6 +24664,28 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             match &current.kind {
                 ExprKind::Field { base, index } => {
                     if let TyKind::Class(id) = *self.types.kind(base.ty) {
+                        if self.types.class_def(id).is_sync {
+                            let initializing = self.class_init_field_index(current).is_some()
+                                && self.class_init.as_ref().is_some_and(|state| !state.whole_used);
+                            if !initializing {
+                                let (field, suggestion) = self.types.class_field_at(id, *index)
+                                    .map(|f| {
+                                        let wrapper = if matches!(self.types.kind(f.ty), TyKind::Int(_) | TyKind::Uint(_)) {
+                                            "Atomic[int]".to_string()
+                                        } else {
+                                            format!("Mutex[{}]", self.types.display(f.ty))
+                                        };
+                                        (f.name, wrapper)
+                                    })
+                                    .unwrap_or((Symbol::intern("field"), "Mutex[T]".to_string()));
+                                self.sink.emit(
+                                    Diagnostic::error(codes::E7003, span,
+                                        format!("cannot write field `{field}` of an `@sync` class after `init` or after using `self` as a whole"))
+                                        .help(format!("wrap `{field}` in `{suggestion}` for mutation after `init`")),
+                                );
+                                return;
+                            }
+                        }
                         let field = self.types.class_field_at_info(id, *index).map(
                             |(owner_id, field)| {
                                 (
@@ -33621,7 +33703,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["test", "bench", "should_panic"], &["fn"], false),
     // `[TYP-34]` — documentation only: a view type is inferred.
     (&["view"], &["struct", "enum"], true),
-    (&["sync"], &["class"], false),
+    (&["sync"], &["class"], true),
     (&["reflect"], &["struct", "enum", "class", "type"], false),
     (&["borrows"], &["fn"], true),
     (&["safety"], &["fn"], false),

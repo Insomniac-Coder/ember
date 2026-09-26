@@ -623,6 +623,7 @@ mod tests {
 
     fn class(types: &mut TypeTable, name: &str) -> ClassId {
         types.add_class(ClassDef {
+            is_sync: false,
             name: Symbol::intern(name),
             fields: Vec::new(),
             span: Span::DUMMY,

@@ -1637,6 +1637,7 @@ mod interface_upcast_invariant_tests {
         let span = Span::new(ember_span::FileId(0), 0, 1);
         let interface = Symbol::intern("Render");
         let class = types.add_class(ClassDef {
+            is_sync: false,
             name: Symbol::intern("Pixel"),
             fields: Vec::new(),
             span,

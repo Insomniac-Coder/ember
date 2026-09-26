@@ -2297,10 +2297,9 @@ impl Emitter<'_> {
             ));
             self.line(&format!("    (uint32_t)sizeof(struct {object}),"));
             self.line(&format!("    (uint32_t)_Alignof(struct {object}),"));
-            // `[CLS-8]`/`[THR-*]` synchronization derivation is a later
-            // compiler phase.  Until it exists, all collected classes use
-            // the plain-counter runtime path and carry no Sync flag.
-            self.line("    UINT32_C(0),");
+            // `[THR-1]`, `[RC-4]`: the runtime selects atomic counts for
+            // explicitly synchronized classes using this type-info flag.
+            self.line(if def.is_sync { "    EMBER_TI_SYNC," } else { "    UINT32_C(0)," });
             self.line(&format!("    {},", c_string_literal(&def.name.to_string())));
             self.line(&format!("    {base},"));
             // Field-drop glue is installed below when the object has fields
@@ -5802,6 +5801,11 @@ impl Emitter<'_> {
         if matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str) {
             return format!("({access}).ptr == NULL && ({access}).len == SIZE_MAX");
         }
+        if let TyKind::Ref { inner, .. } = self.types.kind(niche.payload)
+            && matches!(self.types.kind(*inner), TyKind::Dyn { .. })
+        {
+            return format!("({access}).data == NULL");
+        }
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("({access}) == NULL");
         }
@@ -5850,6 +5854,11 @@ impl Emitter<'_> {
         }
         if matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str) {
             return format!("(({}){{ .ptr = NULL, .len = SIZE_MAX }})", self.c_type(niche.payload));
+        }
+        if let TyKind::Ref { inner, .. } = self.types.kind(niche.payload)
+            && matches!(self.types.kind(*inner), TyKind::Dyn { .. })
+        {
+            return format!("(({}){{ .data = NULL, .vtable = NULL }})", self.c_type(niche.payload));
         }
         if matches!(self.types.kind(niche.payload), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. }) {
             return format!("(({})NULL)", self.c_type(niche.payload));
