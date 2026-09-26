@@ -8387,6 +8387,53 @@ impl<'a> Checker<'a> {
         Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })
     }
 
+    /// ODR-075/076 — construction is safe; the resulting raw pointer has no
+    /// compiler-tracked loan and using it remains the caller's obligation.
+    fn synth_raw_pointer_constructor(
+        &mut self,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: &[Ty],
+        span: Span,
+    ) -> Option<Expr> {
+        if name.is("null") {
+            if explicit.len() != 1 || !args.is_empty() {
+                self.error(codes::E2020, span,
+                    "`null[P]()` takes one raw-pointer type argument and no values");
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let pointer = explicit[0];
+            if !matches!(self.types.kind(pointer), TyKind::Ptr { .. }) {
+                self.error(codes::E2020, span, "`null[P]()` requires a raw-pointer type `P`");
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let zero = Expr { ty: self.common.usize, kind: ExprKind::Int(0), span };
+            return Some(Expr { ty: pointer, kind: ExprKind::Cast {
+                expr: Box::new(zero), to: pointer,
+            }, span });
+        }
+        if name.is("ref_to_ptr") {
+            if !explicit.is_empty() || args.len() != 1 || args[0].name.is_some() {
+                self.error(codes::E2020, span,
+                    "`ref_to_ptr` takes one reference and no type arguments");
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let source = self.synth_committed(&args[0].value);
+            let TyKind::Ref { mutable, inner } = *self.types.kind(source.ty) else {
+                if source.ty != self.common.error {
+                    self.error(codes::E2020, args[0].value.span,
+                        "`ref_to_ptr` requires a shared or mutable reference");
+                }
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let pointer = self.types.intern(TyKind::Ptr { mutable, inner });
+            return Some(Expr { ty: pointer, kind: ExprKind::Cast {
+                expr: Box::new(source), to: pointer,
+            }, span });
+        }
+        None
+    }
+
     /// `Some(x)`, `Ok(x)`, `Err(e)`. `None` has no payload and is handled
     /// where a bare path is checked.
     fn synth_wrapper(
@@ -22075,6 +22122,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             if let Some(decl) = self.generic_classes.get(&resolved_name).cloned() {
                 return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, expected, span);
+            }
+        }
+        if !self.declared_by_program(name, resolved_name)
+            && !self.fn_ids.contains_key(&resolved_name) {
+            if let Some(built) = self.synth_raw_pointer_constructor(name, args, &explicit, span) {
+                return built;
             }
         }
 

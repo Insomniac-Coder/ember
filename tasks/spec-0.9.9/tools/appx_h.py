@@ -354,6 +354,10 @@ ODRS = [
      '`[FFI-10]`, `[FFI-11]`'),
     ('ODR-074', '`count(n)` on a hand-declared safe C function writes `n` at its C ABI position as an integer witness, hides it from the callable signature, and supplies it from a checked span length (Hardened_31)',
      '`[FFI-10]`, `[FFI-11]`'),
+    ('ODR-075', '`ref_to_ptr(r)` remains a safe reference-to-raw-pointer conversion, and `r as *T` is safe when it preserves the pointee type and does not strengthen mutability (Hardened_32)',
+     '§IV.5, `[TYP-7]`'),
+    ('ODR-076', '`null[P]()` takes a complete raw-pointer type and returns that exact pointer type, including its mutability (Hardened_32)',
+     '§IV.5'),
 ]
 
 H5_HEAD = """
@@ -373,7 +377,8 @@ ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 ad
 Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 and ODR-072, found
 closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand-declared C pointer
 contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for a hand-declared
-counted pointer.
+counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
+the exact pointer type of `null[P]()`.
 
 | ODR | Ruling | Rules |
 |---|---|---|

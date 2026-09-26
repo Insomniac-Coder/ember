@@ -10871,15 +10871,29 @@ first**; the rest of §0.355 is the running narrative behind it.
     the unknown fact while adopting a C API. `FFI-11/`, `FFI-11a/`,
     `FFI-11c/`, and `TYP-7/` have focused accepted and rejected cases. These
     are compiler gaps under Hardened_31, so no ODR or hardening is needed.
-    The full annotation sweep, workspace suite, and repository gates passed.
+    The full annotation sweep, workspace suite, and repository gates passed;
+    this batch is commit `c718267`.
+  * ODR-075 and ODR-076 close two real gaps in §IV.5: H31 said a reference
+    may safely become a raw pointer but omitted its source spelling, and
+    `null[T]()` did not determine whether `T` is the pointee or the pointer
+    type. Hardened_32 rules that both the predecessor's `ref_to_ptr(r)` and
+    a non-strengthening `r as *T` are safe, and `null[P]()` takes the complete
+    raw-pointer type `P`. H32 is frozen and pinned. The compiler now implements
+    `ref_to_ptr` and typed `null` as safe constructors, preserves declared
+    functions named `null`, and rejects missing or non-pointer type arguments.
+    `TYP-7/` exercises both pointer mutabilities, generic use and invalid
+    calls. These ODRs were cut because the spec omitted a semantic choice;
+    the preceding C contracts and raw-pointer casts needed no spec change.
+    The H32 pin, frozen-part equality, rule-id and citation checks, full
+    annotation sweep, workspace suite, and repository gates all pass locally.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_31.md`
-  (ODR-074), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_32.md`
+  (ODR-075 and ODR-076), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` and
-  `parts-h31/` are frozen.
-* **Next numbers:** ODR-075, D-363, ADR-063.
+  `parts-h31/` and `parts-h32/` are frozen.
+* **Next numbers:** ODR-077, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed

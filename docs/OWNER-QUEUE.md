@@ -53,6 +53,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-072 | **CLOSED** — in a class method `self` names the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (D-361) | Language / classes | — | **No** — delegated, 2026-09-26 |
 | ODR-073 | **CLOSED** — hand-declared pointer facts use `@ffi(param(name, words...), result(words...))`; `safe fn` exposes the safe Ember type produced by those facts, never a raw pointer | Language / C interop / safety | — | **No** — delegated, 2026-09-26, Hardened_30 |
 | ODR-074 | **CLOSED** — `count(n)` on a hand-declared safe C function writes `n` as an ABI-positioned integer witness but removes it from the callable signature; the span length supplies it with checked conversion | Language / C interop / counted pointers | — | **No** — delegated, 2026-09-27, Hardened_31 |
+| ODR-075 | **CLOSED** — both `ref_to_ptr(r)` and a non-strengthening `r as *T` convert a reference to a raw pointer safely; the raw pointer does not keep a loan | Language / raw pointers / source syntax | — | **No** — delegated, 2026-09-27, Hardened_32 |
+| ODR-076 | **CLOSED** — the type argument to `null[P]()` is the complete raw-pointer type `P`, including constness; the result has exactly type `P` | Language / raw pointers / null construction | — | **No** — delegated, 2026-09-27, Hardened_32 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -228,6 +230,76 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-076 — the type of `null[T]()` — **CLOSED**
+
+    ID:        ODR-076
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_32
+    Category:  LANGUAGE / RAW POINTERS / NULL CONSTRUCTION
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_31.md Part IV §IV.5
+
+    Question:  The spec says `null[T]()` is the null pointer, but does not
+               state whether `T` is the pointee or the complete pointer type,
+               so it cannot determine `*T` versus `*mut T`.
+
+    Blocks implementation:            YES — typed null pointers
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) `null[*i32]()` and `null[*mut i32]()` name the complete
+result type. This is explicit and handles both pointer forms with one generic
+rule, but repeats the star in source. (b) `null[i32]()` returns `*mut i32`; the
+shorter spelling cannot directly construct a const raw pointer without a cast.
+(c) `null[i32]()` takes its mutability from the expected type; shorter at a
+typed site, but an unconstrained expression needs a default and overload
+resolution can change its meaning. **(a)**.
+
+**Ruling.** `null[P]()` requires `P` itself to be `*T` or `*mut T` and returns
+that exact type. It is safe because it dereferences nothing. A non-pointer
+type argument, a missing type argument, or a value argument is a type/arity
+error. Neither mutability nor pointee type is inferred from context.
+
+**Implementation.** Part IV §IV.5 of Hardened_32 gives the exact signature;
+the compiler and TYP-7 conformance tests implement it.
+
+---
+
+## ODR-075 — converting a reference to a raw pointer — **CLOSED**
+
+    ID:        ODR-075
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_32
+    Category:  LANGUAGE / RAW POINTERS / SOURCE SYNTAX
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_31.md Part IV §IV.5, `[TYP-7]`
+
+    Question:  The current text says making a raw pointer from a reference is
+               safe but gives no spelling. The predecessor named
+               `ref_to_ptr`; the implementation also accepts `as *T`.
+
+    Blocks implementation:            YES — a complete, compatible surface
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Retain `ref_to_ptr(r)` and permit an explicit
+non-strengthening `r as *T`, both safe. This preserves the predecessor's
+spelling and the new cast surface, at the cost of two equivalent spellings.
+(b) Use only `as *T`; one spelling, but silently loses the predecessor's
+function. (c) Use only `ref_to_ptr`; one old spelling, but invalidates the
+already shipped safe cast surface. **(a)**.
+
+**Ruling.** `ref_to_ptr(ref T)` returns `*T`, and `ref_to_ptr(ref mut T)`
+returns `*mut T`. `r as *T` is also safe when the pointee type is unchanged
+and the cast does not strengthen mutability: `ref T` to `*T`, or `ref mut T`
+to either `*T` or `*mut T`. The resulting raw pointer does not retain a
+compiler-tracked loan; using its address after the referent dies remains an
+`unsafe` caller obligation. This exception does not relax `[TYP-7]`'s
+`unsafe` requirement for raw-pointer-to-raw-pointer or pointer/integer casts.
+
+**Implementation.** Part IV §IV.5 of Hardened_32 states both spellings. The
+compiler implements both forms, covered by TYP-7 conformance tests.
 
 ---
 
