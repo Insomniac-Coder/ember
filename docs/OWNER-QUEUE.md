@@ -52,6 +52,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
 | ODR-072 | **CLOSED** — in a class method `self` names the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (D-361) | Language / classes | — | **No** — delegated, 2026-09-26 |
 | ODR-073 | **CLOSED** — hand-declared pointer facts use `@ffi(param(name, words...), result(words...))`; `safe fn` exposes the safe Ember type produced by those facts, never a raw pointer | Language / C interop / safety | — | **No** — delegated, 2026-09-26, Hardened_30 |
+| ODR-074 | **CLOSED** — `count(n)` on a hand-declared safe C function writes `n` as an ABI-positioned integer witness but removes it from the callable signature; the span length supplies it with checked conversion | Language / C interop / counted pointers | — | **No** — delegated, 2026-09-27, Hardened_31 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -227,6 +228,50 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-074 — the count parameter in a hand-declared safe C function — **CLOSED**
+
+    ID:        ODR-074
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_31
+    Category:  LANGUAGE / C INTEROP / COUNTED POINTERS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_30.md Part XVI `[FFI-10]`, `[FFI-11]`
+
+    Question:  `[FFI-11]` says `count(n)` removes `n` from the safe signature.
+               `[FFI-10]` says a hand declaration writes the safe Ember type
+               and lowers it to the C carrier. With no imported C header,
+               where does a hand declaration state `n`'s C parameter position
+               and integer type while keeping it out of the callable API?
+
+    Blocks implementation:            YES — hand-declared counted pointers
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) Write `n: usize` (or another integer type) at its
+C position in the hand declaration, and let `count(n)` mark it as an ABI-only
+witness. The compiler erases it from the callable signature and supplies it
+from the span length; this preserves both the C parameter order and the safe
+API, but requires call lowering. (b) Omit `n` and infer its C position and type
+from `count(n)`; less source text, but neither property can be recovered for a
+hand declaration. (c) Keep `n` callable and require the caller to pass both a
+span and a count; easy to lower, but contradicts `[FFI-11]` and permits a
+caller-supplied count that exceeds the span. **(a)**.
+
+**Ruling.** On a hand-declared `safe fn`, the `count(n)` sibling is written as
+an integer scalar parameter at its C ABI position. The contract marks `n` as
+an ABI witness: it is absent from the callable Ember signature, and the
+compiler passes the `Span[T]` or `MutSpan[T]` length in its place. The written
+integer type fixes the C width and signedness. A length that does not fit
+panics before the foreign call. If several pointer clauses name the same
+`n`, their lengths must agree or the call panics before entering C. A missing
+or non-integer witness, or an incompatible pointer surface, is `E5002`. An
+unsafe declaration with raw C pointers keeps its ordinary written ABI
+parameters; this erasure applies only to a mapped `safe fn`.
+
+**Implementation.** The spec ruling is in Hardened_31; compiler lowering and
+conformance follow. Unsupported count forms remain `E0900` until built.
 
 ---
 

@@ -76,6 +76,22 @@ pub struct Param {
     pub mode: Mode,
 }
 
+/// The C parameter list behind a hand-declared safe `count(n)` function.
+/// Indices name the visible Ember parameters; count witnesses have no visible
+/// parameter and are supplied by the wrapper from the associated span(s).
+#[derive(Debug, Clone)]
+pub struct FfiCounted {
+    pub foreign_symbol: String,
+    pub abi_params: Vec<FfiAbiParam>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FfiAbiParam {
+    Value { public_index: usize, ty: Ty, mode: Mode },
+    SpanPointer { public_index: usize, elem: Ty, mutable: bool },
+    Count { public_indices: Vec<usize>, ty: Ty },
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub def: DefId,
@@ -149,6 +165,8 @@ pub struct Function {
     /// A bodyless declaration in `unsafe extern`: emit a C prototype and
     /// resolve calls against the foreign linker symbol, never a C body.
     pub is_extern_declaration: bool,
+    /// ODR-074: a safe Ember wrapper around a counted C pointer signature.
+    pub ffi_counted: Option<FfiCounted>,
 }
 
 impl Function {

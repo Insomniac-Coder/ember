@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 // resolves to it through Rust's implicit format arguments.
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
-    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FuncRef, LocalKind, Operand, Place,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FuncRef, LocalKind, Operand, Place,
     ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
@@ -468,6 +468,10 @@ impl Emitter<'_> {
 
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration {
+                continue;
+            }
+            if body.ffi_counted.is_some() {
+                self.emit_ffi_counted_wrapper(body);
                 continue;
             }
             self.emit_body(body);
@@ -3286,6 +3290,11 @@ impl Emitter<'_> {
         }
         self.line("/* prototypes */");
         for body in bodies {
+            if body.ffi_counted.is_some() {
+                self.line(&format!("extern {};", self.ffi_counted_signature(body)));
+                self.line(&format!("{};", self.signature(body)));
+                continue;
+            }
             if body.is_extern_declaration {
                 // The C linker supplies this body; keep a declaration in the
                 // generated translation unit for type-checked direct calls.
@@ -3313,6 +3322,87 @@ impl Emitter<'_> {
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
         format!("{ret} {}({params})", body.symbol)
+    }
+
+    fn ffi_counted_signature(&self, body: &Body) -> String {
+        let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
+        let params: Vec<_> = counted.abi_params.iter().enumerate().map(|(index, param)| {
+            let ty = match param {
+                FfiAbiParam::Value { ty, mode, .. } if *mode == ParameterMode::Mut =>
+                    format!("{}*", self.c_type(*ty)),
+                FfiAbiParam::Value { ty, .. } => self.c_member_type(*ty),
+                FfiAbiParam::SpanPointer { elem, mutable, .. } => {
+                    let elem = self.c_type(*elem);
+                    if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
+                }
+                FfiAbiParam::Count { ty, .. } => self.c_type(*ty),
+            };
+            format!("{ty} _ffi{index}")
+        }).collect();
+        let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+        format!("{} {}({params})", self.c_type(body.return_ty()), counted.foreign_symbol)
+    }
+
+    fn ffi_count_limit(&self, ty: Ty) -> Option<&'static str> {
+        match self.types.kind(ty) {
+            TyKind::Int(IntTy::I8) => Some("INT8_MAX"),
+            TyKind::Int(IntTy::I16) => Some("INT16_MAX"),
+            TyKind::Int(IntTy::I32) => Some("INT32_MAX"),
+            TyKind::Int(IntTy::I64) => Some("INT64_MAX"),
+            TyKind::Int(IntTy::Isize) => Some("PTRDIFF_MAX"),
+            TyKind::Uint(UintTy::U8) => Some("UINT8_MAX"),
+            TyKind::Uint(UintTy::U16) => Some("UINT16_MAX"),
+            TyKind::Uint(UintTy::U32) => Some("UINT32_MAX"),
+            TyKind::Uint(UintTy::U64) => Some("UINT64_MAX"),
+            _ => None,
+        }
+    }
+
+    fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
+        let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
+        let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
+        self.line(&format!("{} {{", self.signature(body)));
+        let mut foreign_args = Vec::new();
+        for param in &counted.abi_params {
+            match param {
+                FfiAbiParam::Value { public_index, .. } =>
+                    foreign_args.push(args[*public_index].clone()),
+                FfiAbiParam::SpanPointer { public_index, elem, mutable } => {
+                    let pointee = self.c_type(*elem);
+                    let pointer = if *mutable { format!("{pointee}*") }
+                        else { format!("const {pointee}*") };
+                    foreign_args.push(format!("({pointer})({}).ptr", args[*public_index]));
+                }
+                FfiAbiParam::Count { public_indices, ty } => {
+                    let first = &args[public_indices[0]];
+                    for other in public_indices.iter().skip(1) {
+                        let location = self.location(body.span);
+                        self.line(&format!(
+                            "    if (({first}).len != ({}).len) {{ {RT}panic(\"FFI span lengths differ\", sizeof(\"FFI span lengths differ\") - 1, {location}); }}",
+                            args[*other],
+                        ));
+                    }
+                    if let Some(limit) = self.ffi_count_limit(*ty) {
+                        let location = self.location(body.span);
+                        self.line(&format!("#if SIZE_MAX > {limit}"));
+                        self.line(&format!(
+                            "    if (({first}).len > (size_t){limit}) {{ {RT}panic(\"FFI count does not fit\", sizeof(\"FFI count does not fit\") - 1, {location}); }}",
+                        ));
+                        self.line("#endif");
+                    }
+                    foreign_args.push(format!("({})({first}).len", self.c_type(*ty)));
+                }
+            }
+        }
+        let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
+        if self.is_void(body.return_ty()) {
+            self.line(&format!("    {call};"));
+            self.line("    return;");
+        } else {
+            self.line(&format!("    return {call};"));
+        }
+        self.line("}");
+        self.line("");
     }
 
     fn emit_body(&mut self, body: &Body) {

@@ -16,6 +16,7 @@ pub use lower::lower;
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.
 pub use ember_hir::Mode as ParameterMode;
+pub use ember_hir::FfiAbiParam;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BasicBlockId(pub u32);
@@ -116,6 +117,8 @@ pub struct Body {
     pub is_abstract: bool,
     /// See `ember_hir::Function::is_extern_declaration`.
     pub is_extern_declaration: bool,
+    /// ODR-074's mapped C parameter list for a hand-declared counted call.
+    pub ffi_counted: Option<ember_hir::FfiCounted>,
     /// `[EXC-15]` — a class `mut self` method: its caller holds a write
     /// access to every field of `*self` (local 1) for the call, so accesses
     /// to `self`'s fields here are covered and not checked again (`[EXC-5]`).

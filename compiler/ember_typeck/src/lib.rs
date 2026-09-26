@@ -2192,6 +2192,8 @@ impl<'a> Checker<'a> {
                             continue;
                         };
                         let symbol = match &decl.abi {
+                            Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
+                                mangle(qualified, false),
                             Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
                                 .unwrap_or(decl.name.name.as_str()).to_string(),
                             Some(_) => decl.name.name.to_string(),
@@ -2205,7 +2207,7 @@ impl<'a> Checker<'a> {
                             self.signatures[def.0 as usize].borrows.clone(),
                             &self.signatures[def.0 as usize].generics,
                             decl.is_unsafe,
-                            decl.abi.clone(),
+                            self.signatures[def.0 as usize].abi.map(|abi| abi.to_string()),
                         ));
                     }
                     // The owner of `Buffer[T].method` has no runtime `Ty`
@@ -5087,7 +5089,7 @@ impl<'a> Checker<'a> {
                         .chain(decl.ret.as_ref())
                         .collect();
                     self.declare_projections(&mentioned, &mut generics, 0);
-                    let params: Vec<(Symbol, Ty, Mode, Span)> = decl
+                    let mut params: Vec<(Symbol, Ty, Mode, Span)> = decl
                         .params
                         .iter()
                         .filter_map(|p| match &p.kind {
@@ -5101,6 +5103,12 @@ impl<'a> Checker<'a> {
                             ast::ParamKind::Receiver { .. } => None,
                         })
                         .collect();
+                    let count_witnesses = if decl.is_foreign_decl && decl.is_safe {
+                        ffi_count_witnesses(&item.attrs)
+                    } else {
+                        HashSet::new()
+                    };
+                    params.retain(|(name, _, _, _)| !count_witnesses.contains(name));
                     let ret = decl
                         .ret
                         .as_ref()
@@ -5118,7 +5126,8 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                     }
-                    self.signatures.push(Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, generics, borrows });
+                    let abi = if count_witnesses.is_empty() { decl.abi.as_deref().map(Symbol::intern) } else { None };
+                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -10773,10 +10782,12 @@ impl<'a> Checker<'a> {
                 main = Some(def);
             }
             let overflow = self.overflow_policy(&item.attrs, item.span);
+            let ffi_counted = self.foreign_counted_metadata(decl, &item.attrs, &signature_params);
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
             let symbol = match &decl.abi {
+                Some(_) if ffi_counted.is_some() => mangle(name, false),
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
                     .unwrap_or(decl.name.name.as_str()).to_string(),
                 Some(_) => decl.name.name.to_string(),
@@ -10789,7 +10800,7 @@ impl<'a> Checker<'a> {
                 class_init_default_fields: Vec::new(),
                 symbol,
                 is_unsafe: decl.is_unsafe,
-                abi: decl.abi.clone(),
+                abi: if ffi_counted.is_some() { None } else { decl.abi.clone() },
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -10805,7 +10816,8 @@ impl<'a> Checker<'a> {
                 class_owner: None,
                 class_virtual_slot: None,
                 is_abstract: false,
-                is_extern_declaration: decl.is_foreign_decl,
+                is_extern_declaration: decl.is_foreign_decl && ffi_counted.is_none(),
+                ffi_counted,
             });
         }
 
@@ -11004,6 +11016,7 @@ impl<'a> Checker<'a> {
                     class_virtual_slot: self.class_virtual_slots.get(&job.def).copied(),
                     is_abstract: true,
                     is_extern_declaration: false,
+                    ffi_counted: None,
                 });
             }
 
@@ -11222,6 +11235,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
+                && let TyKind::Span { elem, .. } = self.types.kind(ty) {
+                if !self.types.is_ffi_safe(*elem) {
+                    self.error(codes::E5050, span,
+                        format!("`{name}` contains a type with no foreign representation"));
+                }
+            } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*inner) {
                     self.error(codes::E5050, span,
@@ -11239,6 +11258,27 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             check(self, ret, decl.name.span, "this is the return type".to_string());
         }
         if decl.is_foreign_decl {
+            let mut checked_witnesses = HashSet::new();
+            for &(_, kind) in &contracts {
+                if let FfiPointerContract::Count { witness, .. } = kind
+                    && checked_witnesses.insert(witness) {
+                    let source = decl.params.iter().find(|param| matches!(&param.kind,
+                        ast::ParamKind::Named { name, .. } if name.name == witness));
+                    let integer = source.and_then(|param| match &param.kind {
+                        ast::ParamKind::Named { ty, .. }
+                            if mode_of(param.mode) == Mode::Borrow && param.default.is_none() =>
+                                ffi_integer_witness_type(ty),
+                        _ => None,
+                    });
+                    if integer.is_none() {
+                        self.error(codes::E5002, decl.name.span,
+                            format!("`count({witness})` needs integer ABI witness `{witness}`"));
+                    } else if integer.is_some_and(|name| matches!(name.as_str(), "i128" | "u128")) {
+                        self.error(codes::E0900, decl.name.span,
+                            format!("`count({witness})` with a 128-bit integer witness is not implemented yet"));
+                    }
+                }
+            }
             let mut seen_unknown_names = HashSet::new();
             for &(name, _) in &unknown_facts {
                 if seen_unknown_names.insert(name)
@@ -11264,6 +11304,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             FfiPointerContract::NullableMutOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
                                     .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)),
+                            FfiPointerContract::Count { exclusive, .. } => mode == Mode::Borrow
+                                && matches!(self.types.kind(ty), TyKind::Span { elem, mutable }
+                                    if *mutable == exclusive && self.types.is_ffi_safe(*elem)),
                         };
                         if !matches_safe_form {
                             self.error(codes::E5002, decl.name.span,
@@ -11304,6 +11347,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 if mutable { "mutable " } else { "" }));
                     }
                 }
+                if matches!(self.types.kind(ty), TyKind::Span { .. })
+                    && !matches!(contract, Some(FfiPointerContract::Count { .. }))
+                    && unknown.is_empty() {
+                    self.error(codes::E5002, span,
+                        format!("`safe fn` needs an `@ffi` count contract for span parameter `{name}`"));
+                }
                 if self.foreign_pointer_contract_required(ty) {
                     if contract.is_some() {
                         self.error(codes::E5002, span,
@@ -11338,6 +11387,54 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             TyKind::Ref { mutable, inner } => Some((*inner, *mutable)),
             _ => None,
         }
+    }
+
+    fn foreign_counted_metadata(
+        &self,
+        decl: &ast::FnDecl,
+        attrs: &[ast::Attribute],
+        visible: &[(Symbol, Ty, Mode, Span)],
+    ) -> Option<hir::FfiCounted> {
+        if !decl.is_foreign_decl || !decl.is_safe { return None; }
+        let contracts = ffi_param_contracts(attrs);
+        let mut counted = HashMap::<Symbol, (usize, Ty, bool)>::new();
+        let mut witnesses = HashMap::<Symbol, Vec<usize>>::new();
+        for (pointer, contract) in contracts {
+            let FfiPointerContract::Count { witness, exclusive } = contract else { continue };
+            let public_index = visible.iter().position(|(name, _, _, _)| *name == pointer)?;
+            let TyKind::Span { elem, mutable } = self.types.kind(visible[public_index].1) else { return None };
+            if *mutable != exclusive || !self.types.is_ffi_safe(*elem) { return None; }
+            let source = decl.params.iter().find(|param| matches!(&param.kind,
+                ast::ParamKind::Named { name, .. } if name.name == witness))?;
+            if mode_of(source.mode) != Mode::Borrow || source.default.is_some() { return None; }
+            let ast::ParamKind::Named { ty, .. } = &source.kind else { return None };
+            let witness_name = ffi_integer_witness_type(ty)?;
+            if matches!(witness_name.as_str(), "i128" | "u128") { return None; }
+            counted.insert(pointer, (public_index, *elem, exclusive));
+            witnesses.entry(witness).or_default().push(public_index);
+        }
+        if counted.is_empty() { return None; }
+        let mut abi_params = Vec::new();
+        for param in &decl.params {
+            let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
+            if let Some(indices) = witnesses.get(&name.name) {
+                let ast::ParamKind::Named { ty, .. } = &param.kind else { return None };
+                let witness_ty = self.scalar_named(ffi_integer_witness_type(ty)?.as_str())?;
+                abi_params.push(hir::FfiAbiParam::Count {
+                    public_indices: indices.clone(), ty: witness_ty,
+                });
+            } else if let Some(&(public_index, elem, mutable)) = counted.get(&name.name) {
+                abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable });
+            } else {
+                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
+                let (_, ty, mode, _) = visible[public_index];
+                abi_params.push(hir::FfiAbiParam::Value { public_index, ty, mode });
+            }
+        }
+        Some(hir::FfiCounted {
+            foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+            abi_params,
+        })
     }
 
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
@@ -11446,6 +11543,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             class_virtual_slot: None,
             is_abstract: false,
             is_extern_declaration: false,
+            ffi_counted: None,
         }
     }
 
@@ -11779,6 +11877,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     class_virtual_slot: None,
                     is_abstract: false,
                     is_extern_declaration: false,
+                    ffi_counted: None,
                 })
             })
             .collect()
@@ -12164,6 +12263,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             class_virtual_slot: self.class_virtual_slots.get(&def).copied(),
             is_abstract: false,
             is_extern_declaration: false,
+            ffi_counted: None,
         })
     }
 
@@ -27203,6 +27303,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             class_virtual_slot: None,
             is_abstract: false,
             is_extern_declaration: false,
+            ffi_counted: None,
         });
         def
     }
@@ -34193,6 +34294,7 @@ enum FfiPointerContract {
     MutOne,
     NullableSharedOne,
     NullableMutOne,
+    Count { witness: Symbol, exclusive: bool },
 }
 
 /// ODR-073's first direct-declaration pointer contracts: borrowed single
@@ -34208,10 +34310,15 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         return None;
     }
     let name = ffi_contract_word(&args[0].value)?;
-    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed"))
-        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed")) {
         return None;
     }
+
+    let count = if ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        None
+    } else {
+        Some(ffi_count_target(&args[2].value)?)
+    };
     let (mut nullable, mut exclusive, mut aliased) = (false, false, false);
     for arg in &args[3..] {
         match ffi_contract_word(&arg.value)?.as_str() {
@@ -34224,11 +34331,13 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
     if exclusive && aliased {
         return None;
     }
-    let kind = match (nullable, exclusive) {
-        (false, false) => FfiPointerContract::SharedOne,
-        (false, true) => FfiPointerContract::MutOne,
-        (true, false) => FfiPointerContract::NullableSharedOne,
-        (true, true) => FfiPointerContract::NullableMutOne,
+    let kind = match (count, nullable, exclusive) {
+        (Some(witness), false, exclusive) => FfiPointerContract::Count { witness, exclusive },
+        (None, false, false) => FfiPointerContract::SharedOne,
+        (None, false, true) => FfiPointerContract::MutOne,
+        (None, true, false) => FfiPointerContract::NullableSharedOne,
+        (None, true, true) => FfiPointerContract::NullableMutOne,
+        (Some(_), true, _) => return None,
     };
     Some((name, kind))
 }
@@ -34238,11 +34347,40 @@ fn ffi_contract_word(expr: &ast::Expr) -> Option<Symbol> {
     (segments.len() == 1).then_some(segments[0].name)
 }
 
+fn ffi_count_target(expr: &ast::Expr) -> Option<Symbol> {
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("count"))
+        || args.len() != 1 || args[0].name.is_some() {
+        return None;
+    }
+    ffi_contract_word(&args[0].value)
+}
+
 fn ffi_param_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, FfiPointerContract)> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .map(|attr| attr.args.iter().filter_map(ffi_param_contract_arg).collect())
         .unwrap_or_default()
+}
+
+fn ffi_count_witnesses(attrs: &[ast::Attribute]) -> HashSet<Symbol> {
+    ffi_param_contracts(attrs).into_iter().filter_map(|(_, contract)| {
+        if let FfiPointerContract::Count { witness, .. } = contract {
+            Some(witness)
+        } else {
+            None
+        }
+    }).collect()
+}
+
+fn ffi_integer_witness_type(ty: &ast::TypeExpr) -> Option<Symbol> {
+    let ast::TypeKind::Path { segments, args } = &ty.kind else { return None };
+    if segments.len() != 1 || !args.is_empty() { return None; }
+    let name = segments[0].name;
+    matches!(name.as_str(),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "int")
+        .then_some(name)
 }
 
 /// `[FFI-11c]` — a `TODO(axis)` is deliberately an unknown fact, never a

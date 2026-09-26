@@ -4054,6 +4054,7 @@ mod callable_region_metadata_tests {
             class_virtual_slot: None,
             is_abstract: false,
             is_extern_declaration: false,
+            ffi_counted: None,
             mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),

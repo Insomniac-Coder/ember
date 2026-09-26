@@ -10826,14 +10826,34 @@ first**; the rest of §0.355 is the running narrative behind it.
     the full annotation sweep, workspace suite, and repository gates passed
     before this checkpoint. Owned/retained contracts, other count
     modes, result lifetimes, and header overlays remain implementation gaps.
+    It is commit `e7a385a`; the workspace suite and all gates passed before
+    the push.
+  * ODR-074 found a genuine gap in hand-declared `count(n)`: `[FFI-11]`
+    removes `n` from the safe signature, while the declaration has no C header
+    from which to recover `n`'s ABI position or integer type. Hardened_31
+    rules that the source declaration writes `n` as an ABI-only integer
+    witness at its C position; the callable signature hides it and passes the
+    span length with checked conversion. Missing or non-integer witnesses are
+    `E5002`; overflow or unequal lengths for a shared witness panic before C.
+    H31 is pinned and `parts-h31/` frozen. The first implementation maps
+    `Span[T]` and `MutSpan[T]` to C pointers and hides the integer count
+    witness in a generated safe wrapper. It preserves the written C parameter
+    order, checks representability for integer widths through 64 bits, and
+    checks equal lengths when spans share one witness. `FFI-11/` runs shared
+    and mutable C helpers in three profiles, checks a wrapper imported from
+    another module, and rejects missing/non-integer witnesses, wrong witness
+    modes, length mismatch and narrowing overflow.
+    Nullable counted spans and 128-bit count witnesses remain `E0900` gaps.
+    The full annotation sweep, workspace suite, frozen-part/pin check, and
+    repository gates passed. CI for the preceding `e7a385a` finished green.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_30.md`
-  (ODR-073), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` is
-  frozen.
-* **Next numbers:** ODR-074, D-363, ADR-063.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_31.md`
+  (ODR-074), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` and
+  `parts-h31/` are frozen.
+* **Next numbers:** ODR-075, D-363, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10989,9 +11009,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** extend Phase 5 contracts to nullable and counted pointers,
-  pointer results and foreign statics/types. Check the newest CI run before
-  pushing further work.
+* **Next task:** finish the remaining Phase 5 pointer contract shapes,
+  starting with pointer results, then foreign statics/types. Check the newest
+  CI run before pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.
