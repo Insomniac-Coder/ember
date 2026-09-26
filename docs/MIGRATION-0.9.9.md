@@ -820,3 +820,11 @@ The next number is ODR-027.
   instance passes that parameter as the declaration does. A parameter an instance's type makes a
   view is a source of that instance. Found and open: a temporary without a destructor may be
   borrowed past its statement (D-342).
+* **2026-09-26 — private methods, and a class handle as a key (`[MOD-2]`, `[TYP-36]`).**
+  * A method or associated function without `pub` is private to its module, as a field is:
+    calling it from another module is `E1052` "`name` is private to `module`" (D-328). A method
+    implementing an interface is as visible as the interface, `pub` or not. Mark a method `pub fn`
+    to call it from elsewhere. `DefaultHasher.new()` is now `pub`.
+  * A class handle is `Hash` by identity, so it can key a `Map` or fill a `Set` (D-273).
+  * `Either.Right("r")` finds a generic enum's arguments from the expected type (D-270, fixed by
+    D-341).

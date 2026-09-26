@@ -564,6 +564,8 @@ struct GenericMethod {
     borrows: Option<Vec<usize>>,
     /// Module, item and member index of the declaration.
     source: (usize, usize, usize),
+    /// `[MOD-2]` (D-328) — as written: `pub fn`, or private to its module.
+    vis: ast::VisKind,
     span: Span,
 }
 
@@ -1114,6 +1116,13 @@ struct Checker<'a> {
     /// (`self: Holder[T]` for `Holder[str]`'s), which its body was checked
     /// with.
     declared_params: HashMap<DefId, Vec<(Symbol, Ty)>>,
+    /// `[MOD-2]` (D-328) — each method's and associated function's
+    /// visibility and declaring module: its own `pub`, or, implementing an
+    /// interface, the interface's.
+    method_vis: HashMap<DefId, (ast::VisKind, usize)>,
+    /// A call the compiler routes to a helper of `std`'s (`xs.sort()` to
+    /// `sort_ord`), which the program did not write (D-328).
+    routed_call: bool,
     /// Import-visible member declarations collected from resolved source
     /// signatures. This is distinct from HIR/MIR bodies because interface and
     /// generic members can be semantically visible without an emitted body.
@@ -1324,6 +1333,8 @@ impl<'a> Checker<'a> {
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
             declared_params: HashMap::new(),
+            method_vis: HashMap::new(),
+            routed_call: false,
             member_callable_declarations: Vec::new(),
             pending_generic_methods: Vec::new(),
             pending_generic_method_validations: Vec::new(),
@@ -3074,6 +3085,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
+                    vis: member.vis.kind,
                     span: member.span,
                 });
             }
@@ -3148,6 +3160,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
+                    vis: member.vis.kind,
                     span: member.span,
                 });
             }
@@ -3231,6 +3244,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
+                    vis: member.vis.kind,
                     span: member.span,
                 });
             }
@@ -3313,6 +3327,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     source: (self.current_module, item_index, member_index),
+                    vis: member.vis.kind,
                     span: member.span,
                 });
             }
@@ -4258,6 +4273,8 @@ impl<'a> Checker<'a> {
         if base > 0 {
             self.generic_prefix.insert(def, prefix);
         }
+        let vis = self.member_visibility(interface, method.vis, method.source.0);
+        self.method_vis.insert(def, vis);
         // `[DRP-1]` — a generic that writes `fn drop` gives every one of its
         // instantiations a destructor.
         if method.name.is("drop") {
@@ -5197,6 +5214,7 @@ impl<'a> Checker<'a> {
                         item_index,
                     );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.adopt_interface_visibility(ty);
                     self.collect_derived_clone(ty, &item.attrs, item.span);
                     self.collect_assoc_consts(ty, &decl.members);
                 }
@@ -5229,6 +5247,7 @@ impl<'a> Checker<'a> {
                     );
                     self.record_class_virtual_methods(ty, &decl.members);
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.adopt_interface_visibility(ty);
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
@@ -5241,6 +5260,7 @@ impl<'a> Checker<'a> {
                         item_index,
                     );
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.adopt_interface_visibility(ty);
                     self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
@@ -5301,6 +5321,7 @@ impl<'a> Checker<'a> {
                         self.record_class_virtual_methods(ty, &decl.members);
                     }
                     self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.adopt_interface_visibility(ty);
                 }
                 _ => {}
             }
@@ -6607,6 +6628,8 @@ impl<'a> Checker<'a> {
             };
             if let Some(def) = registered {
                 self.record_defaults(def, decl);
+                let vis = self.member_visibility(from_interface, member.vis.kind, self.current_module);
+                self.method_vis.insert(def, vis);
                 if is_abstract_class_method {
                     self.abstract_methods.insert(def);
                     self.pending_abstract_methods.push(PendingAbstractMethod {
@@ -12344,6 +12367,81 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         self.interfaces.contains_key(&qualified).then_some(qualified)
     }
 
+    /// `[MOD-2]` (D-328) — a type's body method that implements an interface
+    /// its header names (`struct DefaultHasher implements Hasher:`) is what
+    /// the interface offers, visible as the interface is.
+    fn adopt_interface_visibility(&mut self, ty: Ty) {
+        let implemented: Vec<Symbol> =
+            self.implemented.iter().filter(|(owner, ..)| *owner == ty).map(|&(_, interface, _)| interface).collect();
+        for interface in implemented {
+            let origin = self.open_interface_origin.get(&interface).map_or(interface, |(origin, _)| *origin);
+            let Some(def) = self.interfaces.get(&origin) else { continue };
+            let names: Vec<Symbol> = def.methods.iter().map(|(name, ..)| *name).collect();
+            for name in names {
+                let entry = self.methods.get(&(ty, name)).map(|entry| entry.def).or_else(|| self.associated.get(&(ty, name)).map(|entry| entry.def));
+                if let Some(entry) = entry {
+                    let vis = self.member_visibility(Some(interface), ast::VisKind::Private, self.current_module);
+                    self.method_vis.insert(entry, vis);
+                }
+            }
+        }
+    }
+
+    /// `[MOD-2]` (D-328) — a method's visibility and module: written with it,
+    /// or, for one implementing an interface, the interface's, since its
+    /// methods are what the interface offers.
+    fn member_visibility(&self, interface: Option<Symbol>, written: ast::VisKind, module: usize) -> (ast::VisKind, usize) {
+        let Some(interface) = interface else { return (written, module) };
+        let origin = self.open_interface_origin.get(&interface).map_or(interface, |(origin, _)| *origin);
+        let vis = self.item_visibility.get(&origin).copied().unwrap_or(ast::VisKind::Public);
+        let declared = match origin.as_str().rsplit_once('.') {
+            Some((prefix, _)) => self.prefixes.iter().position(|known| known == prefix),
+            None => self.prefixes.iter().position(|known| known.is_empty()),
+        };
+        (vis, declared.unwrap_or(module))
+    }
+
+    /// `[MOD-2]` (D-328) — `E1052` for a method or associated function that
+    /// is not visible here.
+    fn check_method_visible(&mut self, def: DefId, owner: Ty, name: ast::Ident) {
+        if self.routed_call {
+            return;
+        }
+        let Some(&(vis, module)) = self.method_vis.get(&def) else { return };
+        let visible_as = |this: &Self, (vis, module): (ast::VisKind, usize)| match vis {
+            ast::VisKind::Private => module == this.current_module,
+            ast::VisKind::Package => this.same_package(module, this.current_module),
+            _ => true,
+        };
+        if visible_as(self, (vis, module)) {
+            return;
+        }
+        // A method that implements an interface its owner implements (in a
+        // generic type's header, say) is what that interface offers.
+        let implemented: Vec<Symbol> =
+            self.implemented.iter().filter(|(ty, ..)| *ty == owner).map(|&(_, interface, _)| interface).collect();
+        for interface in implemented {
+            let origin = self.open_interface_origin.get(&interface).map_or(interface, |(origin, _)| *origin);
+            let offers = self.interfaces.get(&origin).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
+            if offers && visible_as(self, self.member_visibility(Some(interface), vis, module)) {
+                return;
+            }
+        }
+        let declared_in = match self.prefixes.get(module).map(String::as_str) {
+            Some("") | None => format!("`{}`'s module", self.types.display(owner)),
+            Some(path) => format!("`{path}`"),
+        };
+        let (visibility, help) = match vis {
+            ast::VisKind::Package => ("`pub(package)` in", format!("declare it `pub fn {}` to call it from another package", name.name)),
+            _ => ("private to", format!("declare it `pub fn {}` to call it from another module", name.name)),
+        };
+        self.sink.emit(
+            Diagnostic::error(codes::E1052, name.span, format!("`{}` is {visibility} {declared_in}", name.name))
+                .help(help)
+                .note("a method is private to its module unless it says otherwise [MOD-2]"),
+        );
+    }
+
     /// `[MOD-2]` — whether the item `qualified`, declared in `module`, may be
     /// used here: a private item only in its own module, a `pub(package)` one
     /// within its package, a `pub` one anywhere.
@@ -17172,7 +17270,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             let ord = self.implements(elem, Symbol::intern("std.core.Ord"));
             if ord && self.lookup_method(receiver.ty, routed.name).is_some() {
                 let receiver_span = receiver.span;
-                return self.synth_registered_method(receiver, receiver_span, routed, args, Vec::new(), span);
+                // The compiler's own call of std's helper: not the program's.
+                let was = std::mem::replace(&mut self.routed_call, true);
+                let call = self.synth_registered_method(receiver, receiver_span, routed, args, Vec::new(), span);
+                self.routed_call = was;
+                return call;
             }
             let shown = self.types.display(elem);
             let missing = if ord { "Clone" } else { "Ord" };
@@ -17462,7 +17564,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.extend_instance_at_use(value.ty);
                 if self.lookup_method(value.ty, routed.name).is_some() {
                     let value_span = value.span;
-                    return self.synth_registered_method(value, value_span, routed, &[], Vec::new(), span);
+                    let was = std::mem::replace(&mut self.routed_call, true);
+                    let call = self.synth_registered_method(value, value_span, routed, &[], Vec::new(), span);
+                    self.routed_call = was;
+                    return call;
                 }
             }
             let shown = self.types.display(elem);
@@ -23486,6 +23591,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         let def = entry.def;
+        self.check_method_visible(def, owner, name);
         let explicit = self.resolve_method_type_args(generic_args);
         if !self.signatures[def.0 as usize].generics.is_empty() {
             return self.synth_generic_method_call(
@@ -25277,6 +25383,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         };
         let def = entry.def;
         let receiver_mode = entry.receiver;
+        self.check_method_visible(def, receiver.ty, name);
         if let Some(job) = self.deferred_methods.remove(&def) {
             self.pending_methods.push(job);
         }
@@ -27828,6 +27935,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .current_generics
                 .get(*index as usize)
                 .is_some_and(|param| param.bounds.contains(&hash)),
+            // `[TYP-36]` (D-273) — a class handle hashes by identity, as its
+            // `Eq` is identity.
+            TyKind::Class(_) => true,
             _ => self.has_builtin_eq_hash(ty) || self.implemented.iter().any(|(t, i, _)| *t == ty && *i == hash),
         }
     }
@@ -27940,6 +28050,13 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let value = Expr { ty: u64_ty, kind: ExprKind::Cast { expr: Box::new(receiver), to: u64_ty }, span };
                 stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
             }
+            // `[TYP-36]` (D-273) — a class handle hashes by identity: its
+            // object's address, as `is` compares it.
+            TyKind::Class(_) => {
+                let usize_ty = self.common.usize;
+                let value = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(receiver), to: usize_ty }, span };
+                stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
+            }
             TyKind::Enum(id) => {
                 let variants = self.types.enum_def(id).variants.clone();
                 let mut arms = Vec::new();
@@ -28011,7 +28128,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// The kinds whose `hash` `synth_hash_of` builds rather than calls.
     fn hash_provided(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
-            TyKind::Void | TyKind::Range(_) | TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Void | TyKind::Range(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Class(_) => true,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only() || self.derives_hash(ty),
             TyKind::Struct(_) => self.derives_hash(ty),
             _ => false,

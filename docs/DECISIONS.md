@@ -1852,3 +1852,31 @@ when dividing by a `NonZero`. This is how.
   panics (`[TYP-8]`).
 - **Not done.** `NonZero` has no `Ord` until `@derive(Ord)` exists, and prints
   as a struct, `NonZero(value=5)`, until `std` declares `Display`.
+
+## ADR-057 — a method implementing an interface is as visible as the interface
+
+**Decided 2026-09-26, fixing D-328.** `[MOD-2]` makes an item private to its
+module unless marked, and `[BRW-10]` speaks of a method's visibility, so a
+method written without `pub` is private to its module. The spec does not say
+how visible a method is that implements an interface; `[TYP-24]` finds an
+interface method "through any implementation visible in the program".
+
+- **The ruling.** A method that implements an interface, in an `extend T
+  implements I` block or in a type's `implements` header, is as visible as the
+  interface, whatever it writes: the interface's methods are what it offers,
+  and an implementation cannot offer less (a `pub` interface's method written
+  as plain `fn` in the block is callable anywhere), nor more (a private
+  interface's methods, `std.math.det`'s `det_sin`, stay in its module). Any
+  other method or associated function has the visibility written with it.
+- **How.** `method_vis` maps a method's definition to its visibility and
+  module (`member_visibility`), filled where methods are registered and, for
+  a header's interfaces, by `adopt_interface_visibility`; a generic
+  instance's method falls back to the interfaces its owner implements.
+  `check_method_visible` reports `E1052` naming the declaring module.
+- **The compiler's own calls.** Where the compiler routes a call through a
+  `std` helper (`a.sort()` to `sort_ord`), the helper is the compiler's
+  implementation, not the program's call, and is not checked (`routed_call`).
+- **Alternative rejected.** Requiring `pub fn` on every implementing method
+  would make `pub` on it mean nothing (the interface decides who can see the
+  method through `I.m(x)` anyway), and would let a public type's
+  implementation of a public interface hide the interface's methods.

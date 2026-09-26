@@ -10734,7 +10734,8 @@ the running narrative behind it.
     Windows jobs failed, D-330), `bc6d6c8` (D-330's fix; CI green), then
     `NonZero[T]` (`e663590`: ODR-047, Hardened_22, D-332 to D-339; CI
     green), `4883eab` (D-305 and `for x in owned e`, D-340, D-341; CI
-    green), then D-284 (ODR-048, Hardened_23; D-342 open). From the
+    green), `b8ad4ec` (D-284: ODR-048, Hardened_23; D-342 open; CI green),
+    then B2's first commit (D-273, D-270, D-328). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
@@ -10743,12 +10744,14 @@ the running narrative behind it.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_23.md`
   (ODR-048), pinned in `docs/spec-source/development-target.json`. The spec's
   working sources are `tasks/spec-0.9.9/parts/`; `parts-h23/` is frozen.
-* **Next numbers:** ODR-049, D-343, ADR-057.
-* **Next task:** A1 to A4 and B1 are done. B2, the open defects: D-270,
-  D-273, D-218, D-220, D-202, D-201, D-198, D-342 (a temporary's end for
-  the region check), then D-328 (method
-  visibility, after a `std` audit) and D-331 (a nesting limit with a
-  diagnostic, which needs an ODR) also belong; then the rest of the list.
+* **Next numbers:** ODR-049, D-343, ADR-058.
+* **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
+  way: D-273, D-270 and D-328 are fixed. Next: D-218, D-220, D-202, D-201,
+  D-198, D-342 (a temporary's end for the region check: the loans must tell
+  a temporary's own storage from what passes through it; a first attempt
+  that ended every temporary with `StorageDead` broke 17 tests, e.g.
+  `node.get_mut()` on a `Shared`), D-331 (a nesting limit with a
+  diagnostic, which needs an ODR); then the rest of the list.
   `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
   enums) join at `TypeTable::option_niche` (ADR-056).
 * **Last phase table given to the owner (2026-09-26, while `NonZero` was
@@ -11021,6 +11024,22 @@ goes straight to `main`, as `docs/AUTOPILOT.md` says.
   `declared_sources` adds each parameter the instance's type makes a view.
   `fn_value_of` refuses such an instance as a function value (`E2020`).
   D-342 (open) was found on the way.
+* **Then B2: D-273, D-270, D-328.**
+  * **D-273.** A class handle is `Hash` by identity (`[TYP-36]`): `hashes`
+    and `hash_provided` accept `TyKind::Class`, and `synth_hash_of` hashes
+    the handle cast to `usize`.
+  * **D-270** was D-341, already fixed; its example joined D-341's test.
+  * **D-328, method privacy (`[MOD-2]`).** `check_method_visible` runs from
+    `synth_registered_method` and `synth_associated_call` and reports
+    `E1052` naming the declaring module. `method_vis` (def to visibility and
+    module) is filled in `collect_members_inner` and
+    `register_recipe_method`; an interface's method takes the interface's
+    visibility (`member_visibility`, `adopt_interface_visibility` after each
+    `collect_implements`), and a generic instance's falls back to the
+    interfaces `implemented` records for its owner. `routed_call` exempts
+    the compiler's calls of `std` helpers (`sort_ord`, `sorted_ord`).
+    `DefaultHasher.new` became `pub`; the other non-`pub` `std` methods are
+    helpers. ADR-057 records how visible an implementing method is.
 
 **The owner's standing instructions (all still in force)**
 

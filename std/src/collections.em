@@ -161,7 +161,7 @@ extend str implements AsKey[String]:
 pub struct DefaultHasher implements Hasher:
     state: u64
 
-    fn new() -> DefaultHasher:
+    pub fn new() -> DefaultHasher:
         return DefaultHasher(0)
 
     @overflow(wrap)
