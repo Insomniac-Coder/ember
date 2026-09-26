@@ -11059,13 +11059,23 @@ first**; the rest of §0.355 is the running narrative behind it.
     `pub(read)` gates still reject forbidden writes. Focused `FFI-10/`
     annotations and the linked integration test pass. The final full sweep
     reports zero failures, the workspace suite passes, and all repository
-    gates pass. The batch is ready to commit and push.
+    gates pass. Commit `710b8a7` is pushed to `main`; its CI run is
+    `36279791340`.
     `[STA-1]`, `[EXP-2]`, and `[MOD-7]` already specify these behaviors; no
     ODR or new hardening is needed.
+  * The next five-feature slice extends foreign record writes through nested
+    fields. Direct and augmented writes hit the C object, including a test
+    where the right operand changes another field before the read. `link_name`
+    aliases and both module-import forms retain the linker target. Nested
+    immutable, missing-`unsafe`, and cross-module `pub(read)` writes reject.
+    Focused annotations and C-linked integration tests pass. The final full
+    annotation sweep reports zero failures, the workspace suite passes, and
+    all repository gates pass. The batch is ready to commit and push. The
+    existing rules already settle these cases, so H38 remains the target.
 
   Check CI for the newest first. H37 `36276950767`, H38 `36277984572`,
-  and scalar-write `36278807435` passed; the record-global run
-  `36279355654` was running at the last check.
+  and scalar-write `36278807435` passed; record-global `36279355654` and
+  record-field `36279791340` were running at the last check.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through

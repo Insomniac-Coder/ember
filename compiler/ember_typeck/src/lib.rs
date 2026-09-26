@@ -14073,8 +14073,7 @@ impl<'a> Checker<'a> {
 
                 // A field of a foreign record is a place in C storage, even
                 // though an ordinary read of the record produces a value.
-                if let ast::ExprKind::Field { base, .. } = &target.kind
-                    && let Some(binding) = self.foreign_static_assignment_target(base)
+                if let Some(binding) = self.foreign_static_field_assignment_root(target)
                     && matches!(self.types.kind(binding.ty), TyKind::Struct(_))
                 {
                     if !binding.is_mut {
@@ -14089,8 +14088,7 @@ impl<'a> Checker<'a> {
                     self.in_assignment_target = true;
                     let field = self.synth(target);
                     self.in_assignment_target = previous_target;
-                    let ExprKind::Field { index, .. } = &field.kind else { return };
-                    let index = *index;
+                    let Some(path) = self.foreign_static_field_path(&field, binding.symbol) else { return };
                     self.reject_readonly_write_in_assignment(&field, target.span);
                     let field_ty = field.ty;
                     if let Some(bin) = op
@@ -14140,7 +14138,7 @@ impl<'a> Checker<'a> {
                     out.push(Stmt::Expr(Expr {
                         ty: self.common.void,
                         kind: ExprKind::Builtin {
-                            which: Builtin::ForeignStaticFieldWrite { symbol: binding.symbol, record: binding.ty, index },
+                            which: Builtin::ForeignStaticFieldWrite { symbol: binding.symbol, record: binding.ty, path },
                             args: vec![rhs],
                         },
                         span: stmt.span,
@@ -24676,6 +24674,39 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
         self.foreign_statics.get(&qualified).copied()
+    }
+
+    fn foreign_static_field_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+        let mut current = target;
+        while let ast::ExprKind::Field { base, .. } = &current.kind {
+            if let Some(binding) = self.foreign_static_assignment_target(base) {
+                return Some(binding);
+            }
+            current = base;
+        }
+        None
+    }
+
+    /// A checked field expression supplies both the names and their order;
+    /// its innermost base must still be the foreign object we resolved.
+    fn foreign_static_field_path(&self, field: &Expr, symbol: Symbol) -> Option<Symbol> {
+        let mut current = field;
+        let mut names = Vec::new();
+        loop {
+            match &current.kind {
+                ExprKind::Field { base, index } => {
+                    let TyKind::Struct(id) = self.types.kind(base.ty) else { return None };
+                    names.push(self.types.struct_def(*id).fields.get(*index)?.name);
+                    current = base;
+                }
+                ExprKind::Builtin {
+                    which: Builtin::ForeignStaticRead { symbol: found, .. }, ..
+                } if *found == symbol => break,
+                _ => return None,
+            }
+        }
+        names.reverse();
+        Some(Symbol::intern(&names.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(".")))
     }
 
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item

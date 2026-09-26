@@ -787,7 +787,7 @@ pub enum Builtin {
     /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
     ForeignStaticWrite { symbol: Symbol },
     /// `[STA-1]` — update one field of a C record global in place.
-    ForeignStaticFieldWrite { symbol: Symbol, record: Ty, index: usize },
+    ForeignStaticFieldWrite { symbol: Symbol, record: Ty, path: Symbol },
     /// `println(x)` for a scalar or `str`.
     Println,
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
