@@ -5740,6 +5740,16 @@ impl Emitter<'_> {
                 }
                 let value = self.operand(operand, body);
                 let ty = self.c_type(*to);
+                if matches!(kind, CastKind::Numeric)
+                    && let Some(from) = self.operand_type(operand, body)
+                    && ((matches!(self.types.kind(from), TyKind::Ptr { .. }) && self.types.is_integral(*to))
+                        || (self.types.is_integral(from) && matches!(self.types.kind(*to), TyKind::Ptr { .. })))
+                {
+                    // `[TYP-7]` — an explicit integer/pointer cast crosses
+                    // through the pointer-sized integer so C never warns on
+                    // a different source integer width.
+                    return format!("(({ty})(uintptr_t)({value}))");
+                }
                 match kind {
                     CastKind::InterfaceUpcast { concrete, interfaces, .. } => {
                         let table_identity = dyn_table_identity(interfaces);

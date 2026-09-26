@@ -1003,6 +1003,11 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path { segments: vec![Ident { name: "super".into(), span }] }
             }
+            TokenKind::Keyword(Kw::Static) if self.in_ffi_attribute => {
+                let span = self.span();
+                self.bump();
+                ExprKind::Path { segments: vec![Ident { name: "static".into(), span }] }
+            }
             TokenKind::Keyword(Kw::Match) => {
                 let (scrutinee, arms) = self.parse_match_tail();
                 ExprKind::Match { scrutinee: Box::new(scrutinee), arms }

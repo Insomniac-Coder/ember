@@ -10846,6 +10846,21 @@ first**; the rest of §0.355 is the running narrative behind it.
     Nullable counted spans and 128-bit count witnesses remain `E0900` gaps.
     The full annotation sweep, workspace suite, frozen-part/pin check, and
     repository gates passed. CI for the preceding `e7a385a` finished green.
+  * The next five-feature batch builds result lifetimes already specified by
+    Hardened_31, so it needs no ODR or new hardening. A hand-declared safe C
+    function may return `ref T` or `Option[ref T]` under a borrowed-one result
+    contract with `from(static)` or `from(p)`. The signature's borrow metadata
+    records no parameter for `static`, or exactly `p` for a named lifetime;
+    unrelated input loans therefore end at the call. Unknown names and
+    borrowed `Copy` scalars are `E5002`, as are mismatched result types. The
+    same batch implements `[TYP-7]`'s raw-pointer/integer and raw-pointer/type
+    casts under `unsafe:`, with `E3100` outside it; 128-bit pointer/integer
+    casts remain `E0900`. `FFI-11/` and `TYP-7/` exercise C calls, nullable
+    Some/None, lifetime narrowing, casts and rejection cases. A cross-module
+    static-result test caught the interface validator rejecting the empty
+    borrow set; it now accepts that set for C shared-reference results while
+    continuing to reject empty source `@borrows`. The spec files and H31 pin
+    are unchanged.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.

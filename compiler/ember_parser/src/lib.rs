@@ -46,6 +46,9 @@ pub(crate) struct Parser<'a> {
     /// it passed the limit (then the rest of the file is skipped silently).
     depth: u32,
     too_deep: bool,
+    /// `[FFI-11]` permits the keyword `static` as `from(static)` only while
+    /// parsing an `@ffi` attribute's contract words.
+    in_ffi_attribute: bool,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -64,6 +67,7 @@ impl<'a> Parser<'a> {
             region_start: usize::MAX,
             depth: 0,
             too_deep: false,
+            in_ffi_attribute: false,
         }
     }
 

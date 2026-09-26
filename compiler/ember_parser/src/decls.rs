@@ -127,6 +127,8 @@ impl Parser<'_> {
             let path = self.parse_dotted_path();
             let mut args = Vec::new();
             if self.eat_punct(Punct::LParen) {
+                let in_ffi = path.len() == 1 && path[0].name.is("ffi");
+                let outer_ffi = std::mem::replace(&mut self.in_ffi_attribute, in_ffi);
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
                     match self.parse_attr_arg() {
                         Some(arg) => args.push(arg),
@@ -137,6 +139,7 @@ impl Parser<'_> {
                     }
                 }
                 self.expect_punct(Punct::RParen);
+                self.in_ffi_attribute = outer_ffi;
             }
             attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()) });
             self.eat_newlines();

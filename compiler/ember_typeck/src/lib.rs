@@ -5117,7 +5117,18 @@ impl<'a> Checker<'a> {
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
                         .unwrap_or(self.common.void);
-                    let borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
+                    let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
+                    let borrows = if decl.is_foreign_decl && decl.is_safe {
+                        let from = match ffi_result_contract(&item.attrs) {
+                            Some(FfiResultContract::SharedOneStatic | FfiResultContract::NullableSharedOneStatic) => Some(Vec::new()),
+                            Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)) =>
+                                params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![index]),
+                            None => None,
+                        };
+                        from.or(explicit_borrows)
+                    } else {
+                        explicit_borrows
+                    };
                     self.lint_rule_3(&params, ret, &borrows, item.span);
                     self.type_params.clear();
                     self.projection_params.clear();
@@ -11181,6 +11192,7 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
         let contracts = ffi_param_contracts(attrs);
+        let result_contract = ffi_result_contract(attrs);
         let unknown_facts = ffi_unknown_fact_contracts(attrs);
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if let TyKind::Param { index, .. } = this.types.kind(ty)
@@ -11255,7 +11267,21 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         if ret != self.common.void {
-            check(self, ret, decl.name.span, "this is the return type".to_string());
+            if decl.is_foreign_decl && decl.is_safe
+                && let Some((inner, _)) = self.foreign_nullable_ref_inner(ret) {
+                if !self.types.is_ffi_safe(inner) {
+                    self.error(codes::E5050, decl.name.span,
+                        "the nullable reference result refers to a type with no foreign representation");
+                }
+            } else if decl.is_foreign_decl && decl.is_safe
+                && let TyKind::Ref { inner, .. } = self.types.kind(ret) {
+                if !self.types.is_ffi_safe(*inner) {
+                    self.error(codes::E5050, decl.name.span,
+                        "the reference result refers to a type with no foreign representation");
+                }
+            } else {
+                check(self, ret, decl.name.span, "this is the return type".to_string());
+            }
         }
         if decl.is_foreign_decl {
             let mut checked_witnesses = HashSet::new();
@@ -11318,6 +11344,26 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         if decl.is_foreign_decl && decl.is_safe {
+            match result_contract {
+                Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
+                    if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
+                        if self.types.is_ffi_safe(*inner)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` result contract needs a shared reference result"),
+                Some(FfiResultContract::NullableSharedOneStatic | FfiResultContract::NullableSharedOneFrom(_))
+                    if !self.foreign_nullable_ref_inner(ret)
+                        .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)) =>
+                    self.error(codes::E5002, decl.name.span,
+                        "`@ffi` result contract needs a nullable shared reference result"),
+                _ => {}
+            }
+            if let Some(FfiResultContract::SharedOneFrom(name) | FfiResultContract::NullableSharedOneFrom(name)) = result_contract {
+                if !signature.iter().any(|(param, ty, mode, _)| *param == name
+                    && (*mode == Mode::Mut || self.is_source_parameter(*ty, *mode))) {
+                    self.error(codes::E5002, decl.name.span,
+                        format!("result lifetime `from({name})` names no borrowed parameter"));
+                }
+            }
             for &(name, ty, mode, span) in &signature {
                 let contract = contracts.iter().find(|(slot, _)| *slot == name).map(|(_, kind)| *kind);
                 let unknown: Vec<_> = unknown_facts.iter().filter(|(slot, _)| *slot == name)
@@ -11364,8 +11410,19 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
             }
             if self.foreign_pointer_contract_required(ret) {
+                self.error(codes::E5002, decl.name.span, if result_contract.is_some() {
+                    "`safe fn` cannot expose a raw pointer result"
+                } else {
+                    "`safe fn` needs an `@ffi` contract for its pointer result"
+                });
+            } else if matches!(self.types.kind(ret), TyKind::Ref { .. })
+                && result_contract.is_none() {
                 self.error(codes::E5002, decl.name.span,
-                    "`safe fn` needs an `@ffi` contract for its pointer result");
+                    "`safe fn` needs an `@ffi` contract for reference result");
+            } else if self.foreign_nullable_ref_inner(ret).is_some()
+                && result_contract.is_none() {
+                self.error(codes::E5002, decl.name.span,
+                    "`safe fn` needs an `@ffi` contract for nullable reference result");
             }
         }
     }
@@ -21543,9 +21600,29 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Char, TyKind::Uint(UintTy::U32)) | (TyKind::Uint(UintTy::U8), TyKind::Char)
                 );
-                if !char_cast && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
-                    // `[TYP-7]` — pointer casts require `unsafe`, which Phase 0
-                    // does not implement.
+                let pointer_integer_cast =
+                    (matches!(self.types.kind(inner.ty), TyKind::Ptr { .. }) && self.types.is_integral(to))
+                    || (self.types.is_integral(inner.ty) && matches!(self.types.kind(to), TyKind::Ptr { .. }));
+                let pointer_pointer_cast = matches!(
+                    (self.types.kind(inner.ty), self.types.kind(to)),
+                    (TyKind::Ptr { .. }, TyKind::Ptr { .. })
+                );
+                if pointer_integer_cast || pointer_pointer_cast {
+                    if !self.in_unsafe {
+                        self.error(codes::E3100, span, if pointer_integer_cast {
+                            "casting between a raw pointer and an integer requires `unsafe`"
+                        } else {
+                            "casting between raw pointer types requires `unsafe`"
+                        });
+                    }
+                    if pointer_integer_cast && (matches!(self.types.kind(inner.ty),
+                        TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128))
+                        || matches!(self.types.kind(to),
+                            TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128))) {
+                        self.error(codes::E0900, span,
+                            "raw pointer casts involving 128-bit integers are not implemented yet");
+                    }
+                } else if !char_cast && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
                     let shown = self.types.display(to);
                     self.error(
@@ -23949,6 +24026,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     }
                     saw_ffi = true;
                     let mut saw_link_name = false;
+                    let mut saw_result = false;
                     let mut contracted = HashSet::new();
                     for arg in &attr.args {
                         match arg {
@@ -23966,7 +24044,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 }
                             }
                             _ => {
-                                if let Some((name, _)) = ffi_param_contract_arg(arg) {
+                                if ffi_result_contract_arg(arg).is_some() {
+                                    if saw_result {
+                                        self.error(codes::E0104, attr.span, "duplicate result contract in `@ffi`");
+                                    }
+                                    saw_result = true;
+                                } else if let Some((name, _)) = ffi_param_contract_arg(arg) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -34295,6 +34378,53 @@ enum FfiPointerContract {
     NullableSharedOne,
     NullableMutOne,
     Count { witness: Symbol, exclusive: bool },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FfiResultContract {
+    SharedOneStatic,
+    NullableSharedOneStatic,
+    SharedOneFrom(Symbol),
+    NullableSharedOneFrom(Symbol),
+}
+
+fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("result"))
+        || !(3..=4).contains(&args.len()) || args.iter().any(|arg| arg.name.is_some())
+        || !ffi_contract_word(&args[0].value).is_some_and(|word| word.is("borrowed"))
+        || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let (mut nullable, mut source) = (false, None);
+    for word in &args[2..] {
+        if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) && !nullable {
+            nullable = true;
+            continue;
+        }
+        let ast::ExprKind::Call { callee, args: lifetime } = &word.value.kind else { return None };
+        if !ffi_contract_word(callee).is_some_and(|word| word.is("from"))
+            || lifetime.len() != 1 || lifetime[0].name.is_some()
+            || source.is_some() {
+            return None;
+        }
+        source = ffi_contract_word(&lifetime[0].value);
+        if source.is_none() { return None; }
+    }
+    let source = source?;
+    Some(match (source.is("static"), nullable) {
+        (true, false) => FfiResultContract::SharedOneStatic,
+        (true, true) => FfiResultContract::NullableSharedOneStatic,
+        (false, false) => FfiResultContract::SharedOneFrom(source),
+        (false, true) => FfiResultContract::NullableSharedOneFrom(source),
+    })
+}
+
+fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {
+    attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .and_then(|attr| attr.args.iter().find_map(ffi_result_contract_arg))
 }
 
 /// ODR-073's first direct-declaration pointer contracts: borrowed single

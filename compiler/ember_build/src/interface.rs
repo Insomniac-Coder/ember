@@ -98,8 +98,8 @@ pub struct CallableSignature {
     pub parameters: Vec<CallableParameter>,
     pub result: String,
     pub generics: Vec<CallableGenericParameter>,
-    /// Zero-based parameter positions explicitly named by `@borrows`, or
-    /// `None` when ordinary elision remains the contract.
+    /// Zero-based result provenance positions. `None` uses ordinary elision;
+    /// `Some([])` denotes a foreign C result contracted as `from(static)`.
     pub borrows: Option<Vec<usize>>,
     pub is_unsafe: bool,
     /// `None` denotes Ember's ordinary ABI.
@@ -137,7 +137,10 @@ impl CallableSignature {
             }
         }
         if let Some(borrows) = &self.borrows {
-            if borrows.is_empty() {
+            if borrows.is_empty()
+                && !(self.abi.as_deref() == Some("C")
+                    && (self.result.starts_with("ref ") || self.result.starts_with("Option[ref ")))
+            {
                 return Err("`@borrows` must name at least one parameter");
             }
             let mut previous = None;
@@ -1352,5 +1355,21 @@ mod tests {
             Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
                 if reason == "`@borrows` must name at least one parameter"
         ));
+    }
+
+    #[test]
+    fn a_static_c_reference_result_has_no_parameter_provenance() {
+        for result in ["ref i32", "Option[ref i32]"] {
+            let mut foreign = input("root", "root", &[], 0);
+            let contract = &mut foreign.callables[0].contract;
+            contract.signature.result = result.to_string();
+            contract.signature.generics.clear();
+            contract.signature.abi = Some("C".to_string());
+            contract.signature.borrows = Some(Vec::new());
+            contract.metadata = None;
+
+            let artifacts = build_artifacts(&[foreign], "test").unwrap();
+            assert_eq!(artifacts[0].callables.values().next().unwrap().signature.borrows, Some(Vec::new()));
+        }
     }
 }
