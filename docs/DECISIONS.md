@@ -1953,3 +1953,53 @@ programs are accepted; these are the implementation's choices.
   as a synthesized `@borrows`, which its callers read like a written one.
 - **Cost.** Summaries re-run region inference for a body when a callee's summary grows; a
   map-heavy test checks about 15% slower in a debug build (3.05 s to 3.50 s), others unchanged.
+
+## ADR-060 — how `[EXC-19]`'s per-field access is built
+
+**Decided 2026-09-26, with D-202, D-218, D-359 and ODR-072.** The rules fix what is checked;
+these are the implementation's choices.
+
+- **The layout.** A class object holds a `uint32_t` access word in front of each non-`Copy` field
+  (`class_field_has_access_word`; `_access_<field>` in the C struct). The type info's `fields` and
+  `field_count` list every word of the class, its bases' included (`ember_field_desc`: name and
+  offset), and `ember_obj_new` zeroes the whole object. The header's `access` word stays a `Shared`
+  payload's.
+- **The whole-object write is the caller's.** A `mut self` call on a class object is bracketed by
+  `ember_object_begin_write`/`end_write` in its caller, over every word of the object's dynamic
+  class; a call on the caller's own `self` is a reborrow and takes nothing (`[EXC-5]`). Inside the
+  method `self`'s fields are covered (`Body::mut_self`). Through an interface handle or a `dyn`
+  box, the dynamic adapter, which knows the class, takes the write, and the caller none. Taking it
+  in the callee, as before, could not tell a reborrow from an alias (D-359).
+- **Field accesses follow loans.** `field_accesses` (`borrows.rs`), placed by the pass that
+  brackets `Shared` accesses, gives each loan of a place through a field with a word (a view, a
+  `ref`, a field passed or iterated) that word for the loan's exact NLL region, in its mode; a read
+  or write through such a field without a loan (`h.items[i]`, `len(h.name)`, a store, a drop)
+  holds it for that statement, or across a call. An access that would begin and end at one point
+  is not emitted.
+- **A returned view carries its access (`[EXC-18]`).** A body's summary lists the fields (or
+  objects) of its arguments its result may borrow, computed to a fixpoint with the `Shared`
+  summaries; the callee's access ends at its return and the caller begins the same access where
+  the call returns, until the result's last use. Through a virtual or interface call the caller
+  cannot know the field, and reads every field of the receiver object.
+- **Cost.** The field checks are `static inline` in `ember_rt.h`: a load, a test and a store,
+  with only a conflict a call. A `mut self` call checks one word per non-`Copy` field of the
+  class. `[EXC-3]` elides no `mut self` write, since its callee receives the caller's handle and
+  could copy it; `[EXC-8]` hoists a stable receiver's `mut self` calls in a counted loop
+  (`mut_self_call_on_root`).
+
+## ADR-061 — `String` is an `Array[u8]`'s buffer with a flag, not a kind of its own
+
+**Decided 2026-09-26, with D-201.** `TyKind::Vec` carries `text: bool`; `String` is
+`Vec { elem: u8, text: true }` (`CommonTypes::string`). Every generic part of the compiler (drops,
+clones, layout, the borrow and store analyses, the C type `ember_vec`) handles both alike without
+a new case, and Rust's exhaustiveness made every construction site choose. A kind of its own
+(`TyKind::String`) would have needed a case in each of those, where a missed one fails silently
+(a `String` never freed). Text is keyed on the flag, never on the element type.
+
+## ADR-062 — one representation of `void` in the C backend
+
+**Decided 2026-09-26, with D-355.** C has no zero-sized type and no `sizeof(void)`. Ember's `void`
+is: zero bytes in a buffer, a box or `size_of` (`c_size`, `c_align`), with every element at the
+buffer's base (`element_pointer`); a byte as a struct member or a parameter (`c_member_type`), since
+C can declare neither as `void`; the value `0`; and `&(uint8_t){0}` where a runtime call copies
+from an address, which copies zero bytes from it.

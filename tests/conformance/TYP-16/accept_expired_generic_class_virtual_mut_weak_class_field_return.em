@@ -4,7 +4,7 @@
 #$ stdout: 7
 #$ assert-c: contains("static em_Weak_Token em_vt_Derived_bool_slot0")
 #$ assert-c: contains("->slot0")
-#$ assert-c: contains("ember_access_begin_write")
+#$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_retain(")
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")

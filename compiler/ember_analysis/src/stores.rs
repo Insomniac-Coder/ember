@@ -294,7 +294,7 @@ fn owns_viewable(types: &TypeTable, ty: Ty, target: Viewed, seen: &mut HashSet<T
         Viewed::Elements(wanted) => elem == wanted,
     };
     match types.kind(ty) {
-        TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => {
+        TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => {
             holds(*elem) || owns_viewable(types, *elem, target, seen)
         }
         // Through a reference, what it points to: a `str` got from a

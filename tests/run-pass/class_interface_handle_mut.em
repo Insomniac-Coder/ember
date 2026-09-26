@@ -3,8 +3,8 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 42
 #$ assert-c: contains(ember_itable_lookup)
-#$ assert-c: contains(ember_access_begin_write)
-#$ assert-c: contains(ember_access_end_write)
+#$ assert-c: contains(ember_object_begin_write)
+#$ assert-c: contains(ember_object_end_write)
 
 # A mutable dynamic call through an [OBJ-2] class-interface handle still
 # operates on the one-word owning handle.  The concrete method owns the

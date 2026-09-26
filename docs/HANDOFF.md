@@ -10748,17 +10748,20 @@ the running narrative behind it.
     on MSVC: D-354), `a2918a3` (D-354's fix; CI green), SP-013 (`972eafd`:
     ODR-069, Hardened_27; D-352, D-353, D-198, D-356, D-357; CI green),
     `a778c99` (D-319; D-331 with ODR-070, Hardened_28), then D-342 and
-    D-220 with the README's end-of-day status. From the
+    D-220 with the README's end-of-day status. Then, attended the same
+    evening, the last five open defects in one commit after `f16471f`
+    (below: D-358, D-355, D-201, D-202, D-218; D-359 to D-361 found;
+    ODR-071, ODR-072, Hardened_29). From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_28.md`
-  (ODR-070), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h28/` is
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_29.md`
+  (ODR-072), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h29/` is
   frozen.
-* **Next numbers:** ODR-071, D-359, ADR-060.
+* **Next numbers:** ODR-073, D-362, ADR-063.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10778,34 +10781,83 @@ the running narrative behind it.
   `stores.rs`'s summaries). **The whole of Part II is done.** Of the old
   queue, D-198, D-220, D-331 (ODR-070) and D-342 are fixed, and D-319 with
   them; D-201, D-202 and D-218 are not (below).
-* **Next task:** the owner stopped here on 2026-09-26 ("the rest of the
-  implementation will be continued later"). Five defects are open. D-202 is
-  the serious one: a view of a class field starts no read access, so a
-  write through an aliasing handle can reallocate under it (a use after
-  free); it needs `[EXC-19]`'s per-field access words. D-218 (a class getter
-  returning a view of a field) needs `[EXC-18]`'s caller-side access, with
-  D-202. D-201: `String` and `Array[u8]` are one type in the compiler.
-  D-355: an `Array` of `()` does not compile to C beyond indexing. D-358:
-  printing a container nested 256 deep exceeds clang's bracket limit (one C
-  helper per element type would fix it). Then Phase 3's class work.
-  `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
-  enums) join at `TypeTable::option_niche` (ADR-056).
-* **Last phase table given to the owner (2026-09-26, end of day):**
+* **The last five defects, closed (2026-09-26 evening, attended, solo).**
+  The owner asked to fix D-358, D-355, D-201, D-202 and D-218 and push. All
+  five are **fixed**, each with tests that fail without it (break-tested):
+  * **D-358**: the deep nesting was the *drop*, not printing: a part whose
+    own drop opens a level (a loop, a `switch`, a `Box` dereference) gets
+    its own glue function (`drop_nests`).
+  * **D-355**: `void` has one C representation (ADR-062: `c_size`,
+    `c_align`, `element_pointer`, `value_address`, members and parameters
+    a byte); `void` is `Eq`/`Ord` and prints `()`. ODR-071: the type `()`
+    is `void`.
+  * **D-201**: `TyKind::Vec { elem, text }`; `String` is `text: true`
+    (`common.string`, ADR-061). Not built, noted: `String.push(c: char)`
+    (`[TXT-11]`) and the validating `Span[u8]` to `str` (`[TXT-2]`).
+  * **D-202 and D-218: `[EXC-19]` built (ADR-060).** Per-field access words
+    (`_access_<field>` in the object, listed in the type info's `fields`);
+    field accesses from loans and from plain reads/writes (`field_accesses`,
+    `borrows.rs`); the `mut self` whole-object write moved from the callee's
+    entry to the caller (`unless_reborrow`, `Body::mut_self`), and to the
+    dynamic adapter for interface and `dyn` calls; a returned view carries
+    its field access to the caller (`field_return_accesses`; object-wide
+    read through virtual or interface calls); class receivers of
+    view-returning methods are passed by address (`[LT-1]` rule 1).
+    `L3013` reads `Body::mut_self`; `[EXC-8]` hoists a stable receiver's
+    `mut self` calls (`mut_self_call_on_root`); `[EXC-3]` never elides a
+    `mut self` write (the callee could copy the handle). The field checks
+    are `static inline` in `ember_rt.h`. Tests: `EXC-1`, `EXC-2`, `EXC-5`,
+    `EXC-15`, `EXC-18`, `EXC-19`, `CLS-7`.
+  * Found and **fixed**: D-359 (a `mut self` method calling another on
+    `self` panicked), D-361 (a `mut self` method could re-point `self`;
+    ODR-072, `E2103`). Found and **open**: D-360 (equality and clone of a
+    value nested hundreds deep by value can exhaust the stack).
+  * Test churn, each checked against what the program now emits: 49 tests
+    pinned `ember_access_begin_write`, now `ember_object_begin_write` or
+    `ember_field_begin_write` (two became "no check": a `Copy` field has no
+    word, `[EXC-17]`); the `EXC-8` loops call the method on the receiver
+    itself; the side-table elision test uses the `Shared` unique case;
+    `DRP-6`'s drop order follows the glue function.
+  * Verified: the quick check, the full suite with MSVC and with clang, and
+    every gate. Under plain clang on Windows (`EMBER_CC=clang`, not a CI
+    configuration) `ember_build`'s `the_128_bit_halves_agree_with_int128`
+    fails to link (`__divti3` and the other `__int128` helpers are in
+    compiler-rt, which clang does not link for the MSVC target): the test
+    predates this work and runs on CI's Linux jobs.
+  * **The owner wants these five inspected by agents once their usage limit
+    resets ("just ask me about it").** Ask at the start of the next session;
+    the plan was three read-only adversarial reviewers (class locking;
+    `String`/`Array[u8]`; C output for `void` and deep nesting), two at a
+    time. Do not launch unasked.
+* **Next task:** ask the owner about that review. Then: D-360; lift the
+  "mutable class-field access requires a `mut self` class method in this
+  phase" restriction (`E1010`), which per-field accesses now make possible
+  (`[CLS-7]`: any method may write fields; `[EXC-16]`); `String.push(char)`;
+  the validating `str` conversion; then Phase 3's class work. `[TYP-13]`'s
+  other niches join at `TypeTable::option_niche` (ADR-056).
+* **Phase table after the five defects (2026-09-26 evening):**
 
   | Phase | % |
   |---|---:|
   | P1 | 97 |
   | P2 | 88 |
-  | P3 | 50 |
+  | P3 | 58 |
   | P4 | 13 |
   | P5 | 8 |
   | P6 | 2 |
   | P7 | 0 |
   | 7a | 6 |
-  | P8 | 14 |
-  | Overall | 57 |
+  | P8 | 16 |
+  | Overall | 58 |
 
-  `python3 tasks/impl-0.9.9/rule_sizes.py 97 88 50 13 8 2 6` gives the
+  `python3 tasks/impl-0.9.9/rule_sizes.py 97 88 58 13 8 2 6` gives 58.0%
+  (weights now from Hardened_29). P3 50 to 58 for `[EXC-1]`, `[EXC-2]`,
+  `[EXC-5]`, `[EXC-15]`, `[EXC-17]`, `[EXC-18]`, `[EXC-19]` and part of
+  `[EXC-16]` and `[CLS-7]`; P8 for the defects closed.
+
+  The end-of-day table before it (P1 97, P2 88, P3 50, P4 13, P5 8, P6 2,
+  P7 0, 7a 6, P8 14; overall 57):
+  `python3 tasks/impl-0.9.9/rule_sizes.py 97 88 50 13 8 2 6` gave the
   overall figure (57.2%). Since the table before (96, 85, 47, 12, 8, 2, 0,
   6, 13; 55): P1 for `[TYP-15]` held at every store, `[GRM-39]`, `[LEX-17]`
   rounded once, `[EXP-4]` for plain temporaries, `[IFC-4]`'s defaults,

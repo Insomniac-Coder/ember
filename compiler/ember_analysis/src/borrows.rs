@@ -220,7 +220,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
     let summaries = contracts_from_metadata(bodies, &signatures);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
-    let (returned_accesses, returning_accesses) = infer_shared_return_accesses(
+    let (returned_accesses, returning_accesses, field_returns) = infer_shared_return_accesses(
         bodies,
         types,
         &call_contract,
@@ -243,6 +243,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
                 &regions,
                 &returned_accesses,
                 &returning_accesses,
+                &field_returns,
             )
         })
         .sum()
@@ -276,12 +277,14 @@ fn infer_shared_return_accesses(
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_contracts: &HashMap<StructId, CallAccessContract>,
-) -> (HashMap<String, SharedReturnAccess>, HashSet<String>) {
+) -> (HashMap<String, SharedReturnAccess>, HashSet<String>, FieldReturns) {
     let mut summaries = HashMap::new();
     let mut returning = HashSet::new();
+    let mut field_returns = FieldReturns::new();
     for _ in 0..=bodies.len() {
         let mut next = HashMap::new();
         let mut next_returning = HashSet::new();
+        let mut next_fields = FieldReturns::new();
         for body in bodies {
             let capture_paths = capture_borrow_paths(body, capture_contracts);
             let regions = Regions::infer_with_capture_borrow_paths(
@@ -290,6 +293,10 @@ fn infer_shared_return_accesses(
                 call_contract,
                 &capture_paths,
             );
+            let fields = field_return_accesses(body, types, &regions, &field_returns);
+            if !fields.is_empty() {
+                next_fields.insert(body.symbol.clone(), fields);
+            }
             let (summary, returns_shared_access) =
                 shared_return_access(body, types, &regions, &summaries, &returning);
             if returns_shared_access {
@@ -299,13 +306,148 @@ fn infer_shared_return_accesses(
                 next.insert(body.symbol.clone(), summary);
             }
         }
-        if next == summaries && next_returning == returning {
-            return (summaries, returning);
+        if next == summaries && next_returning == returning && next_fields == field_returns {
+            return (summaries, returning, field_returns);
         }
         summaries = next;
         returning = next_returning;
+        field_returns = next_fields;
     }
-    (summaries, returning)
+    (summaries, returning, field_returns)
+}
+
+/// `[EXC-18]` — per function symbol, the accesses its result carries to its
+/// caller.
+type FieldReturns = HashMap<String, Vec<FieldReturnAccess>>;
+
+/// A field access (or, with no final field, a whole-object read) that a
+/// function's result may need in its caller: the result may borrow the place
+/// `projection` of argument `argument` (`(*self).name` is argument 0,
+/// `[Deref, Field(name)]`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct FieldReturnAccess {
+    argument: usize,
+    projection: Vec<Projection>,
+    mutable: bool,
+}
+
+/// `[EXC-18]` — what `body`'s result may borrow of its arguments' class
+/// fields: each loan of a field that reaches the return, and each access a
+/// call's result carries that reaches it. The callee's own access ends at its
+/// return; the caller begins the same access where the call returns, so the
+/// field is held on every path until the caller's last use of the result.
+fn field_return_accesses(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    summaries: &FieldReturns,
+) -> Vec<FieldReturnAccess> {
+    let mut found: Vec<FieldReturnAccess> = Vec::new();
+    let mut add = |place: Place, mutable: bool| {
+        if body.local(place.local).kind != LocalKind::Arg {
+            return;
+        }
+        let Some(argument) = (place.local.0 as usize).checked_sub(1) else { return };
+        let access = FieldReturnAccess { argument, projection: place.projection, mutable };
+        if !found.contains(&access) {
+            found.push(access);
+        }
+    };
+    for (block, basic_block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic_block.stmts.iter().enumerate() {
+            let StmtKind::Assign { rvalue: Rvalue::Ref { place, mutable }, .. } = &stmt.kind else { continue };
+            let Some(region) = regions.loan_region(Point { block, index }) else { continue };
+            if !region_reaches_return(body, regions, region) {
+                continue;
+            }
+            // `self`'s fields count here even in a `mut self` method: its
+            // caller's write access to them ends with the call.
+            for owner in field_boundaries(body, types, place, false) {
+                add(resolve_ref_temps(body, owner), *mutable);
+            }
+        }
+        let Terminator::Call { dest, .. } = &basic_block.terminator else { continue };
+        let Some(region) = regions.local_region(dest.local) else { continue };
+        if !region_reaches_return(body, regions, region) {
+            continue;
+        }
+        for (owner, mutable) in call_result_accesses(body, types, &basic_block.terminator, summaries) {
+            add(owner, mutable);
+        }
+    }
+    found
+}
+
+/// The accesses a call's result carries into this body (`[EXC-18]`): a direct
+/// callee's summary mapped onto this call's arguments; for a call this body
+/// cannot see into (virtual, through an interface) whose result is a
+/// reference or view borrowing a class receiver, a read of every field of the
+/// receiver object.
+fn call_result_accesses(
+    body: &Body,
+    types: &TypeTable,
+    terminator: &Terminator,
+    summaries: &FieldReturns,
+) -> Vec<(Place, bool)> {
+    let Terminator::Call { func, args, dest, .. } = terminator else { return Vec::new() };
+    match func {
+        FuncRef::Direct { symbol, .. } => summaries
+            .get(symbol.as_str())
+            .into_iter()
+            .flatten()
+            .filter_map(|access| {
+                let (Operand::Copy(argument) | Operand::Move(argument)) = args.get(access.argument)? else {
+                    return None;
+                };
+                let mut place = argument.clone();
+                place.projection.extend(access.projection.iter().cloned());
+                Some((resolve_ref_temps(body, place), access.mutable))
+            })
+            .collect(),
+        FuncRef::Virtual { .. } | FuncRef::Interface { .. } if types.is_view(place_ty(body, types, dest)) => {
+            let Some(Operand::Copy(receiver) | Operand::Move(receiver)) = args.first() else { return Vec::new() };
+            let object = match types.kind(place_ty(body, types, receiver)) {
+                TyKind::Class(_) | TyKind::ClassInterface(_) => receiver.clone(),
+                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
+                    let mut object = receiver.clone();
+                    object.projection.push(Projection::Deref);
+                    object
+                }
+                _ => return Vec::new(),
+            };
+            vec![(resolve_ref_temps(body, object), false)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// `(*t).f`, where the temporary `t` is assigned once, as `&p` or `&mut p`,
+/// is `p.f`: the place the reference was taken of, which a summary can name.
+fn resolve_ref_temps(body: &Body, mut place: Place) -> Place {
+    while place.projection.first() == Some(&Projection::Deref)
+        && body.local(place.local).kind == LocalKind::Temp
+    {
+        let mut source = None;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { place: target, rvalue: Rvalue::Ref { place: borrowed, .. } } = &stmt.kind
+                    && target.local == place.local
+                    && target.projection.is_empty()
+                {
+                    source = if source.is_none() { Some(borrowed.clone()) } else { Some(place.clone()) };
+                }
+            }
+        }
+        match source {
+            Some(borrowed) if borrowed != place => {
+                let mut resolved = borrowed;
+                resolved.projection.extend(place.projection[1..].iter().cloned());
+                place = resolved;
+            }
+            _ => break,
+        }
+    }
+    place
 }
 
 fn shared_return_access(
@@ -466,7 +608,10 @@ struct SharedAccess {
     created_at: Point,
     owner: Place,
     mutable: bool,
-    region: RegionVid,
+    /// The loan's region; `None` for an access that lasts only the statement
+    /// or call at `created_at` (a read or write through a class field without
+    /// a loan).
+    region: Option<RegionVid>,
     span: Span,
     start: SharedAccessStart,
     end: SharedAccessEnd,
@@ -534,6 +679,7 @@ fn insert_shared_accesses(
     regions: &Regions,
     returned_accesses: &HashMap<String, SharedReturnAccess>,
     returning_accesses: &HashSet<String>,
+    field_returns: &FieldReturns,
 ) -> usize {
     let original_blocks = body.blocks.len();
     let mut accesses = Vec::new();
@@ -564,7 +710,7 @@ fn insert_shared_accesses(
                 created_at,
                 owner,
                 mutable: *mutable,
-                region,
+                region: Some(region),
                 span: stmt.span,
                 start: if reaches_return {
                     SharedAccessStart::Transfer
@@ -609,7 +755,7 @@ fn insert_shared_accesses(
             created_at: Point { block: next.0 as usize, index: 0 },
             owner,
             mutable: summary.mutable,
-            region,
+            region: Some(region),
             span: basic_block.terminator_span,
             start: SharedAccessStart::Normal,
             end: SharedAccessEnd::Normal,
@@ -645,11 +791,29 @@ fn insert_shared_accesses(
             created_at: Point { block: next.0 as usize, index: 0 },
             owner: payload,
             mutable,
-            region,
+            region: Some(region),
             span: basic_block.terminator_span,
             start: SharedAccessStart::None,
             end: SharedAccessEnd::Transfer,
         });
+    }
+    accesses.extend(field_accesses(body, types, regions));
+    // `[EXC-18]` — a call's result that borrows a class field holds the
+    // field's access from the call's return to the result's last use.
+    for basic_block in body.blocks.iter().take(original_blocks) {
+        let Terminator::Call { dest, next, .. } = &basic_block.terminator else { continue };
+        let Some(region) = regions.local_region(dest.local) else { continue };
+        for (owner, mutable) in call_result_accesses(body, types, &basic_block.terminator, field_returns) {
+            accesses.push(SharedAccess {
+                created_at: Point { block: next.0 as usize, index: 0 },
+                owner,
+                mutable,
+                region: Some(region),
+                span: basic_block.terminator_span,
+                start: SharedAccessStart::Normal,
+                end: SharedAccessEnd::Normal,
+            });
+        }
     }
     if accesses.is_empty() {
         return 0;
@@ -658,6 +822,37 @@ fn insert_shared_accesses(
     let mut inline: HashMap<(usize, usize), Vec<AccessEvent>> = HashMap::new();
     let mut edge_ends = HashMap::new();
     for access in &accesses {
+        // A statement's or a call's own access: begun before it, ended after
+        // it (on each edge out of a call).
+        if access.region.is_none() {
+            let Point { block, index } = access.created_at;
+            inline.entry((block, index)).or_default().push(AccessEvent::Begin {
+                place: access.owner.clone(),
+                mutable: access.mutable,
+                transfer: false,
+                span: access.span,
+            });
+            if index < body.blocks[block].stmts.len() {
+                inline.entry((block, index + 1)).or_default().push(end_event(access));
+            } else {
+                for successor in access_successors(&body.blocks[block].terminator) {
+                    append_edge_end(body, block, successor, end_event(access), &mut edge_ends);
+                }
+            }
+            continue;
+        }
+        // An access that begins before a terminator and ends there (a call's
+        // result returned at once) has nothing between to protect; its end
+        // would come first in that slot. Its caller begins its own.
+        let Point { block: at, index } = access.created_at;
+        if access.start == SharedAccessStart::Normal
+            && index == body.blocks[at].stmts.len()
+            && access_successors(&body.blocks[at].terminator)
+                .iter()
+                .all(|successor| !access_active(access, regions, Point { block: successor.0 as usize, index: 0 }))
+        {
+            continue;
+        }
         // An end at the same location as a new access has to execute first:
         // that is the NLL reuse case (`first` dies before `second` starts).
         if access.start != SharedAccessStart::None {
@@ -755,6 +950,144 @@ fn insert_shared_accesses(
     accesses.len()
 }
 
+/// `[EXC-1]`, `[EXC-2]`, `[EXC-16]`, `[EXC-18]`, `[EXC-19]` — the accesses to
+/// class fields in `body`. A loan of a place through a field with an access
+/// word (a view of `h.items`, `ref h.name`, `h.items` passed to a `mut` or
+/// borrowed parameter or iterated) holds that field's word for the loan's
+/// life, in the loan's mode; a read or write through one without a loan
+/// (`h.items[i]`, `len(h.name)`, a store into a field, a drop of one) holds it
+/// for that statement or call.
+fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<SharedAccess> {
+    let mut accesses = Vec::new();
+    let point_access = |accesses: &mut Vec<SharedAccess>, place: &Place, mutable: bool, created_at: Point, span: Span| {
+        for owner in field_boundaries(body, types, place, true) {
+            accesses.push(SharedAccess {
+                created_at,
+                owner,
+                mutable,
+                region: None,
+                span,
+                start: SharedAccessStart::Normal,
+                end: SharedAccessEnd::Normal,
+            });
+        }
+    };
+    for (block, basic_block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic_block.stmts.iter().enumerate() {
+            let created_at = Point { block, index };
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, mutable } } => {
+                    point_access(&mut accesses, place, true, created_at, stmt.span);
+                    let Some(region) = regions.loan_region(created_at) else { continue };
+                    for owner in field_boundaries(body, types, borrowed, true) {
+                        accesses.push(SharedAccess {
+                            created_at,
+                            owner,
+                            mutable: *mutable,
+                            region: Some(region),
+                            span: stmt.span,
+                            start: SharedAccessStart::Normal,
+                            end: SharedAccessEnd::Normal,
+                        });
+                    }
+                }
+                StmtKind::Assign { place, rvalue } => {
+                    point_access(&mut accesses, place, true, created_at, stmt.span);
+                    for read in rvalue_places(rvalue) {
+                        point_access(&mut accesses, read, false, created_at, stmt.span);
+                    }
+                }
+                StmtKind::Drop { place, .. } => point_access(&mut accesses, place, true, created_at, stmt.span),
+                _ => {}
+            }
+        }
+        let created_at = Point { block, index: basic_block.stmts.len() };
+        let span = basic_block.terminator_span;
+        match &basic_block.terminator {
+            Terminator::Call { args, dest, .. } => {
+                for arg in args {
+                    if let Operand::Copy(read) | Operand::Move(read) = arg {
+                        point_access(&mut accesses, read, false, created_at, span);
+                    }
+                }
+                point_access(&mut accesses, dest, true, created_at, span);
+            }
+            Terminator::SwitchInt { discr: Operand::Copy(read) | Operand::Move(read), .. }
+            | Terminator::Assert { cond: Operand::Copy(read) | Operand::Move(read), .. } => {
+                point_access(&mut accesses, read, false, created_at, span);
+            }
+            _ => {}
+        }
+    }
+    accesses
+}
+
+/// The places an rvalue reads.
+fn rvalue_places(rvalue: &Rvalue) -> Vec<&Place> {
+    fn operand(operand: &Operand) -> Option<&Place> {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => Some(place),
+            Operand::Const(_) => None,
+        }
+    }
+    match rvalue {
+        Rvalue::Use(value) | Rvalue::UnaryOp { operand: value, .. } | Rvalue::Cast { operand: value, .. } => {
+            operand(value).into_iter().collect()
+        }
+        Rvalue::Repeat { value, .. } => operand(value).into_iter().collect(),
+        Rvalue::BinaryOp { lhs, rhs, .. } => operand(lhs).into_iter().chain(operand(rhs)).collect(),
+        Rvalue::Aggregate { operands, .. } => operands.iter().filter_map(operand).collect(),
+        Rvalue::Discriminant(place) => vec![place],
+        Rvalue::Ref { .. } => Vec::new(),
+    }
+}
+
+/// `[EXC-19]` — every class field that `place` passes through and that has
+/// its own access word, as the place up to and including it: `h.items` for
+/// `h.items[i]`; `h.a` and `h.a.child.items` for `h.a.child.items` when both
+/// fields have one. Each access is to a field of the class's own
+/// (`h.inner.items` is an access to `inner`). A field of `self` in a `mut self`
+/// method is covered by the write access the method's caller holds for every
+/// field of `*self` (`[EXC-5]`, `[EXC-15]`).
+fn field_boundaries(body: &Body, types: &TypeTable, place: &Place, self_covered: bool) -> Vec<Place> {
+    let mut boundaries = Vec::new();
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for (at, projection) in place.projection.iter().enumerate() {
+        if let (Projection::Field(index), TyKind::Class(id)) = (projection, types.kind(ty)) {
+            let covered = self_covered
+                && body.mut_self
+                && place.local == LocalId(1)
+                && place.projection[..at] == [Projection::Deref];
+            if types.class_field_has_access_word(*id, *index) && !covered {
+                boundaries.push(Place { local: place.local, projection: place.projection[..=at].to_vec() });
+            }
+            let Some(field) = types.class_field_at(*id, *index) else { break };
+            ty = field.ty;
+            continue;
+        }
+        match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                let Some(v) = variant.take() else { continue };
+                ty = types.enum_def(*id).variants[v].fields.get(*i).map_or(ty, |f| f.ty);
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                ty = types.struct_def(*id).fields.get(*i).map_or(ty, |f| f.ty);
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
+            (
+                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
+            ) => ty = *elem,
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Ptr { inner, .. })
+            | (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    boundaries
+}
+
 fn shared_owner_of_payload(body: &Body, types: &TypeTable, payload: &Place) -> Option<Place> {
     let (Projection::Field(0), Projection::Deref) =
         (payload.projection.get(payload.projection.len().checked_sub(2)?)?, payload.projection.last()?)
@@ -777,7 +1110,7 @@ fn is_shared_owner(body: &Body, types: &TypeTable, owner: &Place) -> bool {
 }
 
 fn access_active(access: &SharedAccess, regions: &Regions, point: Point) -> bool {
-    point == access.created_at || regions.contains(access.region, point)
+    point == access.created_at || access.region.is_some_and(|region| regions.contains(region, point))
 }
 
 fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
@@ -3524,7 +3857,7 @@ fn field_ty(types: &TypeTable, ty: Ty, index: usize) -> Option<Ty> {
 
 fn element_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
     match types.kind(ty) {
-        TyKind::Array { elem, .. } | TyKind::Vec { elem } => Some(*elem),
+        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => Some(*elem),
         TyKind::Ptr { inner, .. } => Some(*inner),
         _ => None,
     }
@@ -3603,7 +3936,7 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => ty = *elem,
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
@@ -3716,6 +4049,7 @@ mod callable_region_metadata_tests {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
         }

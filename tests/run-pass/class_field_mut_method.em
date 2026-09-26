@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: CLS-4, CLS-7, EXC-1
 #$ profiles: debug, release, shipping
-#$ assert-c: contains(ember_access_begin_write)
-#$ assert-c: contains(ember_access_end_write)
+#$ assert-c: contains(ember_object_begin_write)
+#$ assert-c: contains(ember_object_end_write)
 #$ stdout: 3
 
 class Child:

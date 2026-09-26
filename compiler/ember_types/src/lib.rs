@@ -162,8 +162,11 @@ pub enum TyKind {
     Array { elem: Ty, len: u64 },
     /// `Array[T]` — a growable, heap-allocated sequence. Part XX.1 makes this
     /// a compiler-known type until Phase 2's generics let the standard library
-    /// write it in Ember. `String` is this with `u8` elements.
-    Vec { elem: Ty },
+    /// write it in Ember. `String` is this with `u8` elements and `text` set:
+    /// the same buffer, owned and dropped alike, but a type of its own, known
+    /// to be UTF-8 (`[TXT-1]`) and handled as text (D-201). `Array[u8]` is
+    /// an `Array` like any other.
+    Vec { elem: Ty, text: bool },
     /// A mode-bearing callable type. `latebound` is a compile-time callable
     /// boundary fact; it is not runtime metadata or an ABI field.
     Fn { latebound: bool, params: Vec<FnParam>, ret: Ty },
@@ -474,6 +477,8 @@ pub struct CommonTypes {
     pub void: Ty,
     pub never: Ty,
     pub str_: Ty,
+    /// `String` (`[TXT-1]`): `Vec { elem: u8, text: true }`.
+    pub string: Ty,
     pub int_lit: Ty,
     pub float_lit: Ty,
     pub error: Ty,
@@ -518,6 +523,7 @@ impl TypeTable {
             next_infer: 0,
             pointer_size: 8,
         };
+        let u8_ty = table.intern(TyKind::Uint(UintTy::U8));
         let common = CommonTypes {
             bool_: table.intern(TyKind::Bool),
             char_: table.intern(TyKind::Char),
@@ -527,7 +533,7 @@ impl TypeTable {
             i64: table.intern(TyKind::Int(IntTy::I64)),
             i128: table.intern(TyKind::Int(IntTy::I128)),
             isize: table.intern(TyKind::Int(IntTy::Isize)),
-            u8: table.intern(TyKind::Uint(UintTy::U8)),
+            u8: u8_ty,
             u16: table.intern(TyKind::Uint(UintTy::U16)),
             u32: table.intern(TyKind::Uint(UintTy::U32)),
             u64: table.intern(TyKind::Uint(UintTy::U64)),
@@ -539,6 +545,7 @@ impl TypeTable {
             void: table.intern(TyKind::Void),
             never: table.intern(TyKind::Never),
             str_: table.intern(TyKind::Str),
+            string: table.intern(TyKind::Vec { elem: u8_ty, text: true }),
             self_ty: table.intern(TyKind::Param {
                 index: SELF_PARAM,
                 name: Symbol::intern("Self"),
@@ -599,7 +606,7 @@ impl TypeTable {
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
                 self.is_generic_in(*inner, seen)
             }
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } => self.is_generic_in(*elem, seen),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.is_generic_in(*elem, seen),
             TyKind::Span { elem, .. } => self.is_generic_in(*elem, seen),
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic_in(t, seen)),
             TyKind::Fn { params, ret, .. } => {
@@ -651,7 +658,7 @@ impl TypeTable {
             TyKind::Dyn { .. } => true,
             TyKind::Ref { .. } | TyKind::Ptr { .. } => false,
             TyKind::Array { elem, .. }
-            | TyKind::Vec { elem }
+            | TyKind::Vec { elem, .. }
             | TyKind::Span { elem, .. } => self.has_unsized_by_value_in(*elem, seen),
             TyKind::Tuple(items) => {
                 items.iter().any(|&item| self.has_unsized_by_value_in(item, seen))
@@ -714,9 +721,9 @@ impl TypeTable {
                 let elem = self.substitute_self(elem, concrete);
                 self.intern(TyKind::Array { elem, len })
             }
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, text } => {
                 let elem = self.substitute_self(elem, concrete);
-                self.intern(TyKind::Vec { elem })
+                self.intern(TyKind::Vec { elem, text })
             }
             TyKind::Tuple(items) => {
                 let items: Vec<Ty> =
@@ -755,9 +762,9 @@ impl TypeTable {
                 let elem = self.substitute(elem, args);
                 self.intern(TyKind::Array { elem, len })
             }
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, text } => {
                 let elem = self.substitute(elem, args);
-                self.intern(TyKind::Vec { elem })
+                self.intern(TyKind::Vec { elem, text })
             }
             TyKind::Span { elem, mutable } => {
                 let elem = self.substitute(elem, args);
@@ -820,8 +827,11 @@ impl TypeTable {
             }
             (TyKind::Ref { inner: a, .. }, TyKind::Ref { inner: b, .. })
             | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
-            | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. })
-            | (TyKind::Vec { elem: a }, TyKind::Vec { elem: b }) => {
+            | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. }) => {
+                self.unify_with_fixed(a, b, args, fixed)
+            }
+            // A `String` is no `Array[T]` (D-201).
+            (TyKind::Vec { elem: a, text: a_text }, TyKind::Vec { elem: b, text: b_text }) if a_text == b_text => {
                 self.unify_with_fixed(a, b, args, fixed)
             }
             (
@@ -1022,6 +1032,14 @@ impl TypeTable {
         def.fields
             .get(index - base_count)
             .map(|field| (id, field))
+    }
+
+    /// `[EXC-19]` — whether field `index` of class `id` (object layout, bases
+    /// first) has its own access word: every non-`Copy` field. A `Copy`
+    /// field's reads and writes are instantaneous and never checked
+    /// (`[EXC-17]`). (`@sync` classes, which need none, are not built.)
+    pub fn class_field_has_access_word(&self, id: ClassId, index: usize) -> bool {
+        self.class_field_at(id, index).is_some_and(|field| !self.is_copy(field.ty))
     }
 
     /// Number of fields physically present in the object, including bases.
@@ -1695,11 +1713,8 @@ impl TypeTable {
                     .collect::<Vec<_>>()
                     .join(" + ")
             ),
-            // `String` prints as itself, not as `Array[u8]`.
-            TyKind::Vec { elem } if matches!(self.kind(*elem), TyKind::Uint(UintTy::U8)) => {
-                "String".into()
-            }
-            TyKind::Vec { elem } => format!("Array[{}]", self.render(*elem, user)),
+            TyKind::Vec { text: true, .. } => "String".into(),
+            TyKind::Vec { elem, .. } => format!("Array[{}]", self.render(*elem, user)),
             TyKind::Tuple(items) => {
                 let inner: Vec<String> = items.iter().map(|&t| self.render(t, user)).collect();
                 format!("({})", inner.join(", "))
@@ -1823,7 +1838,8 @@ impl TypeTable {
             TyKind::Array { elem, len } => {
                 format!("[{};{len}]", self.canonical_name(*elem)?)
             }
-            TyKind::Vec { elem } => format!("Array[{}]", self.canonical_name(*elem)?),
+            TyKind::Vec { text: true, .. } => "String".to_string(),
+            TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
             TyKind::Fn { latebound, params, ret } => {
                 let mut out = if *latebound {
                     String::from("@latebound fn(")
@@ -2240,7 +2256,7 @@ mod tests {
     #[test]
     fn canonical_artifact_names_are_resolved_and_not_diagnostic_aliases() {
         let (mut table, common) = TypeTable::new();
-        let bytes = table.intern(TyKind::Vec { elem: common.u8 });
+        let bytes = table.intern(TyKind::Vec { elem: common.u8, text: false });
         let span = table.intern(TyKind::Span {
             elem: common.i32,
             mutable: false,
@@ -2250,6 +2266,10 @@ mod tests {
         // `display` preserves source-friendly aliases such as `String`; an
         // interface identity must retain the actual semantic constructor.
         assert_eq!(table.canonical_name(bytes).unwrap(), "Array[u8]");
+        // D-201 — `String` is a type of its own, not `Array[u8]`.
+        assert_eq!(table.canonical_name(common.string).unwrap(), "String");
+        assert_eq!(table.display(common.string), "String");
+        assert_eq!(table.display(bytes), "Array[u8]");
         assert_eq!(table.canonical_name(span).unwrap(), "Span[i32]");
         assert_eq!(
             table.canonical_name(unresolved),
@@ -2412,7 +2432,7 @@ mod tests {
         // layout and ordinary Copy derivation, while `drops_fields` prevents
         // bytes that may not hold an initialized `T` from being destroyed.
         let (mut table, c) = TypeTable::new();
-        let owning = table.intern(TyKind::Vec { elem: c.i32 });
+        let owning = table.intern(TyKind::Vec { elem: c.i32, text: false });
         let wrapper = table.add_struct(StructDef {
             name: Symbol::intern("MaybeUninit_Array_i32"),
             fields: vec![field("value", owning)],
@@ -2457,7 +2477,7 @@ mod tests {
         let (mut table, c) = TypeTable::new();
         let raw = table.intern(TyKind::Ptr { mutable: true, inner: c.i32 });
         let reference = table.intern(TyKind::Ref { mutable: false, inner: c.i32 });
-        let buffer = table.intern(TyKind::Vec { elem: c.i32 });
+        let buffer = table.intern(TyKind::Vec { elem: c.i32, text: false });
         assert!(table.is_builtin_zeroable(c.i32));
         assert!(table.is_builtin_zeroable(raw));
         assert!(!table.is_builtin_zeroable(reference));

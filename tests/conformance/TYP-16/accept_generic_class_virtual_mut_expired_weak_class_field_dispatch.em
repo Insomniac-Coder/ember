@@ -4,7 +4,7 @@
 #$ stdout: 2
 #$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
 #$ assert-c: contains("->slot0")
-#$ assert-c: contains("ember_access_begin_write")
+#$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A base-typed generic handle dispatches a mut virtual call after its inherited

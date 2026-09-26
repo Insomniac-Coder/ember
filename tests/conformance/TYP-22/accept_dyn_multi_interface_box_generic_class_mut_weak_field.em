@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 1
 #$ stdout: 8
-#$ assert-c: contains("ember_access_begin_write")
+#$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 

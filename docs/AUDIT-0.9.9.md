@@ -113,10 +113,10 @@ are migrated or retired with the construct, each named in the progress log.
 | `[OBJ-1]` | VIII | The header is 24 bytes on 64-bit targets and is part of the runtime … | not yet probed | |
 | `[RC-3]` | VIII | Further elisions are allowed only when semantics are preserved … | not yet probed | |
 | `[RC-4]` | VIII | A non-`Sync` class's counts, and a `Shared`'s, use plain loads and … | not yet probed | |
-| `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … | **defect** | D-202: a view of a class field (`v = b.items[1..]`, or `v: Span[int] = b.items`) begins no read access, so `c.items.clear()` through another handle frees what `v` points into (ASan: heap-use-after-free) |
-| `[EXC-2]` | VIII | Beginning a read access to a field while a write access to it is … | not yet probed | |
-| `[EXC-6]` | VIII | A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and … | not yet probed | |
-| `[EXC-7]` | VIII | The opt-in lint `L3013` reports a long-term access held across a … | not yet probed | |
+| `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … | compliant | D-202 fixed: per-field access words (`[EXC-19]`); a view, `ref`, passed or iterated field holds its field until the loan dies; `EXC-1/` tests |
+| `[EXC-2]` | VIII | Beginning a read access to a field while a write access to it is … | compliant | a read through another handle during a `mut self` call panics; reads share a field; `EXC-2/` tests |
+| `[EXC-6]` | VIII | A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and … | compliant (partial) | the panic names both accesses' kinds and the field (`Bag.items`); the active access's location is not kept (the debug stack of `[EXC-6]` is not built) |
+| `[EXC-7]` | VIII | The opt-in lint `L3013` reports a long-term access held across a … | compliant | `L3013` for a `mut self` method (`Body::mut_self`) across a virtual or `dyn` call; `EXC-7/` tests |
 | `[EXC-14]` | VIII | The 0.9.8 `exclusivity = "unchecked"` setting is removed. Code that … | not yet probed | |
 | `[WK-11]` | VIII | `Weak(h)` creates a weak handle to a class object or a `Shared` or … | not yet probed | |
 | `[WK-12]` | VIII | `w.upgrade() -> Option[O]` returns a retained strong handle while the … | compliant (single thread) | `Weak.upgrade` of a live object; `@sync` compare-exchange not probed |

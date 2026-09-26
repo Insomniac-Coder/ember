@@ -482,7 +482,7 @@ impl Emitter<'_> {
     /// non-`Copy` value the type checker proved cloneable: a nested array
     /// through its own helper, anything else through its `clone` function.
     fn clone_element(&self, source: &str, ty: Ty) -> String {
-        if let TyKind::Vec { elem } = self.types.kind(ty) {
+        if let TyKind::Vec { elem, .. } = self.types.kind(ty) {
             let helper = self.array_helper(ArrayHelper::Clone, *elem);
             return format!("{helper}(({source}).ptr, ({source}).len)");
         }
@@ -505,6 +505,9 @@ impl Emitter<'_> {
     /// `a < b` for two elements behind `const void*`, in `Ord`'s order:
     /// totalOrder for floats (`[TYP-37]`), bytes for text.
     fn less_behind_pointers(&self, ty: Ty) -> String {
+        if self.is_void(ty) {
+            return "((void)a, (void)b, 0)".to_string();
+        }
         if let Some(suffix) = self.wide_int(ty) {
             return format!("{RT}{suffix}_lt(*(const {RT}{suffix}*)a, *(const {RT}{suffix}*)b)");
         }
@@ -548,7 +551,7 @@ impl Emitter<'_> {
                         let (none, some) = (&def.variants[0], &def.variants[1]);
                         let elem = some.fields[0].ty;
                         let (option, elem_c) = (self.c_type(ty), self.c_type(elem));
-                        let last = format!("(unsigned char*)v->ptr + v->len * sizeof({elem_c}), sizeof({elem_c})");
+                        let last = format!("(unsigned char*)v->ptr + v->len * {elem_c_size}, {elem_c_size}", elem_c_size = c_size(&elem_c));
                         // `[TYP-13]` — a niche `Option` is its payload, and
                         // its `None` is zero bytes.
                         let body = if self.types.option_niche(id).is_some() {
@@ -573,15 +576,20 @@ impl Emitter<'_> {
                         };
                         (format!("static {option} {symbol}({RT}vec* v)"), body)
                     }
+                    // A zero-sized element is nothing to take out (D-355).
+                    ArrayHelper::Remove | ArrayHelper::SwapRemove if self.is_void(ty) => (
+                        format!("static void {symbol}({RT}vec* v, size_t i)"),
+                        vec!["(void)i;".to_string(), "v->len -= 1;".to_string()],
+                    ),
                     ArrayHelper::Remove => {
                         let c = self.c_type(ty);
                         (
                             format!("static {c} {symbol}({RT}vec* v, size_t i)"),
                             vec![
                                 format!("{c} r;"),
-                                format!("unsigned char* at = (unsigned char*)v->ptr + i * sizeof({c});"),
-                                format!("memcpy(&r, at, sizeof({c}));"),
-                                format!("memmove(at, at + sizeof({c}), (v->len - i - 1) * sizeof({c}));"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + i * {c_size};", c_size = c_size(&c)),
+                                format!("memcpy(&r, at, {c_size});", c_size = c_size(&c)),
+                                format!("memmove(at, at + {c_size}, (v->len - i - 1) * {c_size});", c_size = c_size(&c)),
                                 "v->len -= 1;".to_string(),
                                 "return r;".to_string(),
                             ],
@@ -597,9 +605,9 @@ impl Emitter<'_> {
                             format!("static {RT}vec {symbol}({RT}vec* v, size_t lo, size_t hi)"),
                             vec![
                                 format!("if (lo == hi) {{ return {RT}vec_empty(); }}"),
-                                format!("unsigned char* at = (unsigned char*)v->ptr + lo * sizeof({c});"),
-                                format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), at, hi - lo);"),
-                                format!("memmove(at, at + (hi - lo) * sizeof({c}), (v->len - hi) * sizeof({c}));"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + lo * {c_size};", c_size = c_size(&c)),
+                                format!("{RT}vec r = {RT}vec_from_elems({c_size}, at, hi - lo);", c_size = c_size(&c)),
+                                format!("memmove(at, at + (hi - lo) * {c_size}, (v->len - hi) * {c_size});", c_size = c_size(&c)),
                                 "v->len -= hi - lo;".to_string(),
                                 "return r;".to_string(),
                             ],
@@ -611,10 +619,10 @@ impl Emitter<'_> {
                             format!("static {c} {symbol}({RT}vec* v, size_t i)"),
                             vec![
                                 format!("{c} r;"),
-                                format!("unsigned char* at = (unsigned char*)v->ptr + i * sizeof({c});"),
-                                format!("memcpy(&r, at, sizeof({c}));"),
+                                format!("unsigned char* at = (unsigned char*)v->ptr + i * {c_size};", c_size = c_size(&c)),
+                                format!("memcpy(&r, at, {c_size});", c_size = c_size(&c)),
                                 "v->len -= 1;".to_string(),
-                                format!("memmove(at, (unsigned char*)v->ptr + v->len * sizeof({c}), sizeof({c}));"),
+                                format!("memmove(at, (unsigned char*)v->ptr + v->len * {c_size}, {c_size});", c_size = c_size(&c)),
                                 "return r;".to_string(),
                             ],
                         )
@@ -630,12 +638,20 @@ impl Emitter<'_> {
                         body.push("v->len = n;".to_string());
                         (format!("static void {symbol}({RT}vec* v, size_t n)"), body)
                     }
+                    ArrayHelper::Extend if self.is_void(ty) => (
+                        format!("static void {symbol}({RT}vec* v, const void* elems, size_t count)"),
+                        vec![
+                            "(void)elems;".to_string(),
+                            format!("{RT}vec_reserve(v, 0, v->len + count);"),
+                            "v->len += count;".to_string(),
+                        ],
+                    ),
                     ArrayHelper::Extend => {
                         let c = self.c_type(ty);
                         let mut body = vec![
-                            format!("{RT}vec_reserve(v, sizeof({c}), v->len + count);"),
+                            format!("{RT}vec_reserve(v, {c_size}, v->len + count);", c_size = c_size(&c)),
                             format!("{c}* to = ({c}*)v->ptr + v->len;"),
-                            format!("memcpy(to, elems, count * sizeof({c}));"),
+                            format!("memcpy(to, elems, count * {c_size});", c_size = c_size(&c)),
                         ];
                         let copy = "to[_ci]".to_string();
                         let source = format!("(({c}*)elems)[_ci]");
@@ -667,7 +683,7 @@ impl Emitter<'_> {
                     }
                     ArrayHelper::Clone => {
                         let c = self.c_type(ty);
-                        let mut body = vec![format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), elems, count);")];
+                        let mut body = vec![format!("{RT}vec r = {RT}vec_from_elems({c_size}, elems, count);", c_size = c_size(&c))];
                         let copy = format!("(({c}*)r.ptr)[_ci]");
                         let source = format!("(({c}*)elems)[_ci]");
                         let per_element = if self.types.is_copy(ty) {
@@ -691,8 +707,8 @@ impl Emitter<'_> {
                         (
                             format!("static {RT}vec {symbol}(const void* elems, size_t count)"),
                             vec![
-                                format!("{RT}vec r = {RT}vec_from_elems(sizeof({c}), elems, count);"),
-                                format!("{RT}vec_sort(&r, sizeof({c}), {less});"),
+                                format!("{RT}vec r = {RT}vec_from_elems({c_size}, elems, count);", c_size = c_size(&c)),
+                                format!("{RT}vec_sort(&r, {c_size}, {less});", c_size = c_size(&c)),
                                 "return r;".to_string(),
                             ],
                         )
@@ -715,6 +731,11 @@ impl Emitter<'_> {
     /// equal: IEEE `==` on floats, identity on class handles, bytes on text
     /// and `[STR-5]`'s field-wise equality on aggregates.
     fn eq_expr(&self, a: &str, b: &str, ty: Ty) -> String {
+        // `void` has one value (`[TYP-36]`); a zero-sized element has no
+        // storage to read (D-355).
+        if self.is_void(ty) {
+            return "1".to_string();
+        }
         if let Some((a, b)) = self.text_pair(a, b, ty) {
             return format!("({RT}str_cmp({a}, {b}) == 0)");
         }
@@ -744,7 +765,7 @@ impl Emitter<'_> {
     /// `Result`).
     fn is_display_aggregate(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
-            TyKind::Vec { elem } => !matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)),
+            TyKind::Vec { text, .. } => !text,
             TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => true,
             // `[STR-5]` — structs and enums have `Debug` field-wise; a
             // unit-only enum's `Display` is its variant name (`unit_display`).
@@ -759,6 +780,11 @@ impl Emitter<'_> {
     /// a C `str` expression over the value `v`; `None` for any other type
     /// (whose `Display` is its `Debug` text).
     fn unit_display(&self, v: &str, ty: Ty) -> Option<String> {
+        // `[TYP-36]` — `void` has no `Display`; printing shows its `Debug`,
+        // `()` (D-355).
+        if matches!(self.types.kind(ty), TyKind::Void) {
+            return Some(format!("{RT}str_lit(\"()\", 2)"));
+        }
         let TyKind::Enum(id) = self.types.kind(ty) else { return None };
         let def = self.types.enum_def(*id);
         if !def.is_unit_only() {
@@ -847,7 +873,7 @@ impl Emitter<'_> {
         let TyKind::Struct(map_id) = *self.types.kind(map_ty) else { unreachable!("a Set holds a Map") };
         let map_def = self.types.struct_def(map_id);
         let entries = &map_def.fields[0];
-        let TyKind::Vec { elem: option } = *self.types.kind(entries.ty) else { unreachable!("a Map's entries are an Array") };
+        let TyKind::Vec { elem: option, .. } = *self.types.kind(entries.ty) else { unreachable!("a Map's entries are an Array") };
         let TyKind::Enum(option_id) = *self.types.kind(option) else { unreachable!("an entry is an Option") };
         let some = self
             .types
@@ -904,7 +930,7 @@ impl Emitter<'_> {
                     format!("for (size_t i = 0; i < {{len}}; ++i) {{ if (i) {} {item} }}", text(", "))
                 };
                 let body = match self.types.kind(ty).clone() {
-                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                         format!("{} {} {}", text("["), each(self, elem, "v->ptr").replace("{len}", "v->len"), text("]"))
                     }
                     TyKind::Array { elem, len } => {
@@ -1036,7 +1062,7 @@ impl Emitter<'_> {
     fn text_pair(&self, a: &str, b: &str, ty: Ty) -> Option<(String, String)> {
         match self.types.kind(ty) {
             TyKind::Str => Some((a.to_string(), b.to_string())),
-            TyKind::Vec { elem } if matches!(self.types.kind(*elem), TyKind::Uint(UintTy::U8)) => {
+            TyKind::Vec { text: true, .. } => {
                 let view = |v: &str| format!("(({RT}str){{ (const unsigned char*)({v}).ptr, ({v}).len }})");
                 Some((view(a), view(b)))
             }
@@ -1079,7 +1105,7 @@ impl Emitter<'_> {
                         let each = self.eq_expr("a._0[i]", "b._0[i]", elem);
                         format!("for (size_t i = 0; i < {len}; ++i) {{ if (!{each}) return 0; }} return 1;")
                     }
-                    TyKind::Vec { elem } => {
+                    TyKind::Vec { elem, .. } => {
                         let elem_c = self.c_type(elem);
                         let each = self.eq_expr(
                             &format!("(({elem_c}*)a.ptr)[i]"),
@@ -1128,13 +1154,23 @@ impl Emitter<'_> {
         self.out = self.out.replacen(EQ_FN_PROTOTYPES, &prototypes.join("\n"), 1);
     }
 
-    /// The name of `ty`'s out-of-line drop glue, requesting it. Only
-    /// aggregates are worth a function; everything else drops in one line.
+    /// The name of `ty`'s out-of-line drop glue, requesting it, for a part
+    /// reached through an `Array` element, a `Box` payload or an enum
+    /// payload. Only aggregates are worth a function; everything else drops
+    /// in one line. A part goes out of line when it owns itself, or when its
+    /// own drop would open another level of C nesting (D-358): then no glue
+    /// function nests more than one level, however deep the type is, and a
+    /// type nested 256 deep (`[GRM-39]`) stays within every C compiler's
+    /// limits.
     fn drop_glue_call(&self, access: &str, ty: Ty) -> Option<String> {
         if !matches!(
             self.types.kind(ty),
-            TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Tuple(_) | TyKind::Array { .. }
-        ) || !self.owns_itself(ty)
+            TyKind::Struct(_)
+                | TyKind::Enum(_)
+                | TyKind::Tuple(_)
+                | TyKind::Array { .. }
+                | TyKind::Vec { .. }
+        ) || !(self.owns_itself(ty) || self.drop_nests(ty, &mut BTreeSet::new()))
         {
             return None;
         }
@@ -1167,10 +1203,49 @@ impl Emitter<'_> {
         false
     }
 
+    /// Whether dropping `ty` in line opens a level of C nesting: a loop over
+    /// an `Array`'s elements, a `switch` on an enum's tag, or a dereference
+    /// of a `Box`'s payload, each of which also wraps the access expression
+    /// once more. `seen` stops a recursive type, which has glue anyway.
+    fn drop_nests(&self, ty: Ty, seen: &mut BTreeSet<Ty>) -> bool {
+        if !self.types.needs_drop(ty) {
+            return false;
+        }
+        if !seen.insert(ty) {
+            return true;
+        }
+        match self.types.kind(ty) {
+            TyKind::Vec { elem, .. } => self.types.needs_drop(*elem),
+            TyKind::Array { elem, .. } => self.drop_nests(*elem, seen),
+            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.drop_nests(item, seen)),
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(*id);
+                !def.is_unit_only()
+                    && def
+                        .variants
+                        .iter()
+                        .any(|variant| variant.fields.iter().any(|field| self.types.needs_drop(field.ty)))
+            }
+            TyKind::Struct(id) => {
+                if self.shared_inner_id(*id).is_some() || self.weak_inner_id(*id).is_some() {
+                    return false;
+                }
+                if let Some(payload) = self.box_inner_id(*id) {
+                    return !matches!(self.types.kind(payload), TyKind::Dyn { .. })
+                        && self.types.needs_drop(payload);
+                }
+                let def = self.types.struct_def(*id);
+                def.drops_fields
+                    && def.fields.clone().into_iter().any(|field| self.drop_nests(field.ty, seen))
+            }
+            _ => false,
+        }
+    }
+
     /// The values a value of `ty` owns and drops inline.
     fn owned_parts(&self, ty: Ty) -> Vec<Ty> {
         match self.types.kind(ty) {
-            TyKind::Vec { elem } | TyKind::Array { elem, .. } => vec![*elem],
+            TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
             TyKind::Tuple(items) => items.clone(),
             TyKind::Struct(id) => match self.box_inner_id(*id) {
                 Some(payload) => vec![payload],
@@ -1753,7 +1828,7 @@ impl Emitter<'_> {
                     self.line(&format!("    {line}"));
                 }
                 self.line("}");
-                (name, format!("sizeof({payload_ty})"), format!("_Alignof({payload_ty})"))
+                (name, format!("{payload_ty_size}", payload_ty_size = c_size(&payload_ty)), format!("{payload_ty_align}", payload_ty_align = c_align(&payload_ty)))
             } else if class_handle {
                 let name = format!("{table}_drop");
                 self.line(&format!("static void {name}(void* _0) {{"));
@@ -1817,8 +1892,24 @@ impl Emitter<'_> {
                 }
                 args.extend((1..=signature.params.len()).map(|index| format!("_{index}")));
                 let args = args.join(", ");
+                // `[EXC-15]` — a `mut self` call on a class object writes every
+                // field for the call. Its caller holds only the erased `dyn`
+                // value, so the adapter, which knows the class, takes it.
+                let object_write = matches!(implementation.receiver, ParameterMode::Mut) && class_handle;
+                let object = format!("(({}*)receiver)", ember_branding::runtime("obj_header"));
+                let nowhere = format!("({}loc){{ NULL, 0, 0 }}", RT);
+                if object_write {
+                    self.line(&format!("    {RT}object_begin_write({object}, {nowhere});"));
+                }
                 if self.is_void(signature.ret) {
                     self.line(&format!("    {}({args});", implementation.symbol));
+                    if object_write {
+                        self.line(&format!("    {RT}object_end_write({object}, {nowhere});"));
+                    }
+                } else if object_write {
+                    self.line(&format!("    {} result = {}({args});", self.c_type(signature.ret), implementation.symbol));
+                    self.line(&format!("    {RT}object_end_write({object}, {nowhere});"));
+                    self.line("    return result;");
                 } else {
                     self.line(&format!("    return {}({args});", implementation.symbol));
                 }
@@ -1890,7 +1981,7 @@ impl Emitter<'_> {
         let params = method
             .params
             .iter()
-            .map(|ty| self.c_type(*ty))
+            .map(|ty| self.c_member_type(*ty))
             .collect::<Vec<_>>();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
         format!("{} (*{field})({params})", self.c_type(method.ret))
@@ -1944,7 +2035,7 @@ impl Emitter<'_> {
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(index, ty)| format!("{} _{index}", self.c_type(*ty)))
+                    .map(|(index, ty)| format!("{} _{index}", self.c_member_type(*ty)))
                     .collect::<Vec<_>>();
                 let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
                 self.line(&format!("static {} {adapter}({params}) {{", self.c_type(signature.ret)));
@@ -2046,6 +2137,31 @@ impl Emitter<'_> {
             let def = self.types.class_def(id);
             let object = ember_branding::object_struct(&def.name.to_string());
             let info = ember_branding::type_info(&def.name.to_string());
+            // `[EXC-19]` — every access word of the class, its bases' included,
+            // for a whole-object access to find through the dynamic class.
+            let words: Vec<String> = (0..self.types.class_field_count(id))
+                .filter(|&index| self.types.class_field_has_access_word(id, index))
+                .filter_map(|index| self.types.class_field_at(id, index))
+                .map(|field| {
+                    let name = field.name.to_string();
+                    format!(
+                        "    {{ {}, (uint32_t)offsetof(struct {object}, {}) }},",
+                        c_string_literal(&name),
+                        access_word_member(&name)
+                    )
+                })
+                .collect();
+            let fields = if words.is_empty() {
+                None
+            } else {
+                let symbol = format!("{info}_access_words");
+                self.line(&format!("static const {} {symbol}[] = {{", ember_branding::runtime("field_desc")));
+                for word in &words {
+                    self.line(word);
+                }
+                self.line("};");
+                Some(symbol)
+            };
             let base = def
                 .base
                 .map(|base| {
@@ -2109,8 +2225,16 @@ impl Emitter<'_> {
                 self.line("    NULL,");
                 self.line("    UINT32_C(0),");
             }
-            self.line("    NULL,");
-            self.line("    UINT32_C(0)");
+            match fields {
+                Some(symbol) => {
+                    self.line(&format!("    {symbol},"));
+                    self.line(&format!("    UINT32_C({})", words.len()));
+                }
+                None => {
+                    self.line("    NULL,");
+                    self.line("    UINT32_C(0)");
+                }
+            }
             self.line("};");
         }
     }
@@ -2188,8 +2312,8 @@ impl Emitter<'_> {
             ));
             self.line("    (void)raw; (void)visitor; (void)context;");
             let payload = format!(
-                "(*(({inner_c}*){}(raw, _Alignof({inner_c}))))",
-                ember_branding::runtime("obj_payload")
+                "(*(({inner_c}*){}(raw, {inner_c_align})))",
+                ember_branding::runtime("obj_payload"), inner_c_align = c_align(&inner_c)
             );
             let mut lines = Vec::new();
             let mut loop_counter = 0;
@@ -2235,7 +2359,7 @@ impl Emitter<'_> {
             TyKind::ClassInterface(_) => out.push(format!(
                 "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, NULL, false);"
             )),
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, .. } => {
                 let index = *loop_counter;
                 *loop_counter += 1;
                 out.push(format!("if (({access}).ptr != NULL) {{"));
@@ -2391,9 +2515,9 @@ impl Emitter<'_> {
             let drop = self.shared_drop_symbol(*id);
             let inner_c = self.c_type(*inner);
             let payload = format!(
-                "(*(({inner_c}*){}(({}*)raw, _Alignof({inner_c}))))",
+                "(*(({inner_c}*){}(({}*)raw, {inner_c_align})))",
                 ember_branding::runtime("obj_payload"),
-                ember_branding::runtime("obj_header"),
+                ember_branding::runtime("obj_header"), inner_c_align = c_align(&inner_c),
             );
             let mut lines = Vec::new();
             self.drop_lines(&payload, *inner, &mut lines);
@@ -2409,10 +2533,10 @@ impl Emitter<'_> {
             let display = format!("Shared[{}]", self.types.display(inner));
             self.line(&format!("static const {} {info} = {{", ember_branding::runtime("type_info")));
             self.line(&format!(
-                "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET(_Alignof({inner_c})) + sizeof({inner_c})),"
+                "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET({inner_c_align}) + {inner_c_size}),", inner_c_align = c_align(&inner_c), inner_c_size = c_size(&inner_c)
             ));
             self.line(&format!(
-                "    (uint32_t)((_Alignof({inner_c}) > _Alignof({RT}obj_header)) ? _Alignof({inner_c}) : _Alignof({RT}obj_header)),"
+                "    (uint32_t)(({inner_c_align} > _Alignof({RT}obj_header)) ? {inner_c_align} : _Alignof({RT}obj_header)),", inner_c_align = c_align(&inner_c)
             ));
             self.line("    UINT32_C(0),");
             self.line(&format!("    {},", c_string_literal(&display)));
@@ -2545,6 +2669,11 @@ impl Emitter<'_> {
                 let mut members = vec![format!("{RT}obj_header _header")];
                 for index in 0..self.types.class_field_count(id) {
                     if let Some(field) = self.types.class_field_at(id, index) {
+                        // `[EXC-19]` — a non-`Copy` field's access word stands
+                        // in front of it.
+                        if self.types.class_field_has_access_word(id, index) {
+                            members.push(format!("uint32_t {}", access_word_member(&field.name.to_string())));
+                        }
                         members.push(format!("{} {}", self.c_member_type(field.ty), field.name));
                     }
                 }
@@ -2675,7 +2804,7 @@ impl Emitter<'_> {
                     ember_branding::runtime("obj_header")
                 ));
             }
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, .. } => {
                 // An `Array[T]` owns its elements as well as its buffer.
                 if self.types.needs_drop(*elem) {
                     // D-231 — one index per nesting level: an element that
@@ -2696,10 +2825,7 @@ impl Emitter<'_> {
                         ));
                     }
                 }
-                out.push(format!(
-                    "{RT}vec_free(&{access}, sizeof({}));",
-                    self.c_type(*elem)
-                ));
+                out.push(format!("{RT}vec_free(&{access}, {});", c_size(&self.c_type(*elem))));
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
@@ -2747,7 +2873,7 @@ impl Emitter<'_> {
                         }
                         let inner_c = self.c_type(*inner);
                         out.push(format!(
-                            "{RT}free({access}, sizeof({inner_c}), _Alignof({inner_c}));"
+                            "{RT}free({access}, {inner_c_size}, {inner_c_align});", inner_c_size = c_size(&inner_c), inner_c_align = c_align(&inner_c)
                         ));
                         return;
                     }
@@ -2851,7 +2977,10 @@ impl Emitter<'_> {
                     for (field_index, field) in variant.fields.iter().enumerate().rev() {
                         if self.types.needs_drop(field.ty) {
                             let member = self.enum_member(*id, access, variant_index, field_index);
-                            self.drop_lines(&member, field.ty, &mut inner);
+                            match self.drop_glue_call(&member, field.ty) {
+                                Some(call) => inner.push(call),
+                                None => self.drop_lines(&member, field.ty, &mut inner),
+                            }
                         }
                     }
                     if !inner.is_empty() {
@@ -2986,7 +3115,7 @@ impl Emitter<'_> {
     /// reference.
     fn element_of(&self, ty: Ty) -> Ty {
         match self.types.kind(ty) {
-            TyKind::Vec { elem } => *elem,
+            TyKind::Vec { elem, .. } => *elem,
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.element_of(*inner),
             _ => ty,
         }
@@ -3017,7 +3146,7 @@ impl Emitter<'_> {
             FnParamMode::Borrow if self.types.passed_by_address(param.ty) => {
                 format!("{}*", self.c_type(param.ty))
             }
-            FnParamMode::Borrow | FnParamMode::Owned => self.c_type(param.ty),
+            FnParamMode::Borrow | FnParamMode::Owned => self.c_member_type(param.ty),
             FnParamMode::Mut if matches!(self.types.kind(param.ty), TyKind::Span { mutable: true, .. }) => {
                 self.c_type(param.ty)
             }
@@ -3048,7 +3177,7 @@ impl Emitter<'_> {
         let ret = self.c_type(body.return_ty());
         let params: Vec<String> = body
             .args()
-            .map(|(id, decl)| format!("{} _{}", self.c_type(decl.ty), id.0))
+            .map(|(id, decl)| format!("{} _{}", self.c_member_type(decl.ty), id.0))
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
         format!("{ret} {}({params})", body.symbol)
@@ -3175,12 +3304,7 @@ impl Emitter<'_> {
             StmtKind::BeginAccess { place, mutable } => {
                 self.emit_line_directive(stmt.span);
                 let operation = if *mutable { "begin_write" } else { "begin_read" };
-                let object = self.access_object(place, body);
-                let what = c_string_literal(&body.symbol);
-                let location = self.location(stmt.span);
-                self.line(&format!(
-                    "    {RT}access_{operation}({object}, {what}, {location});"
-                ));
+                self.line(&format!("    {};", self.access_call(place, operation, stmt.span, body)));
             }
             StmtKind::BeginAccessTransfer { place, mutable } => {
                 self.emit_line_directive(stmt.span);
@@ -3195,12 +3319,7 @@ impl Emitter<'_> {
             StmtKind::EndAccess { place, mutable } => {
                 self.emit_line_directive(stmt.span);
                 let operation = if *mutable { "end_write" } else { "end_read" };
-                let object = self.access_object(place, body);
-                let what = c_string_literal(&body.symbol);
-                let location = self.location(stmt.span);
-                self.line(&format!(
-                    "    {RT}access_{operation}({object}, {what}, {location});"
-                ));
+                self.line(&format!("    {};", self.access_call(place, operation, stmt.span, body)));
             }
             StmtKind::EndAccessTransfer { place, mutable } => {
                 self.emit_line_directive(stmt.span);
@@ -3258,6 +3377,40 @@ impl Emitter<'_> {
     /// Render the object pointer represented by a class access place. The
     /// current producer is the dereferenced `ref mut Class` receiver, but the
     /// place renderer remains the single source of truth for projections.
+    /// The runtime call that begins or ends (`operation`) an access to
+    /// `place`: a class field's own word (`[EXC-19]`), every word of a class
+    /// object's dynamic class (`[EXC-15]`), or a `Shared` payload's header
+    /// word (`[HEAP-5]`).
+    fn access_call(&self, place: &Place, operation: &str, span: ember_span::Span, body: &Body) -> String {
+        let location = self.location(span);
+        // A class-typed place is the object, even when it is a field holding
+        // a handle (`holder.child`), which has no word of its own.
+        if matches!(self.types.kind(self.place_ty(place, body)), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            return format!("{RT}object_{operation}({}, {location})", self.access_object(place, body));
+        }
+        if let Some((object, field)) = self.class_field_of_place(place, body) {
+            let def = self.types.class_def(object);
+            let what = c_string_literal(&format!("{}.{}", def.name, field));
+            let handle = Place { local: place.local, projection: place.projection[..place.projection.len() - 1].to_vec() };
+            return format!(
+                "{RT}field_{operation}(&({})->{}, {what}, {location})",
+                self.place_in(&handle, body),
+                access_word_member(&field)
+            );
+        }
+        let what = c_string_literal(&body.symbol);
+        format!("{RT}access_{operation}({}, {what}, {location})", self.access_object(place, body))
+    }
+
+    /// When `place` is a class handle's field (`h.f`), the class and the
+    /// field's name.
+    fn class_field_of_place(&self, place: &Place, body: &Body) -> Option<(ClassId, String)> {
+        let (Projection::Field(index), prefix) = place.projection.split_last()? else { return None };
+        let handle = Place { local: place.local, projection: prefix.to_vec() };
+        let TyKind::Class(id) = *self.types.kind(self.place_ty(&handle, body)) else { return None };
+        Some((id, self.types.class_field_at(id, *index)?.name.to_string()))
+    }
+
     fn access_object(&self, place: &Place, body: &Body) -> String {
         format!(
             "(({}*){})",
@@ -3274,8 +3427,8 @@ impl Emitter<'_> {
         let payload = self.place_in(place, body);
         let payload_ty = self.c_type(self.place_ty(place, body));
         format!(
-            "(({}*)((unsigned char*)&({payload}) - EMBER_OBJ_PAYLOAD_OFFSET(_Alignof({payload_ty}))))",
-            ember_branding::runtime("obj_header"),
+            "(({}*)((unsigned char*)&({payload}) - EMBER_OBJ_PAYLOAD_OFFSET({payload_ty_align})))",
+            ember_branding::runtime("obj_header"), payload_ty_align = c_align(&payload_ty),
         )
     }
 
@@ -3950,13 +4103,11 @@ impl Emitter<'_> {
         let view = if mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
         // A zero-sized element's C type is `void`, which C cannot step over
         // (D-354): every element is at the base pointer.
-        let tail = if elem == "void" {
-            format!("{source}.ptr")
-        } else if mutable {
-            format!("(void*)((({elem}*){source}.ptr) + {boundary})")
-        } else {
-            format!("(const void*)(((const {elem}*){source}.ptr) + {boundary})")
-        };
+        let qualifier = if mutable { "" } else { "const " };
+        let tail = format!(
+            "({qualifier}void*){}",
+            element_pointer(&format!("{source}.ptr"), &elem, boundary, mutable)
+        );
         format!(
             "({pair}){{ ({view}){{ {source}.ptr, {boundary} }}, \
              ({view}){{ ({boundary} == 0 ? {source}.ptr : {tail}), \
@@ -4087,7 +4238,7 @@ impl Emitter<'_> {
                         format!("&{}", rendered[0])
                     };
                     format!(
-                        "{RT}box_new_copy(sizeof({concrete_c}), _Alignof({concrete_c}), {source})"
+                        "{RT}box_new_copy({concrete_c_size}, {concrete_c_align}, {source})", concrete_c_size = c_size(&concrete_c), concrete_c_align = c_align(&concrete_c)
                     )
                 };
                 format!(
@@ -4181,8 +4332,8 @@ impl Emitter<'_> {
                         let array = self.c_type(*array);
                         let elem = self.c_type(*elem);
                         return format!(
-                            "({array}){{ {}, ({elem}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem}), _Alignof({elem})), 0, {} }}",
-                            rendered[0], rendered[0], rendered[1], rendered[1]
+                            "({array}){{ {}, ({elem}*){RT}arena_alloc_uninit(({})->state, {}, {elem_size}, {elem_align}), 0, {} }}",
+                            rendered[0], rendered[0], rendered[1], rendered[1], elem_size = c_size(&elem), elem_align = c_align(&elem)
                         );
                     }
                     Builtin::ArenaMapWithCapacity { map, .. } => {
@@ -4197,15 +4348,15 @@ impl Emitter<'_> {
                         };
                         let slot = self.c_type(slot);
                         return format!(
-                            "({map}){{ {}, ({slot}*){RT}arena_alloc_zeroed(({})->state, {}, sizeof({slot}), _Alignof({slot})), 0, {} }}",
-                            rendered[0], rendered[0], rendered[1], rendered[1]
+                            "({map}){{ {}, ({slot}*){RT}arena_alloc_zeroed(({})->state, {}, {slot_size}, {slot_align}), 0, {} }}",
+                            rendered[0], rendered[0], rendered[1], rendered[1], slot_size = c_size(&slot), slot_align = c_align(&slot)
                         );
                     }
                     Builtin::ArenaAlloc { elem } => {
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}arena_alloc_copy(({})->state, sizeof({elem_c}), _Alignof({elem_c}), &{})",
-                            rendered[0], rendered[1]
+                            "({elem_c}*){RT}arena_alloc_copy(({})->state, {elem_c_size}, {elem_c_align}, &{})",
+                            rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::ArenaAllocUninit { elem } => {
@@ -4213,16 +4364,16 @@ impl Emitter<'_> {
                         let slot = self.c_type(self.span_element(*arg_ty));
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({span}){{ ({slot}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
-                            rendered[0], rendered[1], rendered[1]
+                            "({span}){{ ({slot}*){RT}arena_alloc_uninit(({})->state, {}, {elem_c_size}, {elem_c_align}), {} }}",
+                            rendered[0], rendered[1], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::ArenaAllocArrayZeroed { elem } => {
                         let span = self.c_type(*arg_ty);
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({span}){{ ({elem_c}*){RT}arena_alloc_zeroed(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
-                            rendered[0], rendered[1], rendered[1]
+                            "({span}){{ ({elem_c}*){RT}arena_alloc_zeroed(({})->state, {}, {elem_c_size}, {elem_c_align}), {} }}",
+                            rendered[0], rendered[1], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     // `[ARN-3]`'s `Default` arm is constructed explicitly in
@@ -4233,8 +4384,8 @@ impl Emitter<'_> {
                         let span = self.c_type(*arg_ty);
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({span}){{ ({elem_c}*){RT}arena_alloc_uninit(({})->state, {}, sizeof({elem_c}), _Alignof({elem_c})), {} }}",
-                            rendered[0], rendered[1], rendered[1]
+                            "({span}){{ ({elem_c}*){RT}arena_alloc_uninit(({})->state, {}, {elem_c_size}, {elem_c_align}), {} }}",
+                            rendered[0], rendered[1], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::ArenaReset => {
@@ -4244,8 +4395,8 @@ impl Emitter<'_> {
                         let fixed = self.c_type(self.element_of(*arg_ty));
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}fixed_arena_alloc_copy((void*)(({fixed}*){})->buffer.ptr, (({fixed}*){})->buffer.len, &(({fixed}*){})->used, sizeof({elem_c}), _Alignof({elem_c}), &{})",
-                            rendered[0], rendered[0], rendered[0], rendered[1]
+                            "({elem_c}*){RT}fixed_arena_alloc_copy((void*)(({fixed}*){})->buffer.ptr, (({fixed}*){})->buffer.len, &(({fixed}*){})->used, {elem_c_size}, {elem_c_align}, &{})",
+                            rendered[0], rendered[0], rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::FixedArenaReset => {
@@ -4264,8 +4415,8 @@ impl Emitter<'_> {
                         let scoped = self.c_type(self.element_of(*arg_ty));
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}arena_alloc_copy((({scoped}*){})->state, sizeof({elem_c}), _Alignof({elem_c}), &{})",
-                            rendered[0], rendered[1]
+                            "({elem_c}*){RT}arena_alloc_copy((({scoped}*){})->state, {elem_c_size}, {elem_c_align}, &{})",
+                            rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     // `[CLS-1]` — an empty class constructor allocates the
@@ -4421,11 +4572,11 @@ impl Emitter<'_> {
                     Builtin::ArraySort => {
                         let elem = self.element_of(*arg_ty);
                         let less = self.array_helper(ArrayHelper::Less, elem);
-                        return format!("{RT}vec_sort({}, sizeof({}), {less})", rendered[0], self.c_type(elem));
+                        return format!("{RT}vec_sort({}, {}, {less})", rendered[0], c_size(&self.c_type(elem)));
                     }
                     Builtin::ArrayReverse => {
                         let elem = self.element_of(*arg_ty);
-                        return format!("{RT}vec_reverse({}, sizeof({}))", rendered[0], self.c_type(elem));
+                        return format!("{RT}vec_reverse({}, {})", rendered[0], c_size(&self.c_type(elem)));
                     }
                     Builtin::ArrayClear => {
                         let elem = self.element_of(*arg_ty);
@@ -4467,9 +4618,9 @@ impl Emitter<'_> {
                     Builtin::ArrayReserve => {
                         let elem = self.element_of(*arg_ty);
                         return format!(
-                            "{RT}vec_reserve({}, sizeof({}), ({})->len + ({}))",
+                            "{RT}vec_reserve({}, {}, ({})->len + ({}))",
                             rendered[0],
-                            self.c_type(elem),
+                            c_size(&self.c_type(elem)),
                             rendered[0],
                             rendered[1]
                         );
@@ -4477,9 +4628,9 @@ impl Emitter<'_> {
                     Builtin::ArraySwap => {
                         let elem = self.element_of(*arg_ty);
                         return format!(
-                            "{RT}vec_swap({}, sizeof({}), {}, {})",
+                            "{RT}vec_swap({}, {}, {}, {})",
                             rendered[0],
-                            self.c_type(elem),
+                            c_size(&self.c_type(elem)),
                             rendered[1],
                             rendered[2]
                         );
@@ -4487,11 +4638,11 @@ impl Emitter<'_> {
                     Builtin::ArrayInsert => {
                         let elem = self.element_of(*arg_ty);
                         return format!(
-                            "{RT}vec_insert({}, sizeof({}), {}, &{})",
+                            "{RT}vec_insert({}, {}, {}, {})",
                             rendered[0],
-                            self.c_type(elem),
+                            c_size(&self.c_type(elem)),
                             rendered[2],
-                            rendered[1]
+                            self.value_address(&rendered[1], elem)
                         );
                     }
                     Builtin::ArraySorted { elem } => {
@@ -4587,16 +4738,16 @@ impl Emitter<'_> {
                         };
                         let elem_c = self.c_type(elem);
                         return format!(
-                            "{RT}vec_from_elems(sizeof({elem_c}), ({})._0, {len})",
-                            rendered[0]
+                            "{RT}vec_from_elems({elem_c_size}, ({})._0, {len})",
+                            rendered[0], elem_c_size = c_size(&elem_c)
                         );
                     }
                     Builtin::BoxNew { elem, boxed } => {
                         let elem_c = self.c_type(*elem);
                         let boxed_c = self.c_type(*boxed);
                         return format!(
-                            "(({boxed_c}){RT}box_new_copy(sizeof({elem_c}), _Alignof({elem_c}), &{}))",
-                            rendered[0]
+                            "(({boxed_c}){RT}box_new_copy({elem_c_size}, {elem_c_align}, {}))",
+                            self.value_address(&rendered[0], *elem), elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::SharedNew { elem, shared } => {
@@ -4607,8 +4758,8 @@ impl Emitter<'_> {
                         };
                         let info = self.shared_type_info_symbol(*id);
                         return format!(
-                            "(({shared_c}){RT}obj_new_copy(&{info}, _Alignof({elem_c}), sizeof({elem_c}), &{}))",
-                            rendered[0]
+                            "(({shared_c}){RT}obj_new_copy(&{info}, {elem_c_align}, {elem_c_size}, {}))",
+                            self.value_address(&rendered[0], *elem), elem_c_align = c_align(&elem_c), elem_c_size = c_size(&elem_c)
                         );
                     }
                     Builtin::WeakNew { weak, .. } => {
@@ -4637,10 +4788,10 @@ impl Emitter<'_> {
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);
                         return format!(
-                            "{RT}vec_push({}, sizeof({}), &{})",
+                            "{RT}vec_push({}, {}, {})",
                             rendered[0],
-                            self.c_type(elem),
-                            rendered[1]
+                            c_size(&self.c_type(elem)),
+                            self.value_address(&rendered[1], elem)
                         );
                     }
                     Builtin::StringPush => {
@@ -4681,13 +4832,7 @@ impl Emitter<'_> {
                     // for mutable items.
                     Builtin::SpanIterNext { elem, mutable } => {
                         let elem = self.c_type(*elem);
-                        let source = &rendered[0];
-                        let pointer = if *mutable {
-                            format!("(({elem}*)({source}).ptr)")
-                        } else {
-                            format!("((const {elem}*)({source}).ptr)")
-                        };
-                        return format!("&({pointer})[{}]", rendered[1]);
+                        return element_pointer(&format!("({}).ptr", rendered[0]), &elem, &rendered[1], *mutable);
                     }
                     // `[SPN-6]` — MIR computed the bounded, non-zero advance;
                     // C emission only forms the half-open subview and avoids
@@ -4700,14 +4845,11 @@ impl Emitter<'_> {
                         } else {
                             format!("{RT}span")
                         };
-                        let tail = if *mutable {
-                            format!("(void*)((({elem}*)({source}).ptr) + {})", rendered[1])
-                        } else {
-                            format!(
-                                "(const void*)(((const {elem}*)({source}).ptr) + {})",
-                                rendered[1]
-                            )
-                        };
+                        let qualifier = if *mutable { "" } else { "const " };
+                        let tail = format!(
+                            "({qualifier}void*){}",
+                            element_pointer(&format!("({source}).ptr"), &elem, &rendered[1], *mutable)
+                        );
                         return format!(
                             "(({view}){{ ({} == 0 ? ({}).ptr : {tail}), {} }})",
                             rendered[1], source, rendered[2]
@@ -4760,6 +4902,22 @@ impl Emitter<'_> {
                             ),
                         };
                     }
+                    Builtin::Format | Builtin::FormatWith(_) if matches!(self.types.kind(*arg_ty), TyKind::Void) => {
+                        let text = format!("{RT}str_lit(\"()\", 2)");
+                        // `!r` and `!s` both give its `Debug` text; a spec pads it.
+                        let spec = match which {
+                            Builtin::FormatWith(spec) => Some(*spec),
+                            _ => None,
+                        };
+                        return match spec.filter(|spec| hir_spec_is_more_than_a_conversion(spec)) {
+                            None => format!("{RT}fmt_str({}, {text})", rendered[0]),
+                            Some(spec) => format!(
+                                "{RT}fmt_spec_str({}, {text}, {})",
+                                rendered[0],
+                                fmt_spec_literal(&ember_mir::FormatSpec { kind: None, ..spec })
+                            ),
+                        };
+                    }
                     Builtin::Format => {
                         return format!(
                             "{RT}fmt_{}({}, {})",
@@ -4785,16 +4943,16 @@ impl Emitter<'_> {
                         let elem = self.element_of(*arg_ty);
                         let elem = self.c_type(elem);
                         return format!(
-                            "({elem}*){RT}alloc({} * sizeof({elem}), _Alignof({elem}))",
-                            rendered[0]
+                            "({elem}*){RT}alloc({} * {elem_size}, {elem_align})",
+                            rendered[0], elem_size = c_size(&elem), elem_align = c_align(&elem)
                         );
                     }
                     Builtin::MemFree => {
                         let elem = self.element_of(*arg_ty);
                         let elem = self.c_type(elem);
                         return format!(
-                            "{RT}free({}, {} * sizeof({elem}), _Alignof({elem}))",
-                            rendered[0], rendered[1]
+                            "{RT}free({}, {} * {elem_size}, {elem_align})",
+                            rendered[0], rendered[1], elem_size = c_size(&elem), elem_align = c_align(&elem)
                         );
                     }
                     Builtin::PtrRead => {
@@ -4807,7 +4965,7 @@ impl Emitter<'_> {
                         );
                     }
                     Builtin::SizeOf => {
-                        return format!("sizeof({})", self.c_type(*arg_ty));
+                        return c_size(&self.c_type(*arg_ty));
                     }
                     // `[RNG-3a]` — total: no failure mode, no `Panic`, no
                     // `RuntimeCheck(k)`. "On the C backend it lowers to two
@@ -4838,9 +4996,8 @@ impl Emitter<'_> {
                             format!("(({RT}str){{ ({lo} == 0 ? ({view}).ptr : ({view}).ptr + {lo}), {hi} - {lo} }})")
                         } else {
                             let elem = self.c_type(self.span_element(*arg_ty));
-                            format!(
-                                "(({RT}span){{ ({lo} == 0 ? ({view}).ptr : (const void*)(((const {elem}*)({view}).ptr) + {lo})), {hi} - {lo} }})"
-                            )
+                            let tail = element_pointer(&format!("({view}).ptr"), &elem, lo, false);
+                            format!("(({RT}span){{ ({lo} == 0 ? ({view}).ptr : (const void*){tail}), {hi} - {lo} }})")
                         };
                     }
                     Builtin::StrAsBytes => {
@@ -4946,7 +5103,7 @@ impl Emitter<'_> {
     /// piece is formatted as the `str` it borrows.
     fn format_suffix(&self, ty: Ty) -> &'static str {
         match self.types.kind(ty) {
-            TyKind::Vec { .. } => "str",
+            TyKind::Vec { text: true, .. } => "str",
             _ => self.builtin_suffix(ty),
         }
     }
@@ -4998,11 +5155,11 @@ impl Emitter<'_> {
                             debug_assert_eq!(*index, 0);
                             let inner_c = self.c_type(inner);
                             out = format!(
-                                "(({}*){}(({}*){out}, _Alignof({})))",
+                                "(({}*){}(({}*){out}, {}))",
                                 inner_c,
                                 ember_branding::runtime("obj_payload"),
                                 ember_branding::runtime("obj_header"),
-                                inner_c,
+                                c_align(&inner_c),
                             );
                         } else if self.box_inner_id(*id).is_none() {
                             out.push_str(&format!(".{}", def.fields[*index].name));
@@ -5035,14 +5192,14 @@ impl Emitter<'_> {
                 // `_0` member (Part IV.3 makes `[T; N]` a value, and a bare C
                 // array is not one).
                 Projection::Index(local) => match self.types.kind(at.ty) {
-                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                         out = self.buffer_element(&out, *elem, &format!("_{}", local.0));
                     }
                     TyKind::Ptr { .. } => out = format!("({out})[_{}]", local.0),
                     _ => out.push_str(&format!("._0[_{}]", local.0)),
                 },
                 Projection::ConstIndex(i) => match self.types.kind(at.ty) {
-                    TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                         out = self.buffer_element(&out, *elem, &i.to_string());
                     }
                     TyKind::Ptr { .. } => out = format!("({out})[{i}]"),
@@ -5118,7 +5275,7 @@ impl Emitter<'_> {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => plain(*elem),
             (
                 Projection::Index(_) | Projection::ConstIndex(_),
@@ -5489,13 +5646,20 @@ impl Emitter<'_> {
 
     // -- types ----------------------------------------------------------------
 
+    /// The address of a rendered value of type `ty`, for a runtime call that
+    /// copies `sizeof` bytes from it. A `void` value is rendered `0`, which
+    /// has no address; it copies nothing, so any byte does (D-355).
+    fn value_address(&self, rendered: &str, ty: Ty) -> String {
+        if self.is_void(ty) { "&(uint8_t){0}".to_string() } else { format!("&{rendered}") }
+    }
+
     fn is_void(&self, ty: ember_types::Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error)
     }
 
-    /// A member's C type. Ember's `void` is a unit value, and C cannot declare
-    /// a member of type `void`: one byte carries it, as an enum payload's does
-    /// (D-263).
+    /// A member's or a parameter's C type. Ember's `void` is a unit value, and
+    /// C cannot declare a member or parameter of type `void`: one byte carries
+    /// it, as an enum payload's does (D-263, D-355).
     fn c_member_type(&self, ty: ember_types::Ty) -> String {
         if self.is_void(ty) { "uint8_t".to_string() } else { self.c_type(ty) }
     }
@@ -6105,6 +6269,37 @@ fn conjunction(parts: Vec<String>) -> String {
 }
 
 /// D-182 — the `index`th out-of-line drop-glue function.
+/// `sizeof` of a C type the backend names. C gives `void` no size (MSVC says
+/// 0, GCC and Clang 1); Ember's `void` is zero-sized (`[TYP-1]`), so a buffer
+/// of it stores nothing and every element is at its base pointer (D-354,
+/// D-355). A `void` struct member is a byte (`c_member_type`); only buffers,
+/// boxes and `size_of` see this size.
+fn c_size(c: &str) -> String {
+    if c == "void" { "0".to_string() } else { format!("sizeof({c})") }
+}
+
+/// A pointer to element `index` of the buffer at `pointer`, as a `const` or
+/// mutable `elem_c*`. C cannot step a `void*`; every element of a zero-sized
+/// type is at the base pointer (D-354, ODR-068).
+fn element_pointer(pointer: &str, elem_c: &str, index: &str, mutable: bool) -> String {
+    let qualifier = if mutable { "" } else { "const " };
+    if elem_c == "void" {
+        format!("(({qualifier}void*)({pointer}))")
+    } else {
+        format!("((({qualifier}{elem_c}*)({pointer})) + {index})")
+    }
+}
+
+/// `_Alignof` of a C type the backend names; `void`'s is 1 (`[TYP-1]`).
+fn c_align(c: &str) -> String {
+    if c == "void" { "1".to_string() } else { format!("_Alignof({c})") }
+}
+
+/// `[EXC-19]` — the C member holding a class field's access word.
+fn access_word_member(field: &str) -> String {
+    format!("_access_{field}")
+}
+
 fn drop_glue_symbol(index: usize) -> String {
     ember_branding::mangled(&format!("drop_glue_{index}"))
 }

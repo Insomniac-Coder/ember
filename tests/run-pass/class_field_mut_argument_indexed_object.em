@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: CLS-1, EXC-1, FN-2a
 #$ profiles: debug, release, shipping
-#$ assert-c: contains(ember_access_begin_write)
-#$ assert-c: contains(ember_access_end_write)
+#$ assert-c: contains(ember_field_begin_write)
+#$ assert-c: contains(ember_field_end_write)
 #$ stdout: 1
 
 class Inner:

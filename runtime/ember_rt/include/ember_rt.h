@@ -843,6 +843,15 @@ struct ember_itable_entry {
     const void* table;
 };
 
+/* `[EXC-19]` — a field with its own access word: every non-`Copy` field of a
+ * class that is not Sync. `access_offset` is the word's offset from the object
+ * header; the word sits in front of the field (bit 31 writer, bits 0..30 the
+ * reader count). A class's type info lists its own fields and its bases'. */
+struct ember_field_desc {
+    const char* name;
+    uint32_t access_offset;
+};
+
 struct ember_type_info {
     uint32_t size;
     uint32_t align;
@@ -920,6 +929,15 @@ void ember_access_begin_read(ember_obj_header* object, const char* what, ember_l
 void ember_access_begin_write(ember_obj_header* object, const char* what, ember_loc loc);
 void ember_access_end_read(ember_obj_header* object, const char* what, ember_loc loc);
 void ember_access_end_write(ember_obj_header* object, const char* what, ember_loc loc);
+
+/* `[EXC-15]`, `[EXC-19]` — an access to every field of the object's dynamic
+ * class, found through its type info: a `mut self` call's write, and the read
+ * a view returned through a call the compiler cannot see into holds
+ * (`[EXC-18]`). A class with no such field checks nothing. */
+void ember_object_begin_write(ember_obj_header* object, ember_loc loc);
+void ember_object_end_write(ember_obj_header* object, ember_loc loc);
+void ember_object_begin_read(ember_obj_header* object, ember_loc loc);
+void ember_object_end_read(ember_obj_header* object, ember_loc loc);
 
 /* -- arenas ---------------------------------------------------------------
  *
@@ -1134,6 +1152,44 @@ EMBER_NORETURN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
 EMBER_NORETURN void ember_panic_overflow(const char* op, ember_loc loc);
 EMBER_NORETURN void ember_panic_div_zero(ember_loc loc);
 EMBER_NORETURN void ember_panic_exclusivity(const char* what, ember_loc loc);
+/* `[EXC-6]` — names the offending access and the kind of the active one. */
+EMBER_NORETURN void ember_panic_field_exclusivity(
+    bool writing, uint32_t active, const char* what, ember_loc loc);
+
+/* `[EXC-1]`, `[EXC-2]`, `[EXC-19]` — a long-term access to one field of a class
+ * object: `word` is the field's access word (bit 31 writer, bits 0..30 the
+ * reader count), `what` names it (`Bag.items`). Inline, so a check costs a
+ * load, a test and a store; only a conflict is a call. */
+#define EMBER_ACCESS_WRITER (UINT32_C(1) << 31)
+#define EMBER_ACCESS_READERS (EMBER_ACCESS_WRITER - 1)
+
+static inline void ember_field_begin_read(uint32_t* word, const char* what, ember_loc loc) {
+    if ((*word & EMBER_ACCESS_WRITER) != 0 || (*word & EMBER_ACCESS_READERS) == EMBER_ACCESS_READERS) {
+        ember_panic_field_exclusivity(false, *word, what, loc);
+    }
+    *word += 1;
+}
+
+static inline void ember_field_begin_write(uint32_t* word, const char* what, ember_loc loc) {
+    if (*word != 0) {
+        ember_panic_field_exclusivity(true, *word, what, loc);
+    }
+    *word = EMBER_ACCESS_WRITER;
+}
+
+static inline void ember_field_end_read(uint32_t* word, const char* what, ember_loc loc) {
+    if ((*word & EMBER_ACCESS_WRITER) != 0 || (*word & EMBER_ACCESS_READERS) == 0) {
+        ember_panic_exclusivity(what, loc);
+    }
+    *word -= 1;
+}
+
+static inline void ember_field_end_write(uint32_t* word, const char* what, ember_loc loc) {
+    if (*word != EMBER_ACCESS_WRITER) {
+        ember_panic_exclusivity(what, loc);
+    }
+    *word = 0;
+}
 EMBER_NORETURN void ember_panic_unwrap(const char* what, ember_loc loc);
 /* `[CELL-5]` — `RefCell` contention panics with the conflicting borrow's
  * location, recorded in debug and release (`[CELL-9]`). `file`/`line` are the

@@ -13,14 +13,11 @@ class Counter:
     fn bump(mut self):
         self.value = self.value + 1
 
-class Holder:
-    child: Counter
-
 fn main():
-    holder = Holder(Counter(0))
-    alias = holder
-    published = holder
+    counter = Counter(0)
+    alias = counter
+    published = counter
     for i in 0..3:
-        published = holder
-        holder.child.bump()
-    println(alias.child.value + published.child.value)
+        published = counter
+        counter.bump()
+    println(alias.value + published.value)

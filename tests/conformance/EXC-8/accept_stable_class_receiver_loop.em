@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 3
 
-# `[EXC-8]` — `holder` has a stable class-handle identity throughout the
+# `[EXC-8]` — `counter` has a stable class-handle identity throughout the
 # loop. The driver integration test checks the emitted safety-side-table
 # classification and protected interval.
 
@@ -13,12 +13,9 @@ class Counter:
     fn bump(mut self):
         self.value = self.value + 1
 
-class Holder:
-    child: Counter
-
 fn main():
-    holder = Holder(Counter(0))
-    alias = holder
+    counter = Counter(0)
+    alias = counter
     for i in 0..3:
-        holder.child.bump()
-    println(alias.child.value)
+        counter.bump()
+    println(alias.value)

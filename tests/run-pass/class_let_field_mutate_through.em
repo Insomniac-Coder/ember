@@ -2,8 +2,8 @@
 #$ rules: CLS-9, CLS-9a, EXC-1, EXC-4, EXC-5
 #$ profiles: debug, release, shipping
 #$ stdout: 42
-#$ assert-c-count: contains("ember_access_begin_write") == 2
-#$ assert-c-count: contains("ember_access_end_write") == 2
+#$ assert-c-count: contains("ember_object_begin_write") == 2
+#$ assert-c-count: contains("ember_object_end_write") == 2
 
 # `let` freezes the field binding, not the object stored by that field.
 class Counter:

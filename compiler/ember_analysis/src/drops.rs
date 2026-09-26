@@ -783,7 +783,7 @@ fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => ty = *elem,
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
@@ -825,7 +825,7 @@ fn through_class_field(place: &Place, body: &Body, types: &TypeTable) -> bool {
             (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => ty = *elem,
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
             _ => {}
@@ -860,7 +860,7 @@ fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => ty = *elem,
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),

@@ -2,7 +2,7 @@
 #$ rules: TYP-16, TYP-22, IFC-1, CLS-4, BRW-1, EXC-1, HEAP-3, HEAP-4, HEAP-5, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, TST-26
 #$ profiles: debug, release, shipping
 #$ stdout: 8
-#$ assert-c: contains("ember_access_begin_write")
+#$ assert-c: contains("ember_object_begin_write")
 #$ assert-c-count: contains("ember_weak_retain(") == 1
 #$ assert-c-count: contains("ember_weak_release(") == 1
 #$ assert-c: contains("ember_weak_upgrade(")

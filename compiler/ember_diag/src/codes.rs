@@ -193,6 +193,7 @@ codes! {
     E2090 = (Error, 2090, Types, "[ENM-2]", "non-exhaustive match");
     E2100 = (Error, 2100, Types, "[CLS-2]", "field read before it is initialised");
     E2101 = (Error, 2101, Types, "[CLS-10]", "a derived class with a field that has no default needs an `init`");
+    E2103 = (Error, 2103, Types, "[CLS-7]", "assignment to `self` in a class method");
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
     E2111 = (Error, 2111, Types, "[CLS-4]", "a method that replaces an inherited virtual one without `override`");
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");

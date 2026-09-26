@@ -640,7 +640,9 @@ fn dynamic_access_safety_side_table_is_written() {
         .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
     assert!(json.contains("\"schema\":1"), "missing side-table schema: {json}");
     assert!(json.contains("\"kind\":\"Aliasing\""), "missing access kind: {json}");
-    assert!(json.contains("\"function\":\"bump\""), "missing function identity: {json}");
+    // `[EXC-15]` — a `mut self` call's whole-object write is taken by its
+    // caller, so the check belongs to `main`.
+    assert!(json.contains("\"function\":\"main\""), "missing function identity: {json}");
     assert!(
         json.contains("\"status\":\"emitted\""),
         "missing emitted status: {json}"
@@ -679,7 +681,7 @@ fn dynamic_access_safety_side_table_is_written() {
             "inspect",
             "--safety",
             "--function",
-            "bump",
+            "main",
             &side_table_arg,
         ],
         &root,
@@ -690,9 +692,8 @@ fn dynamic_access_safety_side_table_is_written() {
         function_filtered.stderr
     );
     assert!(
-        function_filtered.stdout.contains("Function: bump")
-            && function_filtered.stdout.contains("bump"),
-        "function-filtered inspect omitted bump:\n{}",
+        function_filtered.stdout.contains("Function: main"),
+        "function-filtered inspect omitted main:\n{}",
         function_filtered.stdout
     );
     let function_json = ember(
@@ -701,23 +702,23 @@ fn dynamic_access_safety_side_table_is_written() {
             "--safety",
             "--json",
             "--function",
-            "bump",
+            "main",
             &side_table_arg,
         ],
         &root,
     );
     assert_eq!(function_json.exit, 0, "JSON function filter failed:\n{}", function_json.stderr);
     assert!(
-        function_json.stdout.contains("\"function\":\"bump\""),
-        "JSON function filter omitted bump:\n{}",
+        function_json.stdout.contains("\"function\":\"main\""),
+        "JSON function filter omitted main:\n{}",
         function_json.stdout
     );
 }
 
 /// `[EXC-8]`–`[EXC-14]` — a copied class handle prevents static unique-handle
 /// elision, but the receiver itself is stable across this counted loop. The
-/// compiler therefore emits one checked loop-level interval, reports its
-/// proof, and leaves the callee's independent receiver access alone.
+/// compiler therefore emits one checked loop-level interval for the `mut
+/// self` calls' whole-object write (`[EXC-15]`) and reports its proof.
 #[test]
 fn stable_class_loop_access_is_reported_as_hoisted() {
     let root = workspace_root();
@@ -780,8 +781,8 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
             .rfind(&format!("void {bump_symbol}("))
             .expect("method is emitted");
         let main_c = &c[main_start..bump_start];
-        let begin_write = ember_branding::runtime("access_begin_write");
-        let end_write = ember_branding::runtime("access_end_write");
+        let begin_write = ember_branding::runtime("object_begin_write");
+        let end_write = ember_branding::runtime("object_end_write");
         assert_eq!(
             main_c.matches(&begin_write).count(),
             1,
@@ -903,7 +904,7 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
     let run = ember(
         &[
             "build",
-            &format!("tests/run-pass/class_field_mut_method.{SOURCE_EXT}"),
+            &format!("tests/conformance/HEAP-5/accept_unique_shared_get_mut_elides_access.{SOURCE_EXT}"),
             "--out-dir",
             &out_dir.to_string_lossy(),
         ],
@@ -914,7 +915,7 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
     let side_table = out_dir
         .join("debug")
         .join("inspect")
-        .join("class_field_mut_method.safety.json");
+        .join("accept_unique_shared_get_mut_elides_access.safety.json");
     let json = std::fs::read_to_string(&side_table)
         .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
     assert!(

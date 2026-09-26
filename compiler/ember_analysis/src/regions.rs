@@ -1115,7 +1115,7 @@ impl Regions {
                     let Some((value, elements, target)) = stored else { continue };
                     let Some(mut ty) = operand_ty(value) else { continue };
                     if elements.is_some()
-                        && let TyKind::Array { elem, .. } | TyKind::Span { elem, .. } | TyKind::Vec { elem } = *types.kind(ty)
+                        && let TyKind::Array { elem, .. } | TyKind::Span { elem, .. } | TyKind::Vec { elem, .. } = *types.kind(ty)
                     {
                         ty = elem;
                     }
@@ -2173,7 +2173,7 @@ fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, variant: &mu
         (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),
         (
             Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
         ) => *elem,
         (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Ptr { inner, .. }) => *inner,
         (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => *inner,

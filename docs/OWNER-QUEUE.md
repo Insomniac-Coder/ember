@@ -50,6 +50,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-028 | **CLOSED** — a method named like an inherited one replaces it: `E2111` without `override` over a virtual one, `E2110` over a non-virtual one; an `override` is virtual | Language / classes | — | Delegated for 0.9.9 — ruled 2026-09-24, 0.9.9_Hardened_9 |
 | ODR-029 | **CLOSED** — `parse[T]()` is strict (Rust's grammar, no white space) and `ParseError` is `Empty`, `Invalid` or `Overflow` | Standard library / text | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_10 |
 | ODR-030 | **CLOSED** — `extend` is a contextual keyword: a keyword only at the start of an item, before the type it extends | Language / lexical | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_11 |
+| ODR-072 | **CLOSED** — in a class method `self` names the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (D-361) | Language / classes | — | **No** — delegated, 2026-09-26 |
+| ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
 | ODR-068 | **CLOSED** — `get_pair_mut(i, j)` on an `Array` or `MutSpan`: two mutable references after checking, or `None` for an index out of range or equal indices (SP-031) | Standard library / borrowing | — | **Yes** — owner, 2026-09-26 |
@@ -224,6 +226,72 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-072 — whether a class method may re-point `self` — **CLOSED**
+
+    ID:        ODR-072
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation (the owner asked for the
+               five open defects to be fixed; this was found fixing D-202); incorporated in
+               0.9.9_Hardened_29
+    Category:  LANGUAGE / CLASSES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_28.md Part V `[CLS-7]`, `[FN-9]`; Part VIII `[EXC-15]`
+
+    Question:  `[FN-9]` lets a `mut` handle parameter re-point the caller's handle and says it
+               "opens no access on the object ([EXC-15] is `mut self`'s alone)". `[CLS-7]` says a
+               `mut self` method "holds a write access to every field of the object for its
+               whole duration", and `[RC-5]` that "a method's `self` is the object it was called
+               on until it returns". The compiler accepted `self = Counter(9)` in a `mut self`
+               method, re-pointing the caller's handle (D-361). May it?
+
+    Blocks implementation:            YES — `[EXC-15]`'s whole-object write (D-202, D-359)
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) No: `self` names one object for the whole call, and re-pointing a
+handle is a `mut` parameter's. A rare pattern is rejected, and its fix is one parameter. (b) Yes,
+with the whole-object write moved to the new object at the assignment: every `mut self` method
+would need to release and re-take the access mid-call, and the covered accesses to `self`'s fields
+before and after would be to different objects. (c) Yes, unchecked: the rest of the method writes
+an object nobody holds, a use after free in Safe code. **(a)**.
+
+**Ruling.** `[CLS-7]`: in a class method `self` is the object the method was called on for the
+whole call; assigning to `self` is `E2103`. To make a caller's handle name another object, take it
+as a `mut` parameter (`[FN-9]`).
+
+**Implementation.** The assignment check (`class_handle_self`) reports `E2103` with an error page;
+`CLS-7/reject_assigning_self_in_a_class_method.em` (D-361).
+
+---
+
+## ODR-071 — what the type `()` is — **CLOSED**
+
+    ID:        ODR-071
+    Status:    CLOSED — ruled 2026-09-26 under the owner's delegation (the owner asked for the
+               five open defects to be fixed, D-355 among them); incorporated in
+               0.9.9_Hardened_29
+    Category:  LANGUAGE / TYPES
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_28.md Part III §3 (`tuple_type`), Part IV `[TYP-27]`
+
+    Question:  The grammar's `tuple_type` accepts `"(" ")"`, and `[TYP-27]` says `()` is the value
+               of type `void`, but nothing says what the type `()` is. The compiler made it an
+               empty tuple, so `units: Array[()] = [(), ()]` was `E2020` "expected `()`, found
+               `void`" (D-355).
+
+    Blocks implementation:            YES — D-355
+    Requires owner semantic decision:  delegated to the agent
+
+**Options and costs.** (a) The type `()` is `void`: one type, two spellings, and `Result[(), E]`
+reads as it does in other languages. (b) Remove `"(" ")"` from `tuple_type`: one spelling, but a
+grammar change and an error for a spelling programmers reach for. (c) An empty tuple type distinct
+from `void`: its one value would be written `()`, which is `void`'s, so it could not be written at
+all. **(a)**.
+
+**Ruling.** `[TYP-27]`: the type `()` is `void`. A tuple type has two or more elements.
+
+**Implementation.** `resolve_type` maps an empty `tuple_type` to `void` (D-355).
 
 ---
 

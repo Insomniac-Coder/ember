@@ -909,3 +909,20 @@ The next number is ODR-027.
     with a destructor: `r = inner(W3(3))` then `println(r)`, and `w = Window(items = [1, 2, 3])` with
     `w.items` used later (a list literal in a `Span` position is a temporary array, `[TYP-38]`). Bind
     the value to a variable first.
+* **2026-09-26 — the last five defects (D-358, D-355, D-201, D-202, D-218); ODR-071, ODR-072;
+  Hardened_29.**
+  * **Class fields are checked for exclusivity** (`[EXC-19]`): a view or `ref` of a field, a
+    field passed to a function, iterated or indexed, holds that field's access, and a `mut self`
+    call holds every field of its object. A write through another handle to the same field while a
+    view of it lives, which used freed memory before, panics: "exclusivity violation: write access
+    to Bag.items while a read access to Bag.items is active". A `mut self` method calling another
+    on `self` no longer panics (D-359).
+  * **A class method may return a view of a field** (`fn name(self) -> str: return self.name`,
+    D-218); the view holds the field until its caller's last use of it.
+  * **`self` cannot be assigned in a class method** (`E2103`, ODR-072). To re-point a handle, take
+    it as a `mut` parameter.
+  * **`Array[u8]` is an `Array`, not a `String`** (D-201): it slices to a `Span[u8]`, prints as
+    numbers, and does not convert to `str` or `String`.
+  * **The type `()` is `void`** (ODR-071); `Array[()]` and every other container of `()` work, and
+    `()` prints as `()` (D-355).
+  * Deeply nested containers compile on every C compiler (D-358).

@@ -22,13 +22,9 @@ class Derived(Counter):
     fn init(mut self):
         super.init()
 
-class Holder:
-    child: Counter
-
 fn main():
-    derived = Derived()
-    holder = Holder(derived)
-    alias = holder
+    counter: Counter = Derived()
+    alias = counter
     for i in 0..3:
-        holder.child.bump()
-    println(alias.child.value)
+        counter.bump()
+    println(alias.value)

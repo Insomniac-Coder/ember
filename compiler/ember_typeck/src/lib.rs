@@ -3805,9 +3805,7 @@ impl<'a> Checker<'a> {
     fn builtin_generic_origin(&self, ty: Ty) -> Option<(Symbol, Vec<Ty>)> {
         let payload = |id: EnumId, variant: usize| self.types.enum_def(id).variants[variant].fields[0].ty;
         match *self.types.kind(ty) {
-            // ponytail: `String` is `Array[u8]` inside the checker, so an
-            // `Array[u8]` takes no `Array` extension; a `String` of its own kind lifts this.
-            TyKind::Vec { elem } if elem != self.common.u8 => Some((Symbol::intern("Array"), vec![elem])),
+            TyKind::Vec { elem, text: false } => Some((Symbol::intern("Array"), vec![elem])),
             TyKind::Span { elem, mutable } => {
                 Some((Symbol::intern(if mutable { "MutSpan" } else { "Span" }), vec![elem]))
             }
@@ -3947,7 +3945,7 @@ impl<'a> Checker<'a> {
             return Some(self.instantiate_class(target, &recipe, args, span));
         }
         match target.as_str() {
-            "Array" => Some(self.types.intern(TyKind::Vec { elem: *args.first()? })),
+            "Array" => Some(self.types.intern(TyKind::Vec { elem: *args.first()?, text: false })),
             "Span" | "MutSpan" => {
                 Some(self.types.intern(TyKind::Span { elem: *args.first()?, mutable: target.is("MutSpan") }))
             }
@@ -4207,7 +4205,7 @@ impl<'a> Checker<'a> {
                 out.insert(index, ty);
             }
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.params_in(inner, out, seen),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => self.params_in(elem, out, seen),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.params_in(elem, out, seen),
             TyKind::Tuple(items) => items.iter().for_each(|&item| self.params_in(item, out, seen)),
             TyKind::Fn { params, ret, .. } => {
                 params.iter().for_each(|param| self.params_in(param.ty, out, seen));
@@ -4444,7 +4442,11 @@ impl<'a> Checker<'a> {
                 pattern_len == actual_len
                     && self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
             }
-            (TyKind::Vec { elem: pattern_elem }, TyKind::Vec { elem: actual_elem }) => {
+            // A `String` is no `Array[T]` (D-201).
+            (
+                TyKind::Vec { elem: pattern_elem, text: pattern_text },
+                TyKind::Vec { elem: actual_elem, text: actual_text },
+            ) if pattern_text == actual_text => {
                 self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
             }
             (
@@ -5672,7 +5674,7 @@ impl<'a> Checker<'a> {
     /// declares: an `int` index, and a reference to an element.
     fn builtin_index_method_fits(&mut self, ty: Ty, method: Symbol, declaration: DefId, receiver: Option<Mode>) -> bool {
         let (elem, writable) = match *self.types.kind(ty) {
-            TyKind::Vec { elem } => (elem, true),
+            TyKind::Vec { elem, text: false } => (elem, true),
             TyKind::Span { elem, mutable } => (elem, mutable),
             _ => return false,
         };
@@ -7133,6 +7135,9 @@ impl<'a> Checker<'a> {
                 }
                 self.types.intern(TyKind::Ptr { mutable: *mutable, inner })
             }
+            // `[TYP-27]` (ODR-071) — the type `()` is `void`, whose one value
+            // `()` is: a tuple type has two or more elements.
+            ast::TypeKind::Tuple(items) if items.is_empty() => self.common.void,
             ast::TypeKind::Tuple(items) => {
                 let items: Vec<Ty> = items.iter().map(|t| self.resolve_type(t)).collect();
                 self.types.intern(TyKind::Tuple(items))
@@ -7261,8 +7266,7 @@ impl<'a> Checker<'a> {
                 // `String` is a growable buffer of UTF-8 bytes: `Array[u8]`
                 // under a different name.
                 if name.is("String") {
-                    let u8_ty = self.common.u8;
-                    return self.types.intern(TyKind::Vec { elem: u8_ty });
+                    return self.common.string;
                 }
                 if name.is("Arena") {
                     return self.arena_ty();
@@ -7423,7 +7427,7 @@ impl<'a> Checker<'a> {
             // `[TYP-15]` (ODR-069) — `Array[str]()` is as legal as
             // `["ann"]`; what enters it must be `static`, checked at each store.
             let (elem, _) = args[0];
-            return self.types.intern(TyKind::Vec { elem });
+            return self.types.intern(TyKind::Vec { elem, text: false });
         }
         if name.is("Box") {
             if !require(self, 1) {
@@ -7573,7 +7577,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let parts: Vec<Ty> = match self.types.kind(ty) {
-            TyKind::Vec { elem } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
+            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
             TyKind::Ref { inner, .. } => vec![*inner],
             TyKind::Tuple(items) => items.clone(),
             TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
@@ -7616,7 +7620,7 @@ impl<'a> Checker<'a> {
             // Python's `str()` shows them, each element by its `Debug`. The
             // built-in types' `Debug` is their `Display` with text quoted, so
             // one test covers both.
-            TyKind::Vec { elem } => *elem == self.common.u8 || self.formattable_in(*elem, seen),
+            TyKind::Vec { elem, text } => *text || self.formattable_in(*elem, seen),
             TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.formattable_in(*elem, seen),
             TyKind::Tuple(items) => items.iter().all(|item| self.formattable_in(*item, seen)),
             // D-227 — a reference prints as what it points to (`Some(1)` for
@@ -7826,7 +7830,7 @@ impl<'a> Checker<'a> {
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
     fn is_text(&self, ty: Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Str)
-            || matches!(self.types.kind(ty), TyKind::Vec { elem } if *elem == self.common.u8)
+            || matches!(self.types.kind(ty), TyKind::Vec { text: true, .. })
     }
 
     /// `[STR-5]` — a type has `Eq` when every component has it: scalars,
@@ -7840,7 +7844,8 @@ impl<'a> Checker<'a> {
 
     fn has_implicit_eq_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.types.kind(ty) {
-            TyKind::Bool
+            TyKind::Void
+            | TyKind::Bool
             | TyKind::Char
             | TyKind::Int(_)
             | TyKind::Uint(_)
@@ -7859,7 +7864,7 @@ impl<'a> Checker<'a> {
             // `@no_derive(Eq)` opts out of the implicit one.
             TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
             TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } => {
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => {
                 self.has_implicit_eq_in(*elem, seen)
             }
             TyKind::Struct(id) => {
@@ -8388,9 +8393,9 @@ impl<'a> Checker<'a> {
                 let elem = self.substitute_ty(elem, args);
                 self.types.intern(TyKind::Array { elem, len })
             }
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, text } => {
                 let elem = self.substitute_ty(elem, args);
-                self.types.intern(TyKind::Vec { elem })
+                self.types.intern(TyKind::Vec { elem, text })
             }
             TyKind::Tuple(items) => {
                 let items = items
@@ -8890,7 +8895,7 @@ impl<'a> Checker<'a> {
         let value = self.read_through(value);
         self.sink.rollback(quiet);
         if self.is_text(value.ty) {
-            self.types.intern(TyKind::Vec { elem: self.common.u8 })
+            self.common.string
         } else {
             value.ty
         }
@@ -10088,7 +10093,7 @@ impl<'a> Checker<'a> {
                 TyKind::Ref { inner, .. }
                 | TyKind::Ptr { inner, .. }
                 | TyKind::Array { elem: inner, .. }
-                | TyKind::Vec { elem: inner }
+                | TyKind::Vec { elem: inner, .. }
                 | TyKind::Span { elem: inner, .. } => visit(this, *inner, seen),
                 TyKind::Tuple(items) => items.iter().any(|&item| visit(this, item, seen)),
                 TyKind::Fn { params, ret, .. } => {
@@ -11303,7 +11308,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn is_cloneable(&self, ty: Ty) -> bool {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
-            || matches!(*self.types.kind(ty), TyKind::Vec { elem } if self.is_cloneable(elem))
+            || matches!(*self.types.kind(ty), TyKind::Vec { elem, .. } if self.is_cloneable(elem))
             || (self.clones_by_parts(ty)
                 && match self.types.kind(ty) {
                     TyKind::Tuple(items) => items.iter().all(|&item| self.is_cloneable(item)),
@@ -11411,7 +11416,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if self.clones_by_parts(ty) {
             return self.clone_by_parts(value);
         }
-        let TyKind::Vec { elem } = *self.types.kind(ty) else {
+        let TyKind::Vec { elem, .. } = *self.types.kind(ty) else {
             unreachable!("clone_value of a type is_cloneable refused")
         };
         Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArrayClone { elem }, args: vec![value] }, span }
@@ -13159,6 +13164,23 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 let target = &targets[0];
 
+                // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
+                // is the object the method was called on for the whole call:
+                // `mut self` writes that object's fields, and re-pointing the
+                // caller's handle would leave them to an object nobody holds.
+                if matches!(target.kind, ast::ExprKind::SelfExpr)
+                    && let Some(local) = self.lookup(Symbol::intern("self"))
+                    && self.class_handle_self(local)
+                {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2103, target.span, "cannot assign to `self` in a class method")
+                            .primary_label("`self` names the object this method was called on")
+                            .help("to re-point a caller's handle, take it as a `mut` parameter [FN-9]")
+                            .note("a `mut self` method holds every field of its object until it returns [EXC-15]"),
+                    );
+                    return;
+                }
+
                 // `[GRM-4]` — a bare name that is not in scope declares.
                 if let ast::ExprKind::Path { segments } = &target.kind {
                     if segments.len() == 1
@@ -13320,7 +13342,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     && !self.float_param(place_ty)
                     && place_ty != self.common.error
                 {
-                    let is_string = matches!(*self.types.kind(place_ty), TyKind::Vec { elem } if elem == self.common.u8);
+                    let is_string = matches!(*self.types.kind(place_ty), TyKind::Vec { text: true, .. });
                     if is_string && *bin == ast::BinOp::Add {
                         let str_ty = self.common.str_;
                         let text = self.synth_committed(value);
@@ -14033,7 +14055,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// `[TXT-9]` — the `String` `f"{value}"` makes: its `Display` text, or its
     /// `Debug` text when it has no `Display`, as `print` writes it.
     fn to_string_of(&mut self, value: Expr, span: Span) -> Expr {
-        let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8) {
+        let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. }) {
             let str_ty = self.common.str_;
             self.coerce(value, str_ty)
         } else {
@@ -14046,7 +14068,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let string_ty = self.common.string;
         let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
         Expr {
             ty: string_ty,
@@ -14520,7 +14542,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn synth_text_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let (str_ty, int_ty, bool_ty, usize_ty) = (self.common.str_, self.common.i64, self.common.bool_, self.common.usize);
-        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let string_ty = self.common.string;
         let method = name.name.as_str();
         let wanted = match method {
             "to_string" | "trim" | "trim_start" | "trim_end" | "to_upper" | "to_lower" | "as_bytes" => 0,
@@ -14974,7 +14996,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     parts.push(hir::FStringPart::Text(": ".to_string()));
                 }
                 if self.is_formattable(error_ty) {
-                    let shown = if matches!(*self.types.kind(error_ty), TyKind::Vec { elem } if elem == self.common.u8) {
+                    let shown = if matches!(*self.types.kind(error_ty), TyKind::Vec { text: true, .. }) {
                         self.coerce(failed_value, str_ty)
                     } else {
                         failed_value
@@ -14983,7 +15005,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 } else {
                     parts.push(hir::FStringPart::Text("called `unwrap` on an `Err` value".to_string()));
                 }
-                let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+                let string_ty = self.common.string;
                 let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
                 let text = Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
                 let text = self.coerce(text, str_ty);
@@ -16389,7 +16411,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             OpenKind::Array => match *self.types.kind(ty) {
                 TyKind::Vec { .. } => ty,
                 TyKind::Span { elem, .. } | TyKind::Array { elem, .. } if !assigned => {
-                    self.types.intern(TyKind::Vec { elem })
+                    self.types.intern(TyKind::Vec { elem, text: false })
                 }
                 _ => return,
             },
@@ -16447,11 +16469,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let base = self.read_through(base);
         let (view, text) = match *self.types.kind(base.ty) {
             TyKind::Str => (base, true),
-            TyKind::Vec { elem } if elem == self.common.u8 => {
+            TyKind::Vec { text: true, .. } => {
                 let str_ty = self.common.str_;
                 (self.coerce(base, str_ty), true)
             }
-            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
                 let view_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 (self.coerce(base, view_ty), false)
             }
@@ -16614,7 +16636,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         return None;
                     }
                     match *self.types.kind(value.ty) {
-                        TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+                        TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
                             sources.push((value, elem));
                         }
                         _ => {
@@ -17002,7 +17024,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 }
                 *element_ty = Some(ty);
                 let acc_ty = match gather {
-                    Gather::Array => self.types.intern(TyKind::Vec { elem: ty }),
+                    Gather::Array => self.types.intern(TyKind::Vec { elem: ty, text: false }),
                     Gather::Sum(_) => ty,
                     Gather::Any | Gather::All => bool_ty,
                 };
@@ -17100,7 +17122,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return None;
         }
         let elem = match *self.types.kind(value.ty) {
-            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
             _ => {
                 let shown = self.types.display(value.ty);
                 self.error(
@@ -17313,7 +17335,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return negated(Expr { ty: bool_ty, kind: ExprKind::Builtin { which, args: vec![text, value] }, span });
         }
         let elem = match *self.types.kind(haystack.ty) {
-            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
             // `[STD-8]` — a type with a `contains` method: `k in m`.
             _ if self.lookup_method(haystack.ty, Symbol::intern("contains")).is_some() => {
                 let name = ast::Ident { name: Symbol::intern("contains"), span };
@@ -17794,7 +17816,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         let value = self.synth_committed(&args[0].value);
         let value = self.read_through(value);
         let elem = match *self.types.kind(value.ty) {
-            TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
             _ if value.ty == self.common.error => return error,
             // ODR-034 — `sorted(m)` is the keys, `sorted(s)` the elements.
             _ if self.collection_named(value.ty).is_some() => {
@@ -17851,7 +17873,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         } else {
             value
         };
-        let ty = self.types.intern(TyKind::Vec { elem });
+        let ty = self.types.intern(TyKind::Vec { elem, text: false });
         Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArraySorted { elem }, args: vec![value] }, span }
     }
 
@@ -18458,7 +18480,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// Whether `min`, `max` and `clamp` can order values of `ty` (`[TYP-37]`).
     fn totally_ordered(&self, ty: Ty) -> bool {
         match *self.types.kind(ty) {
-            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool => true,
+            // `[TYP-36]` — `void` is `Ord`: its one value equals itself (D-355).
+            TyKind::Void | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool => true,
             // `[TYP-17]` — a parameter bounded by `Ord`, or `Float` (`[STD-27]`).
             TyKind::Param { index, .. } => self.param_bound_named(index, &["Ord"]) || self.float_param(ty),
             _ => false,
@@ -18469,7 +18492,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// standard input without its ending.
     fn synth_input(&mut self, args: &[ast::Arg], span: Span) -> Expr {
         let str_ty = self.common.str_;
-        let string_ty = self.types.intern(TyKind::Vec { elem: self.common.u8 });
+        let string_ty = self.common.string;
         let prompt = match args {
             [] => Expr { ty: str_ty, kind: ExprKind::Str(String::new()), span },
             [arg] if arg.name.is_none_or(|name| name.name.is("prompt")) => self.check_expr(&arg.value, str_ty),
@@ -18702,7 +18725,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return Some(error);
                 }
                 let elem = match *self.types.kind(iterable.ty) {
-                    TyKind::Vec { elem } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+                    TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
                     _ => {
                         let shown = self.types.display(iterable.ty);
                         self.error(
@@ -19008,7 +19031,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
         // counted loop over its indices, with no iterator object at all.
-        if let TyKind::Vec { elem } = *self.types.kind(iterable.ty) {
+        if let TyKind::Vec { elem, text: false } = *self.types.kind(iterable.ty) {
             return self.check_for_array(label, pattern, (iterable, elem), body, else_block, span);
         }
         // `[CTL-1]` — a fixed array and a shared view are iterated the same
@@ -19900,7 +19923,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // keeps the container borrowed for the view's region.
         if let TyKind::Span { elem: want, mutable } = *self.types.kind(expected) {
             let source = match *self.types.kind(expr.ty) {
-                TyKind::Vec { elem } | TyKind::Array { elem, .. } => Some(elem),
+                TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } => Some(elem),
                 _ => None,
             };
             if source == Some(want) {
@@ -19915,7 +19938,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         if expected == self.common.str_
             && matches!(
                 *self.types.kind(expr.ty),
-                TyKind::Vec { elem } if elem == self.common.u8
+                TyKind::Vec { text: true, .. }
             )
         {
             return self.view_of(expr, expected, false, Builtin::StringAsStr);
@@ -19925,7 +19948,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // holding its text, allocating at the literal. It is exactly a
         // one-part f-string, so it reuses that lowering and its `Alloc`.
         if let ExprKind::Str(text) = &expr.kind
-            && matches!(*self.types.kind(expected), TyKind::Vec { elem } if elem == self.common.u8)
+            && matches!(*self.types.kind(expected), TyKind::Vec { text: true, .. })
         {
             let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: expected });
             return Expr {
@@ -20317,7 +20340,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// composes with: the type itself, a literal that fits, widening (1–2),
     /// range erasure (3), and the two text rules (4).
     fn coerces_before_option(&self, expr: &Expr, wanted: Ty) -> bool {
-        let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { elem } if elem == self.common.u8);
+        let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { text: true, .. });
         expr.ty == wanted
             || self.types.is_untyped_literal(expr.ty) && self.literal_fits(expr, wanted)
             || self.types.widens_to(expr.ty, wanted)
@@ -20685,7 +20708,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 // one), or `Array[T]`, which is also what it is with no
                 // context. Only the `Array` form allocates.
                 let vec_elem = expected.and_then(|want| match self.types.kind(want) {
-                    TyKind::Vec { elem } => Some(*elem),
+                    TyKind::Vec { elem, text: false } => Some(*elem),
                     _ => None,
                 });
                 let span_elem = expected.and_then(|want| match self.types.kind(want) {
@@ -20721,7 +20744,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 if fixed_context {
                     return fixed;
                 }
-                let array = self.types.intern(TyKind::Vec { elem: elem_ty });
+                let array = self.types.intern(TyKind::Vec { elem: elem_ty, text: false });
                 if len == 0 {
                     return Expr {
                         ty: array,
@@ -20811,7 +20834,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let elem = match self.types.kind(base.ty) {
                     // `[SPN-2]` — "Indexing a `Span` is bounds-checked".
                     TyKind::Array { elem, .. }
-                    | TyKind::Vec { elem }
+                    | TyKind::Vec { elem, text: false }
                     | TyKind::Span { elem, .. } => Some(*elem),
                     _ => None,
                 };
@@ -20902,7 +20925,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                             let value = self.synth_committed(expr);
                             // D-194 — a `String` is written as the `str` it
                             // borrows, as `print` writes it (D-191).
-                            let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8) {
+                            let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. }) {
                                 let str_ty = self.common.str_;
                                 self.coerce(value, str_ty)
                             } else {
@@ -20927,8 +20950,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         }
                     }
                 }
-                let u8_ty = self.common.u8;
-                let ty = self.types.intern(TyKind::Vec { elem: u8_ty });
+                let ty = self.common.string;
                 let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: ty });
                 Expr { ty, kind: ExprKind::FString { parts: checked, buffer_ref }, span }
             }
@@ -21994,10 +22016,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 self.error(codes::E2020, span, format!("`{name}()` takes no arguments"));
             }
             let ty = if name.is("String") {
-                let u8_ty = self.common.u8;
-                self.types.intern(TyKind::Vec { elem: u8_ty })
+                self.common.string
             } else {
-                match expected.filter(|e| matches!(self.types.kind(*e), TyKind::Vec { .. })) {
+                match expected.filter(|e| matches!(self.types.kind(*e), TyKind::Vec { text: false, .. })) {
                     Some(ty) => ty,
                     None => {
                         self.error(
@@ -23271,9 +23292,9 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 let inner = self.resolve_assoc(inner, owner);
                 self.types.intern(TyKind::Ptr { mutable, inner })
             }
-            TyKind::Vec { elem } => {
+            TyKind::Vec { elem, text } => {
                 let elem = self.resolve_assoc(elem, owner);
-                self.types.intern(TyKind::Vec { elem })
+                self.types.intern(TyKind::Vec { elem, text })
             }
             TyKind::Array { elem, len } => {
                 let elem = self.resolve_assoc(elem, owner);
@@ -24506,6 +24527,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
+    /// Whether `local` is a class method's `self`: a class handle, taken by
+    /// value, by address or as `mut self`.
+    fn class_handle_self(&self, local: LocalId) -> bool {
+        let decl = &self.locals[local.0 as usize];
+        let ty = match *self.types.kind(decl.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => decl.ty,
+        };
+        decl.name.is_some_and(|name| name.is("self"))
+            && matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+    }
+
     /// `[FN-1]`, `[BRW-1]`, `[CELL-10]` — a default-mode parameter is a
     /// shared borrow, even when its ABI is a small by-value copy. A write
     /// rooted at that parameter is shape B4: the caller remains the owner and
@@ -25028,7 +25061,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 && let ("push" | "append", [item]) | ("insert", [_, item]) = (name.name.as_str(), args)
             {
                 let item = self.synth_committed(&item.value);
-                let array = self.types.intern(TyKind::Vec { elem: item.ty });
+                let array = self.types.intern(TyKind::Vec { elem: item.ty, text: false });
                 self.fix_open_local(local, array, true);
             }
             // `m.insert(k, v)` and `s.add(x)` say what an open `Map()` or
@@ -25406,16 +25439,14 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             return self.synth_text_count(receiver, name.name.as_str(), span);
         }
-        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
-            && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
+        if let TyKind::Vec { elem, text: false } = *self.types.kind(receiver.ty)
             && matches!(name.name.as_str(), "is_empty" | "contains" | "index_of" | "get" | "first" | "last" | "capacity")
             && explicit.is_empty()
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_array_query(receiver, elem, name, args, span);
         }
-        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
-            && !matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8))
+        if let TyKind::Vec { elem, text: false } = *self.types.kind(receiver.ty)
             && matches!(
                 name.name.as_str(),
                 "sort" | "reverse" | "clear" | "pop" | "remove" | "insert" | "sorted" | "swap_remove" | "swap"
@@ -25429,7 +25460,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         // No compiler-known method takes type arguments, so with some written
         // the call is an extension's generic method (`[GRM-34]`), found below.
         let extension_generic = !explicit.is_empty() && self.lookup_method(receiver.ty, name.name).is_some();
-        if let TyKind::Vec { elem } = *self.types.kind(receiver.ty)
+        if let TyKind::Vec { elem, .. } = *self.types.kind(receiver.ty)
             && !extension_generic
         {
             if !explicit.is_empty() {
@@ -28345,7 +28376,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             // D-318 — as its representation: not a float range.
             TyKind::Range(id) => self.hashes(self.types.range_def(*id).repr, seen),
             TyKind::Tuple(items) => items.clone().iter().all(|&item| self.hashes(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                 self.hashes(*elem, seen)
             }
             TyKind::Enum(id) if self.types.enum_def(*id).is_unit_only() => true,
@@ -28623,7 +28654,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Enum(_) if self.methods.contains_key(&(ty, Symbol::intern("eq"))) => true,
             TyKind::Tuple(items) => items.clone().iter().any(|&item| self.needs_written_eq(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } => {
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                 self.needs_written_eq(*elem, seen)
             }
             TyKind::Struct(id) => {
@@ -28658,7 +28689,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             };
             return Expr { ty: bool_ty, kind, span };
         }
-        if let TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
+        if let TyKind::Array { elem, .. } | TyKind::Vec { elem, text: false } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
             let view = self.types.intern(TyKind::Span { elem, mutable: false });
             let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
             self.extend_instance_at_use(view);
@@ -30611,7 +30642,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
-        let is_string = matches!(self.types.kind(elem), TyKind::Uint(UintTy::U8));
+        let is_string = self.is_text(receiver.ty);
         let usize_ty = self.common.usize;
         let str_ty = self.common.str_;
 
@@ -30788,16 +30819,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// by address: a type passed by address anyway, or any receiver that is
     /// not itself a view of a method whose result is a reference or view, so
     /// `[LT-1]` rule 1 can tie the result to the caller's place (`Index` on a
-    /// `Copy` matrix). A class handle is left as it is: a view of its object is
-    /// `[EXC-18]`'s, not built here.
+    /// `Copy` matrix). A class handle's receiver is the caller's handle too, so
+    /// a view of its object's field borrows that handle, and the field's
+    /// access goes with the view to the caller (`[EXC-18]`, D-218).
     fn receiver_by_address(&self, ty: Ty, callee: DefId) -> bool {
         if self.types.passed_by_address(ty) {
             return true;
         }
         let ret = self.signatures[callee.0 as usize].ret;
-        (self.types.is_view(ret)
-            && !self.types.is_view(ty)
-            && !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error))
+        (self.types.is_view(ret) && !self.types.is_view(ty) && !matches!(self.types.kind(ty), TyKind::Error))
             || self.param_by_address(callee, Symbol::intern("self"), ty)
     }
 
@@ -30825,7 +30855,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         if name.is("self") {
             // As `receiver_by_address` passes the declared receiver.
-            return !matches!(self.types.kind(declared), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Error);
+            return !matches!(self.types.kind(declared), TyKind::Error);
         }
         !self.types.is_copy_for_elision(declared)
     }
@@ -32202,7 +32232,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 None => {
                     let value = self.synth_committed(&arg.value);
                     let value = self.read_through(value);
-                    let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { elem } if elem == self.common.u8)
+                    let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. })
                     {
                         self.coerce(value, str_ty)
                     } else {

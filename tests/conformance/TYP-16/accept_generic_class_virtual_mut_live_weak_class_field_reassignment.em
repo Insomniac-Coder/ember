@@ -5,7 +5,7 @@
 #$ stdout: 5
 #$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
 #$ assert-c: contains("->slot0")
-#$ assert-c: contains("ember_access_begin_write")
+#$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_retain(")
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")

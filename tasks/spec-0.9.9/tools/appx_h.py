@@ -346,6 +346,10 @@ ODRS = [
      '`[TYP-15]`, `[STD-11]`, `[TYP-38]`, `[LT-1]`'),
     ('ODR-070', 'every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (Hardened_28)',
      '`[GRM-39]`'),
+    ('ODR-071', 'the type `()` is `void`; a tuple type has two or more elements (Hardened_29)',
+     '`[TYP-27]`'),
+    ('ODR-072', 'in a class method `self` is the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller\'s handle is a `mut` parameter\'s (Hardened_29)',
+     '`[CLS-7]`, `[FN-9]`, `[EXC-15]`'),
 ]
 
 H5_HEAD = """
@@ -362,7 +366,8 @@ Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Ha
 ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
 Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
 ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013;
-Hardened_28 adds ODR-070, the nesting limit (D-331).
+Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 and ODR-072, found
+closing the last open defects (D-355, D-202).
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -375,6 +375,7 @@ impl<'a> Builder<'a> {
             class_owner: self.function.class_owner,
             class_virtual_slot: self.function.class_virtual_slot,
             is_abstract: self.function.is_abstract,
+            mut_self: self.class_access.is_some(),
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
         }
@@ -449,9 +450,6 @@ impl<'a> Builder<'a> {
 
     fn build(&mut self) {
         let body = &self.function.body;
-        if let Some(place) = self.class_access.clone() {
-            self.push(StmtKind::BeginAccess { place, mutable: true });
-        }
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
         // slot as it stands. `[FN-8]`'s `main` is the common case. Owned
@@ -461,85 +459,46 @@ impl<'a> Builder<'a> {
         // `emit_drops_from(0)` while lowering that statement.
         if matches!(self.blocks[self.current.0 as usize].terminator, Terminator::Unreachable) {
             self.emit_drops_from(0);
-            self.end_class_access();
             self.terminate(Terminator::Return);
         }
     }
 
-    fn end_class_access(&mut self) {
-        if let Some(place) = self.class_access.clone() {
-            self.push(StmtKind::EndAccess { place, mutable: true });
+    /// `[EXC-5]` — a `mut self` call on this method's own `self` is a
+    /// reborrow of the write access its caller holds for it, and opens none.
+    fn unless_reborrow(&self, access: Option<Place>) -> Option<Place> {
+        if access.is_some() && self.class_access.as_ref() == access.as_ref() {
+            return None;
         }
+        access
     }
 
-    /// Find the nearest class-typed base of a mutable argument place. The
-    /// fallback path is used for access places with no side-effecting
-    /// projection; indexed roots use the single-evaluation helper below.
-    fn class_access_base<'b>(&self, expr: &'b hir::Expr) -> Option<&'b hir::Expr> {
-        match &expr.kind {
-            hir::ExprKind::Field { base, .. }
-            | hir::ExprKind::Index { base, .. }
-            | hir::ExprKind::Deref(base) => {
-                if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
-                    (!matches!(base.kind, hir::ExprKind::Index { .. })).then_some(base.as_ref())
-                } else {
-                    self.class_access_base(base)
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn class_access_for_mut_argument(&mut self, expr: &'a hir::Expr) -> Option<Place> {
-        // An inherited `mut self` method receives a compiler-internal
-        // borrow-preserving class upcast around the ordinary `ref mut` of its
-        // receiver.  The access still belongs to the original place (and, for
-        // a class-valued field, to its containing object), so look through
-        // that adjustment before classifying the access boundary.  User
-        // ownership is not changed and the cast remains in the call argument.
-        let receiver = match &expr.kind {
-            hir::ExprKind::Cast { expr, .. }
-                if matches!(expr.kind, hir::ExprKind::Ref { mutable: true, .. }) => expr.as_ref(),
-            _ => expr,
-        };
-        let hir::ExprKind::Ref { place, mutable: true } = &receiver.kind else { return None };
-        self.class_access_base(place).map(|base| self.lower_place(base))
-    }
-
-    /// Return the number of HIR place projections between `expr` and its
-    /// nearest class-typed root. The corresponding MIR prefix identifies the
-    /// object whose dynamic exclusivity interval surrounds a mutable call
-    /// argument. Keeping this depth next to the already-lowered place is
-    /// important for `[EXP-1]`: an indexed handle must be bounds-checked and
-    /// evaluated exactly once, not once for the reference and again for the
-    /// runtime access object.
-    fn class_access_projection_depth(&self, expr: &'a hir::Expr) -> Option<usize> {
-        if matches!(self.types.kind(expr.ty), TyKind::Class(_)) {
-            return Some(0);
-        }
-        match &expr.kind {
-            hir::ExprKind::Field { base, .. }
-            | hir::ExprKind::Index { base, .. }
-            | hir::ExprKind::Deref(base) => {
-                self.class_access_projection_depth(base).map(|depth| depth + 1)
-            }
-            _ => None,
-        }
-    }
-
-    /// Lower a mutable call argument and, when it is rooted in a class
-    /// handle, derive the runtime access place from the exact MIR place used
-    /// to form the reference. This is the indexed-class counterpart to the
-    /// older side-effect-free access lookup.
+    /// Lower a mutable call argument, and give the whole-object write access
+    /// a `mut self` call on a class object takes (`[EXC-15]`), on the exact
+    /// MIR place the reference is formed from, so an indexed handle is
+    /// evaluated once (`[EXP-1]`).
     fn lower_mut_argument_with_access(
         &mut self,
         expr: &'a hir::Expr,
         receiver: bool,
     ) -> (Operand, Option<Place>) {
+        // An inherited `mut self` method receives a compiler-internal
+        // borrow-preserving class upcast around the ordinary `ref mut` of its
+        // receiver: lowered as that `ref mut`, so the receiver gets the same
+        // retained copy and access, then cast.
+        if let hir::ExprKind::Cast { expr: inner, to } = &expr.kind
+            && matches!(inner.kind, hir::ExprKind::Ref { mutable: true, .. })
+        {
+            let (operand, access) = self.lower_mut_argument_with_access(inner, receiver);
+            let cast = self.temp(*to, expr.span);
+            self.push(StmtKind::StorageLive(cast));
+            self.push(StmtKind::Assign {
+                place: Place::local(cast),
+                rvalue: Rvalue::Cast { kind: CastKind::ClassUpcastBorrowed, operand, to: *to },
+            });
+            return (Operand::Copy(Place::local(cast)), access);
+        }
         let hir::ExprKind::Ref { place, mutable: true } = &expr.kind else {
-            let operand = self.lower_operand_borrowed(expr);
-            let access = self.class_access_for_mut_argument(expr);
-            return (operand, access);
+            return (self.lower_operand_borrowed(expr), None);
         };
 
         // ODR-065 — a handle stored where another handle can overwrite it is
@@ -570,33 +529,15 @@ impl<'a> Builder<'a> {
             rvalue: Rvalue::Ref { place: lowered_place.clone(), mutable: true },
         });
 
-        let access = match self.class_access_projection_depth(place) {
-            // A class-valued field used as a method receiver retains the
-            // existing containing-object boundary: the callee opens the
-            // receiver object itself. In particular, this keeps
-            // `holder.child.bump()` from opening the same child twice.
-            Some(0) => self.class_access_for_mut_argument(expr),
-            Some(depth) => lowered_place
-                .projection
-                .len()
-                .checked_sub(depth)
-                .map(|prefix_len| Place {
-                    local: lowered_place.local,
-                    projection: lowered_place.projection[..prefix_len].to_vec(),
-                }),
-            None => None,
-        };
-        // `[EXC-5]` — borrowing a field through this method's own `mut self`
-        // is a reborrow of the interval opened at entry, not a second access
-        // to the containing object.  The callee still opens its receiver's
-        // separate interval; suppress only an exactly identical caller-side
-        // place so unrelated class arguments retain their normal boundary.
-        let access = if self.class_access.as_ref() == access.as_ref() {
-            None
-        } else {
-            access
-        };
-        (Operand::Copy(Place::local(temp)), access)
+        // `[EXC-15]`, `[EXC-19]` — a `mut self` call on a class object writes
+        // every field of that object for the call, taken here by the caller.
+        // Through an interface-typed handle the concrete class is not known
+        // here; the dynamic adapter, which knows it, takes it instead. A field
+        // passed to a `mut` parameter is an access to that field alone, which
+        // `field_accesses` takes from its loan; a `mut` handle parameter
+        // re-points the handle and opens nothing (`[FN-9]`).
+        let access = (receiver && matches!(self.types.kind(place.ty), TyKind::Class(_))).then(|| lowered_place.clone());
+        (Operand::Copy(Place::local(temp)), self.unless_reborrow(access))
     }
 
     /// ODR-065 — store the copies explicit `mut` arguments were given back
@@ -757,7 +698,6 @@ impl<'a> Builder<'a> {
                 // own, before it goes.
                 self.emit_defers_from(0);
                 self.emit_drops_from(0);
-                self.end_class_access();
                 self.terminate(Terminator::Return);
                 // Anything after a `return` in the same block is unreachable;
                 // start a fresh block so later statements still lower cleanly.

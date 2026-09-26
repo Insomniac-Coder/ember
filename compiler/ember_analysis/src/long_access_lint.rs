@@ -1,15 +1,16 @@
 //! `[EXC-7]` — warn when a mutable class-method access remains live across a
 //! virtual or dynamic call in its own open-class hierarchy.
 //!
-//! The lint consumes explicit `BeginAccess`/`EndAccess` MIR. It therefore does
-//! not guess from source syntax and cannot mistake the short call-argument
-//! interval for a method-duration access. Effect analysis is a later phase;
-//! until it can prove a dispatch target access-free, the lint is conservative.
+//! A `mut self` method's access is its caller's write to every field of
+//! `*self`, held for the whole call (`[EXC-15]`), which the MIR records as
+//! `Body::mut_self`; explicit `BeginAccess`/`EndAccess` of `*self` inside the
+//! body still end and restart it. Effect analysis is a later phase; until it
+//! can prove a dispatch target access-free, the lint is conservative.
 
 use std::collections::HashSet;
 
 use ember_diag::{Diagnostic, Sink, codes};
-use ember_mir::{Body, FuncRef, LocalId, Operand, Place, Rvalue, StmtKind, Terminator};
+use ember_mir::{Body, FuncRef, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator};
 use ember_types::{ClassId, ClassOpenness, TypeTable};
 
 /// Emit the opt-in `[EXC-7]` lint for each reachable dynamic call that occurs
@@ -42,7 +43,7 @@ fn lint_body(body: &Body, types: &TypeTable, sink: &mut Sink) {
     if types.class_def(access.class).openness == ClassOpenness::Final {
         return;
     }
-    let mut pending = vec![(0usize, false)];
+    let mut pending = vec![(0usize, true)];
     let mut visited = HashSet::new();
     let mut reported = HashSet::new();
 
@@ -95,19 +96,15 @@ fn lint_body(body: &Body, types: &TypeTable, sink: &mut Sink) {
     }
 }
 
-/// A method-duration class access is created only by lowering the first
-/// `mut self` receiver. Short dynamic intervals for mutable call arguments are
-/// inserted beside those calls and deliberately do not qualify as long-term.
+/// A method-duration class access belongs only to a `mut self` method: its
+/// caller writes every field of `*self` for the call (`[EXC-15]`). Short
+/// intervals for call arguments do not qualify as long-term.
 fn entry_class_access(body: &Body) -> Option<LongTermAccess> {
     let class = body.class_owner?;
-    let statement = body.blocks.first()?.stmts.first()?;
-    let StmtKind::BeginAccess { place, mutable: true } = &statement.kind else {
-        return None;
-    };
-    (place.local == LocalId(1)).then(|| LongTermAccess {
-        place: place.clone(),
+    body.mut_self.then(|| LongTermAccess {
+        place: Place { local: LocalId(1), projection: vec![Projection::Deref] },
         class,
-        span: statement.span,
+        span: body.span,
     })
 }
 

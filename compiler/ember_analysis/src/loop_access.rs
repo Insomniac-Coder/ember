@@ -140,12 +140,19 @@ fn candidate(
     {
         return None;
     }
-    let (setup_refs, kept) = setup_references(
-        body,
-        types,
-        &loop_body.stmts[..begin_index],
-        place.local,
-    )?;
+    // Either a call on a class held in one of the receiver's fields, whose
+    // summary shows it touches only that field, or a `mut self` call on the
+    // receiver itself (`[EXC-15]`): it held the receiver's write access for
+    // each call, and between calls only the counter runs. `self` cannot be
+    // re-pointed inside it (ODR-072), so the object stays the same.
+    let (setup_refs, kept) = match setup_references(body, types, &loop_body.stmts[..begin_index], place.local) {
+        Some((setup_refs, kept))
+            if direct_call_is_modelled_for_setup_fields(func, args, place.local, &setup_refs, contracts) =>
+        {
+            (setup_refs, kept)
+        }
+        _ => (vec![mut_self_call_on_root(body, &loop_body.stmts[..begin_index], func, args, place.local)?], Vec::new()),
+    };
     // The matching end opens the post-call block, and all that may follow it
     // there is the release of the receiver copies ODR-065 retains for the call
     // (`kept`). This both proves that the access cannot escape the source
@@ -167,9 +174,6 @@ fn candidate(
             _ => false,
         })
     {
-        return None;
-    }
-    if !direct_call_is_modelled_for_setup_fields(func, args, place.local, &setup_refs, contracts) {
         return None;
     }
     // The loop condition and step cannot read, overwrite, publish, or
@@ -250,6 +254,43 @@ fn setup_references(
         }
     }
     Some((references, kept))
+}
+
+/// `[EXC-15]` — the loop body only borrows the receiver for a direct `mut self`
+/// call on it: `t = &mut root` and `call(t, …)`, where no other argument
+/// names the receiver or `t`. The reference is the one the call takes.
+fn mut_self_call_on_root(
+    body: &Body,
+    statements: &[Stmt],
+    func: &FuncRef,
+    args: &[Operand],
+    root: LocalId,
+) -> Option<LocalId> {
+    if !matches!(func, FuncRef::Direct { .. }) {
+        return None;
+    }
+    let mut reference = None;
+    for statement in statements {
+        match &statement.kind {
+            StmtKind::StorageLive(_) => {}
+            StmtKind::StorageDead(local) if body.local(*local).kind == LocalKind::Temp => {}
+            StmtKind::Assign { place: destination, rvalue: Rvalue::Ref { place: borrowed, mutable: true } }
+                if destination.projection.is_empty() && *borrowed == Place::local(root) && reference.is_none() =>
+            {
+                reference = Some(destination.local);
+            }
+            _ => return None,
+        }
+    }
+    let reference = reference?;
+    let (Operand::Copy(receiver) | Operand::Move(receiver)) = args.first()? else { return None };
+    if *receiver != Place::local(reference) {
+        return None;
+    }
+    args[1..]
+        .iter()
+        .all(|argument| !operand_mentions_local(argument, root) && !operand_mentions_local(argument, reference))
+        .then_some(reference)
 }
 
 /// A direct callee must have a verified finite summary, and each summarized

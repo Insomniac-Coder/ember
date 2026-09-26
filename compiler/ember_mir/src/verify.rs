@@ -473,6 +473,7 @@ mod tests {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
         }
@@ -1388,7 +1389,7 @@ fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
             }
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem } | TyKind::Span { elem, .. },
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
             ) => ty = *elem,
             (
                 Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
@@ -1570,6 +1571,7 @@ mod view_invariant_tests {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
         };
@@ -1725,6 +1727,7 @@ mod interface_upcast_invariant_tests {
             class_owner: None,
             class_virtual_slot: None,
             is_abstract: false,
+            mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
         };
