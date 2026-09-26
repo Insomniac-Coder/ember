@@ -346,6 +346,7 @@ codes! {
 
     // --- concurrency ----------------------------------------------------------
     E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` class has a field that is not Send and Sync, or a mismatched base");
+    E7002 = (Error, 7002, Concurrency, "[STA-1]", "static has a type that is not Sync");
     E7003 = (Error, 7003, Concurrency, "[THR-1]", "write to a `@sync` class field outside `init`, or a `mut self` method");
     E7011 = (Error, 7011, Concurrency, "[PAR-2a]", "parallel loop has a loop-carried dependency");
     E7010 = (Error, 7010, Concurrency, "[PAR-2]", "parallel loop writes to a shared place");

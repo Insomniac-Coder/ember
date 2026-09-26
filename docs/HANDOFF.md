@@ -11037,10 +11037,22 @@ first**; the rest of §0.355 is the running narrative behind it.
     is needed.
     `FFI-10/` annotations and the linked integration test pass. The final
     full annotation sweep reports zero failures, the workspace suite passes,
-    and all repository gates pass. The batch is ready to commit and push.
+    and all repository gates pass. Commit `c9700e1` is pushed to `main`; its
+    CI run is `36278807435`.
+  * The next `[FFI-10]` slice admits plain `Copy` C-compatible record globals.
+    A separate C translation unit proves immutable reads, unsafe mutable
+    reads and writes, and the same operations through both forms of module
+    import. Non-`Copy`, borrowed-field, and non-C-compatible globals remain
+    explicit errors. `[STA-1]` also now enforces `Sync` on local and foreign
+    statics (`E7002`); raw-pointer and `cstr` negative cases failed before
+    the check. `E7002` has an executable error page. Focused annotations and
+    the linked record integration test pass. The final full annotation sweep
+    reports zero failures, the workspace suite passes, and all repository
+    gates pass. No ODR or hardening is needed for this
+    slice; H38 already specifies the type mapping and `Sync` requirement.
 
-  Check CI for the newest first. The H37 run `36276950767` passed; the H38
-  run `36277984572` was still running at the last check.
+  Check CI for the newest first. H37 `36276950767` and H38 `36277984572`
+  passed; the write run `36278807435` was running at the last check.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through

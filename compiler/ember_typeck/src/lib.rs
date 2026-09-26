@@ -5066,10 +5066,21 @@ impl<'a> Checker<'a> {
                 // the value has to be known here.
                 ast::ItemKind::Static(decl) => {
                     let ty = self.resolve_type(&decl.ty);
+                    if !self.types.is_sync(ty) {
+                        let shown = self.types.display(ty);
+                        self.error(codes::E7002, decl.ty.span,
+                            format!("{}static type `{shown}` is not Sync",
+                                if decl.is_foreign_decl { "foreign " } else { "" }));
+                        continue;
+                    }
                     if decl.is_foreign_decl {
-                        if !matches!(self.types.kind(ty), TyKind::Bool | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)) {
+                        let supported = matches!(self.types.kind(ty),
+                            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
+                                | TyKind::Float(_) | TyKind::Struct(_) | TyKind::Ptr { .. });
+                        if !supported || !self.types.is_ffi_safe(ty) || !self.types.is_copy(ty)
+                            || self.types.is_view(ty) {
                             self.error(codes::E0900, decl.ty.span,
-                                "foreign static reads currently require a C scalar type");
+                                "foreign static access requires a Copy C-compatible value without borrowed fields");
                             continue;
                         }
                         let immutable = ffi_static_immutable(&item.attrs);
