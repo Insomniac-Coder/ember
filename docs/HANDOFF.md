@@ -10779,7 +10779,7 @@ the running narrative behind it.
     `owned` aggregates already use the by-value ABI. Hardened_29
     specifies the behavior; no ODR was needed. The workspace suite and all
     repository gates passed locally, and CI finished green.
-  * The following solo batch starts `[FFI-10]`: `unsafe extern "C":` function
+  * `d536d8f` starts `[FFI-10]`: `unsafe extern "C":` function
     declarations now enter the enclosing module's names and emit external C
     prototypes, with no synthesized body. Scalar-only `safe fn` calls and
     capture-free values link to libc; declarations without `safe fn` require
@@ -10789,7 +10789,15 @@ the running narrative behind it.
     and compile-fail cases. Foreign statics/types, `@ffi` contracts,
     `link_name`, and header import remain. The full workspace suite, annotation
     sweep, and repository gates passed; `E5002` now has an executable error
-    page. No ODR was needed.
+    page. No ODR was needed. CI finished green.
+  * The next solo five-feature batch adds `@ffi(link_name="C_identifier")` to
+    hand-declared C functions, direct unsafe-call gates for ordinary methods
+    and generic functions, unsafe-body permissions, and `@safety` obligation
+    diagnostics. `FFI-49/`, `UNS-1/`, `UNS-7/`, and `FFI-10/` cover the accepted
+    and rejected forms. Unsafe functions cannot become safe callable values.
+    Arbitrary assembler linker names and full pointer contracts remain
+    explicit `E0900` gaps. No ODR or hardening is needed: Hardened_29 already
+    specifies each behavior.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
@@ -10953,8 +10961,8 @@ the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** continue Phase 5 with `@ffi(link_name=...)` and contract
-  support after this `[FFI-10]` batch is committed and pushed.
+* **Next task:** continue Phase 5 with `@ffi` pointer contracts and the
+  remaining C boundary forms. Check the newest CI run before building on it.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

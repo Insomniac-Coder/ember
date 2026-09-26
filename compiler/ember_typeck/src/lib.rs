@@ -273,6 +273,7 @@ struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
     ret: Ty,
     abi: Option<Symbol>,
+    is_unsafe: bool,
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
@@ -2191,6 +2192,8 @@ impl<'a> Checker<'a> {
                             continue;
                         };
                         let symbol = match &decl.abi {
+                            Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
+                                .unwrap_or(decl.name.name.as_str()).to_string(),
                             Some(_) => decl.name.name.to_string(),
                             None => mangle(qualified, qualified.is("main")),
                         };
@@ -4335,6 +4338,7 @@ impl<'a> Checker<'a> {
             params,
             ret: self.substitute_self(ret, ty),
             abi: None,
+            is_unsafe: false,
             generics,
             borrows: method.borrows.clone(),
         };
@@ -5114,7 +5118,7 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                     }
-                    self.signatures.push(Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), generics, borrows });
+                    self.signatures.push(Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -6364,7 +6368,7 @@ impl<'a> Checker<'a> {
                 .map(|param| self.substitute_generic_param(param, args))
                 .collect();
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, generics, borrows: signature.borrows });
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
         }
@@ -6755,7 +6759,7 @@ impl<'a> Checker<'a> {
             self.lint_rule_3(&params, ret, &borrows, span);
         }
         self.type_params = saved_type_params;
-        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), generics, borrows }))
+        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -7060,6 +7064,7 @@ impl<'a> Checker<'a> {
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
                 abi: None,
+                is_unsafe: false,
                 generics: Vec::new(),
                 borrows: None,
             };
@@ -10694,7 +10699,9 @@ impl<'a> Checker<'a> {
                         self.reject_unsafe_cell_in_static_safe(item.span);
                     }
                     self.check_declared_defaults(def, decl, &signature_params);
+                    let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
                     self.check_body(block);
+                    self.in_unsafe = outer_unsafe;
                 }
                 self.in_static_safe = outer_static_safe;
                 self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
@@ -10770,6 +10777,8 @@ impl<'a> Checker<'a> {
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
             let symbol = match &decl.abi {
+                Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
+                    .unwrap_or(decl.name.name.as_str()).to_string(),
                 Some(_) => decl.name.name.to_string(),
                 None => mangle(name, is_main),
             };
@@ -11238,11 +11247,18 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
     }
 
-    fn check_foreign_call(&mut self, def: DefId, span: Span) {
-        if self.foreign_declarations.get(&def) == Some(&false) && !self.in_unsafe {
+    fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
+        if !self.signatures[def.0 as usize].is_unsafe || self.in_unsafe {
+            return;
+        }
+        if self.foreign_declarations.contains_key(&def) {
             self.sink.emit(Diagnostic::error(codes::E5002, span,
                 "a foreign call without a complete safe contract requires `unsafe`")
                 .help("wrap the call in `unsafe:` or declare a scalar-only `safe fn`"));
+        } else {
+            self.sink.emit(Diagnostic::error(codes::E3100, span,
+                "calling an `unsafe fn` requires an `unsafe` block")
+                .help("wrap the call in `unsafe:` and state its safety reason"));
         }
     }
 
@@ -11303,8 +11319,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         {
             self.reject_unsafe_cell_in_static_safe(span);
         }
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
+        self.in_unsafe = outer_unsafe;
         let overflow = self.overflow_policy(attrs, span);
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
@@ -11721,7 +11739,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, generics: own.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, generics: own.clone(), borrows: signature.borrows.clone() });
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
             let saved_generics = std::mem::take(&mut self.current_generics);
@@ -12012,8 +12030,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             .unwrap_or_default();
         let signature_params = self.signatures[def.0 as usize].params.clone();
         self.check_declared_defaults(def, decl, &signature_params);
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
+        self.in_unsafe = outer_unsafe;
         if self.class_init.is_some() {
             self.report_missing_class_init_fields(span);
         }
@@ -22208,8 +22228,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
-        self.check_foreign_call(def, span);
-
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
         // arguments say what its parameters are, and the instance gets its own
         // symbol.
@@ -22427,6 +22445,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared = self.signatures[def.0 as usize].params.clone();
         let ret = self.signatures[def.0 as usize].ret;
@@ -22745,6 +22764,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         span: Span,
         instantiate: bool,
     ) -> Expr {
+        self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
@@ -23615,6 +23635,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
+            is_unsafe: self.signatures[def.0 as usize].is_unsafe,
             generics: Vec::new(),
             borrows,
         });
@@ -23671,6 +23692,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
+            is_unsafe: self.signatures[def.0 as usize].is_unsafe,
             generics: Vec::new(),
             borrows,
         });
@@ -23721,6 +23743,33 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     }
 
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Fn(decl) = &item.kind {
+            self.check_safety_attribute(&item.attrs, decl.is_unsafe,
+                item.vis.kind != ast::VisKind::Private, item.span);
+        }
+        if let ast::ItemKind::Fn(decl) = &item.kind && decl.is_foreign_decl {
+            let mut saw_ffi = false;
+            for attr in &item.attrs {
+                if attr.path.len() == 1 && attr.path[0].name.is("ffi") {
+                    if saw_ffi {
+                        self.error(codes::E0104, attr.span, "a foreign declaration has only one `@ffi` attribute");
+                    }
+                    saw_ffi = true;
+                    match ffi_link_name_attr(attr) {
+                        Some(symbol) if c_link_identifier(symbol) => {}
+                        Some(_) => self.error(codes::E0900, attr.span,
+                            "a `link_name` that is not a C identifier is not implemented yet"),
+                        None => self.error(codes::E0900, attr.span,
+                            "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
+                    }
+                } else if attr.path.len() == 1 && attr.path[0].name.is("safety") {
+                    // Validity and the obligation lint are checked above.
+                } else {
+                    self.check_attribute_list(std::slice::from_ref(attr), "extern item");
+                }
+            }
+            return;
+        }
         let site = match &item.kind {
             _ if in_extern => "extern item",
             ast::ItemKind::Fn(decl) if decl.is_foreign_decl => "extern item",
@@ -23759,6 +23808,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             _ => &[],
         };
         for member in members {
+            if let ast::MemberKind::Fn(decl) = &member.kind {
+                self.check_safety_attribute(&member.attrs, decl.is_unsafe,
+                    member.vis.kind != ast::VisKind::Private, member.span);
+            }
             let site = match &member.kind {
                 ast::MemberKind::Field(_) => "field",
                 ast::MemberKind::Fn(_) => "fn",
@@ -23766,6 +23819,38 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                 ast::MemberKind::TypeAlias(_) => "type",
             };
             self.check_attribute_list(&member.attrs, site);
+        }
+    }
+
+    /// `[UNS-7]` — the attribute documents an unsafe caller obligation; its
+    /// presence neither creates one nor makes a safe function unsafe.
+    fn check_safety_attribute(&mut self, attrs: &[ast::Attribute], is_unsafe: bool,
+        is_public: bool, span: Span) {
+        let mut documented = false;
+        for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")) {
+            if !is_unsafe {
+                self.error(codes::E0104, attr.span, "`@safety` applies only to an `unsafe fn`");
+                continue;
+            }
+            let [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(text)), .. })]
+                = attr.args.as_slice() else {
+                self.error(codes::E0104, attr.span, "`@safety` requires one string obligation");
+                continue;
+            };
+            if text.trim().is_empty() {
+                self.error(codes::E0104, attr.span, "`@safety` requires a nonempty obligation");
+                continue;
+            }
+            documented = true;
+            if text.trim().to_ascii_uppercase().starts_with("TODO") {
+                self.sink.emit(Diagnostic::lint(codes::L3016, attr.span,
+                    "`@safety` text still reads `TODO`"));
+            }
+        }
+        if is_public && is_unsafe && !documented {
+            self.sink.emit(Diagnostic::lint(codes::L3015, span,
+                "undocumented unsafe obligation")
+                .help("add `@safety(\"state the caller's obligation\")` above this function"));
         }
     }
 
@@ -23940,7 +24025,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
-        self.check_foreign_call(def, span);
         if !self.signatures[def.0 as usize].generics.is_empty() {
             return self.synth_generic_call(def, qualified, args, explicit, None, span);
         }
@@ -26248,6 +26332,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
+        self.check_direct_call_safety(def, span);
         checked.extend(self.check_bound_call_arguments(args, &params, &slots, Some(def)));
         Expr {
             ty: ret,
@@ -26960,6 +27045,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             params: signature_params,
             ret,
             abi: None,
+            is_unsafe: false,
             borrows: None,
             generics: Vec::new(),
         });
@@ -27470,11 +27556,6 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     fn function_value(&mut self, name: Symbol, span: Span) -> Option<Expr> {
         let qualified = self.resolve_name(name);
         let def = *self.fn_ids.get(&qualified)?;
-        if self.foreign_declarations.get(&def) == Some(&false) {
-            self.error(codes::E0900, span,
-                "an unsafe foreign declaration cannot become a safe callable value yet");
-            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
-        }
         let signature = &self.signatures[def.0 as usize];
         if !signature.generics.is_empty() {
             self.sink.emit(
@@ -27497,6 +27578,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
     /// The value of function `def` (`[FN-6]`), unless its `@borrows` lends
     /// more than a callable type accounts for (`[LT-7]`).
     fn fn_value_of(&mut self, def: DefId, name: Symbol, span: Span) -> Expr {
+        if self.signatures[def.0 as usize].is_unsafe {
+            self.error(codes::E0900, span,
+                "an `unsafe fn` cannot become a safe callable value yet");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let signature = &self.signatures[def.0 as usize];
         let params = signature
             .params
@@ -31361,6 +31447,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         slots: &[Option<usize>],
         span: Span,
     ) -> (Vec<Expr>, Vec<Option<usize>>) {
+        self.check_direct_call_safety(def, span);
         let written = self.check_bound_call_arguments(args, params, slots, Some(def));
         let mut given = vec![false; params.len()];
         for slot in slots.iter().flatten() {
@@ -31727,6 +31814,7 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let slots = self.call_argument_slots(name, args, params);
+                self.check_direct_call_safety(init, span);
                 let values = self.check_bound_call_arguments(args, params, &slots, Some(init));
                 (init, values, Self::call_eval_order(&slots))
             } else {
@@ -33870,7 +33958,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["sync"], &["class"], true),
     (&["reflect"], &["struct", "enum", "class", "type"], false),
     (&["borrows"], &["fn"], true),
-    (&["safety"], &["fn"], false),
+    (&["safety"], &["fn"], true),
     (&["must_drop"], &["struct", "class"], false),
     (&["non_exhaustive"], &["enum"], false),
     (&["component"], &["struct"], false),
@@ -33946,6 +34034,40 @@ fn attr_argument(attrs: &[ast::Attribute], name: &str) -> Option<Symbol> {
             ast::AttrArg::Named { .. } => None,
         })
     })
+}
+
+/// `[FFI-49]` — the currently supported `@ffi` spelling on a hand-written
+/// foreign function. Keep the extraction shared by emitted C and the module
+/// interface so a renamed symbol never changes only one side of a call.
+fn ffi_link_name_attr(attr: &ast::Attribute) -> Option<&str> {
+    let [ast::AttrArg::Named { name, value }] = attr.args.as_slice() else { return None };
+    if !name.name.is("link_name") {
+        return None;
+    }
+    let ast::ExprKind::Lit(ast::Literal::Str(symbol)) = &value.kind else { return None };
+    Some(symbol)
+}
+
+fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
+    attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .and_then(ffi_link_name_attr)
+}
+
+/// A C declaration cannot spell an arbitrary linker symbol portably. Names
+/// needing an assembler alias remain an explicit implementation gap.
+fn c_link_identifier(symbol: &str) -> bool {
+    let mut chars = symbol.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !matches!(symbol,
+            "auto" | "break" | "case" | "char" | "const" | "continue" | "default" | "do"
+            | "double" | "else" | "enum" | "extern" | "float" | "for" | "goto" | "if"
+            | "inline" | "int" | "long" | "register" | "restrict" | "return" | "short"
+            | "signed" | "sizeof" | "static" | "struct" | "switch" | "typedef" | "union"
+            | "unsigned" | "void" | "volatile" | "while" | "_Alignas" | "_Alignof"
+            | "_Atomic" | "_Bool" | "_Complex" | "_Generic" | "_Imaginary" | "_Noreturn"
+            | "_Static_assert" | "_Thread_local")
 }
 
 /// `[STD-20]` (ODR-039) — an integer method: the ones of their own, and the
