@@ -10902,6 +10902,15 @@ first**; the rest of §0.355 is the running narrative behind it.
     combinations have run-pass coverage. Hardened_32 already specifies
     `fixed(N)` and borrowed results; this is a
     compiler gap and needs no ODR or new hardening.
+  * The next pointer-result slice supports `result(borrowed, fixed(N),
+    from(static|p))` for a shared `ref [T; N]`, plus `nullable` for
+    `Option[ref [T; N]]` and explicit `aliased`. A result-only declaration
+    now gets a wrapper: the C result is `const T*`, converted to Ember's
+    checked array-reference carrier. The result lifetime comes from the
+    contract, including `from(p)` with a fixed-array parameter; wrong result
+    length or shape is `E5002`. `FFI-11/` covers static, parameter-derived,
+    nullable, and explicitly aliased results. Hardened_32 already defines
+    these contract words and mappings, so no ODR or new hardening is needed.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.

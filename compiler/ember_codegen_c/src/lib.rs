@@ -3326,9 +3326,13 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        let result = match self.types.kind(body.return_ty()) {
-            TyKind::Ref { mutable: false, inner } => format!("const {}*", self.c_type(*inner)),
-            _ => self.c_type(body.return_ty()),
+        let result = if let Some(elem) = counted.result_array_elem {
+            format!("const {}*", self.c_type(elem))
+        } else {
+            match self.types.kind(body.return_ty()) {
+                TyKind::Ref { mutable: false, inner } => format!("const {}*", self.c_type(*inner)),
+                _ => self.c_type(body.return_ty()),
+            }
         };
         let params: Vec<_> = counted.abi_params.iter().enumerate().map(|(index, param)| {
             let ty = match param {
@@ -3416,7 +3420,8 @@ impl Emitter<'_> {
             self.line(&format!("    {call};"));
             self.line("    return;");
         } else {
-            let value = if matches!(self.types.kind(body.return_ty()), TyKind::Ref { mutable: false, .. }) {
+            let value = if counted.result_array_elem.is_some()
+                || matches!(self.types.kind(body.return_ty()), TyKind::Ref { mutable: false, .. }) {
                 format!("({})({call})", self.c_type(body.return_ty()))
             } else {
                 call

@@ -76,13 +76,15 @@ pub struct Param {
     pub mode: Mode,
 }
 
-/// The C parameter list behind a hand-declared safe `count(n)` or `fixed(N)`
-/// function. Indices name the visible Ember parameters; count witnesses have
-/// no visible parameter and are supplied from the associated span(s).
+/// The C ABI behind a hand-declared safe `count(n)` or `fixed(N)` function.
+/// Indices name visible Ember parameters; count witnesses have no visible
+/// parameter and are supplied from the associated span(s).
 #[derive(Debug, Clone)]
 pub struct FfiCounted {
     pub foreign_symbol: String,
     pub abi_params: Vec<FfiAbiParam>,
+    /// A borrowed fixed-array result arrives as a C element pointer.
+    pub result_array_elem: Option<Ty>,
 }
 
 #[derive(Debug, Clone)]
