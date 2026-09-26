@@ -2101,6 +2101,29 @@ fn check_body(
                 // Dynamic class access intervals are checked by the runtime;
                 // they do not create static loans for the ordinary borrow
                 // checker to compare here.
+                // `[EXP-4]` (D-342) — a statement temporary's storage ends
+                // with its statement, as its drop would: a borrow of it that
+                // is still to be used conflicts, as with a drop.
+                StmtKind::StorageDead(local) if body.local(*local).kind == LocalKind::Temp => {
+                    let depending: Vec<Loan> = loans
+                        .iter()
+                        .filter(|loan| loan.capability.must_not_outlive_storage())
+                        .cloned()
+                        .collect();
+                    check_point(
+                        body,
+                        types,
+                        &depending,
+                        &regions,
+                        &reads,
+                        point,
+                        &[(Place::local(*local), Access::Write)],
+                        stmt.span,
+                        is_method,
+                        sink,
+                        &mut reported,
+                    );
+                }
                 StmtKind::BeginAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }
@@ -3099,7 +3122,7 @@ fn check_point(
             let dropped_temporary = body.local(loan_place.local).name.is_none()
                 && matches!(
                     body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind),
-                    Some(StmtKind::Drop { .. })
+                    Some(StmtKind::Drop { .. } | StmtKind::StorageDead(_))
                 );
             if dropped_temporary {
                 let mut diagnostic = Diagnostic::error(

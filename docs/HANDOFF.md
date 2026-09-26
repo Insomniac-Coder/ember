@@ -674,6 +674,10 @@ Therefore:
   `Array[str]`, `Map[str, V]`, `Array[MutSpan[T]]` remain rejected whatever the
   region, because that rejection is at the *type* and not at the region.
   `BorrowList[T]` / `ViewList[T]` remain the specialised model.
+  **Superseded 2026-09-26** by the owner's adoption of SP-013 (ODR-069): every
+  owning container follows the one region rule, so `Array[str]()`,
+  `Map[str, int]()` and `Set[str]()` are legal types and hold only `static`
+  views, checked at each store. The first two points stand.
 
 **Do not regress the implementation to the old blanket prohibition.**
 `tests/conformance/TYP-15/` holds `accept_a_static_region_view_in_a_static.em`
@@ -10740,17 +10744,21 @@ the running narrative behind it.
     D-343, D-344; CI green), then the SP-010 safety review (ODR-065,
     Hardened_25; D-345 to D-349), and the README rewritten (`1496b42`; CI
     green), then Part II's SP-007, SP-016 and SP-031 (ODR-066 to ODR-068,
-    Hardened_26; D-350, D-351 fixed, D-352 and D-353 found). From the
+    Hardened_26; D-350, D-351 fixed, D-352 and D-353 found; `953bd85`, red
+    on MSVC: D-354), `a2918a3` (D-354's fix; CI green), SP-013 (`972eafd`:
+    ODR-069, Hardened_27; D-352, D-353, D-198, D-356, D-357; CI green),
+    `a778c99` (D-319; D-331 with ODR-070, Hardened_28), then D-342 and
+    D-220 with the README's end-of-day status. From the
     `NonZero` commit on, each commit's author is the owner and its committer
     Claude (the owner's instruction, below).
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_26.md`
-  (ODR-066 to ODR-068), pinned in `docs/spec-source/development-target.json`.
-  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h26/` is
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_28.md`
+  (ODR-070), pinned in `docs/spec-source/development-target.json`. The
+  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h28/` is
   frozen.
-* **Next numbers:** ODR-069, D-354, ADR-059.
+* **Next numbers:** ODR-071, D-359, ADR-060.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -10767,35 +10775,45 @@ the running narrative behind it.
   D-353 (views stored through `mut` parameters, references, `mem.replace`,
   `mem.swap`, into class fields and elements' fields; use after free) and
   closed D-198. How it is checked is ADR-059 (`regions.rs`'s store following,
-  `stores.rs`'s summaries). **The whole of Part II is done.** Next: the old
-  defect queue.
-* **Next task:** A1 to A4 and B1 are done. B2, the open defects, is under
-  way: D-273, D-270, D-328, D-345 and D-198 are fixed. Next: D-218, D-220, D-202, D-201,
-  D-355 (arrays of `()` in C), D-342 (a temporary's end for the region check: the loans must tell
-  a temporary's own storage from what passes through it; a first attempt
-  that ended every temporary with `StorageDead` broke 17 tests, e.g.
-  `node.get_mut()` on a `Shared`), D-331 (a nesting limit with a
-  diagnostic, which needs an ODR); then the rest of the list.
+  `stores.rs`'s summaries). **The whole of Part II is done.** Of the old
+  queue, D-198, D-220, D-331 (ODR-070) and D-342 are fixed, and D-319 with
+  them; D-201, D-202 and D-218 are not (below).
+* **Next task:** the owner stopped here on 2026-09-26 ("the rest of the
+  implementation will be continued later"). Five defects are open. D-202 is
+  the serious one: a view of a class field starts no read access, so a
+  write through an aliasing handle can reallocate under it (a use after
+  free); it needs `[EXC-19]`'s per-field access words. D-218 (a class getter
+  returning a view of a field) needs `[EXC-18]`'s caller-side access, with
+  D-202. D-201: `String` and `Array[u8]` are one type in the compiler.
+  D-355: an `Array` of `()` does not compile to C beyond indexing. D-358:
+  printing a container nested 256 deep exceeds clang's bracket limit (one C
+  helper per element type would fix it). Then Phase 3's class work.
   `[TYP-13]`'s other niches (handles, `Box`, `ref`, `bool`, `char`, ranges,
   enums) join at `TypeTable::option_niche` (ADR-056).
-* **Last phase table given to the owner (2026-09-26, while `NonZero` was
-  under way):**
+* **Last phase table given to the owner (2026-09-26, end of day):**
 
   | Phase | % |
   |---|---:|
-  | P1 | 96 |
-  | P2 | 85 |
-  | P3 | 47 |
-  | P4 | 12 |
+  | P1 | 97 |
+  | P2 | 88 |
+  | P3 | 50 |
+  | P4 | 13 |
   | P5 | 8 |
   | P6 | 2 |
   | P7 | 0 |
   | 7a | 6 |
-  | P8 | 13 |
-  | Overall | 55 |
+  | P8 | 14 |
+  | Overall | 57 |
 
-  `python3 tasks/impl-0.9.9/rule_sizes.py 96 85 47 12 8 2 6` gives the
-  overall figure. The owner was also told that `53ddfbe` (D-272) carries
+  `python3 tasks/impl-0.9.9/rule_sizes.py 97 88 50 13 8 2 6` gives the
+  overall figure (57.2%). Since the table before (96, 85, 47, 12, 8, 2, 0,
+  6, 13; 55): P1 for `[TYP-15]` held at every store, `[GRM-39]`, `[LEX-17]`
+  rounded once, `[EXP-4]` for plain temporaries, `[IFC-4]`'s defaults,
+  `[TYP-37]`, `[MOD-2]`; P2 for `[LT-21]` through references and `mut`
+  parameters, `[LT-7]`, `get_pair_mut`, `[BRW-6]`, `[LT-22]`, D-284; P3 for
+  ODR-065's retained copies, `[RC-3]`, `[FN-9]`, handles as keys; P4 for
+  `@derive(Zeroable)`; P8 for the defects closed. The owner was also told,
+  earlier, that `53ddfbe` (D-272) carries
   their identity as author by mistake, and that `main` was red on Windows
   until `bc6d6c8`.
 

@@ -904,3 +904,8 @@ The next number is ODR-027.
   * Nesting more than 1,024 levels deep (brackets, blocks, types, or an operator or method-call
     chain that long) is `E0112`; it ended the compiler with a stack overflow before (D-331). Every
     compiler accepts 256 (`[GRM-39]`).
+* **2026-09-26 — a temporary without a destructor ends with its statement too (D-342).**
+  * A view of such a temporary kept past its statement is `E3060`, as it already was for a temporary
+    with a destructor: `r = inner(W3(3))` then `println(r)`, and `w = Window(items = [1, 2, 3])` with
+    `w.items` used later (a list literal in a `Span` position is a temporary array, `[TYP-38]`). Bind
+    the value to a variable first.

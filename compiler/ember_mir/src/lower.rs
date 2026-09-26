@@ -165,6 +165,10 @@ struct Builder<'a> {
     /// `[DRP-3]` — the temporaries the statement being lowered has made, and
     /// which end with it. Named locals go in `owned` and end with their block.
     statement_temps: Vec<LocalId>,
+    /// `[EXP-4]` (D-342) — this statement's temporaries that need no drop and
+    /// hold nothing that points elsewhere: their storage ends with the
+    /// statement too, which a borrow of one must not outlive.
+    plain_temps: Vec<LocalId>,
     /// ODR-065 — a handle expression lowered as a retained temporary while a
     /// borrow through it is lowered (`lower_borrowed_place`).
     place_overrides: Vec<(*const hir::Expr, Place)>,
@@ -304,6 +308,7 @@ impl<'a> Builder<'a> {
             defers: Vec::new(),
             owned,
             statement_temps: Vec::new(),
+            plain_temps: Vec::new(),
             place_overrides: Vec::new(),
             write_backs: Vec::new(),
             mut_param_locals: function
@@ -418,6 +423,8 @@ impl<'a> Builder<'a> {
         // that forgot would be invisible.
         if self.types.needs_drop(ty) {
             self.statement_temps.push(id);
+        } else if is_plain_data(self.types, ty) {
+            self.plain_temps.push(id);
         }
         id
     }
@@ -653,6 +660,7 @@ impl<'a> Builder<'a> {
 
     fn lower_stmt(&mut self, stmt: &'a hir::Stmt) {
         let temps = self.statement_temps.len();
+        let plain = self.plain_temps.len();
         self.lower_stmt_inner(stmt);
         // `[EXP-4]` — a temporary made by a `for` iterable lives to the end of
         // the loop: the hidden iterator's temporaries end with the loop's
@@ -664,10 +672,26 @@ impl<'a> Builder<'a> {
             let iterator = self.local_map[local.0 as usize];
             let at = self.owned.iter().rposition(|&owned| owned == iterator).unwrap_or(self.owned.len());
             self.owned.splice(at..at, held);
+            self.plain_temps.truncate(plain);
             return;
         }
         // `[EXP-4]`, `[DRP-3]` — the statement is over, so its temporaries are.
         self.emit_statement_temps(temps);
+        self.end_plain_temps(plain);
+    }
+
+    /// `[EXP-4]` (D-342) — end the storage of this statement's plain
+    /// temporaries, for the borrow check: a borrow of one that is still used
+    /// is `E3060`, as it is for a temporary with a destructor.
+    fn end_plain_temps(&mut self, mark: usize) {
+        if self.plain_temps.len() <= mark {
+            return;
+        }
+        let pending: Vec<LocalId> = self.plain_temps[mark..].iter().rev().copied().collect();
+        for local in pending {
+            self.push(StmtKind::StorageDead(local));
+        }
+        self.plain_temps.truncate(mark);
     }
 
     fn lower_stmt_inner(&mut self, stmt: &'a hir::Stmt) {
@@ -6021,5 +6045,26 @@ impl<'a> Builder<'a> {
                 Place::local(temp)
             }
         }
+    }
+}
+
+/// `[EXP-4]` (D-342) — a value that needs no drop and holds nothing that points
+/// elsewhere (no handle, reference, view, pointer or heap storage): a borrow
+/// of one can only be of its own storage.
+fn is_plain_data(types: &ember_types::TypeTable, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Void => true,
+        TyKind::Struct(id) => {
+            let def = types.struct_def(*id);
+            !def.has_drop && def.fields.iter().all(|field| is_plain_data(types, field.ty))
+        }
+        TyKind::Tuple(items) => items.iter().all(|&item| is_plain_data(types, item)),
+        TyKind::Enum(id) => {
+            let def = types.enum_def(*id);
+            !def.has_drop
+                && def.variants.iter().all(|variant| variant.fields.iter().all(|field| is_plain_data(types, field.ty)))
+        }
+        TyKind::Array { elem, .. } => is_plain_data(types, *elem),
+        _ => false,
     }
 }

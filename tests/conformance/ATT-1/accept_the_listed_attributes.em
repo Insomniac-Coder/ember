@@ -30,5 +30,6 @@ fn main():
     println(q.x, p.y)
     level = Level.High
     println(level as u8)
-    w = Window(items = [1, 2, 3])
+    numbers = [1, 2, 3]
+    w = Window(items = numbers)
     println(pick_first(w.items, w.items)[2])

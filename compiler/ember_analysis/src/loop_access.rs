@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use ember_mir::{
     BasicBlock, BasicBlockId, Body, CallableAccessSummary, FuncRef, HoistedAccess,
-    HoistedAccessProof, LocalId, Operand, Place, Rvalue, Stmt, StmtKind, Terminator,
+    HoistedAccessProof, LocalId, LocalKind, Operand, Place, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_types::{TyKind, TypeTable};
 
@@ -160,7 +160,10 @@ fn candidate(
         )
         || !end_block.stmts[1..].iter().all(|statement| match &statement.kind {
             StmtKind::Drop { place: dropped, .. } => dropped.projection.is_empty() && kept.contains(&dropped.local),
-            StmtKind::StorageDead(local) => kept.contains(local) || setup_refs.contains(local),
+            // D-342 — the end of a statement temporary's storage runs no code.
+            StmtKind::StorageDead(local) => {
+                kept.contains(local) || setup_refs.contains(local) || body.local(*local).kind == LocalKind::Temp
+            }
             _ => false,
         })
     {
@@ -209,6 +212,8 @@ fn setup_references(
     for statement in statements {
         match &statement.kind {
             StmtKind::StorageLive(_) => {}
+            // D-342 — the end of an earlier statement temporary's storage.
+            StmtKind::StorageDead(local) if body.local(*local).kind == LocalKind::Temp => {}
             StmtKind::Assign { place: copy, rvalue: Rvalue::Use(Operand::Copy(field)) }
                 if copy.projection.is_empty()
                     && field.local == root
