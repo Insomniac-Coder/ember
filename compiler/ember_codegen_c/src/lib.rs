@@ -5227,6 +5227,9 @@ impl Emitter<'_> {
                             rendered[0], rendered[1], rendered[2]
                         );
                     }
+                    Builtin::PtrIsNull => {
+                        return format!("({} == 0)", rendered[0]);
+                    }
                     Builtin::SizeOf => {
                         return c_size(&self.c_type(*arg_ty));
                     }

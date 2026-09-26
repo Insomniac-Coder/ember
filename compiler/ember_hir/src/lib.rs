@@ -945,6 +945,8 @@ pub enum Builtin {
     PtrRead,
     /// `write[T](p, index, value)`.
     PtrWrite,
+    /// Test a raw pointer's nullness without dereferencing it.
+    PtrIsNull,
     /// `size_of[T]() -> usize`, which needs no `unsafe`.
     SizeOf,
     /// `align_of[T]() -> usize`, folded from the canonical target layout.
@@ -1246,6 +1248,7 @@ impl Builtin {
             Builtin::MemFree => "free",
             Builtin::PtrRead => "read",
             Builtin::PtrWrite => "write",
+            Builtin::PtrIsNull => "is_null",
             Builtin::SizeOf => "size_of",
             Builtin::AlignOf => "align_of",
             Builtin::MemReplace { .. } => "replace",

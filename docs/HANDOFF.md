@@ -10860,7 +10860,18 @@ first**; the rest of §0.355 is the running narrative behind it.
     static-result test caught the interface validator rejecting the empty
     borrow set; it now accepts that set for C shared-reference results while
     continuing to reject empty source `@borrows`. The spec files and H31 pin
-    are unchanged.
+    are unchanged. This batch is commit `c38ac19`; its local annotation
+    sweep, workspace suite, and gates passed.
+  * The following five-feature batch adds explicit `aliased` on shared result
+    contracts, `E5012` for a result contract with no count, safe conversion
+    from `ref T`/`ref mut T` to const/mutable raw pointers without permitting
+    a shared reference to become a mutable pointer, a safe raw-pointer
+    `is_null()` query, and `TODO(axis)` on result contracts. A safe declaration
+    with an unknown result fact gets `E5002`; an unsafe declaration may retain
+    the unknown fact while adopting a C API. `FFI-11/`, `FFI-11a/`,
+    `FFI-11c/`, and `TYP-7/` have focused accepted and rejected cases. These
+    are compiler gaps under Hardened_31, so no ODR or hardening is needed.
+    The full annotation sweep, workspace suite, and repository gates passed.
 
   Check CI for the newest first. CI was green on every push that day before
   `a32d0b7`.

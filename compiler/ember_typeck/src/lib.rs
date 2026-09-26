@@ -11193,6 +11193,7 @@ impl<'a> Checker<'a> {
         let ret = self.signatures[def.0 as usize].ret;
         let contracts = ffi_param_contracts(attrs);
         let result_contract = ffi_result_contract(attrs);
+        let unknown_result = ffi_unknown_result_fact_contracts(attrs);
         let unknown_facts = ffi_unknown_fact_contracts(attrs);
 let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             if let TyKind::Param { index, .. } = this.types.kind(ty)
@@ -11344,6 +11345,10 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
             }
         }
         if decl.is_foreign_decl && decl.is_safe {
+            for axis in &unknown_result {
+                self.error(codes::E5002, decl.name.span,
+                    format!("`safe fn` has an unknown {axis} for its result"));
+            }
             match result_contract {
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
@@ -11416,11 +11421,11 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     "`safe fn` needs an `@ffi` contract for its pointer result"
                 });
             } else if matches!(self.types.kind(ret), TyKind::Ref { .. })
-                && result_contract.is_none() {
+                && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
                     "`safe fn` needs an `@ffi` contract for reference result");
             } else if self.foreign_nullable_ref_inner(ret).is_some()
-                && result_contract.is_none() {
+                && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
                     "`safe fn` needs an `@ffi` contract for nullable reference result");
             }
@@ -21607,6 +21612,12 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Ptr { .. }, TyKind::Ptr { .. })
                 );
+                let reference_pointer_cast = matches!(
+                    (self.types.kind(inner.ty), self.types.kind(to)),
+                    (TyKind::Ref { mutable: source_mutable, inner: source },
+                     TyKind::Ptr { mutable: target_mutable, inner: target })
+                        if source == target && (!target_mutable || *source_mutable)
+                );
                 if pointer_integer_cast || pointer_pointer_cast {
                     if !self.in_unsafe {
                         self.error(codes::E3100, span, if pointer_integer_cast {
@@ -21622,7 +21633,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                         self.error(codes::E0900, span,
                             "raw pointer casts involving 128-bit integers are not implemented yet");
                     }
-                } else if !char_cast && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
+                } else if !char_cast && !reference_pointer_cast
+                    && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
                     let shown = self.types.display(to);
                     self.error(
@@ -24044,7 +24056,8 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                 }
                             }
                             _ => {
-                                if ffi_result_contract_arg(arg).is_some() {
+                                if ffi_result_contract_arg(arg).is_some()
+                                    || ffi_unknown_result_fact_arg(arg).is_some() {
                                     if saw_result {
                                         self.error(codes::E0104, attr.span, "duplicate result contract in `@ffi`");
                                     }
@@ -24061,7 +24074,17 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
                                     let mut diagnostic = Diagnostic::error(codes::E5012, attr.span,
                                         format!("pointer contract for `{name}` has no count"))
                                         .help("choose one, count(n), nul_terminated, fixed(N), or inout_count(p)");
-                                    let siblings = ffi_count_siblings(decl, name);
+                                    let siblings = ffi_count_siblings(decl, Some(name));
+                                    if !siblings.is_empty() {
+                                        diagnostic = diagnostic.note(format!(
+                                            "possible length parameter: {}", siblings.join(", ")));
+                                    }
+                                    self.sink.emit(diagnostic);
+                                } else if ffi_result_missing_count_arg(arg) {
+                                    let mut diagnostic = Diagnostic::error(codes::E5012, attr.span,
+                                        "pointer result contract has no count")
+                                        .help("choose one, count(n), nul_terminated, fixed(N), or inout_count(p)");
+                                    let siblings = ffi_count_siblings(decl, None);
                                     if !siblings.is_empty() {
                                         diagnostic = diagnostic.note(format!(
                                             "possible length parameter: {}", siblings.join(", ")));
@@ -25653,6 +25676,15 @@ let check = |this: &mut Self, ty: Ty, span: Span, what: String| {
         }
         self.extend_instance_at_use(receiver.ty);
         let explicit = self.resolve_method_type_args(generic_args);
+        if matches!(self.types.kind(receiver.ty), TyKind::Ptr { .. }) && name.name.is("is_null") {
+            if !explicit.is_empty() || !args.is_empty() {
+                self.error(codes::E2020, span, "`is_null` takes no arguments or type arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return Expr { ty: self.common.bool_, kind: ExprKind::Builtin {
+                which: Builtin::PtrIsNull, args: vec![receiver],
+            }, span };
+        }
         // `[TYP-24]` — `I.m(recv)` names the interface's method, which an
         // extension may give a type the compiler knows a method `m` of. So
         // does a call a generic body made through a bound (`[TYP-17]`), when
@@ -34392,15 +34424,19 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
     if !ffi_contract_word(callee).is_some_and(|word| word.is("result"))
-        || !(3..=4).contains(&args.len()) || args.iter().any(|arg| arg.name.is_some())
+        || !(3..=5).contains(&args.len()) || args.iter().any(|arg| arg.name.is_some())
         || !ffi_contract_word(&args[0].value).is_some_and(|word| word.is("borrowed"))
         || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("one")) {
         return None;
     }
-    let (mut nullable, mut source) = (false, None);
+    let (mut nullable, mut aliased, mut source) = (false, false, None);
     for word in &args[2..] {
         if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) && !nullable {
             nullable = true;
+            continue;
+        }
+        if ffi_contract_word(&word.value).is_some_and(|word| word.is("aliased")) && !aliased {
+            aliased = true;
             continue;
         }
         let ast::ExprKind::Call { callee, args: lifetime } = &word.value.kind else { return None };
@@ -34570,6 +34606,50 @@ fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     (!args[2..].iter().any(|arg| ffi_is_count_word(&arg.value))).then_some(name)
 }
 
+fn ffi_unknown_result_fact_arg(arg: &ast::AttrArg) -> Option<Vec<Symbol>> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("result"))
+        || args.is_empty() || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let mut unknown = Vec::new();
+    for arg in args {
+        if let Some(axis) = ffi_todo_axis(&arg.value) {
+            if unknown.contains(&axis) { return None; }
+            unknown.push(axis);
+        } else if ffi_contract_word(&arg.value).is_some_and(|word|
+            matches!(word.as_str(), "borrowed" | "one" | "exclusive" | "nullable" | "aliased")) {
+            continue;
+        } else if let ast::ExprKind::Call { callee, args: from_args } = &arg.value.kind {
+            if !ffi_contract_word(callee).is_some_and(|word| word.is("from"))
+                || from_args.len() != 1 || from_args[0].name.is_some()
+                || ffi_contract_word(&from_args[0].value).is_none() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    (!unknown.is_empty()).then_some(unknown)
+}
+
+fn ffi_unknown_result_fact_contracts(attrs: &[ast::Attribute]) -> Vec<Symbol> {
+    attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .and_then(|attr| attr.args.iter().find_map(ffi_unknown_result_fact_arg))
+        .unwrap_or_default()
+}
+
+fn ffi_result_missing_count_arg(arg: &ast::AttrArg) -> bool {
+    let ast::AttrArg::Expr(expr) = arg else { return false };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return false };
+    ffi_contract_word(callee).is_some_and(|word| word.is("result"))
+        && args.first().is_some_and(|arg| arg.name.is_none()
+            && ffi_contract_word(&arg.value).is_some_and(|word| word.is("borrowed")))
+        && !args.iter().skip(1).any(|arg| ffi_is_count_word(&arg.value))
+}
+
 fn ffi_is_count_word(expr: &ast::Expr) -> bool {
     match &expr.kind {
         ast::ExprKind::Path { segments } if segments.len() == 1 => {
@@ -34584,10 +34664,10 @@ fn ffi_is_count_word(expr: &ast::Expr) -> bool {
     }
 }
 
-fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Symbol) -> Vec<String> {
+fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String> {
     decl.params.iter().filter_map(|param| {
         let ast::ParamKind::Named { name, ty } = &param.kind else { return None };
-        if name.name == pointer { return None; }
+        if pointer == Some(name.name) { return None; }
         let written = name.name.as_str();
         let name_looks_like_count = ["Count", "Len", "Size", "N"]
             .iter().any(|suffix| written.ends_with(suffix));
