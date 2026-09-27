@@ -30,7 +30,9 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 8 follows ODR-024: a borrowed parameter whose type is not `Copy` is
 // passed by address, which changes the ABI and the region summary of every
 // function that has one, so a schema 7 record describes a different call.
-const SCHEMA_VERSION: u32 = 8;
+// Schema 9 records a callable's effective lexical overflow policy. Schema 8
+// cannot safely validate an importing module after that policy changes.
+const SCHEMA_VERSION: u32 = 9;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -104,6 +106,9 @@ pub struct CallableSignature {
     pub is_unsafe: bool,
     /// `None` denotes Ember's ordinary ABI.
     pub abi: Option<String>,
+    /// Effective declaration policy. This is an interface/cache contract,
+    /// not part of the language-level callable type or ABI.
+    pub overflow: String,
 }
 
 impl CallableSignature {
@@ -116,6 +121,9 @@ impl CallableSignature {
         }
         if self.abi.as_deref().is_some_and(str::is_empty) {
             return Err("callable ABI is empty");
+        }
+        if !matches!(self.overflow.as_str(), "panic" | "wrap" | "saturate") {
+            return Err("callable overflow policy is invalid");
         }
         for generic in &self.generics {
             if generic.bounds.iter().any(String::is_empty) {
@@ -755,6 +763,7 @@ fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
         }
         None => out.push(0),
     }
+    push_string(out, &signature.overflow);
 }
 
 fn push_callable_contract(
@@ -856,6 +865,7 @@ fn read_callable_signature(
         }
         _ => return Err(InterfaceArtifactError::NonCanonical),
     };
+    let overflow = reader.string()?;
     let signature = CallableSignature {
         parameters,
         result,
@@ -863,6 +873,7 @@ fn read_callable_signature(
         borrows,
         is_unsafe,
         abi,
+        overflow,
     };
     signature
         .validate()
@@ -1123,6 +1134,7 @@ mod tests {
             borrows: Some(vec![0]),
             is_unsafe: false,
             abi: None,
+            overflow: "panic".to_string(),
         }
     }
 
@@ -1215,6 +1227,22 @@ mod tests {
             .iter()
             .find(|artifact| artifact.module == "root")
             .unwrap();
+        assert_ne!(before_root.cache_key, after_root.cache_key);
+    }
+
+    #[test]
+    fn changing_a_dependency_declaration_policy_invalidates_the_callers_cache_key() {
+        let root = input("root", "root", &["dep"], 0);
+        let before = build_artifacts(
+            &[root.clone(), input("dep", "dep", &[], 0)],
+            "test",
+        )
+        .unwrap();
+        let mut changed_dependency = input("dep", "dep", &[], 0);
+        changed_dependency.callables[0].contract.signature.overflow = "wrap".to_string();
+        let after = build_artifacts(&[root, changed_dependency], "test").unwrap();
+        let before_root = before.iter().find(|artifact| artifact.module == "root").unwrap();
+        let after_root = after.iter().find(|artifact| artifact.module == "root").unwrap();
         assert_ne!(before_root.cache_key, after_root.cache_key);
     }
 
@@ -1354,6 +1382,18 @@ mod tests {
             build_artifacts(&[invalid], "test"),
             Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
                 if reason == "`@borrows` must name at least one parameter"
+        ));
+    }
+
+    #[test]
+    fn an_invalid_overflow_policy_is_rejected_at_the_artifact_boundary() {
+        let mut invalid = input("root", "root", &[], 0);
+        invalid.callables[0].contract.signature.overflow = "unknown".to_string();
+
+        assert!(matches!(
+            build_artifacts(&[invalid], "test"),
+            Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
+                if reason == "callable overflow policy is invalid"
         ));
     }
 

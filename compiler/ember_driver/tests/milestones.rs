@@ -2771,6 +2771,25 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
 }
 
 #[test]
+fn module_attributes_format_from_the_parsed_tree() {
+    let root = workspace_root();
+    let scratch = std::env::temp_dir().join(ember_branding::source_file("ember-module-attr-fmt"));
+    std::fs::write(&scratch,
+        "#! language \"0.9.9\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
+        .expect("module attribute fixture is writable");
+    let path = scratch.to_string_lossy();
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    assert!(once.stdout.contains("#! module overflow(wrap)"));
+    std::fs::write(&scratch, &once.stdout).expect("formatted fixture is writable");
+    let twice = ember(&["fmt", &path], &root);
+    assert_eq!(twice.exit, 0, "{}", twice.stderr);
+    assert_eq!(once.stdout, twice.stdout);
+    let checked = ember(&["fmt", &path, "--check"], &root);
+    assert_eq!(checked.exit, 0, "{}", checked.stderr);
+}
+
+#[test]
 fn hello_world_builds_and_runs() {
     // Phase 0's exit criterion (Part XX.2).
     let root = workspace_root();
@@ -2901,6 +2920,58 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
         .signature;
     assert_eq!(signature.parameters[0].ty, "i64");
     assert_eq!(signature.result, "i64");
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
+/// `[TYP-8]` / ODR-084 — an imported declaration keeps its module's lexical
+/// policy. Editing only that directive changes the callable interface and
+/// invalidates the importing module even when its own source is unchanged.
+#[test]
+fn imported_module_overflow_policy_invalidates_callers_interface_key() {
+    let workspace = workspace_root();
+    let test_root = std::env::temp_dir().join(format!(
+        "ember-overflow-interface-{}", std::process::id()
+    ));
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create overflow-interface package");
+    let helper_source = |policy: &str| format!(
+        "#! module overflow({policy})\n\npub fn defaulted(value: i8, next: i8 = value + 1i8) -> i8:\n    return next\n\npub fn generic[T](tag: T, value: i8) -> i8:\n    return value + 1i8\n"
+    );
+    std::fs::write(test_root.join(&helper), helper_source("wrap"))
+        .expect("write initial helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import defaulted, generic\n\nfn main():\n    println(defaulted(1i8), generic[int](0, 1i8))\n",
+    )
+    .expect("write importer");
+
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for overflow interfaces");
+        assert!(output.status.success(),
+            "{label} check failed:\n{}", String::from_utf8_lossy(&output.stderr));
+    };
+
+    check("initial");
+    let before_helper = cached_interface(&out_dir, "helper");
+    let before_root = cached_interface(&out_dir, "root");
+    assert!(before_helper.callables.values().all(|contract| contract.signature.overflow == "wrap"));
+
+    std::fs::write(test_root.join(&helper), helper_source("saturate"))
+        .expect("change only module policy");
+    check("after module policy change");
+    let after_helper = cached_interface(&out_dir, "helper");
+    let after_root = cached_interface(&out_dir, "root");
+    assert!(after_helper.callables.values().all(|contract| contract.signature.overflow == "saturate"));
+    assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
+    assert_ne!(before_root.cache_key, after_root.cache_key);
     let _ = std::fs::remove_dir_all(&test_root);
 }
 

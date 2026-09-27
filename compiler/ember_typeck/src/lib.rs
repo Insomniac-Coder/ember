@@ -53,6 +53,7 @@ pub struct CallableDeclaration {
     pub generics: Vec<CallableDeclarationGeneric>,
     pub is_unsafe: bool,
     pub abi: Option<String>,
+    pub overflow: OverflowPolicy,
 }
 
 /// A declaration type that is already resolved by the checker, or the one
@@ -117,11 +118,13 @@ pub fn check(
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.default_overflow = default_overflow;
+    checker.active_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
     checker.lint_return_intersection = lint_return_intersection;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
+    checker.module_overflow = vec![default_overflow; modules.len()];
 
     // `RangeError` before anything else. `[RNG-3]` writes the signature
     // `T.checked(v) -> Result[T, RangeError]`, so a program that declares a
@@ -299,6 +302,8 @@ struct Signature {
     ret: Ty,
     abi: Option<Symbol>,
     is_unsafe: bool,
+    /// Effective policy at the declaration, retained through instantiation.
+    overflow: OverflowPolicy,
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
@@ -594,6 +599,7 @@ struct GenericMethod {
     /// is stored, then are rebased to zero when the owner is instantiated.
     generics: Vec<GenericParam>,
     borrows: Option<Vec<usize>>,
+    overflow: OverflowPolicy,
     /// Module, item and member index of the declaration.
     source: (usize, usize, usize),
     /// `[MOD-2]` (D-328) — as written: `pub fn`, or private to its module.
@@ -1280,9 +1286,12 @@ struct Checker<'a> {
     /// in both its signature and body.
     static_safe_unsafe_cell_reported: bool,
     ret_ty: Ty,
-    /// The profile's `[TYP-8]` policy, used when a function has no
-    /// `@overflow(...)` of its own.
+    /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
+    /// Each source module's lexical default, selected before checking bodies.
+    module_overflow: Vec<OverflowPolicy>,
+    /// The lexical policy while checking a body or an inserted default.
+    active_overflow: OverflowPolicy,
     lint_return_intersection: bool,
     /// `[ATT-6]` — statement attributes already reported, so a generic body
     /// checked once per instance reports each once.
@@ -1436,6 +1445,8 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             default_overflow: OverflowPolicy::default(),
+            module_overflow: Vec::new(),
+            active_overflow: OverflowPolicy::default(),
             lint_return_intersection: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
@@ -2267,6 +2278,7 @@ impl<'a> Checker<'a> {
                             &self.signatures[def.0 as usize].generics,
                             decl.is_unsafe,
                             self.signatures[def.0 as usize].abi.map(|abi| abi.to_string()),
+                            self.signatures[def.0 as usize].overflow,
                         ));
                     }
                     // The owner of `Buffer[T].method` has no runtime `Ty`
@@ -2394,6 +2406,7 @@ impl<'a> Checker<'a> {
                 &generics,
                 source.is_unsafe,
                 source.abi.clone(),
+                method.overflow,
             ));
         }
     }
@@ -2419,6 +2432,7 @@ impl<'a> Checker<'a> {
         generics: &[GenericParam],
         is_unsafe: bool,
         abi: Option<String>,
+        overflow: OverflowPolicy,
     ) -> CallableDeclaration {
         CallableDeclaration {
             span,
@@ -2442,6 +2456,7 @@ impl<'a> Checker<'a> {
                 .collect(),
             is_unsafe,
             abi,
+            overflow,
         }
     }
 
@@ -3225,6 +3240,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    overflow: signature.overflow,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3304,6 +3320,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    overflow: signature.overflow,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3393,6 +3410,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    overflow: signature.overflow,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3478,6 +3496,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    overflow: signature.overflow,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3651,7 +3670,8 @@ impl<'a> Checker<'a> {
         }
         // `[CT-1]` — the value, worked out now: an overflow is an error here,
         // not a panic at every use.
-        match const_eval::fold(self.types, &checked) {
+        let policy = self.module_overflow.get(module).copied().unwrap_or(self.default_overflow);
+        match const_eval::fold(self.types, &checked, policy) {
             Ok(folded) => ExprConst { value: value.clone(), module, ok: true, public: true, folded: Some(folded) },
             Err(const_eval::Failure::Panic(span, message)) => {
                 self.sink.emit(
@@ -3697,7 +3717,10 @@ impl<'a> Checker<'a> {
     fn synth_in_module(&mut self, value: &ast::Expr, module: usize) -> Expr {
         let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let caller = std::mem::replace(&mut self.current_module, module);
+        let policy = self.module_overflow.get(module).copied().unwrap_or(self.default_overflow);
+        let caller_policy = std::mem::replace(&mut self.active_overflow, policy);
         let value = self.synth(value);
+        self.active_overflow = caller_policy;
         self.current_module = caller;
         self.scopes = scopes;
         value
@@ -4412,6 +4435,7 @@ impl<'a> Checker<'a> {
             ret: self.substitute_self(ret, ty),
             abi: None,
             is_unsafe: false,
+            overflow: method.overflow,
             generics,
             borrows: method.borrows.clone(),
         };
@@ -5274,7 +5298,8 @@ impl<'a> Checker<'a> {
                         decl.abi.as_deref().or_else(|| has_attribute(&item.attrs, "export").then_some("C"))
                             .map(Symbol::intern)
                     } else { None };
-                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, generics, borrows });
+                    let overflow = self.overflow_policy(&item.attrs, item.span);
+                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, overflow, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -6335,6 +6360,7 @@ impl<'a> Checker<'a> {
                     &signature.generics,
                     f.is_unsafe,
                     f.abi.clone(),
+                    signature.overflow,
                 ));
             }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
@@ -6527,7 +6553,7 @@ impl<'a> Checker<'a> {
                 .map(|param| self.substitute_generic_param(param, args))
                 .collect();
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, generics, borrows: signature.borrows });
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
         }
@@ -6918,7 +6944,8 @@ impl<'a> Checker<'a> {
             self.lint_rule_3(&params, ret, &borrows, span);
         }
         self.type_params = saved_type_params;
-        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, generics, borrows }))
+        let overflow = self.overflow_policy(attrs, span);
+        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -7051,6 +7078,7 @@ impl<'a> Checker<'a> {
                         &signature.generics,
                         decl.is_unsafe,
                         decl.abi.clone(),
+                        signature.overflow,
                     ));
                 }
             }
@@ -7224,6 +7252,7 @@ impl<'a> Checker<'a> {
                 ret: ty,
                 abi: None,
                 is_unsafe: false,
+                overflow: self.module_overflow.get(self.current_module).copied().unwrap_or(self.default_overflow),
                 generics: Vec::new(),
                 borrows: None,
             };
@@ -10851,6 +10880,8 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            let outer_overflow = std::mem::replace(&mut self.active_overflow,
+                self.signatures[def.0 as usize].overflow);
             if decl.is_safe && !decl.is_foreign_decl {
                 self.error(codes::E0104, decl.name.span, "`safe fn` is only valid inside `unsafe extern` declarations");
             }
@@ -10932,6 +10963,7 @@ impl<'a> Checker<'a> {
                 self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
                 self.type_params.clear();
                 self.current_generics.clear();
+                self.active_overflow = outer_overflow;
                 continue;
             }
 
@@ -10997,7 +11029,7 @@ impl<'a> Checker<'a> {
             if is_main && !decl.is_foreign_decl {
                 main = Some(def);
             }
-            let overflow = self.overflow_policy(&item.attrs, item.span);
+            let overflow = self.signatures[def.0 as usize].overflow;
             let ffi_counted = self.foreign_counted_metadata(decl, &item.attrs, &signature_params, self.ret_ty);
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
@@ -11044,6 +11076,7 @@ impl<'a> Checker<'a> {
                 is_extern_declaration: decl.is_foreign_decl && ffi_counted.is_none(),
                 ffi_counted,
             });
+            self.active_overflow = outer_overflow;
         }
 
         functions.extend(self.check_method_bodies(module));
@@ -11232,7 +11265,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     body: hir::Block { stmts: Vec::new(), span: job.span },
                     span: job.span,
-                    overflow: OverflowPolicy::Panic,
+                    overflow: signature.overflow,
                     borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
@@ -12064,6 +12097,8 @@ impl<'a> Checker<'a> {
         self.latebound_callable_parameter_locals.clear();
         self.callable_value_bindings.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        let outer_overflow = std::mem::replace(&mut self.active_overflow,
+            self.signatures[def.0 as usize].overflow);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
         self.in_static_safe = has_attribute(attrs, "static_safe");
@@ -12109,7 +12144,8 @@ impl<'a> Checker<'a> {
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
         self.in_unsafe = outer_unsafe;
-        let overflow = self.overflow_policy(attrs, span);
+        let overflow = self.signatures[def.0 as usize].overflow;
+        self.active_overflow = outer_overflow;
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         // `[MONO-1]` — the symbol carries the instantiation, so two of them
@@ -12532,7 +12568,7 @@ impl<'a> Checker<'a> {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, generics: own.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, generics: own.clone(), borrows: signature.borrows.clone() });
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
             let saved_generics = std::mem::take(&mut self.current_generics);
@@ -12676,6 +12712,8 @@ impl<'a> Checker<'a> {
         self.callable_parameter_locals.clear();
         self.latebound_callable_parameter_locals.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        let outer_overflow = std::mem::replace(&mut self.active_overflow,
+            self.signatures[def.0 as usize].overflow);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
         self.in_static_safe = has_attribute(attrs, "static_safe");
@@ -12833,7 +12871,8 @@ impl<'a> Checker<'a> {
         self.class_init = outer_class_init;
         self.class_method_receiver = outer_class_method_receiver;
         self.self_ty = outer_self;
-        let overflow = self.overflow_policy(attrs, span);
+        let overflow = self.signatures[def.0 as usize].overflow;
+        self.active_overflow = outer_overflow;
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         let name = decl.name.name;
@@ -13302,46 +13341,39 @@ impl<'a> Checker<'a> {
         state.base_initialized = true;
     }
 
-    /// `[TYP-8]` — `@overflow(panic|wrap|saturate)` overrides the profile.
-    fn overflow_policy(&mut self, attrs: &[ast::Attribute], span: Span) -> OverflowPolicy {
+    /// `[TYP-8]` — a function attribute overrides its declaring module.
+    fn overflow_policy(&mut self, attrs: &[ast::Attribute], _span: Span) -> OverflowPolicy {
+        let fallback = self.module_overflow.get(self.current_module).copied()
+            .unwrap_or(self.default_overflow);
         let Some(attr) = attrs
             .iter()
             .find(|a| a.path.len() == 1 && a.path[0].name.is("overflow"))
         else {
-            return self.default_overflow;
+            return fallback;
         };
-        let named = attr.args.iter().find_map(|arg| match arg {
-            ast::AttrArg::Expr(e) => match &e.kind {
-                ast::ExprKind::Path { segments } if segments.len() == 1 => Some(segments[0].name),
-                _ => None,
-            },
-            ast::AttrArg::Named { .. } => None,
-        });
+        self.parse_overflow_policy(attr, fallback)
+    }
+
+    fn parse_overflow_policy(&mut self, attr: &ast::Attribute, fallback: OverflowPolicy) -> OverflowPolicy {
+        let named = match attr.args.as_slice() {
+            [ast::AttrArg::Expr(ast::Expr {
+                kind: ast::ExprKind::Path { segments }, ..
+            })] if segments.len() == 1 => Some(segments[0].name),
+            _ => None,
+        };
         let Some(name) = named else {
             self.error(codes::E0104, attr.span, "`@overflow` needs `panic`, `wrap` or `saturate`");
-            return self.default_overflow;
+            return fallback;
         };
         match OverflowPolicy::from_name(name.as_str()) {
-            Some(OverflowPolicy::Saturate) => {
-                // The lowering for saturation needs each type's bounds as
-                // constants, which the backend cannot yet render for signed
-                // minimums. Rejected rather than silently treated as `wrap`.
-                self.error(
-                    codes::E0104,
-                    attr.span,
-                    "`@overflow(saturate)` is not supported yet in this phase of the compiler",
-                );
-                self.default_overflow
-            }
             Some(policy) => policy,
             None => {
-                let _ = span;
                 self.error(
                     codes::E0104,
                     attr.span,
                     format!("`{name}` is not an overflow policy; use `panic`, `wrap` or `saturate`"),
                 );
-                self.default_overflow
+                fallback
             }
         }
     }
@@ -19434,7 +19466,17 @@ impl<'a> Checker<'a> {
                 }
             }
         };
-        Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+        // Receiver and explicit arguments are evaluated in the caller's
+        // lexical policy by `stmts`. The method algorithm has its own fixed
+        // contract: plain methods check overflow, and named arithmetic
+        // families use their explicit overflowing primitives.
+        let result_ty = value.ty;
+        let value = Expr {
+            ty: result_ty,
+            span,
+            kind: ExprKind::OverflowScope { policy: OverflowPolicy::Panic, expr: Box::new(value) },
+        };
+        Expr { ty: result_ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
     /// `[STD-20]` — `x ** e` as `(result modulo 2^N, whether any step
@@ -19759,6 +19801,14 @@ impl<'a> Checker<'a> {
                             span,
                         };
                         let value_expr = self.if_value(negative, negated, local(x), ty, span);
+                        let value_expr = Expr {
+                            ty,
+                            span,
+                            kind: ExprKind::OverflowScope {
+                                policy: OverflowPolicy::Panic,
+                                expr: Box::new(value_expr),
+                            },
+                        };
                         Expr {
                             ty,
                             kind: ExprKind::Block {
@@ -21358,6 +21408,7 @@ impl<'a> Checker<'a> {
                 Some((bound, bound))
             }
             ExprKind::Widen { expr, .. } => self.range_of(expr),
+            ExprKind::OverflowScope { expr, .. } => self.range_of(expr),
             ExprKind::Local(local) => self.local_ranges.get(local).copied(),
             ExprKind::Deref(inner) => self.range_of(inner),
             ExprKind::Unary { op, operand } => {
@@ -21426,7 +21477,9 @@ impl<'a> Checker<'a> {
                 if self.types.is_float(expr.ty) { Bound::Float(v as f64) } else { Bound::Int(v) }
             }),
             ExprKind::Float(value) => Some(Bound::Float(*value)),
-            ExprKind::Widen { expr, .. } => self.constant_bound_of(expr),
+            ExprKind::Widen { expr, .. } | ExprKind::OverflowScope { expr, .. } => {
+                self.constant_bound_of(expr)
+            }
             _ => None,
         }
     }
@@ -22234,7 +22287,32 @@ impl<'a> Checker<'a> {
             }
 
             ast::ExprKind::Unary { op, operand } => {
+                let direct_integer_literal = *op == ast::UnOp::Neg
+                    && matches!(&operand.kind, ast::ExprKind::Lit(ast::Literal::Int { .. }));
                 let operand = self.synth(operand);
+                // `[LEX-24]` — a direct negative integer literal is one
+                // literal even when nested inside arithmetic. In particular
+                // `-128i8 + 0i8` must not evaluate the positive magnitude
+                // as an out-of-range `i8` before applying the minus.
+                if direct_integer_literal
+                    && let ExprKind::Int(value) = &operand.kind
+                    && (self.types.is_untyped_literal(operand.ty)
+                        || matches!(self.types.kind(operand.ty), TyKind::Int(_)))
+                {
+                    if !self.types.is_untyped_literal(operand.ty) {
+                        let limit = ember_types::signed_min_magnitude(self.types, operand.ty).unwrap_or(0);
+                        if *value > limit {
+                            let shown = self.types.display(operand.ty);
+                            self.error(codes::E2010, span,
+                                format!("the literal `-{value}` does not fit in `{shown}`"));
+                        }
+                    }
+                    return Expr {
+                        ty: operand.ty,
+                        kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(operand) },
+                        span,
+                    };
+                }
                 if *op == ast::UnOp::Not && operand.ty != self.common.bool_ && operand.ty != self.common.error {
                     let shown = self.types.display(operand.ty);
                     self.error(codes::E2020, span, format!("`not` needs a `bool`, found `{shown}`"));
@@ -24663,6 +24741,7 @@ impl<'a> Checker<'a> {
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
             is_unsafe: self.signatures[def.0 as usize].is_unsafe,
+            overflow: self.signatures[def.0 as usize].overflow,
             generics: Vec::new(),
             borrows,
         });
@@ -24720,6 +24799,7 @@ impl<'a> Checker<'a> {
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
             is_unsafe: self.signatures[def.0 as usize].is_unsafe,
+            overflow: self.signatures[def.0 as usize].overflow,
             generics: Vec::new(),
             borrows,
         });
@@ -24837,6 +24917,22 @@ impl<'a> Checker<'a> {
     /// one whose effect is not built is `E0900`. Statement attributes are the
     /// parser's (`[ATT-2]`).
     fn check_attributes(&mut self, module: &ast::Module) {
+        for directive in &module.directives {
+            let ast::DirectiveValue::ModuleAttribute(attr) = &directive.value else { continue };
+            if attr.path.len() == 1
+                && matches!(attr.path[0].name.as_str(), "deterministic" | "reloadable" | "noreload" | "prelude")
+                && !attr.args.is_empty()
+            {
+                self.error(codes::E0104, attr.span,
+                    format!("`#! module {}` takes no arguments", attr.path[0].name));
+                continue;
+            }
+            self.check_attribute_list(std::slice::from_ref(attr), "module");
+            if attr.path.len() == 1 && attr.path[0].name.is("overflow") {
+                let policy = self.parse_overflow_policy(attr, self.default_overflow);
+                self.module_overflow[self.current_module] = policy;
+            }
+        }
         for item in &module.items {
             self.check_item_attributes(item, false);
         }
@@ -28355,6 +28451,7 @@ impl<'a> Checker<'a> {
             ret,
             abi: None,
             is_unsafe: false,
+            overflow: self.active_overflow,
             borrows: None,
             generics: Vec::new(),
         });
@@ -28373,7 +28470,7 @@ impl<'a> Checker<'a> {
             ret,
             body,
             span,
-            overflow: self.default_overflow,
+            overflow: self.active_overflow,
             borrows: None,
             sources,
             is_lambda: true,
@@ -28583,6 +28680,7 @@ impl<'a> Checker<'a> {
             | ExprKind::Cast { expr: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
+            | ExprKind::OverflowScope { expr: base, .. }
             | ExprKind::EraseRange(base) => {
                 self.collect_mutated_capture_fields_expr(base, environment, fields);
             }
@@ -28769,6 +28867,7 @@ impl<'a> Checker<'a> {
             | ExprKind::Cast { expr: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
+            | ExprKind::OverflowScope { expr: base, .. }
             | ExprKind::EraseRange(base) => self.closure_expr_moves_capture(base, environment, false),
             ExprKind::Index { base, index } => {
                 self.closure_expr_moves_capture(base, environment, false)
@@ -28820,6 +28919,7 @@ impl<'a> Checker<'a> {
             | ExprKind::Cast { expr: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
+            | ExprKind::OverflowScope { expr: base, .. }
             | ExprKind::EraseRange(base) => Self::closure_capture_field_index(base, environment),
             ExprKind::Index { base, .. } => Self::closure_capture_field_index(base, environment),
             _ => None,
@@ -32830,6 +32930,8 @@ impl<'a> Checker<'a> {
             let mark = self.sink.mark();
             let scopes = std::mem::replace(&mut self.scopes, vec![scope]);
             let caller_module = std::mem::replace(&mut self.current_module, module);
+            let policy = self.signatures[source.0 as usize].overflow;
+            let caller_policy = std::mem::replace(&mut self.active_overflow, policy);
             let caller_types = type_bindings.as_ref().map(|types|
                 std::mem::replace(&mut self.type_params, types.clone()));
             let caller_owner = owner.map(|owner| self.self_ty.replace(owner));
@@ -32838,10 +32940,17 @@ impl<'a> Checker<'a> {
             if let Some(previous) = caller_owner { self.self_ty = previous; }
             if let Some(previous) = caller_types { self.type_params = previous; }
             self.current_module = caller_module;
+            self.active_overflow = caller_policy;
             self.scopes = scopes;
             let value = if self.sink.rollback(mark) {
                 Expr { ty, kind: ExprKind::Error, span }
-            } else { value };
+            } else {
+                Expr {
+                    ty: value.ty,
+                    span: value.span,
+                    kind: ExprKind::OverflowScope { policy, expr: Box::new(value) },
+                }
+            };
             checked.push(value);
             order.push(Some(index));
         }
@@ -33327,6 +33436,8 @@ impl<'a> Checker<'a> {
         if module != usize::MAX {
             self.current_module = module;
         }
+        let policy = self.module_overflow.get(self.current_module).copied().unwrap_or(self.default_overflow);
+        let caller_policy = std::mem::replace(&mut self.active_overflow, policy);
         let bindings: HashMap<Symbol, Ty> = owner
             .and_then(|id| self.types.struct_def(id).origin.clone())
             .and_then(|(name, args)| self.generic_structs.get(&name).map(|decl| decl.params.iter().copied().zip(args).collect()))
@@ -33336,9 +33447,14 @@ impl<'a> Checker<'a> {
         if let Some(outer) = outer {
             self.type_params = outer;
         }
+        self.active_overflow = caller_policy;
         self.current_module = caller;
         self.scopes = scopes;
-        value
+        Expr {
+            ty: value.ty,
+            span: value.span,
+            kind: ExprKind::OverflowScope { policy, expr: Box::new(value) },
+        }
     }
 
     /// `[EXP-9]` — whether an `Option` is `None` (or, `present`, is not): a
@@ -33818,6 +33934,7 @@ impl<'a> Checker<'a> {
                     })
             }
             ExprKind::Block { block, value } => self.block_diverges(block) || self.expr_diverges(value),
+            ExprKind::OverflowScope { expr, .. } => self.expr_diverges(expr),
             _ => false,
         }
     }
@@ -34593,7 +34710,21 @@ fn is_literal_expr(expr: &ast::Expr) -> bool {
     match &expr.kind {
         ast::ExprKind::Lit(_) => true,
         ast::ExprKind::Paren(inner) => is_literal_expr(inner),
-        ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => matches!(operand.kind, ast::ExprKind::Lit(_)),
+        ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => match &operand.kind {
+            // A suffixed unsigned operand is an ordinary negation operator,
+            // whose result follows `[TYP-8]`; it is not `[LEX-24]`'s
+            // context-typed negative literal.
+            ast::ExprKind::Lit(ast::Literal::Int { suffix: Some(suffix), .. })
+                if matches!(suffix,
+                    ast::ember_lexer_types::IntSuffix::U8
+                    | ast::ember_lexer_types::IntSuffix::U16
+                    | ast::ember_lexer_types::IntSuffix::U32
+                    | ast::ember_lexer_types::IntSuffix::U64
+                    | ast::ember_lexer_types::IntSuffix::U128
+                    | ast::ember_lexer_types::IntSuffix::Usize) => false,
+            ast::ExprKind::Lit(_) => true,
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -35312,8 +35443,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["repr"], &["struct", "enum"], true),
     (&["gpu_layout"], &["struct"], false),
     (&["static_safe"], &["fn"], true),
-    (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "deterministic", "realtime"], &["fn"], false),
-    (&["overflow"], &["fn"], true),
+    (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime"], &["fn"], false),
+    (&["deterministic"], &["fn", "module"], false),
+    (&["overflow"], &["fn", "module"], true),
     (&["fastmath", "fp", "inline", "noinline", "cold", "hot"], &["fn"], false),
     (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
     (&["deprecated", "allow"], &["item"], false),
@@ -35332,7 +35464,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["component"], &["struct"], false),
     (&["soa"], &["field"], false),
     (&["always_specialize", "never_specialize"], &["fn", "struct", "enum", "class", "type"], false),
-    (&["reloadable", "noreload", "renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
+    (&["reloadable", "noreload"], &["item", "module"], false),
+    (&["renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
     (&["prelude"], &["module"], false),
 ];
 
@@ -35469,7 +35602,10 @@ fn export_thread_policy(attrs: &[ast::Attribute], directives: &[ast::Directive])
         }
     }
     match directives.iter().find(|directive| directive.name.name.is("threads"))
-        .map(|directive| directive.value.as_str()) {
+        .and_then(|directive| match &directive.value {
+            ast::DirectiveValue::Text(value) => Some(value.as_str()),
+            ast::DirectiveValue::ModuleAttribute(_) => None,
+        }) {
         Some("main") => hir::ExportThreadPolicy::Main,
         Some("creator") => hir::ExportThreadPolicy::Creator,
         _ => hir::ExportThreadPolicy::Any,

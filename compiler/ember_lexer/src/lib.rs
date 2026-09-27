@@ -191,7 +191,8 @@ impl<'a> Lexer<'a> {
 
         let mut parts = body.splitn(2, char::is_whitespace);
         let name = parts.next().unwrap_or("").trim();
-        let value = parts.next().unwrap_or("").trim().trim_matches('"').to_string();
+        let value = parts.next().unwrap_or("").trim();
+        let value = if name == "language" { value.trim_matches('"') } else { value }.to_string();
         if name.is_empty() {
             let span = self.span(start);
             let d = Diagnostic::error(codes::E0006, span, "empty directive");

@@ -444,6 +444,7 @@ mod tests {
             symbol: "facts".to_string(),
             is_unsafe: false,
             abi: None,
+            overflow: ember_types::OverflowPolicy::Panic,
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

@@ -6,7 +6,7 @@
 //! backend against HIR would mean writing it twice.
 
 use ember_span::{Span, Symbol};
-use ember_types::{EnumId, StructId, Ty};
+use ember_types::{EnumId, OverflowPolicy, StructId, Ty};
 
 pub mod lower;
 pub mod verify;
@@ -71,6 +71,8 @@ pub struct Body {
     /// The declared external ABI, if any; `None` denotes Ember's ordinary
     /// callable ABI.
     pub abi: Option<String>,
+    /// Effective lexical arithmetic policy of this callable's declaration.
+    pub overflow: OverflowPolicy,
     /// `[FFI-33]` — resolved calling-thread contract of a C export.
     pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,

@@ -11,7 +11,8 @@
 use ember_hir as hir;
 use ember_span::SourceMap;
 use ember_types::{
-    CommonTypes, EnumId, OverflowPolicy, Ty, TyKind, TypeTable, bit_width, is_signed,
+    CommonTypes, EnumId, OverflowPolicy, Ty, TyKind, TypeTable, bit_width, int_max, is_signed,
+    signed_min_magnitude,
 };
 
 use crate::{
@@ -368,6 +369,7 @@ impl<'a> Builder<'a> {
             symbol: self.function.symbol.clone(),
             is_unsafe: self.function.is_unsafe,
             abi: self.function.abi.clone(),
+            overflow: self.function.overflow,
             export_thread_policy: self.function.export_thread_policy,
             locals: self.locals,
             blocks: self.blocks,
@@ -495,6 +497,12 @@ impl<'a> Builder<'a> {
         expr: &'a hir::Expr,
         receiver: bool,
     ) -> (Operand, Option<Place>) {
+        if let hir::ExprKind::OverflowScope { policy, expr: inner } = &expr.kind {
+            let outer = std::mem::replace(&mut self.overflow, *policy);
+            let result = self.lower_mut_argument_with_access(inner, receiver);
+            self.overflow = outer;
+            return result;
+        }
         // An inherited `mut self` method receives a compiler-internal
         // borrow-preserving class upcast around the ordinary `ref mut` of its
         // receiver: lowered as that `ref mut`, so the receiver gets the same
@@ -1752,6 +1760,11 @@ impl<'a> Builder<'a> {
     fn lower_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
+            hir::ExprKind::OverflowScope { policy, expr: inner } => {
+                let outer = std::mem::replace(&mut self.overflow, *policy);
+                self.lower_into(place, inner);
+                self.overflow = outer;
+            }
             hir::ExprKind::DynBoxNew {
                 concrete,
                 interfaces,
@@ -1838,7 +1851,11 @@ impl<'a> Builder<'a> {
                         // retain its two-phase reservation through this
                         // forwarding slot. A user reference is an ordinary
                         // active loan and receives no such metadata.
-                        if matches!(&a.kind, hir::ExprKind::Ref { mutable: true, .. })
+                        let mut source_expr = a;
+                        while let hir::ExprKind::OverflowScope { expr, .. } = &source_expr.kind {
+                            source_expr = expr;
+                        }
+                        if matches!(&source_expr.kind, hir::ExprKind::Ref { mutable: true, .. })
                             && let Operand::Copy(source) = &operand
                             && source.projection.is_empty()
                         {
@@ -2631,6 +2648,15 @@ impl<'a> Builder<'a> {
             // [TYP-8], [TYP-10] -- arithmetic that can trap lowers to the
             // operation plus an Assert, so the check is visible to the effect
             // analysis and the borrow checker rather than hidden in the backend.
+            hir::ExprKind::Binary { op, lhs, rhs }
+                if self.overflow == OverflowPolicy::Saturate
+                    && self.types.is_integral(expr.ty)
+                    && !self.types.is_untyped_literal(expr.ty)
+                    && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul
+                        | BinOp::FloorDiv | BinOp::FloorRem) =>
+            {
+                self.lower_saturating_binary(place, *op, lhs, rhs, expr.ty, expr.span);
+            }
             hir::ExprKind::Binary { op, lhs, rhs } if self.needs_check(*op, expr.ty) => {
                 self.lower_checked_binary(place, *op, lhs, rhs, expr.ty, expr.span);
             }
@@ -3118,17 +3144,17 @@ impl<'a> Builder<'a> {
 
     /// Whether this operator on this type needs a runtime check.
     ///
-    /// Division and remainder are always checked: `[TYP-8]` says `/` and `%`
-    /// by zero always panic, and `i32.MIN / -1` always panics, with no
-    /// dependence on the profile. Overflow of `+ - *` and shift amounts follow
-    /// the policy.
+    /// Division and remainder check zero and their fixed integer hazards.
+    /// `[TYP-10]` checks every operator shift amount, independent of lexical
+    /// arithmetic policy; only `wrapping_shl/shr` mask their amounts.
     fn needs_check(&self, op: BinOp, ty: Ty) -> bool {
         if !self.types.is_integral(ty) || self.types.is_untyped_literal(ty) {
             return false;
         }
         match op {
             BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem => true,
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Shl | BinOp::Shr => {
+            BinOp::Shl | BinOp::Shr => true,
+            BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 self.overflow == OverflowPolicy::Panic
             }
             _ => false,
@@ -5004,6 +5030,132 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// `[TYP-8]` — clamp an overflowing integer operator to its exact
+    /// mathematical sign. Evaluate operands and capture the clamp direction
+    /// before the checked helper writes `place`: a compound assignment may
+    /// use that same place as either operand.
+    fn lower_saturating_binary(
+        &mut self,
+        place: Place,
+        op: BinOp,
+        lhs: &'a hir::Expr,
+        rhs: &'a hir::Expr,
+        ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let lhs_op = self.lower_operand(lhs);
+        let rhs_op = self.lower_operand(rhs);
+        let signed = is_signed(self.types, ty) == Some(true);
+        let zero = Operand::Const(Const::Int { value: 0, ty });
+        let max = int_max(self.types, ty).expect("an integral saturation bound");
+
+        if matches!(op, BinOp::FloorDiv | BinOp::FloorRem) && !self.nonzero_divisor(rhs) {
+            let is_zero = self.temp(self.bool_ty, span);
+            self.push(StmtKind::Assign {
+                place: Place::local(is_zero),
+                rvalue: Rvalue::BinaryOp { op: BinOp::Eq, lhs: rhs_op.clone(), rhs: zero.clone() },
+            });
+            let after_zero = self.new_block();
+            self.terminate(Terminator::Assert {
+                cond: Operand::Copy(Place::local(is_zero)),
+                expected: false,
+                msg: AssertKind::DivisionByZero,
+                next: after_zero,
+                span,
+            });
+            self.current = after_zero;
+        }
+
+        if matches!(op, BinOp::FloorDiv | BinOp::FloorRem) && !signed {
+            // An unsigned nonzero division or remainder has no overflow.
+            self.push(StmtKind::Assign {
+                place,
+                rvalue: Rvalue::BinaryOp { op, lhs: lhs_op, rhs: rhs_op },
+            });
+            return;
+        }
+
+        let choose_min = if signed && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+            let rhs_negative = self.temp(self.bool_ty, span);
+            self.push(StmtKind::Assign {
+                place: Place::local(rhs_negative),
+                rvalue: Rvalue::BinaryOp { op: BinOp::Lt, lhs: rhs_op.clone(), rhs: zero.clone() },
+            });
+            if op == BinOp::Mul {
+                let lhs_negative = self.temp(self.bool_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(lhs_negative),
+                    rvalue: Rvalue::BinaryOp { op: BinOp::Lt, lhs: lhs_op.clone(), rhs: zero.clone() },
+                });
+                let differs = self.temp(self.bool_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(differs),
+                    rvalue: Rvalue::BinaryOp {
+                        op: BinOp::Ne,
+                        lhs: Operand::Copy(Place::local(lhs_negative)),
+                        rhs: Operand::Copy(Place::local(rhs_negative)),
+                    },
+                });
+                Some((differs, true))
+            } else {
+                // `a + negative` underflows; `a - positive` underflows.
+                Some((rhs_negative, op == BinOp::Add))
+            }
+        } else {
+            None
+        };
+
+        let overflow = self.temp(self.bool_ty, span);
+        self.push(StmtKind::CheckedBinaryOp {
+            dest: place.clone(),
+            overflow: Place::local(overflow),
+            op,
+            lhs: lhs_op,
+            rhs: rhs_op,
+        });
+        if op == BinOp::FloorRem {
+            // `MIN % -1` is exactly zero; the checked floor-rem helper gives
+            // that result without C's undefined signed remainder.
+            return;
+        }
+
+        let join = self.new_block();
+        let clamp = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(overflow)),
+            targets: vec![(0, join)],
+            otherwise: clamp,
+        });
+        self.current = clamp;
+
+        if let Some((direction, true_means_min)) = choose_min {
+            let min_block = self.new_block();
+            let max_block = self.new_block();
+            self.terminate(Terminator::SwitchInt {
+                discr: Operand::Copy(Place::local(direction)),
+                targets: vec![(0, if true_means_min { max_block } else { min_block })],
+                otherwise: if true_means_min { min_block } else { max_block },
+            });
+            self.current = min_block;
+            self.push(StmtKind::Assign {
+                place: place.clone(),
+                rvalue: Rvalue::Use(Operand::Const(Const::Int {
+                    value: signed_min_magnitude(self.types, ty).expect("a signed saturation bound"), ty,
+                })),
+            });
+            self.terminate(Terminator::Goto(join));
+            self.current = max_block;
+        }
+
+        let bound = if op == BinOp::Sub && !signed { 0 } else { max };
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: bound, ty })),
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
     fn lower_checked_binary(
         &mut self,
         place: Place,
@@ -5053,6 +5205,13 @@ impl<'a> Builder<'a> {
                         lhs: lhs_op,
                         rhs: rhs_op,
                     });
+                    if op == BinOp::Rem {
+                        // C's `MIN % -1` cannot be evaluated directly. The
+                        // checked helper safely writes its mathematical zero
+                        // and flags that C hazard; `rem_trunc` itself does
+                        // not overflow, so that flag is not an assertion.
+                        return;
+                    }
                     let after = self.new_block();
                     self.terminate(Terminator::Assert {
                         cond: Operand::Copy(Place::local(overflow)),
@@ -5078,8 +5237,7 @@ impl<'a> Builder<'a> {
 
             BinOp::Shl | BinOp::Shr => {
                 // [TYP-10] -- an amount that is negative (D-309) or at or past
-                // the width panics under `panic`; `lower_rvalue` masks it
-                // under `wrap`. The amount is tested in its own type, which
+                // the width panics under every arithmetic policy. The amount is tested in its own type, which
                 // may be any integer type (D-308); one too narrow to reach the
                 // width cannot pass it.
                 let width = bit_width(self.types, ty).unwrap_or(64);
@@ -5142,30 +5300,6 @@ impl<'a> Builder<'a> {
     fn lower_rvalue(&mut self, expr: &'a hir::Expr) -> Rvalue {
         self.at(expr.span);
         match &expr.kind {
-            hir::ExprKind::Binary { op: shift @ (BinOp::Shl | BinOp::Shr), lhs, rhs }
-                if self.overflow == OverflowPolicy::Wrap
-                    && self.types.is_integral(expr.ty)
-                    && !self.types.is_untyped_literal(expr.ty) =>
-            {
-                // [TYP-10] -- under `wrap` the shift amount is masked, which
-                // also removes C's undefined behaviour for an over-wide shift.
-                let width = bit_width(self.types, expr.ty).unwrap_or(64);
-                // The amount keeps its own type (D-308); every integer type
-                // holds `width - 1`, which is at most 127.
-                let amount_ty = rhs.ty;
-                let lhs = self.lower_operand(lhs);
-                let amount = self.lower_operand(rhs);
-                let masked = self.temp(amount_ty, expr.span);
-                self.push(StmtKind::Assign {
-                    place: Place::local(masked),
-                    rvalue: Rvalue::BinaryOp {
-                        op: BinOp::BitAnd,
-                        lhs: amount,
-                        rhs: Operand::Const(Const::Int { value: (width - 1) as u128, ty: amount_ty }),
-                    },
-                });
-                Rvalue::BinaryOp { op: *shift, lhs, rhs: Operand::Copy(Place::local(masked)) }
-            }
             hir::ExprKind::Binary { op, lhs, rhs } => {
                 let lhs = self.lower_operand(lhs);
                 let rhs = self.lower_operand(rhs);
@@ -5930,6 +6064,12 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_operand_borrowed(&mut self, expr: &'a hir::Expr) -> Operand {
+        if let hir::ExprKind::OverflowScope { policy, expr: inner } = &expr.kind {
+            let outer = std::mem::replace(&mut self.overflow, *policy);
+            let operand = self.lower_operand_borrowed(inner);
+            self.overflow = outer;
+            return operand;
+        }
         // ODR-065 — a handle lent to a callee from a class object's memory
         // is retained for the call: the callee may overwrite that field
         // through another handle while it uses the object.

@@ -4,8 +4,9 @@
 //! as the target does it: an `f32` sum is rounded to `f32`, an `f16` one to
 //! `f16` once (from `double`, as the runtime does), float `//` and `%` are the
 //! runtime's floor forms, and an integer is exact in its own width. An
-//! overflow, a division by zero or a shift amount out of range is a
-//! `Failure::Panic` here, which the checker reports as `E6004` (`[CT-7]`),
+//! arithmetic overflow follows the declaration's lexical policy; a panic
+//! from that policy, division by zero, or an invalid shift amount becomes a
+//! `Failure::Panic` reported as `E6004` (`[CT-7]`),
 //! rather than a panic at every use. Each use is the value's literals
 //! (`Folded::to_expr`); a negative integer is `-magnitude`, the form `i64.MIN`
 //! has. What this phase cannot evaluate (a call, `**`) is
@@ -13,7 +14,7 @@
 
 use ember_hir::{BinOp, Expr, ExprKind, UnOp};
 use ember_span::Span;
-use ember_types::{EnumId, FloatTy, StructId, Ty, TyKind, TypeTable};
+use ember_types::{EnumId, FloatTy, OverflowPolicy, StructId, Ty, TyKind, TypeTable};
 
 /// A constant's value.
 #[derive(Clone)]
@@ -78,7 +79,7 @@ enum Num {
 }
 
 /// `expr`, a checked constant initialiser, as a value.
-pub(crate) fn fold(types: &TypeTable, expr: &Expr) -> Result<Folded, Failure> {
+pub(crate) fn fold(types: &TypeTable, expr: &Expr, policy: OverflowPolicy) -> Result<Folded, Failure> {
     let span = expr.span;
     let ty = expr.ty;
     let at = |kind| Folded { ty, kind };
@@ -88,12 +89,12 @@ pub(crate) fn fold(types: &TypeTable, expr: &Expr) -> Result<Folded, Failure> {
             fitting(types, value, ty, span, "-")?
         }
         ExprKind::Str(s) => at(FoldedKind::Str(s.clone())),
-        ExprKind::TupleLit(items) => at(FoldedKind::Tuple(fold_all(types, items)?)),
-        ExprKind::ArrayLit(items) => at(FoldedKind::Array(fold_all(types, items)?)),
-        ExprKind::ArrayRepeat { value, count } => at(FoldedKind::Repeat(Box::new(fold(types, value)?), *count)),
-        ExprKind::StructLit { struct_id, fields } => at(FoldedKind::Struct(*struct_id, fold_all(types, fields)?)),
-        ExprKind::EnumLit { enum_id, variant, fields } => at(FoldedKind::Enum(*enum_id, *variant, fold_all(types, fields)?)),
-        ExprKind::Field { base, index } => match fold(types, base)?.kind {
+        ExprKind::TupleLit(items) => at(FoldedKind::Tuple(fold_all(types, items, policy)?)),
+        ExprKind::ArrayLit(items) => at(FoldedKind::Array(fold_all(types, items, policy)?)),
+        ExprKind::ArrayRepeat { value, count } => at(FoldedKind::Repeat(Box::new(fold(types, value, policy)?), *count)),
+        ExprKind::StructLit { struct_id, fields } => at(FoldedKind::Struct(*struct_id, fold_all(types, fields, policy)?)),
+        ExprKind::EnumLit { enum_id, variant, fields } => at(FoldedKind::Enum(*enum_id, *variant, fold_all(types, fields, policy)?)),
+        ExprKind::Field { base, index } => match fold(types, base, policy)?.kind {
             FoldedKind::Struct(_, fields) | FoldedKind::Tuple(fields) => {
                 fields.into_iter().nth(*index).ok_or(Failure::Unsupported(span))?
             }
@@ -101,8 +102,9 @@ pub(crate) fn fold(types: &TypeTable, expr: &Expr) -> Result<Folded, Failure> {
         },
         // A lossless widening, or a range type read as its representation:
         // the same value in `ty`.
+        ExprKind::OverflowScope { policy, expr: inner } => fold(types, inner, *policy)?,
         ExprKind::Widen { expr: inner, .. } | ExprKind::EraseRange(inner) => {
-            let value = scalar(&fold(types, inner)?).ok_or(Failure::Unsupported(span))?;
+            let value = scalar(&fold(types, inner, policy)?).ok_or(Failure::Unsupported(span))?;
             let value = match (value, types.kind(ty)) {
                 (Num::Signed(v), TyKind::Float(_)) => Num::Float(v as f64),
                 (Num::Unsigned(v), TyKind::Float(_)) => Num::Float(v as f64),
@@ -118,21 +120,21 @@ pub(crate) fn fold(types: &TypeTable, expr: &Expr) -> Result<Folded, Failure> {
             if let Some(value) = leaf(types, expr) {
                 return fitting(types, value, ty, span, "-");
             }
-            let value = scalar(&fold(types, operand)?).ok_or(Failure::Unsupported(span))?;
-            unary(types, *op, value, ty, span)?
+            let value = scalar(&fold(types, operand, policy)?).ok_or(Failure::Unsupported(span))?;
+            unary(types, *op, value, ty, span, policy)?
         }
         ExprKind::Binary { op, lhs, rhs } => {
-            let (left, right) = (fold(types, lhs)?, fold(types, rhs)?);
+            let (left, right) = (fold(types, lhs, policy)?, fold(types, rhs, policy)?);
             let a = scalar(&left).ok_or(Failure::Unsupported(span))?;
             let b = scalar(&right).ok_or(Failure::Unsupported(span))?;
-            binary(types, *op, a, b, left.ty, ty, span)?
+            binary(types, *op, a, b, left.ty, ty, span, policy)?
         }
         _ => return Err(Failure::Unsupported(span)),
     })
 }
 
-fn fold_all(types: &TypeTable, items: &[Expr]) -> Result<Vec<Folded>, Failure> {
-    items.iter().map(|item| fold(types, item)).collect()
+fn fold_all(types: &TypeTable, items: &[Expr], policy: OverflowPolicy) -> Result<Vec<Folded>, Failure> {
+    items.iter().map(|item| fold(types, item, policy)).collect()
 }
 
 /// A literal's value: `Int`, `-magnitude` of a signed type, `Float`, `Bool`.
@@ -185,6 +187,69 @@ fn fitting(types: &TypeTable, value: Num, ty: Ty, span: Span, op: &str) -> Resul
     Ok(literal(types, value, ty))
 }
 
+/// Apply the declaration's arithmetic policy after computing an integer
+/// result. Literal conversion still uses `fitting`: a policy does not make an
+/// out-of-range source literal legal.
+fn arithmetic_result(
+    types: &TypeTable,
+    value: Num,
+    ty: Ty,
+    span: Span,
+    op: &str,
+    policy: OverflowPolicy,
+) -> Result<Folded, Failure> {
+    match (policy, value) {
+        (OverflowPolicy::Panic, value) => fitting(types, value, ty, span, op),
+        (OverflowPolicy::Wrap, Num::Signed(value)) => {
+            let width = ember_types::bit_width(types, ty).ok_or(Failure::Unsupported(span))?;
+            let shift = 128 - width as u32;
+            Ok(literal(types, Num::Signed(((value as u128) << shift) as i128 >> shift), ty))
+        }
+        (OverflowPolicy::Wrap, Num::Unsigned(value)) => {
+            Ok(literal(types, Num::Unsigned(value & mask(types, ty)), ty))
+        }
+        (OverflowPolicy::Saturate, Num::Signed(value)) => {
+            let max = ember_types::int_max(types, ty).ok_or(Failure::Unsupported(span))? as i128;
+            let min = (ember_types::signed_min_magnitude(types, ty)
+                .ok_or(Failure::Unsupported(span))? as i128).wrapping_neg();
+            Ok(literal(types, Num::Signed(value.clamp(min, max)), ty))
+        }
+        (OverflowPolicy::Saturate, Num::Unsigned(value)) => {
+            Ok(literal(types, Num::Unsigned(value.min(mask(types, ty))), ty))
+        }
+        (_, value) => fitting(types, value, ty, span, op),
+    }
+}
+
+fn arithmetic_overflow(
+    types: &TypeTable,
+    ty: Ty,
+    span: Span,
+    op: &str,
+    policy: OverflowPolicy,
+    wrapped: Num,
+    negative: bool,
+) -> Result<Folded, Failure> {
+    match policy {
+        OverflowPolicy::Panic => Err(Failure::Panic(span, format!("integer overflow in `{op}`"))),
+        OverflowPolicy::Wrap => arithmetic_result(types, wrapped, ty, span, op, policy),
+        OverflowPolicy::Saturate => match wrapped {
+            Num::Signed(_) => {
+                let bound = if negative {
+                    (ember_types::signed_min_magnitude(types, ty)
+                        .ok_or(Failure::Unsupported(span))? as i128).wrapping_neg()
+                } else {
+                    ember_types::int_max(types, ty).ok_or(Failure::Unsupported(span))? as i128
+                };
+                Ok(literal(types, Num::Signed(bound), ty))
+            }
+            Num::Unsigned(_) => Ok(literal(types,
+                Num::Unsigned(if negative { 0 } else { mask(types, ty) }), ty)),
+            _ => Err(Failure::Unsupported(span)),
+        },
+    }
+}
+
 /// A float rounded to `ty`, as the target keeps it.
 fn round(types: &TypeTable, ty: Ty, v: f64) -> f64 {
     match types.kind(ty) {
@@ -194,13 +259,24 @@ fn round(types: &TypeTable, ty: Ty, v: f64) -> f64 {
     }
 }
 
-fn unary(types: &TypeTable, op: UnOp, value: Num, ty: Ty, span: Span) -> Result<Folded, Failure> {
+fn unary(types: &TypeTable, op: UnOp, value: Num, ty: Ty, span: Span, policy: OverflowPolicy) -> Result<Folded, Failure> {
     let overflow = || Failure::Panic(span, "integer overflow in `-`".to_string());
     let result = match (op, value) {
-        (UnOp::Neg, Num::Signed(v)) => Num::Signed(v.checked_neg().ok_or_else(overflow)?),
+        (UnOp::Neg, Num::Signed(v)) => {
+            return match v.checked_neg() {
+                Some(value) => arithmetic_result(types, Num::Signed(value), ty, span, "-", policy),
+                None => arithmetic_overflow(types, ty, span, "-", policy,
+                    Num::Signed(v.wrapping_neg()), false),
+            };
+        }
         // D-314 — only 0 has an unsigned negation.
         (UnOp::Neg, Num::Unsigned(0)) => Num::Unsigned(0),
-        (UnOp::Neg, Num::Unsigned(_)) => return Err(overflow()),
+        (UnOp::Neg, Num::Unsigned(v)) => return match policy {
+            OverflowPolicy::Panic => Err(overflow()),
+            OverflowPolicy::Wrap => arithmetic_result(types,
+                Num::Unsigned(v.wrapping_neg()), ty, span, "-", policy),
+            OverflowPolicy::Saturate => Ok(literal(types, Num::Unsigned(0), ty)),
+        },
         (UnOp::Neg, Num::Float(v)) => Num::Float(-v),
         (UnOp::Not, Num::Bool(b)) => Num::Bool(!b),
         (UnOp::BitNot, Num::Signed(v)) => Num::Signed(!v),
@@ -215,10 +291,8 @@ fn mask(types: &TypeTable, ty: Ty) -> u128 {
     ember_types::int_max(types, ty).unwrap_or(u128::MAX)
 }
 
-fn binary(types: &TypeTable, op: BinOp, a: Num, b: Num, operand_ty: Ty, ty: Ty, span: Span) -> Result<Folded, Failure> {
+fn binary(types: &TypeTable, op: BinOp, a: Num, b: Num, operand_ty: Ty, ty: Ty, span: Span, policy: OverflowPolicy) -> Result<Folded, Failure> {
     let spelling = op.spelling();
-    let overflow = || Failure::Panic(span, format!("integer overflow in `{spelling}`"));
-    let by_zero = || Failure::Panic(span, "division by zero".to_string());
     let compare = |ordering: Option<std::cmp::Ordering>| -> Result<Folded, Failure> {
         use std::cmp::Ordering::{Equal, Greater, Less};
         let holds = match (op, ordering) {
@@ -241,6 +315,17 @@ fn binary(types: &TypeTable, op: BinOp, a: Num, b: Num, operand_ty: Ty, ty: Ty, 
             (Num::Bool(x), Num::Bool(y)) => compare(Some(x.cmp(&y))),
             _ => Err(Failure::Unsupported(span)),
         };
+    }
+    if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::FloorRem) {
+        match (a, b) {
+            (Num::Signed(x), Num::Signed(y)) => {
+                return signed_arithmetic(types, op, x, y, ty, span, policy);
+            }
+            (Num::Unsigned(x), Num::Unsigned(y)) => {
+                return unsigned_arithmetic(types, op, x, y, ty, span, policy);
+            }
+            _ => {}
+        }
     }
     let result = match (a, b) {
         (Num::Bool(x), Num::Bool(y)) => Num::Bool(match op {
@@ -279,36 +364,12 @@ fn binary(types: &TypeTable, op: BinOp, a: Num, b: Num, operand_ty: Ty, ty: Ty, 
             }
         }
         (Num::Signed(x), Num::Signed(y)) => Num::Signed(match op {
-            BinOp::Add => x.checked_add(y).ok_or_else(overflow)?,
-            BinOp::Sub => x.checked_sub(y).ok_or_else(overflow)?,
-            BinOp::Mul => x.checked_mul(y).ok_or_else(overflow)?,
-            BinOp::FloorDiv => {
-                if y == 0 {
-                    return Err(by_zero());
-                }
-                let q = x.checked_div(y).ok_or_else(overflow)?;
-                if x % y != 0 && ((x < 0) != (y < 0)) { q - 1 } else { q }
-            }
-            BinOp::FloorRem => {
-                if y == 0 {
-                    return Err(by_zero());
-                }
-                // `MIN % -1` is 0, which Rust's `%` cannot say.
-                let r = if y == -1 { 0 } else { x % y };
-                if r != 0 && ((r < 0) != (y < 0)) { r + y } else { r }
-            }
             BinOp::BitAnd => x & y,
             BinOp::BitOr => x | y,
             BinOp::BitXor => x ^ y,
             _ => return Err(Failure::Unsupported(span)),
         }),
         (Num::Unsigned(x), Num::Unsigned(y)) => Num::Unsigned(match op {
-            BinOp::Add => x.checked_add(y).ok_or_else(overflow)?,
-            BinOp::Sub => x.checked_sub(y).ok_or_else(overflow)?,
-            BinOp::Mul => x.checked_mul(y).ok_or_else(overflow)?,
-            BinOp::FloorDiv | BinOp::FloorRem if y == 0 => return Err(by_zero()),
-            BinOp::FloorDiv => x / y,
-            BinOp::FloorRem => x % y,
             BinOp::BitAnd => x & y,
             BinOp::BitOr => x | y,
             BinOp::BitXor => x ^ y,
@@ -334,6 +395,70 @@ fn binary(types: &TypeTable, op: BinOp, a: Num, b: Num, operand_ty: Ty, ty: Ty, 
         _ => return Err(Failure::Unsupported(span)),
     };
     fitting(types, result, ty, span, spelling)
+}
+
+fn signed_arithmetic(
+    types: &TypeTable, op: BinOp, x: i128, y: i128, ty: Ty, span: Span,
+    policy: OverflowPolicy,
+) -> Result<Folded, Failure> {
+    let spelling = op.spelling();
+    let by_zero = || Failure::Panic(span, "division by zero".to_string());
+    let checked = match op {
+        BinOp::Add => x.checked_add(y),
+        BinOp::Sub => x.checked_sub(y),
+        BinOp::Mul => x.checked_mul(y),
+        BinOp::FloorDiv => {
+            if y == 0 { return Err(by_zero()); }
+            x.checked_div(y).map(|q| {
+                if x % y != 0 && ((x < 0) != (y < 0)) { q - 1 } else { q }
+            })
+        }
+        BinOp::FloorRem => {
+            if y == 0 { return Err(by_zero()); }
+            let r = if y == -1 { 0 } else { x % y };
+            Some(if r != 0 && ((r < 0) != (y < 0)) { r + y } else { r })
+        }
+        _ => return Err(Failure::Unsupported(span)),
+    };
+    if let Some(value) = checked {
+        return arithmetic_result(types, Num::Signed(value), ty, span, spelling, policy);
+    }
+    let (wrapped, negative) = match op {
+        BinOp::Add => (x.wrapping_add(y), y < 0),
+        BinOp::Sub => (x.wrapping_sub(y), y > 0),
+        BinOp::Mul => (x.wrapping_mul(y), (x < 0) != (y < 0)),
+        BinOp::FloorDiv => (x, false), // i128::MIN // -1
+        _ => unreachable!("floor remainder is always representable"),
+    };
+    arithmetic_overflow(types, ty, span, spelling, policy, Num::Signed(wrapped), negative)
+}
+
+fn unsigned_arithmetic(
+    types: &TypeTable, op: BinOp, x: u128, y: u128, ty: Ty, span: Span,
+    policy: OverflowPolicy,
+) -> Result<Folded, Failure> {
+    let spelling = op.spelling();
+    let checked = match op {
+        BinOp::Add => x.checked_add(y),
+        BinOp::Sub => x.checked_sub(y),
+        BinOp::Mul => x.checked_mul(y),
+        BinOp::FloorDiv | BinOp::FloorRem if y == 0 => {
+            return Err(Failure::Panic(span, "division by zero".to_string()));
+        }
+        BinOp::FloorDiv => Some(x / y),
+        BinOp::FloorRem => Some(x % y),
+        _ => return Err(Failure::Unsupported(span)),
+    };
+    if let Some(value) = checked {
+        return arithmetic_result(types, Num::Unsigned(value), ty, span, spelling, policy);
+    }
+    let (wrapped, negative) = match op {
+        BinOp::Add => (x.wrapping_add(y), false),
+        BinOp::Sub => (x.wrapping_sub(y), true),
+        BinOp::Mul => (x.wrapping_mul(y), false),
+        _ => unreachable!("nonzero unsigned division and remainder fit"),
+    };
+    arithmetic_overflow(types, ty, span, spelling, policy, Num::Unsigned(wrapped), negative)
 }
 
 /// The runtime's `ember_floordiv_f64` and `ember_floorrem_f64`: Python's float

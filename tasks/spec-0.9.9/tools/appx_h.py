@@ -372,6 +372,8 @@ ODRS = [
      '`[FFI-8]`'),
     ('ODR-083', 'the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39)',
      '`[FFI-33]`, `[FFI-33c]`, `[GRM-37]`'),
+    ('ODR-084', '`#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts (Hardened_40)',
+     '`[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]`'),
 ]
 
 H5_HEAD = """
@@ -399,7 +401,7 @@ between absent and present-empty views; Hardened_36 adds ODR-080, nullable borro
 their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
 explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
 foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
-contracts.
+contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy.
 
 | ODR | Ruling | Rules |
 |---|---|---|

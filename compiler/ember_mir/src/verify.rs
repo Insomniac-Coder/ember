@@ -537,6 +537,7 @@ mod tests {
             symbol: ember_branding::mangled("t"),
             is_unsafe: false,
             abi: None,
+            overflow: ember_types::OverflowPolicy::Panic,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![LocalDecl {
                 ty: ember_types::TypeTable::new().1.void,
@@ -1684,6 +1685,7 @@ mod view_invariant_tests {
             symbol: ember_branding::mangled("t"),
             is_unsafe: false,
             abi: None,
+            overflow: ember_types::OverflowPolicy::Panic,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {
@@ -1826,6 +1828,7 @@ mod interface_upcast_invariant_tests {
             symbol: ember_branding::mangled("upcast"),
             is_unsafe: false,
             abi: None,
+            overflow: ember_types::OverflowPolicy::Panic,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

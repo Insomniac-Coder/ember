@@ -1620,7 +1620,10 @@ fn module_interface_inputs(
             .directives
             .iter()
             .find(|directive| directive.name.name.is("language"))
-            .map(|directive| directive.value.clone())
+            .and_then(|directive| match &directive.value {
+                ember_ast::DirectiveValue::Text(value) => Some(value.clone()),
+                ember_ast::DirectiveValue::ModuleAttribute(_) => None,
+            })
             // `[VER-8]` — the one language; a directive can only repeat it.
             .unwrap_or_else(|| ember_parser::LANGUAGE_VERSION.to_string());
         inputs.push(ModuleInterfaceInput {
@@ -1759,6 +1762,7 @@ fn callable_signature(body: &ember_mir::Body, types: &TypeTable) -> Result<Calla
         borrows,
         is_unsafe: body.is_unsafe,
         abi: body.abi.clone(),
+        overflow: body.overflow.name().to_string(),
     })
 }
 
@@ -1867,6 +1871,7 @@ fn declaration_signature(
         borrows,
         is_unsafe: declaration.is_unsafe,
         abi: declaration.abi.clone(),
+        overflow: declaration.overflow.name().to_string(),
     })
 }
 
@@ -2068,7 +2073,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Check.
     let (mut types, common) = TypeTable::new();
-    // [TYP-8] -- the profile chooses the default overflow policy.
+    // [TYP-8] -- every profile defaults to panic; lexical attributes may
+    // override that for arithmetic inside their declaration scope.
     let checked = ember_typeck::check(
         &modules,
         &mut types,

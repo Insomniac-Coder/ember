@@ -2085,17 +2085,16 @@ pub fn align_to(offset: u64, align: u64) -> u64 {
 
 /// `[TYP-8]` — what an arithmetic overflow does.
 ///
-/// The profile chooses the default (`debug` panics, `release` and `shipping`
-/// wrap); `@overflow(panic|wrap|saturate)` on a function or module overrides
-/// it. `[PRF-1]` names this as one of only three things a profile may change
-/// about a program's semantics.
+/// Panic is the default in every profile. An explicit function attribute or
+/// module directive selects wrapping or saturation for arithmetic operators;
+/// shift-amount checks and named integer methods have fixed contracts.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum OverflowPolicy {
-    /// Every overflowing `+ - * <<` panics.
+    /// Overflowing arithmetic operators panic.
     #[default]
     Panic,
-    /// `+ - *` and `<<` wrap two's-complement; shift amounts are masked
-    /// (`[TYP-10]`).
+    /// Arithmetic operators wrap two's-complement; shift amounts still check
+    /// (`[TYP-10]`). Only `wrapping_shl/shr` methods mask their amounts.
     Wrap,
     /// Results clamp to the type's bounds.
     Saturate,

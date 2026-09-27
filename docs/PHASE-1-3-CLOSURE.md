@@ -11,11 +11,11 @@ not evidence that coverage is absent:
 
 | Area | Current evidence / remaining question |
 |---|---|
-| `OWN-6` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L100)). Seven cases in [`tests/conformance/OWN-6`](../tests/conformance/OWN-6/) cover take/replace/swap/forget, `Default`, aliasing, use-after-forget, and class-handle use after `mem.drop`. The accepted test calls ordinary `mem.drop`, but no dedicated plain non-class moved-from-use case isolates it. |
+| `OWN-6` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L100)). Existing cases cover take/replace/swap/forget, `Default`, aliasing, use-after-forget, and class-handle use after `mem.drop`; new [`reject_use_after_mem_drop_of_noncopy_value.em`](../tests/conformance/OWN-6/reject_use_after_mem_drop_of_noncopy_value.em) isolates ordinary non-Copy moved-from use. Focused annotations and the current full workspace suites pass. |
 | `BRW-4` | The audit row is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L107)). Four cases in [`tests/conformance/BRW-4`](../tests/conformance/BRW-4/) cover distinct and nested field projections, same-field conflict, and method conflict. Class-field access is expressly governed by Part VIII, not this rule. |
 | `LT-4` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L108)). The accept/reject pair in [`tests/conformance/LT-4`](../tests/conformance/LT-4/) checks an arena allocation within its region and a returned allocation that outlives its arena; ARN-1/ARN-7 also test reset conflicts while views remain live. |
 | `LT-6` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L109)). [`tests/conformance/LT-6`](../tests/conformance/LT-6/) rejects named-lifetime syntax and accepts a character literal as non-lifetime syntax. Clause guidance for restructuring uninferrable relationships (owned result, index, view struct, `@borrows`) is not individually asserted by this pair; map related LT-1/LT-1a cases before claiming clause-complete coverage. |
-| `SPN-5` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L112)). Eight cases in [`tests/conformance/SPN-5`](../tests/conformance/SPN-5/) cover mutable splitting through a `MutSpan`, iterator regions/disjoint items, reuse, parent conflicts, and the rejected `Array.split_at_mut` spelling. Thin direct coverage remains for `Span.split_at`, simultaneous use of both halves returned by `MutSpan.split_at`, and the specified `i > len` panic. `get_pair_mut` is cross-referenced to BRW-5 and should be mapped there. |
+| `SPN-5` | The audit's `not yet probed` label is stale ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L112)). Existing cases cover mutable splitting through a `MutSpan`, iterator regions/disjoint items, reuse, parent conflicts, and the rejected `Array.split_at_mut` spelling. New cases cover `Span.split_at` values at both ends and the middle, simultaneous use/mutation of both `MutSpan` halves with writes observed through the owner, and the specified `i > len` panic on an empty span. Focused annotations and the current full workspace suites pass. `get_pair_mut` is cross-referenced to BRW-5 and should be mapped there. |
 | `DRP-4` | The audit's `not yet probed` label is accurate ([AUDIT-0.9.9.md](AUDIT-0.9.9.md#L111)); there is no DRP-4 conformance directory or test for `@noalloc` on a type's drop/panic inside drop. The handoff records the `@noalloc` promise as Phase-4-effects-gated ([HANDOFF.md](HANDOFF.md#L7848)); this is deferred scope, not a confirmed implementation defect. The SHOULD NOT block wording is advisory. |
 | `BRW-11` | H39 requires all call borrows to overlap; two overlapping `mut` arguments must produce E3022, while disjoint fields are allowed (H39 lines 2085–2088). The direct overlap-reject and disjoint-field-accept cases both pass focused validation. |
 | `DRP-7` | Paired probes found D-368 (missing local/counter storage ends) and D-369 (unrelated String cleanup incorrectly prolonging a plain-view borrow). The fixes track scope ends and infer destructor region reads from the actual fields being destroyed. Focused direct, generic payload, source-before-borrower, return, break/continue, counter and guard cases pass. Mutation break-tests reproduce each defect when its fix is removed and pass after restoring it. Final MSVC/clang-cl workspace suites, 18 gates, H39 examples, and full annotation sweep pass; D-368 and D-369 are fixed (see [DEFECTS.md](DEFECTS.md#L59-L60)). |
@@ -24,12 +24,14 @@ not evidence that coverage is absent:
 ### Phase 2 audit follow-up
 
 1. BRW-11 focused cases pass. DRP-7 focused cases and mutation break-tests pass
-   after restoring both fixes. Final MSVC and clang-cl workspace suites exit 0,
-   all 18 gates pass, H39 examples report 46 with `failing 0`, and the
-   287-directory annotation sweep reports `failing 0`.
-2. Add focused SPN-5 cases for both split halves, `Span.split_at`, and out-of-range panic; consider isolating ordinary non-class `mem.drop` use-after-move for OWN-6.
-3. Reconcile CELL/thread-boundary evidence and keep DRP-4 scoped to its explicit Phase-4 effects dependency.
-4. Continue the full rule-level closure audit; do not recompute percentages until the parent reviews evidence against exit criteria.
+   after restoring both fixes. The current clang-cl full workspace suite exits
+   0. The initial MSVC `--no-fail-fast` run had only the stale integer-shift
+   expectation; after correcting it to use `wrapping_shl`, the exact failed
+   target passed 1/1, and all other MSVC targets had passed in the initial run.
+   All 18 gates pass, H40 examples report 46 with `failing 0`, and the current
+   annotation sweep reports `failing 0` across 288 directories and 1,794 files.
+2. Reconcile CELL/thread-boundary evidence and keep DRP-4 scoped to its explicit Phase-4 effects dependency.
+3. Continue the full rule-level closure audit; do not recompute percentages until the parent reviews evidence against exit criteria.
 
 This remains a bounded list; an exhaustive phase-exit audit is still required.
 
@@ -41,9 +43,11 @@ no estimate changes follow from it.
 
 | Area | Finding |
 |---|---|
-| `FN-5` defaults | All current focused default-argument cases pass, including earlier-parameter, generic, generic-owner, method-default, declaration-scope, borrowed-identity, mutable-handle write-back, and reservation/conflict cases. Reverting alias normalization wrongly accepts `reject_default_borrow_live_at_mut_activation.em`; restoring it recovers the expected E3021 call-site diagnostic. Full MSVC/clang-cl suites, 18 gates, and annotations pass. The declaration arithmetic-policy boundary remains pending ODR review; focused behavior and this working ledger do not resolve it or close Phase 1. |
-| `TYP-8` overflow attributes | `@overflow(saturate)` is rejected with E0104 by the attribute applicability/implementation gate (`ATT-1`/`ATT-6`), not E0900. Saturation remains unimplemented pending the core-language review. |
-| `TYP-9` float controls | `@fastmath` and `@fp(contract)` remain in the unbuilt function-attribute gate (`compiler/ember_typeck/src/lib.rs:35243`); attribute acceptance/semantics remain open. |
+| `FN-5` defaults | Current focused default-argument cases pass, including earlier-parameter, generic, generic-owner, method-default, declaration-scope, borrowed-identity, mutable-handle write-back, and reservation/conflict cases. Reverting alias normalization wrongly accepts `reject_default_borrow_live_at_mut_activation.em`; restoring it recovers E3021 at the call site. ODR-084/H40 settles declaration arithmetic-policy boundaries; ADR-068's propagation is implemented. The current full verification is recorded above; this bounded evidence does not close Phase 1. |
+| `TYP-8` overflow attributes | Module overflow directives and `@overflow(panic|wrap|saturate)` now have focused coverage, including saturation and const-evaluation policy. The `#! module` syntax, declaration policy, CT-4 integration, and current full validation pass; no broad Phase 1 closure is claimed. |
+| `CT-4` constant evaluation | Supported arithmetic forms are covered by focused cases for lexical/module policy, imported wrapped constants, typed unsigned negation, and nested signed-minimum literals. Comptime calls and powers, plus const-generic evaluation, remain gated; do not infer CT-4 closure from this batch. Current annotation and workspace verification pass for the covered cases. |
+| `TYP-10` shifts and `STD-20` fixed integer methods | Invalid shift amounts now panic regardless of overflow policy; fixed-contract methods retain checked semantics, including `MIN.rem_trunc(-1) == 0` while a zero divisor still panics. The focused fixtures and current full verification pass. |
+| `TYP-9` float controls | `@fastmath` and `@fp(contract)` remain unimplemented. The next-session work has not started; map the strict/default policy boundary and separate-TU backend requirement under ODR-085 before implementation. |
 | `CTL-3b` counted loops | `step_by` and composed counted-loop adapters are absent. This needs dependency/iterator design; do not treat existing range-loop tests as that coverage. |
 | `EXP-4` temporary iterable | An indirect borrowed iterable temporary is an investigation lead only; no current reproduction or defect has been confirmed. |
 

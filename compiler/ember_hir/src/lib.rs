@@ -438,6 +438,9 @@ pub enum ExprKind {
     EraseRange(Box<Expr>),
     /// A call the compiler knows about directly, before `std` exists.
     Builtin { which: Builtin, args: Vec<Expr> },
+    /// `[FN-5]`, `[TYP-8]` — an omitted argument is evaluated in the caller
+    /// but its operators retain the declaring function's lexical policy.
+    OverflowScope { policy: OverflowPolicy, expr: Box<Expr> },
     /// A block used as an expression: its statements run, then `value` is
     /// the result, and the block's locals end after it is read. The checker
     /// builds these for calls that loop or bind (`sum`, `min`, `[STD-26]`),
@@ -1762,6 +1765,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         ExprKind::Builtin { which, args } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             format!("{}({})", which.name(), inner.join(", "))
+        }
+        ExprKind::OverflowScope { policy, expr } => {
+            format!("overflow({}; {})", policy.name(), dump_expr(expr, function, types))
         }
         ExprKind::ClassNew { class_id, args, .. } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();

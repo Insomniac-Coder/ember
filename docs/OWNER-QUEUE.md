@@ -62,6 +62,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-081 | **CLOSED** — `str.to_cstring()` returns `Result[CString, NulError]`; `.as_cstr()` is an explicit owner-bound borrow | Language / C interop / owned strings | — | **No** — delegated, 2026-09-27, Hardened_37 |
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
+| ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -237,6 +238,89 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-084 — module attributes and lexical integer overflow — **CLOSED**
+
+    ID:        ODR-084
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_40
+    Category:  LANGUAGE / MODULE ATTRIBUTES / ARITHMETIC
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_39.md [GRM-37], [ATT-4], [TYP-8],
+               [TYP-28], [FN-5], [CT-4], [STD-20]
+
+    Question:  How are promised module attributes written, and which policy
+               governs moved/default expressions and built-in method calls?
+
+    Blocks implementation:            YES — complete lexical arithmetic policies
+    Requires owner semantic decision:  delegated to the agent
+
+**Existing wording and omissions.** H39 permits overflow attributes on functions
+and modules, and also gives module meanings to deterministic and reload attributes.
+Its complete grammar has no module-attribute target: `@` prefixes items, while
+`#!` admits only language and thread directives. TYP-8 says attributes change
+operators "inside" a function or module, but FN-5 evaluates defaults at the call
+without specifying the policy boundary. CT-4 requires compile-time results to
+match target execution. STD-20 defines plain methods by reference to operators
+while explicitly requiring `abs(MIN)` to panic. Leaving these boundaries implicit
+lets lowering choices or a caller's module alter a declaration's meaning.
+
+**Options and costs.** Dedicated directives such as `#! overflow saturate`
+would require a new directive shape for each existing module attribute. An `@!`
+sigil adds punctuation and a second attribute form; a module block adds a new
+declaration structure merely to attach metadata. A generic `#! module` directive
+reuses the established file-policy prefix and attribute grammar with an explicit
+target. For overflow, dynamically inheriting the caller's policy makes imported
+and generic code context-dependent; duplicating a policy parameter through all
+APIs adds runtime or specialization complexity. A lexical policy keeps the
+written declaration authoritative. Integer methods retain fixed contracts rather
+than behaving as undocumented textual expansions at each call.
+
+**Ruling.** `#! module name(args)` applies one module attribute before imports
+and items, with the ordinary attribute name/argument grammar and no `@`. The
+argument list is optional. Distinct attributes occupy separate lines; duplicate
+names, invalid targets and invalid arguments are E0104. Valid effects not yet
+implemented produce E0900. This supplies syntax for existing module attributes,
+not new effects: deterministic still has no opt-out, and reload settings retain
+their existing item precedence.
+
+Module overflow defaults to panic; `#! module overflow(panic|wrap|saturate)`
+selects its lexical policy. A function's explicit overflow attribute overrides
+its enclosing policy. Lambdas and local functions inherit their declaration's
+lexical policy unless an explicit override is permitted and written. Generic
+instantiation, importing, inlining and calls preserve declaration policy.
+Parameter defaults resolve names and type expressions in the declaration scope,
+with generic parameters substituted at instantiation, and retain declaration
+policy; supplied argument expressions retain the caller's lexical policy. Compile-time evaluation
+uses exactly the same policies as runtime evaluation, including module constants.
+
+Only written arithmetic operators take this lexical policy. Called functions
+and integer methods retain their own contracts: plain `pow`, `abs`,
+`next_power_of_two`, and `div_trunc` have their documented checked behavior;
+explicit checked/wrapping/saturating/overflowing families remain fixed. In
+particular, `abs(MIN)` and `MIN.div_trunc(-1)` panic, and
+`MIN.rem_trunc(-1)` is zero, under every caller policy. The `pow(e)` shorthand
+in STD-20 means the default checked `x ** e`, not a lexical macro. For the
+written operator `MIN // -1`, wrapping yields MIN and saturation yields MAX.
+Saturation clamps the exact mathematical result to the nearest bound; division
+by zero, negative exponents, casts and invalid shift amounts keep their existing
+rules. No profile or optimization flag changes these meanings (PHIL-13).
+
+**Implementation guidance.** Keep policy as compile-time metadata, with one
+resolved declaration policy and explicit expression boundaries where defaults
+are inserted into a caller. Synthesized arithmetic implementing a fixed method
+must retain that method's policy. The representation is not normative. Parser,
+formatter, generic/default/closure lowering, constant evaluation, and backend
+arithmetic must agree; syntax acceptance alone is not support (PHIL-12).
+
+**Conformance.** Exercise module defaults and function overrides, imported and
+generic defaults, caller-side supplied arguments, escaping lambdas/local functions,
+compile-time/runtime parity, signed/unsigned limits including 128-bit targets,
+fixed method behavior, and unchanged zero-divisor/negative-exponent/shift checks
+in every profile. Module attributes with effects still unimplemented must be
+rejected explicitly. Earlier frozen hardenings and the adopted master stay intact.
 
 ---
 

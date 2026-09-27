@@ -11088,11 +11088,11 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_39.md`
-  (ODR-083), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_40.md`
+  (ODR-084), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h39/` are frozen.
-* **Next numbers:** ODR-084, D-370, ADR-068.
+  `parts-h40/` are frozen.
+* **Next numbers:** ODR-085, D-374, ADR-069.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11312,6 +11312,11 @@ first**; the rest of §0.355 is the running narrative behind it.
 * **Spec update:** H39 carries ODR-083, resolving the creator-thread anchor
   for static exports. The callback batch is pushed as
   `9821bbef5c0eaf93367399d525d5d1ca3b162b99`; all five CI jobs are green.
+* **H40 / ODR-084:** module attributes use `#! module name(args)`; overflow
+  policy is lexical at declarations, defaults, and compile time, while integer
+  methods keep their fixed contracts. Sources are frozen in `parts-h40/` and
+  pinned as the current development target. This specification ruling does
+  not claim the compiler implementation is complete.
 * **Creator/header batch:** H39/ODR-083 and ADR-065 implement static export
   policies and export-header output. `creator` is anchored to successful module
   initialization; attachment precedes enforcement and generated header
@@ -11350,37 +11355,63 @@ first**; the rest of §0.355 is the running narrative behind it.
 * **Defects closed:** D-366 (runtime-header path collision for a package named
   `ember_rt`) and D-367 (cross-package generated C name/linkage collisions).
   The earlier callback batch's CI remains green.
+* **Default-argument/destructor-lifetime batch:** pushed as
+  `41c75fecfd68d65684938bf176f8d706f406f13a`; CI run
+  [36297125559](https://github.com/Insomniac-Coder/ember/actions/runs/36297125559)
+  passed all five jobs.
 * **Still open:** export-table formation/protocol/per-field contracts, complete
   static reachability, `cdylib` and shared-runtime lifecycle, and captured or
   retained callback contracts.
 * **Owner priority (2026-09-27): finish Phases 1–3 and their dependencies
   first.** Begin with bounded closure audits of core language,
-  ownership/borrowing, and classes/reference counting against actual H39
+  ownership/borrowing, and classes/reference counting against actual H40
   obligations, tests, and implementation, then implement the remaining gaps.
   The 97/88/59 percentages are carried-forward estimates, not a fresh tally
   of satisfied exit criteria. Defer further FFI expansion unless it is a
   concrete dependency of these phases. Export-table rules remain an unnumbered
-  deferred topic. Next ODR is 084; next D number
-  is 370; next ADR is 068. AUTOPILOT records this priority.
+  deferred topic. Next ODR is 085; next D number
+  is 374; next ADR is 069. AUTOPILOT records this priority.
   The working checklist is `docs/PHASE-1-3-CLOSURE.md`. The FN-5 focused cases
   pass, including generic-owner methods and declaration-scope defaults. The
   alias-normalize mutation test wrongly accepts the negative default-borrow
   case; restoring the implementation produces the expected E3021 at the call
   site. BRW-11 overlap rejection and disjoint-field acceptance both pass.
   D-368 and D-369 focused controls and mutation break-tests pass after
-  restoring each fix; both defects are now fixed. The final full MSVC and
-  clang-cl workspace suites exited 0 without watchdog kills, all 18 gates
-  passed, H39 examples reported 46 with `failing 0`, and the 287-directory
-  annotation sweep reported `failing 0`. The adopted-master SHA remains
+  restoring each fix; both defects are now fixed. In the preceding ownership
+  batch, full MSVC and clang-cl workspace suites exited 0, all 18 gates passed,
+  H39 examples reported 46 with `failing 0`, and the 287-directory annotation
+  sweep reported `failing 0`. The adopted-master SHA remains
   `F8EC2010EADC6F7393E81C67C77DCB8268B8604578F419BC03EEDAD422DCC4AF`.
-  Keep first-three-phase priority and the carried-forward P1/P2/P3 estimates
-  at 97/88/59. FN-5 focused behavior passes, but its declaration arithmetic-
-  policy boundary remains pending ODR review. The next core item is TYP-8
-  saturation and module-attribute spelling, still under lead review; there is
-  no ODR ruling or H40 yet; ODR-084 is available for that ruling. Next
-  ODR/D/ADR numbers remain 084/370/068. The current default-argument/
-  destructor-lifetime batch is fully validated and awaiting its integration
-  commit.
+  Keep first-three-phase priority and carried-forward P1/P2/P3 estimates at
+  97/88/59; this batch does not revise the percentages or claim phase closure.
+  H40's declaration overflow policy is implemented across defaults, generic
+  instantiations, fixed-contract integer methods, and constant evaluation;
+  module overflow policy, saturation, and policy-independent shift checks are
+  also covered. [ADR-068](DECISIONS.md#adr-068-preserve-declaration-overflow-policy-across-compiler-boundaries)
+  is implemented. FN-5, CT-4, TYP-8, TYP-10, STD-20, and the added OWN-6 and
+  SPN-5 cases passed focused validation and the full checks below. D-370 through
+  D-373 are fixed. The next ODR/D/ADR numbers are 085/374/069.
+* **Current H40 verification:** Clang-cl's full workspace suite exited 0,
+  including 54 milestones, static-library and 10 UI tests, all unit tests, and
+  doctests. The full MSVC `--no-fail-fast` run had one stale
+  `integer_semantics` expectation for masked shifts; the fixture was corrected
+  to call `wrapping_shl`, and the exact failed target passed 1/1 on rerun. All
+  other MSVC targets passed in the initial run. There were no watchdog kills.
+  All 18 repository gates passed; H40 examples reported 46 with `failing 0`;
+  and the annotation sweep checked 288 directories and 1,794 top-level `.em`
+  files with literal `failing 0`.
+* **Phase 1 follow-up:** A mechanical Parts II–VI rule/annotation inventory
+  provides a bounded audit index, not a conformance denominator: absent direct
+  rule tags do not prove that no relevant test exists or that an implementation
+  is wrong. Closure/generic exclusions and mixed-scope rules need manual review
+  before any exit or percentage decision. The next-session TYP-9 floating
+  controls work remains unstarted. The read-only architectural map identified
+  the need for per-function separate translation units, preserving strict
+  settings in callers/shared code, and avoiding a global fast-math link mode;
+  nested, local-function, and default-expression FP policy boundaries need an
+  ODR-085 ruling in a hardened successor before implementation. This current
+  H40 batch is locally verified and prepared for this commit; post-push CI is
+  unverified. Pause development after it is pushed, as requested.
   Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
   cover their stated gaps.
 * **Phase estimates (2026-09-27; engineering estimates, not test counts):**

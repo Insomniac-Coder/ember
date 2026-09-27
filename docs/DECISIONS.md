@@ -2114,3 +2114,38 @@ and shared-runtime packaging modes fail explicitly.
 
 These are build and representation choices. File/prototype semantics do not
 change; no new ODR or hardening is required.
+
+## ADR-068 — preserve declaration overflow policy across compiler boundaries
+
+**Decided 2026-09-27; implementation verified in the current H40 batch.** ODR-084/H40 makes overflow
+policy lexical. Resolve a source module's default once and retain each
+callable's effective declaration policy in its checked signature. Generic
+instantiation preserves that fact. A closure captures the policy of its
+declaration context; calling it does not replace the policy with the caller's.
+
+When default expressions are inserted into a caller, use an explicit HIR
+expression policy boundary. MIR lowering saves and restores policy at that
+boundary, so supplied arguments keep caller policy and inserted defaults keep
+declaration policy. Fixed-contract integer methods use the same mechanism to
+protect their synthesized arithmetic; their receiver and supplied argument
+expressions still evaluate under the caller's policy, before entering that
+fixed computation. Constant evaluation consumes the same
+resolved policies. Prefer boundaries to copying policy onto every synthesized
+operator, which would duplicate state and make a missed constructor silently
+change semantics. The boundary must remain transparent to ordinary type,
+place, region, and effect traversal.
+
+Effective declaration policy is part of the serialized callable contract and
+its interface hash. Bump the artifact schema and reject invalid encoded policy
+values; old schema records are invalidated before use. A module-only policy
+edit must change the dependency identity seen by an importer whose defaults
+or generic code can depend on it. This is compile-time metadata, with no
+runtime policy parameter or change to callable ABI/type compatibility.
+
+The present compiler still checks the whole loaded module graph each run.
+Its interface artifacts are not a complete executable-code reuse cache:
+default-expression and generic/inline expansion source identities remain
+incomplete independently of this policy field. They must be included before
+reusing such code across source changes. This decision does not claim that
+broader cache work is complete or introduce unrelated private source text into
+every public interface hash.

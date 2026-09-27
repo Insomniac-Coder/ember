@@ -447,8 +447,16 @@ impl<'a> Parser<'a> {
         let mut directives = Vec::new();
         while matches!(self.peek(), TokenKind::Directive { .. }) {
             if let Some(directive) = self.parse_directive() {
-                if directives.iter().any(|prior: &ember_ast::Directive|
-                    prior.name.name == directive.name.name) {
+                if directives.iter().any(|prior: &ember_ast::Directive| {
+                    if prior.name.name != directive.name.name { return false; }
+                    match (&prior.value, &directive.value) {
+                        (ember_ast::DirectiveValue::ModuleAttribute(a),
+                         ember_ast::DirectiveValue::ModuleAttribute(b)) =>
+                            a.path.iter().map(|part| part.name)
+                                .eq(b.path.iter().map(|part| part.name)),
+                        _ => true,
+                    }
+                }) {
                     self.report(Diagnostic::error(codes::E0104, directive.span,
                         format!("duplicate `#! {}` directive", directive.name.name)));
                 }
@@ -586,6 +594,13 @@ impl<'a> Parser<'a> {
                 self.report(Diagnostic::error(codes::E0104, span,
                     "`#! threads` must be `main`, `any`, or `creator`"));
             }
+        } else if name.is("module") {
+            let attribute = self.parse_module_attribute(span, &value)?;
+            return Some(ember_ast::Directive {
+                name: Ident { name, span },
+                value: ember_ast::DirectiveValue::ModuleAttribute(attribute),
+                span,
+            });
         } else {
             self.report(
                 Diagnostic::error(
@@ -593,9 +608,47 @@ impl<'a> Parser<'a> {
                     span,
                     format!("`#! {name}` is not a directive"),
                 )
-                .help("use `#! language \"<version>\"` or `#! threads main|any|creator`"),
+                .help("use `#! language \"<version>\"`, `#! threads main|any|creator`, or `#! module name(args)`"),
             );
         }
-        Some(ember_ast::Directive { name: Ident { name, span }, value, span })
+        Some(ember_ast::Directive { name: Ident { name, span }, value: ember_ast::DirectiveValue::Text(value), span })
+    }
+
+    /// Parse the value of `#! module` through the ordinary attribute parser,
+    /// using the original source range so names and arguments keep real spans.
+    fn parse_module_attribute(&mut self, span: Span, value: &str) -> Option<ember_ast::Attribute> {
+        let line = &self.src[span.start as usize..span.end as usize];
+        let Some(offset) = line.rfind(value) else { return None };
+        let start = span.start as usize + offset;
+        let end = start + value.len();
+        let mark = self.sink.mark();
+        let sub = ember_lexer::lex_range(self.file, self.src, start, end, self.sink);
+        let outer = std::mem::replace(&mut self.tokens, sub.tokens);
+        let outer_pos = std::mem::replace(&mut self.pos, 0);
+        let outer_region = (self.region_errors, self.region_start);
+        let id = self.next_id();
+        let path = self.parse_dotted_path();
+        let mut args = Vec::new();
+        if self.eat_punct(Punct::LParen) {
+            while !self.at_punct(Punct::RParen) && !self.at_eof() {
+                if let Some(arg) = self.parse_attr_arg() { args.push(arg); }
+                if !self.eat_punct(Punct::Comma) { break; }
+            }
+            self.expect_punct(Punct::RParen);
+        }
+        // `lex_range` closes a nonempty substream with a structural newline.
+        self.eat_newlines();
+        let at_end = self.at_eof();
+        let had_errors = self.sink.rollback(mark);
+        let valid = at_end && !had_errors;
+        self.tokens = outer;
+        self.pos = outer_pos;
+        (self.region_errors, self.region_start) = outer_region;
+        if !valid || value.is_empty() {
+            self.report(Diagnostic::error(codes::E0104, span,
+                "`#! module` needs one valid attribute name and arguments"));
+            return None;
+        }
+        Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32) })
     }
 }

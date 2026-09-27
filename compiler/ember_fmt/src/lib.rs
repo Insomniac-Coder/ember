@@ -130,10 +130,17 @@ impl Printer<'_> {
 
     fn module(&mut self, module: &ast::Module) {
         for directive in &module.directives {
-            if directive.name.name.is("threads") {
-                self.line(&format!("#! threads {}", directive.value));
-            } else {
-                self.line(&format!("#! {} {:?}", directive.name.name, directive.value));
+            match &directive.value {
+                ast::DirectiveValue::Text(value) if directive.name.name.is("threads") => {
+                    self.line(&format!("#! threads {value}"));
+                }
+                ast::DirectiveValue::Text(value) => {
+                    self.line(&format!("#! {} {value:?}", directive.name.name));
+                }
+                ast::DirectiveValue::ModuleAttribute(attr) => {
+                    let rendered = self.attribute(attr);
+                    self.line(&format!("#! module {}", rendered.trim_start_matches('@')));
+                }
             }
         }
         if !module.directives.is_empty() { self.blank(); }

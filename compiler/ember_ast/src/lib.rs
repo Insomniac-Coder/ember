@@ -54,8 +54,17 @@ pub struct Script {
 #[derive(Clone, Debug)]
 pub struct Directive {
     pub name: Ident,
-    pub value: String,
+    pub value: DirectiveValue,
     pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub enum DirectiveValue {
+    /// The existing `language` and `threads` directive values.
+    Text(String),
+    /// `#! module` uses the ordinary attribute syntax. The parsed attribute
+    /// is the single source of truth for semantics and formatting.
+    ModuleAttribute(Attribute),
 }
 
 // ---------------------------------------------------------------------------

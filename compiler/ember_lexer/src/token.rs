@@ -60,7 +60,7 @@ pub enum TokenKind {
 
     /// `## text` — attaches to the next declaration.
     DocComment(String),
-    /// `#! name "value"` on the first line of a file only.
+    /// `#! name value` before a file's imports and declarations.
     Directive { name: Symbol, value: String },
 
     /// An unrecognised character. The lexer never fails fatally (`[II.7]`).

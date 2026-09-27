@@ -13,7 +13,13 @@ pub fn dump(module: &Module) -> String {
     p.line("Module");
     p.depth += 1;
     for d in &module.directives {
-        p.line(&format!("Directive {} = {:?}", d.name.name, d.value));
+        match &d.value {
+            DirectiveValue::Text(value) => p.line(&format!("Directive {} = {value:?}", d.name.name)),
+            DirectiveValue::ModuleAttribute(attr) => {
+                let path = attr.path.iter().map(|part| part.name.as_str()).collect::<Vec<_>>().join(".");
+                p.line(&format!("Directive module = {path} ({} arguments)", attr.args.len()));
+            }
+        }
     }
     for import in &module.imports {
         p.import(import);
